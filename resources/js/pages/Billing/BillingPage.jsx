@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, FileText, Send, Check, X, Eye, Clock, AlertTriangle, Users, ChevronDown, ChevronUp, Copy, ExternalLink } from 'lucide-react';
+import { Search, FileText, Send, Check, X, Eye, Clock, AlertTriangle, Users, ChevronDown, ChevronUp, Copy, ExternalLink, ShieldAlert } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -12,6 +12,7 @@ function BillingPage() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [search, setSearch] = useState('');
+    const [isolationStatus, setIsolationStatus] = useState({});
     
     // Modal states
     const [createModal, setCreateModal] = useState({ open: false, customer: null });
@@ -38,11 +39,31 @@ function BillingPage() {
             setLoading(true);
             const response = await billingService.getAll({ search });
             setCustomers(response.data.data);
+            
+            // Isolation status is now included in the response
+            if (response.data.data.isolationStatus) {
+                setIsolationStatus(response.data.data.isolationStatus);
+            }
         } catch (err) {
             setError('Gagal memuat data penagihan');
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleIsolateCustomer = async (customerId) => {
+        try {
+            setSubmitting(true);
+            await billingService.isolateCustomer(customerId);
+            setSuccess('Pelanggan berhasil diisolir');
+            
+            // Refresh data to get updated isolation status
+            await fetchBillingData();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Gagal melakukan isolir');
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -208,7 +229,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">No</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">PPPoE</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell">No WA</th>
+                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell">Isolir</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jatuh Tempo</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
@@ -227,6 +248,9 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                             key={item.customer.id} 
                                             item={item} 
                                             index={index}
+                                            onIsolate={handleIsolateCustomer}
+                                            isolationStatus={isolationStatus[item.customer.id]}
+                                            isLateCustomer={title === "Pelanggan Telat"}
                                         />
                                     ))
                                 )}
@@ -238,7 +262,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         );
     };
 
-    const CustomerRow = ({ item, index }) => {
+    const CustomerRow = ({ item, index, onIsolate, isolationStatus, isLateCustomer }) => {
         const { customer, invoice } = item;
         
         const getStatusBadge = () => {
@@ -254,6 +278,34 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
         };
 
+        const getIsolirButton = () => {
+            // Only show for late customers
+            if (!isLateCustomer) return null;
+            
+            const isIsolated = isolationStatus?.isolated;
+            
+            if (isIsolated) {
+                return (
+                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1">
+                        <ShieldAlert size={12} />
+                        Sedang Isolir
+                    </span>
+                );
+            }
+            
+            return (
+                <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => onIsolate(customer.id)}
+                    disabled={submitting}
+                >
+                    <ShieldAlert size={14} className="mr-1" />
+                    Lakukan Isolir
+                </Button>
+            );
+        };
+
         return (
             <tr className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 text-sm text-gray-600">{index + 1}</td>
@@ -262,7 +314,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     <div className="text-xs text-gray-500 md:hidden">{customer.pppoe_username}</div>
                 </td>
                 <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{customer.pppoe_username || '-'}</td>
-                <td className="px-4 py-3 text-sm text-gray-600 hidden sm:table-cell">{customer.phone || '-'}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 hidden sm:table-cell">{getIsolirButton()}</td>
                 <td className="px-4 py-3 text-sm text-gray-600">{formatDate(customer.due_date)}</td>
                 <td className="px-4 py-3">{getStatusBadge()}</td>
                 <td className="px-4 py-3">
@@ -352,7 +404,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                     <input
                         type="text"
-                        placeholder="Cari nama, PPPoE, atau No WA..."
+                        placeholder="Cari nama atau PPPoE..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"

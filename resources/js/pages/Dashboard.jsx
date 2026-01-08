@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { 
     Users, DollarSign, TrendingUp, AlertCircle, Plus, FileText, Settings,
-    ArrowUpRight, ArrowDownRight, Wallet, Activity, Calendar, Zap, MessageSquare
+    ArrowUpRight, ArrowDownRight, Wallet, Activity, Calendar, Zap, MessageSquare, AlertTriangle
 } from 'lucide-react';
 import { Line, Bar, Doughnut } from 'react-chartjs-2';
 import {
@@ -40,6 +40,7 @@ function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [monthLabels, setMonthLabels] = useState([]);
+    const [isolatedCount, setIsolatedCount] = useState(0);
 
     useEffect(() => {
         const fetchStats = async () => {
@@ -56,6 +57,14 @@ function Dashboard() {
                     labels.push(d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }));
                 }
                 setMonthLabels(labels);
+                
+                // Fetch isolated devices count
+                try {
+                    const isolirResponse = await apiClient.get('/isolir');
+                    setIsolatedCount(isolirResponse.data.count || 0);
+                } catch (isolirErr) {
+                    console.error('Failed to fetch isolated count:', isolirErr);
+                }
             } catch (err) {
                 setError('Gagal memuat dashboard');
                 console.error(err);
@@ -354,6 +363,68 @@ function Dashboard() {
                                 >
                                     <span className="text-lg">Lihat Monitoring</span>
                                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Fast Menu - Isolir */}
+            {stats && (
+                <div className="bg-gradient-to-br from-red-600 via-orange-600 to-red-600 rounded-xl p-4 md:p-5 text-white shadow-lg shadow-red-500/20 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                    
+                    <div className="relative">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
+                                        <AlertTriangle className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-lg md:text-xl font-bold">Perangkat Isolir</h2>
+                                        <p className="text-red-100 text-xs">Terbatas karena lewat jatuh tempo</p>
+                                    </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3 flex-1">
+                                        <p className="text-red-100 text-xs font-medium mb-1">Total Isolir</p>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className="text-2xl md:text-3xl font-bold">{isolatedCount}</span>
+                                            <span className="text-sm text-red-200">perangkat</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                                        <p className="text-red-100 text-xs font-medium mb-1">Status</p>
+                                        <div className="flex items-center gap-1.5">
+                                            {isolatedCount > 0 ? (
+                                                <>
+                                                    <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
+                                                    <span className="text-sm font-semibold">Warning</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                                    <span className="text-sm font-semibold">Normal</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex-shrink-0">
+                                <a
+                                    href="/isolir"
+                                    className="flex items-center justify-center gap-2 bg-white text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg transition font-semibold text-sm shadow hover:shadow-md transform hover:-translate-y-0.5 duration-200"
+                                >
+                                    <span>Lihat Detail</span>
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"/>
                                     </svg>
                                 </a>

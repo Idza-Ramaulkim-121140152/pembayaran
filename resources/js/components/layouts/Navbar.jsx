@@ -49,6 +49,7 @@ export function Navbar() {
         if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
         if (path === '/complaints') return location.pathname.startsWith('/complaints') || location.pathname.startsWith('/aduan');
         if (path === '/monitoring') return location.pathname.startsWith('/monitoring');
+        if (path === '/isolir') return location.pathname.startsWith('/isolir');
         if (path === '/profile') return location.pathname === '/profile';
         if (path === '/settings/payment-methods') return location.pathname === '/settings/payment-methods';
         if (path === '/settings/promo') return location.pathname === '/settings/promo';
@@ -176,6 +177,14 @@ export function Navbar() {
                                         >
                                             <Activity size={18} />
                                             <span>Monitoring</span>
+                                        </Link>
+                                        <Link
+                                            to="/isolir"
+                                            onClick={() => setIsProfileOpen(false)}
+                                            className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/isolir') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                        >
+                                            <AlertTriangle size={18} />
+                                            <span>Isolir</span>
                                         </Link>
                                         <Link
                                             to="/settings/network-notices"
@@ -318,6 +327,14 @@ export function Navbar() {
                             >
                                 <Activity size={20} />
                                 <span>Monitoring</span>
+                            </Link>
+                            <Link
+                                to="/isolir"
+                                onClick={() => setIsOpen(false)}
+                                className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/isolir') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                <AlertTriangle size={20} />
+                                <span>Isolir</span>
                             </Link>
                             <Link
                                 to="/settings/network-notices"

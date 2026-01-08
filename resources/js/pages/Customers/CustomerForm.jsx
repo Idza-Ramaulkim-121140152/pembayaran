@@ -38,6 +38,8 @@ function CustomerForm() {
         is_active: true,
         latitude: '',
         longitude: '',
+        last_payment_date: '',
+        active_until: '',
     });
 
     const [photos, setPhotos] = useState({
@@ -92,6 +94,8 @@ function CustomerForm() {
                 is_active: data.is_active ?? true,
                 latitude: data.latitude || '',
                 longitude: data.longitude || '',
+                last_payment_date: data.last_payment_date || '',
+                active_until: data.active_until || '',
             });
             // Set existing photo previews
             setPreviews({
@@ -198,7 +202,6 @@ function CustomerForm() {
             });
 
             if (id) {
-                data.append('_method', 'PUT');
                 await customerService.updateWithFiles(id, data);
                 setSuccess(true);
                 setTimeout(() => navigate('/customers'), 1500);
@@ -298,22 +301,66 @@ function CustomerForm() {
                                 placeholder="Masukkan nama lengkap"
                             />
                         </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Kode Wilayah <span className="text-red-500">*</span>
-                            </label>
-                            <input
-                                type="text"
-                                name="area_code"
-                                value={formData.area_code}
-                                onChange={handleChange}
-                                required
-                                maxLength="10"
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="Contoh: CJA, KBS, CNS"
-                            />
-                            <p className="text-xs text-gray-500 mt-1">Kode wilayah untuk username PPPoE (3 huruf)</p>
-                        </div>
+                        {!id && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Kode Wilayah <span className="text-red-500">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    name="area_code"
+                                    value={formData.area_code}
+                                    onChange={handleChange}
+                                    required
+                                    maxLength="10"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Contoh: CJA, KBS, CNS"
+                                />
+                                <p className="text-xs text-gray-500 mt-1">Kode wilayah untuk username PPPoE (3 huruf)</p>
+                            </div>
+                        )}
+                        {id && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Username PPPoE
+                                    </label>
+                                    <input
+                                        type="text"
+                                        name="pppoe_username"
+                                        value={formData.pppoe_username}
+                                        onChange={handleChange}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="Username PPPoE"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Edit username PPPoE (hanya update database, tidak mengubah MikroTik)</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Tanggal Pembayaran Terakhir
+                                    </label>
+                                    <input
+                                        type="date"
+                                        name="last_payment_date"
+                                        value={formData.last_payment_date}
+                                        readOnly
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Tanggal Aktif Sampai
+                                    </label>
+                                    <input
+                                        type="date"
+                                        name="active_until"
+                                        value={formData.active_until}
+                                        readOnly
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                                    />
+                                </div>
+                            </>
+                        )}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                 Email

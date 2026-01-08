@@ -24,6 +24,14 @@ export const billingService = {
         apiClient.post(`/invoice/${invoiceId}/confirm`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         }),
+
+    // Isolate customer
+    isolateCustomer: (customerId) => 
+        apiClient.post(`/billing/customer/${customerId}/isolate`),
+
+    // Check isolation status
+    checkIsolationStatus: (customerId) => 
+        apiClient.get(`/billing/customer/${customerId}/isolation-status`),
 };
 
 export default billingService;

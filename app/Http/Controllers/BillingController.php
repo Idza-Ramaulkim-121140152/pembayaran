@@ -234,14 +234,50 @@ class BillingController extends Controller
             }
         }
 
+        // Get bulk isolation status for late customers only
+        $isolationStatus = $this->getBulkIsolationStatus($late);
+
         return response()->json([
             'data' => [
                 'late' => $late,
                 'almostLate' => $almostLate,
                 'others' => $others,
                 'paid' => $paid,
+                'isolationStatus' => $isolationStatus,
             ]
         ]);
+    }
+
+    private function getBulkIsolationStatus($lateCustomers)
+    {
+        try {
+            $mikrotik = new \App\Services\MikroTikService();
+            
+            // Get all isolated secrets in ONE MikroTik call
+            $isolatedSecrets = $mikrotik->getIsolatedSecrets();
+            
+            // Create map of isolated usernames
+            $isolatedUsernames = [];
+            foreach ($isolatedSecrets as $secret) {
+                $isolatedUsernames[$secret['name']] = $secret['profile'];
+            }
+            
+            // Build isolation status map by customer ID
+            $statusMap = [];
+            foreach ($lateCustomers as $item) {
+                $customer = $item['customer'];
+                $username = $customer->pppoe_username;
+                $statusMap[$customer->id] = [
+                    'isolated' => isset($isolatedUsernames[$username]),
+                    'profile' => $isolatedUsernames[$username] ?? null,
+                ];
+            }
+            
+            return $statusMap;
+        } catch (\Exception $e) {
+            \Log::error('Failed to get bulk isolation status: ' . $e->getMessage());
+            return [];
+        }
     }
 
     public function showInvoiceApi($invoice_link)
@@ -265,15 +301,131 @@ class BillingController extends Controller
 
         // Update due_date customer
         $customer = $invoice->customer;
-        if ($customer && $invoice->due_date) {
-            $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-            $customer->due_date = $oldDue->copy()->addDays(30);
+        if ($customer && $customer->pppoe_username) {
+            // Check if user is isolated in MikroTik
+            try {
+                $mikrotik = new \App\Services\MikroTikService();
+                $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+                
+                if ($secret && strtolower($secret['profile']) === 'isolir') {
+                    // User is isolated, restore to original package profile
+                    $targetProfile = $customer->package_type ?: 'default';
+                    $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                    
+                    // Due date = today + 30 days (for isolated users)
+                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                    
+                    \Log::info('User unrestricted after payment', [
+                        'username' => $customer->pppoe_username,
+                        'new_due_date' => $customer->due_date
+                    ]);
+                } else {
+                    // User is NOT isolated, due date = old due date + 30 days
+                    if ($invoice->due_date) {
+                        $oldDue = \Carbon\Carbon::parse($invoice->due_date);
+                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
+                    } else {
+                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::error('Failed to check/unrestrict user', [
+                    'username' => $customer->pppoe_username,
+                    'error' => $e->getMessage()
+                ]);
+                
+                // Fallback: use old due date + 30 days
+                if ($invoice->due_date) {
+                    $oldDue = \Carbon\Carbon::parse($invoice->due_date);
+                    $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
+                } else {
+                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                }
+            }
+            
             $customer->save();
         }
 
         $invoice->save();
 
         return response()->json(['message' => 'Pembayaran berhasil dikonfirmasi', 'data' => $invoice]);
+    }
+
+    public function isolateCustomer($customerId)
+    {
+        try {
+            $customer = Customer::findOrFail($customerId);
+            
+            if (!$customer->pppoe_username) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Customer tidak memiliki username PPPoE'
+                ], 400);
+            }
+            
+            $mikrotik = new \App\Services\MikroTikService();
+            $result = $mikrotik->isolateUser($customer->pppoe_username);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'User berhasil diisolir',
+                'data' => $result
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to isolate customer', [
+                'customer_id' => $customerId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal melakukan isolir: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function checkIsolationStatus($customerId)
+    {
+        try {
+            $customer = Customer::findOrFail($customerId);
+            
+            if (!$customer->pppoe_username) {
+                return response()->json([
+                    'isolated' => false,
+                    'profile' => null
+                ]);
+            }
+            
+            $mikrotik = new \App\Services\MikroTikService();
+            $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+            
+            if (!$secret) {
+                return response()->json([
+                    'isolated' => false,
+                    'profile' => null
+                ]);
+            }
+            
+            $isIsolated = strtolower($secret['profile']) === 'isolir';
+            
+            return response()->json([
+                'isolated' => $isIsolated,
+                'profile' => $secret['profile']
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to check isolation status', [
+                'customer_id' => $customerId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'isolated' => false,
+                'profile' => null,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     public function rejectPaymentApi($invoiceId)

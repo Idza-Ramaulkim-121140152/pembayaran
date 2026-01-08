@@ -15,6 +15,7 @@ use App\Http\Controllers\CustomerAuthController;
 use App\Http\Controllers\ComplaintController;
 use App\Http\Controllers\NetworkNoticeController;
 use App\Http\Controllers\MonitoringController;
+use App\Http\Controllers\IsolirController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -99,6 +100,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');
     Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->name('api.billing.confirm');
     Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->name('api.billing.reject');
+    Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
+    Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
 
     // ODP API
     Route::get('/api/odp', [OdpController::class, 'apiIndex'])->name('api.odp.index');
@@ -148,6 +151,9 @@ Route::middleware('auth')->group(function () {
     // Network Notices API (Admin)
     Route::get('/api/network-notices', [NetworkNoticeController::class, 'index'])->name('api.network-notices.index');
     Route::get('/api/network-notices/stats', [NetworkNoticeController::class, 'stats'])->name('api.network-notices.stats');
+    
+    // Isolir API (Isolated Devices)
+    Route::get('/api/isolir', [IsolirController::class, 'index'])->name('api.isolir.index');
     Route::post('/api/network-notices', [NetworkNoticeController::class, 'store'])->name('api.network-notices.store');
     Route::get('/api/network-notices/{networkNotice}', [NetworkNoticeController::class, 'show'])->name('api.network-notices.show');
     Route::put('/api/network-notices/{networkNotice}', [NetworkNoticeController::class, 'update'])->name('api.network-notices.update');

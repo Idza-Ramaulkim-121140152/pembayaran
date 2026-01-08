@@ -716,6 +716,157 @@ class MikroTikService
         }
     }
 
+    /**
+     * Get all PPPoE secrets with profile "Isolir"
+     */
+    public function getIsolatedSecrets()
+    {
+        try {
+            \Log::info('Getting isolated PPPoE secrets (profile: Isolir)');
+            
+            // Get all secrets
+            $response = $this->command('/ppp/secret/print');
+            
+            \Log::debug('Got secrets from MikroTik', ['count' => count($response)]);
+            
+            if (empty($response)) {
+                \Log::warning('No secrets found in MikroTik');
+                return [];
+            }
+            
+            // Filter secrets with profile "Isolir"
+            $isolatedSecrets = [];
+            foreach ($response as $item) {
+                $profile = $item['profile'] ?? '';
+                
+                // Check if profile is "Isolir" (case-insensitive)
+                if (strtolower($profile) === 'isolir') {
+                    $isolatedSecrets[] = [
+                        'id' => $item['.id'] ?? null,
+                        'name' => $item['name'] ?? null,
+                        'password' => $item['password'] ?? null,
+                        'service' => $item['service'] ?? null,
+                        'profile' => $item['profile'] ?? null,
+                        'remote_address' => $item['remote-address'] ?? null,
+                        'local_address' => $item['local-address'] ?? null,
+                        'caller_id' => $item['caller-id'] ?? null,
+                        'disabled' => $item['disabled'] ?? 'false',
+                    ];
+                }
+            }
+            
+            \Log::info('Found isolated secrets', ['count' => count($isolatedSecrets)]);
+            
+            return $isolatedSecrets;
+        } catch (Exception $e) {
+            \Log::error('Failed to get isolated PPPoE secrets', [
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Change PPPoE secret profile to "Isolir" and disconnect active session
+     */
+    public function isolateUser($username)
+    {
+        try {
+            \Log::info('Isolating user', ['username' => $username]);
+            
+            // Get current secret to find ID and current profile
+            $secret = $this->getPPPoESecret($username);
+            if (!$secret) {
+                throw new Exception("Secret not found for username: {$username}");
+            }
+            
+            $secretId = $secret['id'];
+            $originalProfile = $secret['profile'];
+            
+            \Log::info('Found secret', ['id' => $secretId, 'current_profile' => $originalProfile]);
+            
+            // Change profile to "Isolir"
+            $this->command('/ppp/secret/set', [
+                '.id' => $secretId,
+                'profile' => 'Isolir'
+            ]);
+            
+            \Log::info('Profile changed to Isolir', ['username' => $username]);
+            
+            // Disconnect active PPPoE session if exists
+            try {
+                $activeSessions = $this->command('/ppp/active/print');
+                foreach ($activeSessions as $session) {
+                    if (isset($session['name']) && $session['name'] === $username) {
+                        $sessionId = $session['.id'] ?? null;
+                        if ($sessionId) {
+                            $this->command('/ppp/active/remove', ['.id' => $sessionId]);
+                            \Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
+                        }
+                    }
+                }
+            } catch (Exception $e) {
+                \Log::warning('Failed to disconnect active session', ['error' => $e->getMessage()]);
+                // Continue even if disconnect fails
+            }
+            
+            return [
+                'success' => true,
+                'username' => $username,
+                'original_profile' => $originalProfile,
+                'new_profile' => 'Isolir'
+            ];
+            
+        } catch (Exception $e) {
+            \Log::error('Failed to isolate user', [
+                'username' => $username,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Restore PPPoE secret profile from "Isolir" back to original profile
+     */
+    public function unrestrictUser($username, $targetProfile)
+    {
+        try {
+            \Log::info('Unrestricting user', ['username' => $username, 'target_profile' => $targetProfile]);
+            
+            // Get current secret to find ID
+            $secret = $this->getPPPoESecret($username);
+            if (!$secret) {
+                throw new Exception("Secret not found for username: {$username}");
+            }
+            
+            $secretId = $secret['id'];
+            
+            \Log::info('Found secret', ['id' => $secretId, 'current_profile' => $secret['profile']]);
+            
+            // Change profile back to target profile
+            $this->command('/ppp/secret/set', [
+                '.id' => $secretId,
+                'profile' => $targetProfile
+            ]);
+            
+            \Log::info('Profile restored', ['username' => $username, 'new_profile' => $targetProfile]);
+            
+            return [
+                'success' => true,
+                'username' => $username,
+                'profile' => $targetProfile
+            ];
+            
+        } catch (Exception $e) {
+            \Log::error('Failed to unrestrict user', [
+                'username' => $username,
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
+        }
+    }
+
     public function __destruct()
     {
         // Disconnect only if still connected and socket is valid

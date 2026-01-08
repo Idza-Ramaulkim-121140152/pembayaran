@@ -50,7 +50,26 @@ class CustomerController extends Controller
 
     public function show(Customer $customer)
     {
-        return response()->json(['data' => $customer]);
+        // Get last paid invoice
+        $lastPaidInvoice = $customer->invoices()
+            ->where('status', 'paid')
+            ->whereNotNull('paid_at')
+            ->orderBy('paid_at', 'desc')
+            ->first();
+        
+        // Calculate active until (due_date + 30 days from last payment, or use due_date)
+        $activeUntil = null;
+        if ($lastPaidInvoice && $lastPaidInvoice->paid_at) {
+            $activeUntil = \Carbon\Carbon::parse($lastPaidInvoice->paid_at)->addDays(30)->format('Y-m-d');
+        } elseif ($customer->due_date) {
+            $activeUntil = $customer->due_date;
+        }
+        
+        $customerData = $customer->toArray();
+        $customerData['last_payment_date'] = $lastPaidInvoice ? \Carbon\Carbon::parse($lastPaidInvoice->paid_at)->format('Y-m-d') : null;
+        $customerData['active_until'] = $activeUntil;
+        
+        return response()->json(['data' => $customerData]);
     }
 
     public function edit($customerId)
@@ -95,12 +114,6 @@ class CustomerController extends Controller
                     Storage::disk('public')->delete($customer->$field);
                 }
             }
-        }
-
-        // Auto-calculate due_date = activation_date + 30 days (only if activation_date changed and due_date not provided)
-        if (!empty($validated['activation_date']) && empty($validated['due_date'])) {
-            $activationDate = \Carbon\Carbon::parse($validated['activation_date']);
-            $validated['due_date'] = $activationDate->addDays(30)->format('Y-m-d');
         }
 
         $customer->update($validated);
