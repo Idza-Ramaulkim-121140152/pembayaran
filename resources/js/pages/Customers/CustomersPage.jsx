@@ -3,7 +3,7 @@ import {
     Plus, Edit2, Trash2, Search, Phone, Eye, X, 
     User, Calendar, MapPin, Wifi, CreditCard, FileText,
     MessageCircle, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, History,
-    CheckCircle, Clock, XCircle, Router
+    CheckCircle, Clock, XCircle, Router, Gift
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -30,6 +30,10 @@ function CustomersPage() {
     const [showSecretModal, setShowSecretModal] = useState(false);
     const [secretData, setSecretData] = useState(null);
     const [loadingSecret, setLoadingSecret] = useState(false);
+    const [showCompensationModal, setShowCompensationModal] = useState(false);
+    const [compensationCustomer, setCompensationCustomer] = useState(null);
+    const [newDueDate, setNewDueDate] = useState('');
+    const [submittingCompensation, setSubmittingCompensation] = useState(false);
 
     useEffect(() => {
         fetchCustomers();
@@ -197,6 +201,39 @@ function CustomersPage() {
         }
     };
 
+    const handleOpenCompensation = (customer) => {
+        setCompensationCustomer(customer);
+        setNewDueDate(customer.due_date || '');
+        setShowCompensationModal(true);
+    };
+
+    const handleAddDays = (days) => {
+        const currentDate = newDueDate ? new Date(newDueDate) : new Date();
+        currentDate.setDate(currentDate.getDate() + days);
+        setNewDueDate(currentDate.toISOString().split('T')[0]);
+    };
+
+    const handleSubmitCompensation = async (e) => {
+        e.preventDefault();
+        
+        if (!newDueDate) {
+            setError('Tanggal jatuh tempo harus diisi');
+            return;
+        }
+
+        try {
+            setSubmittingCompensation(true);
+            await customerService.giveCompensation(compensationCustomer.id, newDueDate);
+            setSuccess(`Kompensasi berhasil diberikan kepada ${compensationCustomer.name}`);
+            setShowCompensationModal(false);
+            fetchCustomers();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memberikan kompensasi');
+        } finally {
+            setSubmittingCompensation(false);
+        }
+    };
+
     const getSortIcon = (field) => {
         if (sortBy !== field) {
             return <ArrowUpDown size={16} className="text-gray-400" />;
@@ -353,6 +390,13 @@ function CustomersPage() {
                             <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="flex gap-1">
+                                        <button
+                                            onClick={() => handleOpenCompensation(customer)}
+                                            className="p-2 text-teal-600 hover:bg-teal-50 rounded-lg transition"
+                                            title="Berikan Kompensasi"
+                                        >
+                                            <Gift size={20} />
+                                        </button>
                                         <a
                                             href={getWhatsAppLink(customer.phone)}
                                             target="_blank"
@@ -837,6 +881,112 @@ function CustomersPage() {
                                 Tutup
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Compensation Modal */}
+            {showCompensationModal && compensationCustomer && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full flex items-center justify-center">
+                                    <Gift size={24} className="text-white" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900">Berikan Kompensasi</h2>
+                                    <p className="text-sm text-gray-500">{compensationCustomer.name}</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowCompensationModal(false)}
+                                className="text-gray-400 hover:text-gray-600 transition"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <form onSubmit={handleSubmitCompensation} className="p-6 space-y-6">
+                            <div>
+                                <p className="text-sm text-gray-600 mb-2">Jatuh tempo saat ini:</p>
+                                <p className="text-lg font-semibold text-gray-900">{compensationCustomer.due_date || '-'}</p>
+                            </div>
+
+                            {/* Quick Actions */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-3">
+                                    Tambah Waktu
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddDays(1)}
+                                        className="px-4 py-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition font-medium"
+                                    >
+                                        +1 Hari
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddDays(2)}
+                                        className="px-4 py-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition font-medium"
+                                    >
+                                        +2 Hari
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleAddDays(3)}
+                                        className="px-4 py-3 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition font-medium"
+                                    >
+                                        +3 Hari
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Manual Date Input */}
+                            <div>
+                                <label htmlFor="dueDate" className="block text-sm font-medium text-gray-700 mb-2">
+                                    Atau Pilih Tanggal Manual
+                                </label>
+                                <input
+                                    type="date"
+                                    id="dueDate"
+                                    value={newDueDate}
+                                    onChange={(e) => setNewDueDate(e.target.value)}
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                                    required
+                                />
+                            </div>
+
+                            {/* New Due Date Preview */}
+                            {newDueDate && (
+                                <div className="bg-teal-50 border border-teal-200 rounded-lg p-4">
+                                    <p className="text-sm text-teal-700 mb-1">Jatuh tempo baru:</p>
+                                    <p className="text-lg font-bold text-teal-900">{newDueDate}</p>
+                                </div>
+                            )}
+
+                            {/* Submit Button */}
+                            <div className="flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowCompensationModal(false)}
+                                    className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-300 transition"
+                                    disabled={submittingCompensation}
+                                >
+                                    Batal
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-1 px-4 py-3 bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-medium rounded-xl hover:from-teal-600 hover:to-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={submittingCompensation}
+                                >
+                                    {submittingCompensation ? 'Menyimpan...' : 'Berikan Kompensasi'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

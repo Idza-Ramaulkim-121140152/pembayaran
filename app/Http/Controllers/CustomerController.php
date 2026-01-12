@@ -354,6 +354,48 @@ class CustomerController extends Controller
         }
     }
 
+    public function giveCompensation(Request $request, $customerId)
+    {
+        try {
+            $customer = Customer::findOrFail($customerId);
+            
+            $request->validate([
+                'due_date' => 'required|date',
+            ]);
+            
+            $oldDueDate = $customer->due_date;
+            $customer->due_date = $request->due_date;
+            $customer->save();
+            
+            \Log::info('Compensation given', [
+                'customer_id' => $customerId,
+                'customer_name' => $customer->name,
+                'old_due_date' => $oldDueDate,
+                'new_due_date' => $customer->due_date
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Kompensasi berhasil diberikan',
+                'data' => [
+                    'old_due_date' => $oldDueDate,
+                    'new_due_date' => $customer->due_date,
+                    'customer' => $customer
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to give compensation', [
+                'customer_id' => $customerId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memberikan kompensasi: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function destroy($customerId)
     {
         $customer = Customer::findOrFail($customerId);

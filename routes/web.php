@@ -84,6 +84,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/api/customers/{customer}', [CustomerController::class, 'update'])->name('api.customers.update');
     Route::delete('/api/customers/{customer}', [CustomerController::class, 'destroy'])->name('api.customers.destroy');
     Route::get('/api/customers/{customer}/riwayat', [CustomerController::class, 'riwayatApi'])->name('api.customers.riwayat');
+    Route::post('/api/customers/{customer}/compensation', [CustomerController::class, 'giveCompensation'])->name('api.customers.compensation');
 
     // Customer Routes (for form-based activation)
     Route::get('/pelanggan', [CustomerController::class, 'list'])->name('customers.list');

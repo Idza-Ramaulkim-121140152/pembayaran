@@ -53,6 +53,9 @@ export const customerService = {
 
     // Get riwayat pembayaran customer
     getPaymentHistory: (id) => apiClient.get(`/customers/${id}/riwayat`),
+
+    // Give compensation (update due date)
+    giveCompensation: (id, dueDate) => apiClient.post(`/customers/${id}/compensation`, { due_date: dueDate }),
 };
 
 export default customerService;
