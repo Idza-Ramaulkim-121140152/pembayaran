@@ -3,7 +3,7 @@ import {
     Plus, Edit2, Trash2, Search, Phone, Eye, X, 
     User, Calendar, MapPin, Wifi, CreditCard, FileText,
     MessageCircle, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, History,
-    CheckCircle, Clock, XCircle, Router, Gift
+    CheckCircle, Clock, XCircle, Router, Gift, Download
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -251,6 +251,14 @@ function CustomersPage() {
         );
     }
 
+    const handleExport = async () => {
+        try {
+            window.location.href = '/api/customers/export/excel';
+        } catch (err) {
+            setError('Gagal mengekspor data pelanggan');
+        }
+    };
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -259,12 +267,21 @@ function CustomersPage() {
                     <h1 className="text-2xl font-bold text-gray-900">Daftar Pelanggan</h1>
                     <p className="text-gray-600 mt-1">Total {customers.length} pelanggan terdaftar</p>
                 </div>
-                <Link to="/customers/create">
-                    <Button className="flex items-center gap-2">
-                        <Plus size={20} />
-                        Aktivasi Baru
-                    </Button>
-                </Link>
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition"
+                    >
+                        <Download size={20} />
+                        Export Data
+                    </button>
+                    <Link to="/customers/create">
+                        <Button className="flex items-center gap-2">
+                            <Plus size={20} />
+                            Aktivasi Baru
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}

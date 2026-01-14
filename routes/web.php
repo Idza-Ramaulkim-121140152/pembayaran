@@ -85,6 +85,7 @@ Route::middleware('auth')->group(function () {
     Route::delete('/api/customers/{customer}', [CustomerController::class, 'destroy'])->name('api.customers.destroy');
     Route::get('/api/customers/{customer}/riwayat', [CustomerController::class, 'riwayatApi'])->name('api.customers.riwayat');
     Route::post('/api/customers/{customer}/compensation', [CustomerController::class, 'giveCompensation'])->name('api.customers.compensation');
+    Route::get('/api/customers/export/excel', [CustomerController::class, 'exportExcel'])->name('api.customers.export');
 
     // Customer Routes (for form-based activation)
     Route::get('/pelanggan', [CustomerController::class, 'list'])->name('customers.list');

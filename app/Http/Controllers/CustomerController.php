@@ -396,6 +396,46 @@ class CustomerController extends Controller
         }
     }
 
+    public function exportExcel()
+    {
+        try {
+            $export = new \App\Exports\CustomersExport();
+            $spreadsheet = $export->export();
+            
+            // Generate filename
+            $filename = 'Data_Pelanggan_' . date('d-m-Y') . '.xlsx';
+            
+            // Create writer
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            
+            // Clear any output buffers
+            if (ob_get_length()) {
+                ob_end_clean();
+            }
+            
+            // Set headers
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment;filename="' . $filename . '"');
+            header('Cache-Control: max-age=0');
+            
+            // Save to php://output
+            $writer->save('php://output');
+            exit;
+            
+        } catch (\Exception $e) {
+            \Log::error('Failed to export customers', ['error' => $e->getMessage()]);
+            
+            if (request()->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal export data: ' . $e->getMessage()
+                ], 500);
+            }
+            
+            return redirect()->back()->with('error', 'Gagal export data');
+        }
+    }
+
     public function destroy($customerId)
     {
         $customer = Customer::findOrFail($customerId);
