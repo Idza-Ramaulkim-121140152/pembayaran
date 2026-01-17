@@ -49,7 +49,9 @@ Route::get('/api/network-notices/public', [NetworkNoticeController::class, 'publ
 Route::get('/api/network-notices/customer', [NetworkNoticeController::class, 'customerNotices'])->name('api.network-notices.customer');
 
 // Customer Portal API (Public)
-Route::post('/api/customer/login', [CustomerAuthController::class, 'login'])->name('api.customer.login');
+Route::post('/api/customer/login', [CustomerAuthController::class, 'login'])
+    ->middleware('throttle:5,1')
+    ->name('api.customer.login');
 Route::post('/api/customer/logout', [CustomerAuthController::class, 'logout'])->name('api.customer.logout');
 Route::get('/api/customer/check', [CustomerAuthController::class, 'check'])->name('api.customer.check');
 Route::get('/api/customer/dashboard', [CustomerAuthController::class, 'dashboard'])->name('api.customer.dashboard');
@@ -65,8 +67,12 @@ Route::get('/customer/dashboard', function () {
 })->name('customer.dashboard');
 
 // Auth API routes
-Route::post('/login', [\App\Http\Controllers\Auth\AuthenticatedSessionController::class, 'store'])->name('login.store');
-Route::post('/register', [\App\Http\Controllers\Auth\RegisteredUserController::class, 'store'])->name('register.store');
+Route::post('/login', [\App\Http\Controllers\Auth\AuthenticatedSessionController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('login.store');
+Route::post('/register', [\App\Http\Controllers\Auth\RegisteredUserController::class, 'store'])
+    ->middleware('throttle:5,1')
+    ->name('register.store');
 Route::post('/logout', [\App\Http\Controllers\Auth\AuthenticatedSessionController::class, 'destroy'])->name('logout');
 
 // Auth routes (login, register, etc.) - untuk view

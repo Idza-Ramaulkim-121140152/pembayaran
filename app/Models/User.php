@@ -21,7 +21,15 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // admin, user, dll
+    ];
+    
+    /**
+     * The attributes that should be guarded from mass assignment.
+     *
+     * @var list<string>
+     */
+    protected $guarded = [
+        'role', // Prevent mass assignment of role to avoid privilege escalation
     ];
 
     /**

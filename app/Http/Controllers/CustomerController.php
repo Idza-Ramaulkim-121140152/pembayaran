@@ -13,11 +13,13 @@ class CustomerController extends Controller
         $query = Customer::query();
         $search = request('search');
         if ($search) {
+            // Sanitize search input to prevent SQL injection
+            $search = str_replace(['%', '_'], ['\\%', '\\_'], $search);
             $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%$search%")
-                  ->orWhere('pppoe_username', 'like', "%$search%")
-                  ->orWhere('phone', 'like', "%$search%")
-                  ->orWhere('email', 'like', "%$search%");
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('pppoe_username', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
             });
         }
         

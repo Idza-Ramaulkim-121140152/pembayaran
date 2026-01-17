@@ -14,13 +14,17 @@ class MikroTikService
     private $timeout;
     private $isConnected = false;
 
-    public function __construct($host = '103.195.65.216', $user = 'admin', $pass = 'rumahkita69', $port = 8728, $timeout = 5)
+    public function __construct($host = null, $user = null, $pass = null, $port = null, $timeout = null)
     {
-        $this->host = $host;
-        $this->user = $user;
-        $this->pass = $pass;
-        $this->port = $port;
-        $this->timeout = $timeout;
+        $this->host = $host ?? env('MIKROTIK_HOST');
+        $this->user = $user ?? env('MIKROTIK_USER');
+        $this->pass = $pass ?? env('MIKROTIK_PASS');
+        $this->port = $port ?? env('MIKROTIK_PORT', 8728);
+        $this->timeout = $timeout ?? env('MIKROTIK_TIMEOUT', 5);
+        
+        if (empty($this->host) || empty($this->user) || empty($this->pass)) {
+            throw new Exception('MikroTik credentials not configured. Please set MIKROTIK_HOST, MIKROTIK_USER, and MIKROTIK_PASS in .env file');
+        }
     }
 
     /**
