@@ -78,8 +78,8 @@ The customer authentication system uses phone number or PPPoE username without p
 ### Public Invoice Access
 Invoices are accessible via a unique link without authentication. While this provides convenience:
 - **Risk**: Anyone with the link can view invoice details
-- **Current Protection**: Links use `uniqid()` which is not cryptographically secure
-- **Recommendation**: Use `Str::random(32)` or similar for stronger random link generation
+- **Current Protection**: Links now use `Str::random(32)` which generates cryptographically secure random strings (implemented)
+- **Status**: ✅ Fixed - Invoice links are now secure
 
 ## Security Best Practices
 
@@ -115,8 +115,8 @@ Please do not create public GitHub issues for security vulnerabilities.
 - [x] Protect mass assignment
 - [x] Validate file uploads
 - [x] Add rate limiting
+- [x] Use cryptographically secure random strings for invoice links
 - [ ] Implement OTP for customer authentication
-- [ ] Use cryptographically secure random strings for invoice links
 - [ ] Add HTTPS enforcement
 - [ ] Implement audit logging
 - [ ] Add database encryption for sensitive data
