@@ -32,6 +32,8 @@ class ComplaintController extends Controller
         // Search
         if ($request->has('search') && $request->search) {
             $search = $request->search;
+            // Sanitize search input to prevent SQL injection
+            $search = str_replace(['%', '_'], ['\\%', '\\_'], $search);
             $query->where(function($q) use ($search) {
                 $q->where('subject', 'like', "%{$search}%")
                   ->orWhere('message', 'like', "%{$search}%")

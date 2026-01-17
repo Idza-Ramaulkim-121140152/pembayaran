@@ -13,14 +13,39 @@ class BillingController extends Controller
     public function confirmPayment($invoiceId)
     {
         $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        
+        // Validate paid_amount if provided
         $paidAmount = request()->input('paid_amount');
-        if ($paidAmount && $paidAmount > 0) {
+        if ($paidAmount !== null) {
+            if (!is_numeric($paidAmount) || $paidAmount <= 0 || $paidAmount > 999999999) {
+                if (request()->wantsJson()) {
+                    return response()->json(['error' => 'Nominal pembayaran tidak valid.'], 422);
+                }
+                return redirect()->back()->with('error', 'Nominal pembayaran tidak valid.');
+            }
             $invoice->amount = $paidAmount;
         }
 
         // Handle upload bukti pembayaran (opsional)
         if (request()->hasFile('bukti_pembayaran')) {
             $file = request()->file('bukti_pembayaran');
+            
+            // Validate file type and size
+            if (!in_array($file->getClientOriginalExtension(), ['jpg', 'jpeg', 'png', 'pdf'])) {
+                if (request()->wantsJson()) {
+                    return response()->json(['error' => 'Format file tidak valid. Hanya JPG, PNG, dan PDF yang diperbolehkan.'], 422);
+                }
+                return redirect()->back()->with('error', 'Format file tidak valid.');
+            }
+            
+            // Max 5MB
+            if ($file->getSize() > 5 * 1024 * 1024) {
+                if (request()->wantsJson()) {
+                    return response()->json(['error' => 'Ukuran file terlalu besar. Maksimal 5MB.'], 422);
+                }
+                return redirect()->back()->with('error', 'Ukuran file terlalu besar.');
+            }
+            
             $path = $file->store('bukti_pembayaran', 'public');
             $invoice->bukti_pembayaran = $path;
             $invoice->tolak_info = null; // reset info tolak jika ada upload baru
@@ -71,10 +96,12 @@ class BillingController extends Controller
         $query = Customer::query();
         $search = request('search');
         if ($search) {
+            // Sanitize search input to prevent SQL injection
+            $search = str_replace(['%', '_'], ['\\%', '\\_'], $search);
             $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%$search%")
-                  ->orWhere('pppoe_username', 'like', "%$search%")
-                  ->orWhere('phone', 'like', "%$search%");
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('pppoe_username', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%");
             });
         }
         $sort = request('sort');
@@ -122,19 +149,20 @@ class BillingController extends Controller
     public function createInvoice($customerId)
     {
         $customer = Customer::findOrFail($customerId);
-        $amount = request()->input('amount');
-        if (!$amount || $amount <= 0) {
-            if (request()->wantsJson()) {
-                return response()->json(['error' => 'Nominal tagihan harus diisi.'], 422);
-            }
-            return redirect()->back()->with('error', 'Nominal tagihan harus diisi.');
-        }
+        
+        // Validate amount input
+        $validated = request()->validate([
+            'amount' => 'required|numeric|min:1|max:999999999',
+        ]);
+        
+        $amount = $validated['amount'];
+        
         $invoice = $customer->invoices()->create([
             'invoice_date' => now(),
             'due_date' => $customer->due_date ?? now()->addDays(7),
             'amount' => $amount,
             'status' => 'unpaid',
-            'invoice_link' => uniqid('inv_'),
+            'invoice_link' => 'inv_' . \Illuminate\Support\Str::random(32),
         ]);
 
         // TODO: Kirim link invoice ke pelanggan jika perlu
@@ -191,10 +219,12 @@ class BillingController extends Controller
         
         $search = request('search');
         if ($search) {
+            // Sanitize search input to prevent SQL injection
+            $search = str_replace(['%', '_'], ['\\%', '\\_'], $search);
             $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%$search%")
-                  ->orWhere('pppoe_username', 'like', "%$search%")
-                  ->orWhere('phone', 'like', "%$search%");
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('pppoe_username', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%");
             });
         }
         
@@ -288,10 +318,25 @@ class BillingController extends Controller
 
     public function confirmPaymentApi($invoiceId)
     {
-        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
-        $paidAmount = request()->input('paid_amount');
+        // Only admins can confirm payments via API
+        if (!auth()->check() || auth()->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Only admins can confirm payments.'
+            ], 403);
+        }
         
-        if ($paidAmount && $paidAmount > 0) {
+        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        
+        // Validate paid_amount if provided
+        $paidAmount = request()->input('paid_amount');
+        if ($paidAmount !== null) {
+            if (!is_numeric($paidAmount) || $paidAmount <= 0 || $paidAmount > 999999999) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Nominal pembayaran tidak valid.'
+                ], 422);
+            }
             $invoice->amount = $paidAmount;
         }
 
@@ -353,6 +398,14 @@ class BillingController extends Controller
 
     public function isolateCustomer($customerId)
     {
+        // Only admins can isolate customers
+        if (!auth()->check() || auth()->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Only admins can isolate customers.'
+            ], 403);
+        }
+        
         try {
             $customer = Customer::findOrFail($customerId);
             
@@ -430,6 +483,14 @@ class BillingController extends Controller
 
     public function rejectPaymentApi($invoiceId)
     {
+        // Only admins can reject payments
+        if (!auth()->check() || auth()->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized. Only admins can reject payments.'
+            ], 403);
+        }
+        
         $invoice = \App\Models\Invoice::findOrFail($invoiceId);
         $reason = request()->input('reason') ?: 'Bukti pembayaran Anda ditolak. Silakan upload ulang bukti pembayaran yang valid.';
         
