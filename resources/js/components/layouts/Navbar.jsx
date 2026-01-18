@@ -93,11 +93,11 @@ export function Navbar() {
                             <span>Pelanggan</span>
                         </Link>
                         <Link
-                            to="/customers/create"
-                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/customers/create') ? 'text-green-600 bg-green-50 font-semibold' : 'text-gray-700 hover:text-green-600 hover:bg-gray-50'}`}
+                            to="/customer-verification"
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${location.pathname.startsWith('/customer-verification') ? 'text-green-600 bg-green-50 font-semibold' : 'text-gray-700 hover:text-green-600 hover:bg-gray-50'}`}
                         >
-                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
-                            <span>Aktivasi</span>
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span>Verifikasi</span>
                         </Link>
                         <Link
                             to="/pengeluaran"
@@ -262,12 +262,12 @@ export function Navbar() {
                             <span>Pelanggan</span>
                         </Link>
                         <Link
-                            to="/customers/create"
+                            to="/customer-verification"
                             onClick={() => setIsOpen(false)}
-                            className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/customers/create') ? 'text-green-600 bg-green-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                            className={`flex items-center gap-3 px-4 py-3 rounded-lg ${location.pathname.startsWith('/customer-verification') ? 'text-green-600 bg-green-50' : 'text-gray-700 hover:bg-gray-50'}`}
                         >
-                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
-                            <span>Aktivasi Pelanggan</span>
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            <span>Verifikasi Pelanggan</span>
                         </Link>
                         <Link
                             to="/pengeluaran"

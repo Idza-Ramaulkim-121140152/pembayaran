@@ -13,6 +13,8 @@ export default function Monitoring() {
     });
     const [filter, setFilter] = useState('all'); // all, online, offline
     const [searchTerm, setSearchTerm] = useState('');
+    const [showAreaModal, setShowAreaModal] = useState(false);
+    const [selectedArea, setSelectedArea] = useState(null);
 
     useEffect(() => {
         fetchData();
@@ -101,6 +103,18 @@ export default function Monitoring() {
             .map(([code, stats]) => ({ code, ...stats }));
     };
 
+    const getCustomersByArea = (areaCode) => {
+        return data.customers.filter(customer => {
+            const customerArea = customer.pppoe_username?.substring(0, 3).toUpperCase() || 'N/A';
+            return customerArea === areaCode;
+        });
+    };
+
+    const handleAreaClick = (area) => {
+        setSelectedArea(area);
+        setShowAreaModal(true);
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
@@ -169,7 +183,8 @@ export default function Monitoring() {
                             {getAreaSummary().map((area) => (
                                 <div 
                                     key={area.code} 
-                                    className="p-3 border border-gray-200 rounded-lg hover:shadow-md transition-shadow"
+                                    onClick={() => handleAreaClick(area)}
+                                    className="p-3 border border-gray-200 rounded-lg hover:shadow-md transition-shadow cursor-pointer hover:border-blue-500"
                                 >
                                     <p className="text-xs font-medium text-gray-600 mb-1">{area.code}</p>
                                     <p className="text-lg font-bold">
@@ -425,6 +440,100 @@ export default function Monitoring() {
                     </div>
                 )}
             </div>
+
+            {/* Modal Area Detail */}
+            {showAreaModal && selectedArea && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setShowAreaModal(false)}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        {/* Modal Header */}
+                        <div className="p-6 border-b border-gray-200">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-2xl font-bold text-gray-800">Daerah {selectedArea.code}</h3>
+                                    <p className="mt-1 text-sm text-gray-600">
+                                        <span className={selectedArea.online === selectedArea.total ? 'text-green-600 font-semibold' : selectedArea.online === 0 ? 'text-red-600 font-semibold' : 'text-yellow-600 font-semibold'}>
+                                            {selectedArea.online} Online
+                                        </span>
+                                        <span className="text-gray-400"> / {selectedArea.total} Total Customer</span>
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowAreaModal(false)}
+                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                >
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                            <div className="overflow-x-auto">
+                                <table className="w-full">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Username</th>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Status</th>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Nama</th>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Paket</th>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">IP</th>
+                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Telepon</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {getCustomersByArea(selectedArea.code).map((customer, index) => (
+                                            <tr key={index} className={customer.is_online ? 'hover:bg-green-50' : 'hover:bg-red-50'}>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <span className={`font-medium ${customer.is_online ? 'text-green-600' : 'text-red-600'}`}>
+                                                        {customer.pppoe_username}
+                                                    </span>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    {customer.is_online ? (
+                                                        <span className="px-2 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Online</span>
+                                                    ) : (
+                                                        <span className="px-2 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Offline</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="text-sm text-gray-900">{customer.customer_name || '-'}</div>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <div className="text-sm text-gray-900">{customer.package_type || '-'}</div>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <div className="text-sm font-mono text-gray-900">{customer.ip_address || '-'}</div>
+                                                </td>
+                                                <td className="px-4 py-3 whitespace-nowrap">
+                                                    <div className="text-sm text-gray-900">{customer.customer_phone || '-'}</div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {getCustomersByArea(selectedArea.code).length === 0 && (
+                                <div className="py-12 text-center">
+                                    <p className="text-gray-500">Tidak ada customer di daerah ini</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-6 border-t border-gray-200 bg-gray-50">
+                            <button
+                                onClick={() => setShowAreaModal(false)}
+                                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                            >
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

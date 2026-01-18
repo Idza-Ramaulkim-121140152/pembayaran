@@ -14,6 +14,8 @@ import LandingPage from './pages/LandingPage';
 import PromoManagementPage from './pages/Settings/PromoManagementPage';
 import CustomerLoginPage from './pages/Customer/CustomerLoginPage';
 import CustomerDashboard from './pages/Customer/CustomerDashboard';
+import CustomerVerificationPage from './pages/Customers/CustomerVerificationPage';
+import CustomerVerificationForm from './pages/Customers/CustomerVerificationForm';
 import ComplaintsPage from './pages/Complaints/ComplaintsPage';
 import NetworkNoticePage from './pages/Settings/NetworkNoticePage';
 import SendNotificationPage from './pages/Settings/SendNotificationPage';
@@ -72,6 +74,10 @@ function App() {
                     <Route path="/customers/create" element={<CustomerForm />} />
                     <Route path="/customers/:id/edit" element={<CustomerForm />} />
                     <Route path="/pelanggan" element={<CustomersPage />} />
+                    
+                    {/* Customer Verification (Google Sheets) */}
+                    <Route path="/customer-verification" element={<CustomerVerificationPage />} />
+                    <Route path="/customer-verification/verify/:timestamp" element={<CustomerVerificationForm />} />
                     
                     {/* ODP */}
                     <Route path="/odp" element={<OdpPage />} />

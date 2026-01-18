@@ -87,7 +87,6 @@ class CustomerController extends Controller
             'area_code' => 'nullable|string|max:10',
             'activation_date' => 'nullable|date',
             'due_date' => 'nullable|string|max:10',
-            'nik' => 'nullable|string|max:32',
             'gender' => 'nullable|in:male,female,Pria,Wanita',
             'address' => 'nullable|string',
             'package_type' => 'nullable|string',
@@ -101,20 +100,6 @@ class CustomerController extends Controller
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable',
         ]);
-
-        // Handle file upload (optional on edit)
-        $fileFields = [
-            'photo_front', 'photo_modem', 'photo_opm', 'photo_ktp'
-        ];
-        foreach ($fileFields as $field) {
-            if ($request->hasFile($field)) {
-                $validated[$field] = $request->file($field)->store('uploads/customers', 'public');
-                // Hapus file lama jika ada
-                if ($customer->$field) {
-                    Storage::disk('public')->delete($customer->$field);
-                }
-            }
-        }
 
         $customer->update($validated);
         
@@ -157,34 +142,19 @@ class CustomerController extends Controller
             'area_code' => 'required|string|max:10',
             'activation_date' => 'nullable|date',
             'due_date' => 'nullable|string|max:10',
-            'nik' => 'nullable|string|max:32',
             'gender' => 'nullable|in:male,female,Pria,Wanita',
             'address' => 'nullable|string',
             'package_type' => 'nullable|string',
             'custom_package' => 'nullable|string',
-            'photo_front' => 'nullable|image|max:5120',
-            'photo_modem' => 'nullable|image|max:5120',
             'pppoe_username' => 'nullable|string|max:64',
             'odp' => 'nullable|string|max:64',
             'phone' => 'nullable|string|max:20',
             'installation_fee' => 'nullable|numeric',
-            'photo_opm' => 'nullable|image|max:5120',
-            'photo_ktp' => 'nullable|image|max:5120',
             'email' => 'nullable|email',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable',
         ]);
-
-        // Handle file upload (optional for API)
-        $fileFields = [
-            'photo_front', 'photo_modem', 'photo_opm', 'photo_ktp'
-        ];
-        foreach ($fileFields as $field) {
-            if ($request->hasFile($field)) {
-                $validated[$field] = $request->file($field)->store('uploads/customers', 'public');
-            }
-        }
 
         $validated['is_active'] = $validated['is_active'] ?? true;
         

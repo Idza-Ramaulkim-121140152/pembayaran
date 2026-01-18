@@ -8,9 +8,9 @@ class Customer extends Model
 {
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
-        'activation_date', 'nik', 'gender', 'address', 'package_type', 'custom_package',
-    'photo_front', 'photo_modem', 'pppoe_username', 'odp', 'installation_fee',
-    'photo_opm', 'photo_ktp', 'latitude', 'longitude'
+        'activation_date', 'gender', 'address', 'package_type', 'custom_package',
+        'pppoe_username', 'odp', 'installation_fee',
+        'latitude', 'longitude', 'google_sheets_timestamp'
     ];
 
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];

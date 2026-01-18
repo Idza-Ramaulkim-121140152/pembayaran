@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import MapPicker from '../../components/common/MapPicker';
 import odpService from '../../services/odpService';
 
 function OdpPage() {
@@ -25,6 +26,8 @@ function OdpPage() {
         rasio_spesial: '',
         rasio_distribusi: '1:8',
         foto: null,
+        latitude: null,
+        longitude: null,
     });
     const [submitting, setSubmitting] = useState(false);
     const [previewImage, setPreviewImage] = useState(null);
@@ -64,6 +67,8 @@ function OdpPage() {
             rasio_spesial: '',
             rasio_distribusi: '1:8',
             foto: null,
+            latitude: null,
+            longitude: null,
         });
         setPreviewImage(null);
     };
@@ -135,6 +140,8 @@ function OdpPage() {
             rasio_spesial: odp.rasio_spesial || '',
             rasio_distribusi: odp.rasio_distribusi,
             foto: null,
+            latitude: odp.latitude || null,
+            longitude: odp.longitude || null,
         });
         setPreviewImage(odp.foto ? `/storage/${odp.foto}` : null);
         setEditModal({ open: true, odp });
@@ -192,6 +199,17 @@ function OdpPage() {
                     placeholder="Contoh: 1:32"
                 />
             </div>
+            
+            {/* Map Picker */}
+            <MapPicker
+                latitude={formData.latitude}
+                longitude={formData.longitude}
+                onLocationChange={(lat, lng) => {
+                    setFormData(prev => ({ ...prev, latitude: lat, longitude: lng }));
+                }}
+                height="300px"
+            />
+            
             <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Foto ODP</label>
                 <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-blue-400 transition-colors">
@@ -402,7 +420,34 @@ function OdpPage() {
                                 <p className="text-sm text-gray-500">Jumlah Pelanggan</p>
                                 <p className="font-semibold">{viewModal.odp.customers_count || 0} pelanggan</p>
                             </div>
+                            {(viewModal.odp.latitude && viewModal.odp.longitude) && (
+                                <>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Latitude</p>
+                                        <p className="font-semibold">{viewModal.odp.latitude}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm text-gray-500">Longitude</p>
+                                        <p className="font-semibold">{viewModal.odp.longitude}</p>
+                                    </div>
+                                </>
+                            )}
                         </div>
+                        
+                        {/* Display map in view modal */}
+                        {(viewModal.odp.latitude && viewModal.odp.longitude) && (
+                            <div>
+                                <p className="text-sm font-medium text-gray-700 mb-2 flex items-center">
+                                    <MapPin className="w-4 h-4 mr-1" />
+                                    Lokasi ODP
+                                </p>
+                                <MapPicker
+                                    latitude={parseFloat(viewModal.odp.latitude)}
+                                    longitude={parseFloat(viewModal.odp.longitude)}
+                                    height="250px"
+                                />
+                            </div>
+                        )}
                         
                         {viewModal.odp.customers && viewModal.odp.customers.length > 0 && (
                             <div>

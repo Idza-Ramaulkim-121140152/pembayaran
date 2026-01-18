@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader, Upload, MapPin, Camera, X } from 'lucide-react';
+import { ArrowLeft, Loader, MapPin } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -26,7 +26,6 @@ function CustomerForm() {
         email: '',
         phone: '',
         address: '',
-        nik: '',
         gender: '',
         package_type: '',
         custom_package: '',
@@ -42,19 +41,7 @@ function CustomerForm() {
         active_until: '',
     });
 
-    const [photos, setPhotos] = useState({
-        photo_front: null,
-        photo_modem: null,
-        photo_ktp: null,
-        photo_opm: null,
-    });
-
-    const [previews, setPreviews] = useState({
-        photo_front: null,
-        photo_modem: null,
-        photo_ktp: null,
-        photo_opm: null,
-    });
+    // Remove photos state completely - no longer needed
 
     useEffect(() => {
         fetchOdpList();
@@ -82,7 +69,6 @@ function CustomerForm() {
                 email: data.email || '',
                 phone: data.phone || '',
                 address: data.address || '',
-                nik: data.nik || '',
                 gender: data.gender || '',
                 package_type: data.package_type || '',
                 custom_package: data.custom_package || '',
@@ -96,13 +82,6 @@ function CustomerForm() {
                 longitude: data.longitude || '',
                 last_payment_date: data.last_payment_date || '',
                 active_until: data.active_until || '',
-            });
-            // Set existing photo previews
-            setPreviews({
-                photo_front: data.photo_front ? `/storage/${data.photo_front}` : null,
-                photo_modem: data.photo_modem ? `/storage/${data.photo_modem}` : null,
-                photo_ktp: data.photo_ktp ? `/storage/${data.photo_ktp}` : null,
-                photo_opm: data.photo_opm ? `/storage/${data.photo_opm}` : null,
             });
         } catch (err) {
             setError('Gagal memuat data pelanggan');
@@ -132,25 +111,6 @@ function CustomerForm() {
             ...prev,
             [name]: type === 'checkbox' ? checked : value,
         }));
-    };
-
-    const handlePhotoChange = (e) => {
-        const { name, files } = e.target;
-        if (files && files[0]) {
-            const file = files[0];
-            setPhotos((prev) => ({ ...prev, [name]: file }));
-            // Create preview
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setPreviews((prev) => ({ ...prev, [name]: reader.result }));
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
-    const removePhoto = (photoName) => {
-        setPhotos((prev) => ({ ...prev, [photoName]: null }));
-        setPreviews((prev) => ({ ...prev, [photoName]: null }));
     };
 
     const getCurrentLocation = () => {
@@ -191,13 +151,6 @@ function CustomerForm() {
                     } else {
                         data.append(key, formData[key]);
                     }
-                }
-            });
-
-            // Append photos
-            Object.keys(photos).forEach((key) => {
-                if (photos[key]) {
-                    data.append(key, photos[key]);
                 }
             });
 
@@ -390,19 +343,6 @@ function CustomerForm() {
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                NIK
-                            </label>
-                            <input
-                                type="text"
-                                name="nik"
-                                value={formData.nik}
-                                onChange={handleChange}
-                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="Masukkan NIK"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
                                 Jenis Kelamin
                             </label>
                             <select
@@ -570,152 +510,6 @@ function CustomerForm() {
                             Lihat di Google Maps →
                         </a>
                     )}
-                </div>
-
-                {/* Photos */}
-                <div>
-                    <h2 className="text-xl font-bold text-gray-900 mb-4">Dokumentasi Foto</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Photo Front */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Foto Depan Rumah
-                            </label>
-                            {previews.photo_front ? (
-                                <div className="relative">
-                                    <img
-                                        src={previews.photo_front}
-                                        alt="Foto Depan"
-                                        className="w-full h-40 object-cover rounded-lg border"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => removePhoto('photo_front')}
-                                        className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            ) : (
-                                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
-                                    <Camera size={32} className="text-gray-400 mb-2" />
-                                    <span className="text-sm text-gray-500">Klik untuk upload</span>
-                                    <input
-                                        type="file"
-                                        name="photo_front"
-                                        accept="image/*"
-                                        onChange={handlePhotoChange}
-                                        className="hidden"
-                                    />
-                                </label>
-                            )}
-                        </div>
-
-                        {/* Photo Modem */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Foto Modem
-                            </label>
-                            {previews.photo_modem ? (
-                                <div className="relative">
-                                    <img
-                                        src={previews.photo_modem}
-                                        alt="Foto Modem"
-                                        className="w-full h-40 object-cover rounded-lg border"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => removePhoto('photo_modem')}
-                                        className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            ) : (
-                                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
-                                    <Camera size={32} className="text-gray-400 mb-2" />
-                                    <span className="text-sm text-gray-500">Klik untuk upload</span>
-                                    <input
-                                        type="file"
-                                        name="photo_modem"
-                                        accept="image/*"
-                                        onChange={handlePhotoChange}
-                                        className="hidden"
-                                    />
-                                </label>
-                            )}
-                        </div>
-
-                        {/* Photo KTP */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Foto KTP
-                            </label>
-                            {previews.photo_ktp ? (
-                                <div className="relative">
-                                    <img
-                                        src={previews.photo_ktp}
-                                        alt="Foto KTP"
-                                        className="w-full h-40 object-cover rounded-lg border"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => removePhoto('photo_ktp')}
-                                        className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            ) : (
-                                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
-                                    <Camera size={32} className="text-gray-400 mb-2" />
-                                    <span className="text-sm text-gray-500">Klik untuk upload</span>
-                                    <input
-                                        type="file"
-                                        name="photo_ktp"
-                                        accept="image/*"
-                                        onChange={handlePhotoChange}
-                                        className="hidden"
-                                    />
-                                </label>
-                            )}
-                        </div>
-
-                        {/* Photo OPM */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Foto Redaman OPM
-                            </label>
-                            {previews.photo_opm ? (
-                                <div className="relative">
-                                    <img
-                                        src={previews.photo_opm}
-                                        alt="Foto OPM"
-                                        className="w-full h-40 object-cover rounded-lg border"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => removePhoto('photo_opm')}
-                                        className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                </div>
-                            ) : (
-                                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition">
-                                    <Camera size={32} className="text-gray-400 mb-2" />
-                                    <span className="text-sm text-gray-500">Klik untuk upload</span>
-                                    <input
-                                        type="file"
-                                        name="photo_opm"
-                                        accept="image/*"
-                                        onChange={handlePhotoChange}
-                                        className="hidden"
-                                    />
-                                </label>
-                            )}
-                        </div>
-                    </div>
                 </div>
 
                 {/* Status */}

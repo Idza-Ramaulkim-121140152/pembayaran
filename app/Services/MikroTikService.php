@@ -14,13 +14,117 @@ class MikroTikService
     private $timeout;
     private $isConnected = false;
 
-    public function __construct($host = '103.195.65.216', $user = 'admin', $pass = 'rumahkita69', $port = 8728, $timeout = 5)
+    // Static connection pool untuk persistent connection antar request
+    private static $connectionPool = [];
+    private static $lastActivityTime = [];
+    private const CONNECTION_LIFETIME = 3600; // 1 jam dalam detik
+
+    public function __construct($host = null, $user = null, $pass = null, $port = null, $timeout = null)
     {
-        $this->host = $host;
-        $this->user = $user;
-        $this->pass = $pass;
-        $this->port = $port;
-        $this->timeout = $timeout;
+        $this->host = $host ?? env('MIKROTIK_HOST', '192.168.88.1');
+        $this->user = $user ?? env('MIKROTIK_USER', 'admin');
+        $this->pass = $pass ?? env('MIKROTIK_PASSWORD', '');
+        $this->port = $port ?? env('MIKROTIK_PORT', 8728);
+        $this->timeout = $timeout ?? env('MIKROTIK_TIMEOUT', 5);
+
+        // Load existing connection from pool if available and valid
+        $this->loadFromPool();
+    }
+
+    /**
+     * Load connection from static pool if still valid
+     */
+    private function loadFromPool()
+    {
+        $poolKey = $this->getPoolKey();
+        
+        // Check if we have a cached connection
+        if (isset(self::$connectionPool[$poolKey]) && isset(self::$lastActivityTime[$poolKey])) {
+            $timeSinceLastActivity = time() - self::$lastActivityTime[$poolKey];
+            
+            // If connection is less than 1 hour old, reuse it
+            if ($timeSinceLastActivity < self::CONNECTION_LIFETIME) {
+                $this->socket = self::$connectionPool[$poolKey];
+                $this->isConnected = is_resource($this->socket);
+                
+                if ($this->isConnected) {
+                    \Log::info('Reusing existing MikroTik connection', [
+                        'age_seconds' => $timeSinceLastActivity,
+                        'remaining_seconds' => self::CONNECTION_LIFETIME - $timeSinceLastActivity
+                    ]);
+                }
+            } else {
+                // Connection too old, clean it up
+                \Log::info('MikroTik connection expired, will reconnect', [
+                    'age_seconds' => $timeSinceLastActivity
+                ]);
+                $this->cleanupPoolConnection($poolKey);
+            }
+        }
+    }
+
+    /**
+     * Get unique pool key for this connection
+     */
+    private function getPoolKey()
+    {
+        return md5($this->host . ':' . $this->port . ':' . $this->user);
+    }
+
+    /**
+     * Save connection to pool
+     */
+    private function saveToPool()
+    {
+        $poolKey = $this->getPoolKey();
+        self::$connectionPool[$poolKey] = $this->socket;
+        self::$lastActivityTime[$poolKey] = time();
+        
+        \Log::info('Saved MikroTik connection to pool', [
+            'pool_key' => $poolKey,
+            'lifetime_seconds' => self::CONNECTION_LIFETIME
+        ]);
+    }
+
+    /**
+     * Update last activity time for connection pool
+     */
+    private function updateActivity()
+    {
+        $poolKey = $this->getPoolKey();
+        self::$lastActivityTime[$poolKey] = time();
+    }
+
+    /**
+     * Clean up a specific pool connection
+     */
+    private function cleanupPoolConnection($poolKey)
+    {
+        if (isset(self::$connectionPool[$poolKey]) && is_resource(self::$connectionPool[$poolKey])) {
+            @fclose(self::$connectionPool[$poolKey]);
+        }
+        unset(self::$connectionPool[$poolKey]);
+        unset(self::$lastActivityTime[$poolKey]);
+    }
+
+    /**
+     * Check if connection is still valid
+     */
+    public function isConnectionValid()
+    {
+        if (!$this->isConnected || !$this->socket || !is_resource($this->socket)) {
+            return false;
+        }
+        
+        // Check if socket is still readable/writable
+        $read = [$this->socket];
+        $write = [$this->socket];
+        $except = null;
+        
+        // Quick check without blocking
+        $result = @stream_select($read, $write, $except, 0, 0);
+        
+        return $result !== false;
     }
 
     /**
@@ -63,6 +167,15 @@ class MikroTikService
             }
             
             $this->isConnected = true;
+            
+            // Save connection to pool for reuse
+            $this->saveToPool();
+            
+            \Log::info('New MikroTik connection established', [
+                'host' => $this->host,
+                'will_expire_at' => date('Y-m-d H:i:s', time() + self::CONNECTION_LIFETIME)
+            ]);
+            
             return true;
             
         } catch (Exception $e) {
@@ -243,10 +356,17 @@ class MikroTikService
      */
     public function command($command, $params = [])
     {
-        // Always ensure fresh connection
-        if (!$this->isConnected) {
+        // Ensure we have a valid connection
+        if (!$this->isConnectionValid()) {
+            // Disconnect first if there's a stale connection
+            if ($this->socket && is_resource($this->socket)) {
+                $this->disconnect();
+            }
             $this->connect();
         }
+
+        // Update activity time to keep connection alive
+        $this->updateActivity();
 
         // Send command
         $this->write($command, false);
@@ -324,8 +444,8 @@ class MikroTikService
             'result' => $result
         ]);
         
-        // Force disconnect after command to ensure clean state for next command
-        $this->disconnect();
+        // Keep connection alive for reuse within the same request
+        // Connection will be closed automatically in destructor
         
         return $result;
     }
@@ -869,9 +989,26 @@ class MikroTikService
 
     public function __destruct()
     {
-        // Disconnect only if still connected and socket is valid
-        if ($this->isConnected && $this->socket && is_resource($this->socket)) {
-            $this->disconnect();
+        // Don't disconnect automatically - let connection pool manage it
+        // Connection will be reused for up to 1 hour
+        $poolKey = $this->getPoolKey();
+        
+        if (isset(self::$lastActivityTime[$poolKey])) {
+            $timeSinceLastActivity = time() - self::$lastActivityTime[$poolKey];
+            
+            // Only disconnect if connection is too old
+            if ($timeSinceLastActivity >= self::CONNECTION_LIFETIME) {
+                \Log::info('Closing expired MikroTik connection', [
+                    'age_seconds' => $timeSinceLastActivity
+                ]);
+                $this->cleanupPoolConnection($poolKey);
+                $this->isConnected = false;
+            } else {
+                \Log::debug('Keeping MikroTik connection alive in pool', [
+                    'age_seconds' => $timeSinceLastActivity,
+                    'remaining_seconds' => self::CONNECTION_LIFETIME - $timeSinceLastActivity
+                ]);
+            }
         }
     }
 }

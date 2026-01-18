@@ -97,6 +97,19 @@ Route::middleware('auth')->group(function () {
     Route::get('/pelanggan/{customerId}/secret', [CustomerController::class, 'getSecret'])->name('customers.secret');
     Route::delete('/pelanggan/{customerId}/delete', [CustomerController::class, 'destroy'])->name('customers.destroy');
 
+    // Customer Verification (Google Sheets Integration)
+    Route::prefix('api/customer-verification')->group(function () {
+        Route::get('/form-url', [\App\Http\Controllers\CustomerVerificationController::class, 'getFormUrl'])->name('customer-verification.form-url');
+        Route::get('/pending', [\App\Http\Controllers\CustomerVerificationController::class, 'fetchPendingCustomers'])->name('customer-verification.pending');
+        Route::get('/get/{timestamp}', [\App\Http\Controllers\CustomerVerificationController::class, 'getCustomerForVerification'])->name('customer-verification.get');
+        Route::post('/verify', [\App\Http\Controllers\CustomerVerificationController::class, 'verifyCustomer'])->name('customer-verification.verify');
+        Route::get('/verified', [\App\Http\Controllers\CustomerVerificationController::class, 'getVerifiedTimestamps'])->name('customer-verification.verified');
+    });
+
+    // Customer Verification Pages (React SPA)
+    Route::get('/customer-verification', fn() => view('app'))->name('customer-verification.index');
+    Route::get('/customer-verification/verify/{timestamp}', fn() => view('app'))->name('customer-verification.form');
+
     // Billing/Penagihan API
     Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
     Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');

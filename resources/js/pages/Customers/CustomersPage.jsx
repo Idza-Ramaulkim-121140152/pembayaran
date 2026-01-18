@@ -275,7 +275,7 @@ function CustomersPage() {
                         <Download size={20} />
                         Export Data
                     </button>
-                    <Link to="/customers/create">
+                    <Link to="/customer-verification">
                         <Button className="flex items-center gap-2">
                             <Plus size={20} />
                             Aktivasi Baru
@@ -518,10 +518,6 @@ function CustomersPage() {
                                     </h3>
                                     <div className="space-y-3 pl-6">
                                         <div>
-                                            <p className="text-xs text-gray-500">NIK</p>
-                                            <p className="font-medium text-gray-900">{selectedCustomer.nik || '-'}</p>
-                                        </div>
-                                        <div>
                                             <p className="text-xs text-gray-500">Jenis Kelamin</p>
                                             <p className="font-medium text-gray-900">{selectedCustomer.gender || '-'}</p>
                                         </div>
@@ -600,58 +596,6 @@ function CustomersPage() {
                                     </div>
                                 </div>
                             </div>
-
-                            {/* Foto-foto */}
-                            {(selectedCustomer.photo_front || selectedCustomer.photo_modem || selectedCustomer.photo_ktp || selectedCustomer.photo_opm) && (
-                                <div className="mt-6 pt-6 border-t border-gray-200">
-                                    <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-4">
-                                        <FileText size={18} className="text-blue-600" />
-                                        Dokumentasi
-                                    </h3>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                        {selectedCustomer.photo_front && (
-                                            <div>
-                                                <p className="text-xs text-gray-500 mb-2">Foto Depan Rumah</p>
-                                                <img 
-                                                    src={`/storage/${selectedCustomer.photo_front}`} 
-                                                    alt="Foto Depan" 
-                                                    className="w-full h-24 object-cover rounded-lg border"
-                                                />
-                                            </div>
-                                        )}
-                                        {selectedCustomer.photo_modem && (
-                                            <div>
-                                                <p className="text-xs text-gray-500 mb-2">Foto Modem</p>
-                                                <img 
-                                                    src={`/storage/${selectedCustomer.photo_modem}`} 
-                                                    alt="Foto Modem" 
-                                                    className="w-full h-24 object-cover rounded-lg border"
-                                                />
-                                            </div>
-                                        )}
-                                        {selectedCustomer.photo_ktp && (
-                                            <div>
-                                                <p className="text-xs text-gray-500 mb-2">Foto KTP</p>
-                                                <img 
-                                                    src={`/storage/${selectedCustomer.photo_ktp}`} 
-                                                    alt="Foto KTP" 
-                                                    className="w-full h-24 object-cover rounded-lg border"
-                                                />
-                                            </div>
-                                        )}
-                                        {selectedCustomer.photo_opm && (
-                                            <div>
-                                                <p className="text-xs text-gray-500 mb-2">Foto Redaman OPM</p>
-                                                <img 
-                                                    src={`/storage/${selectedCustomer.photo_opm}`} 
-                                                    alt="Foto OPM" 
-                                                    className="w-full h-24 object-cover rounded-lg border"
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
 
                             {/* Lokasi */}
                             {(selectedCustomer.latitude && selectedCustomer.longitude) && (

@@ -21,6 +21,8 @@ class OdpController extends Controller
             'rasio_spesial' => 'nullable|string',
             'rasio_distribusi' => 'required|in:1:2,1:4,1:8,1:16',
             'foto' => 'nullable|image|max:2048',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
         ]);
         if ($request->hasFile('foto')) {
             $validated['foto'] = $request->file('foto')->store('uploads/odp', 'public');
@@ -41,6 +43,8 @@ class OdpController extends Controller
             'rasio_spesial' => 'nullable|string',
             'rasio_distribusi' => 'required|in:1:2,1:4,1:8,1:16',
             'foto' => 'nullable|image|max:2048',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
         ]);
         if ($request->hasFile('foto')) {
             if ($odp->foto) Storage::disk('public')->delete($odp->foto);
@@ -70,6 +74,8 @@ class OdpController extends Controller
             'rasio_spesial' => 'nullable|string',
             'rasio_distribusi' => 'required|in:1:2,1:4,1:8,1:16',
             'foto' => 'nullable|image|max:2048',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
         ]);
         
         if ($request->hasFile('foto')) {
@@ -94,6 +100,8 @@ class OdpController extends Controller
             'rasio_spesial' => 'nullable|string',
             'rasio_distribusi' => 'required|in:1:2,1:4,1:8,1:16',
             'foto' => 'nullable|image|max:2048',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
         ]);
         
         if ($request->hasFile('foto')) {
