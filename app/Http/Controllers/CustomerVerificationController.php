@@ -31,7 +31,7 @@ class CustomerVerificationController extends Controller
     public function getFormUrl()
     {
         return response()->json([
-            'form_url' => env('GOOGLE_FORM_URL', 'https://forms.gle/D7e6D1W5nJHsRiBC7')
+            'form_url' => config('google.form_url', 'https://forms.gle/D7e6D1W5nJHsRiBC7')
         ]);
     }
 

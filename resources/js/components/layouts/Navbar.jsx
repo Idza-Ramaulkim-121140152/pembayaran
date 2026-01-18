@@ -48,7 +48,8 @@ export function Navbar() {
         if (path === '/odp') return location.pathname.startsWith('/odp');
         if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
         if (path === '/complaints') return location.pathname.startsWith('/complaints') || location.pathname.startsWith('/aduan');
-        if (path === '/monitoring') return location.pathname.startsWith('/monitoring');
+        if (path === '/monitoring') return location.pathname === '/monitoring';
+        if (path === '/monitoring-maps') return location.pathname === '/monitoring-maps';
         if (path === '/isolir') return location.pathname.startsWith('/isolir');
         if (path === '/profile') return location.pathname === '/profile';
         if (path === '/settings/payment-methods') return location.pathname === '/settings/payment-methods';
@@ -177,6 +178,14 @@ export function Navbar() {
                                         >
                                             <Activity size={18} />
                                             <span>Monitoring</span>
+                                        </Link>
+                                        <Link
+                                            to="/monitoring-maps"
+                                            onClick={() => setIsProfileOpen(false)}
+                                            className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/monitoring-maps') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                        >
+                                            <MapPin size={18} />
+                                            <span>Monitoring Maps</span>
                                         </Link>
                                         <Link
                                             to="/isolir"
@@ -327,6 +336,14 @@ export function Navbar() {
                             >
                                 <Activity size={20} />
                                 <span>Monitoring</span>
+                            </Link>
+                            <Link
+                                to="/monitoring-maps"
+                                onClick={() => setIsOpen(false)}
+                                className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/monitoring-maps') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                <MapPin size={20} />
+                                <span>Monitoring Maps</span>
                             </Link>
                             <Link
                                 to="/isolir"

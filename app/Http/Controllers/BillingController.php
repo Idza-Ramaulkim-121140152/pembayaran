@@ -33,11 +33,55 @@ class BillingController extends Controller
             $invoice->paid_at = now();
             $invoice->tolak_info = null; // reset info tolak jika sudah dikonfirmasi
 
-            // Update due_date customer: due_date lama + 30 hari
+            // Update due_date customer
             $customer = $invoice->customer;
-            if ($customer && $invoice->due_date) {
-                $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                $customer->due_date = $oldDue->copy()->addDays(30);
+            if ($customer && $customer->pppoe_username) {
+                // Check if user is isolated in MikroTik
+                try {
+                    $mikrotik = new \App\Services\MikroTikService();
+                    $mikrotik->connect();
+                    $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+                    
+                    if ($secret && strtolower($secret['profile']) === 'isolir') {
+                        // User is isolated, restore to original package profile
+                        $targetProfile = $customer->package_type ?: 'default';
+                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                        
+                        // Due date = confirmation date (today) + 31 days
+                        $customer->due_date = now()->addDays(31)->format('Y-m-d');
+                        
+                        \Log::info('User restored from isolation after payment confirmation', [
+                            'username' => $customer->pppoe_username,
+                            'restored_profile' => $targetProfile,
+                            'new_due_date' => $customer->due_date,
+                            'confirmed_at' => now()->format('Y-m-d H:i:s')
+                        ]);
+                    } else {
+                        // User is NOT isolated, due date = old due date + 31 days
+                        if ($invoice->due_date) {
+                            $oldDue = \Carbon\Carbon::parse($invoice->due_date);
+                            $customer->due_date = $oldDue->copy()->addDays(31)->format('Y-m-d');
+                        } else {
+                            $customer->due_date = now()->addDays(31)->format('Y-m-d');
+                        }
+                    }
+                    
+                    $mikrotik->disconnect();
+                } catch (\Exception $e) {
+                    \Log::error('Failed to check/restore user from isolation', [
+                        'username' => $customer->pppoe_username,
+                        'error' => $e->getMessage()
+                    ]);
+                    
+                    // Fallback: use old due date + 31 days
+                    if ($invoice->due_date) {
+                        $oldDue = \Carbon\Carbon::parse($invoice->due_date);
+                        $customer->due_date = $oldDue->copy()->addDays(31)->format('Y-m-d');
+                    } else {
+                        $customer->due_date = now()->addDays(31)->format('Y-m-d');
+                    }
+                }
+                
                 $customer->save();
             }
         } else {
@@ -305,6 +349,7 @@ class BillingController extends Controller
             // Check if user is isolated in MikroTik
             try {
                 $mikrotik = new \App\Services\MikroTikService();
+                $mikrotik->connect();
                 $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
                 
                 if ($secret && strtolower($secret['profile']) === 'isolir') {
@@ -312,34 +357,38 @@ class BillingController extends Controller
                     $targetProfile = $customer->package_type ?: 'default';
                     $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
                     
-                    // Due date = today + 30 days (for isolated users)
-                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                    // Due date = confirmation date (today) + 31 days
+                    $customer->due_date = now()->addDays(31)->format('Y-m-d');
                     
-                    \Log::info('User unrestricted after payment', [
+                    \Log::info('User restored from isolation after payment', [
                         'username' => $customer->pppoe_username,
-                        'new_due_date' => $customer->due_date
+                        'restored_profile' => $targetProfile,
+                        'new_due_date' => $customer->due_date,
+                        'confirmed_at' => now()->format('Y-m-d H:i:s')
                     ]);
                 } else {
-                    // User is NOT isolated, due date = old due date + 30 days
+                    // User is NOT isolated, due date = old due date + 31 days
                     if ($invoice->due_date) {
                         $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
+                        $customer->due_date = $oldDue->copy()->addDays(31)->format('Y-m-d');
                     } else {
-                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                        $customer->due_date = now()->addDays(31)->format('Y-m-d');
                     }
                 }
+                
+                $mikrotik->disconnect();
             } catch (\Exception $e) {
-                \Log::error('Failed to check/unrestrict user', [
+                \Log::error('Failed to check/restore user from isolation', [
                     'username' => $customer->pppoe_username,
                     'error' => $e->getMessage()
                 ]);
                 
-                // Fallback: use old due date + 30 days
+                // Fallback: use old due date + 31 days
                 if ($invoice->due_date) {
                     $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                    $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
+                    $customer->due_date = $oldDue->copy()->addDays(31)->format('Y-m-d');
                 } else {
-                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
+                    $customer->due_date = now()->addDays(31)->format('Y-m-d');
                 }
             }
             

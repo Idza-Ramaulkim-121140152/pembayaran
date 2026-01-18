@@ -15,6 +15,7 @@ use App\Http\Controllers\CustomerAuthController;
 use App\Http\Controllers\ComplaintController;
 use App\Http\Controllers\NetworkNoticeController;
 use App\Http\Controllers\MonitoringController;
+use App\Http\Controllers\MonitoringMapsController;
 use App\Http\Controllers\IsolirController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
@@ -179,6 +180,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/api/monitoring', [MonitoringController::class, 'getData'])->name('api.monitoring.data');
     Route::post('/api/monitoring/refresh', [MonitoringController::class, 'refresh'])->name('api.monitoring.refresh');
     Route::get('/api/monitoring/connection/{username}', [MonitoringController::class, 'connectionDetails'])->name('api.monitoring.connection');
+    
+    // Monitoring Maps API
+    Route::get('/api/monitoring-maps', [MonitoringMapsController::class, 'getMapData'])->name('api.monitoring-maps');
 
     // User API
     Route::get('/api/user', function () {
@@ -188,6 +192,10 @@ Route::middleware('auth')->group(function () {
     // Profile
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    
+    // View routes - Return React app view
+    Route::get('/monitoring', fn() => view('app'))->name('monitoring');
+    Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
     
     // Serve React app untuk semua routes yang tidak dimulai dengan /api
     Route::get('{any}', function () {

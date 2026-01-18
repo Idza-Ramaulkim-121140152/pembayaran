@@ -17,15 +17,15 @@ class GoogleSheetsService
 
     public function __construct()
     {
-        if (!env('GOOGLE_SHEETS_ENABLED', false)) {
-            throw new Exception('Google Sheets integration is not enabled');
+        if (!config('google.enabled', false)) {
+            throw new \Exception('Google Sheets integration is not enabled');
         }
 
-        $this->spreadsheetId = env('GOOGLE_SHEETS_ID');
-        $this->range = env('GOOGLE_SHEETS_RANGE', 'Sheet1!A:R');
-        $this->skipRows = (int) env('GOOGLE_SHEETS_SKIP_ROWS', 0); // Skip old data rows
-        
-        $credentialsPath = storage_path('app/google-sheets-credentials.json');
+        $this->spreadsheetId = config('google.spreadsheet_id');
+        $this->range = config('google.range', 'Sheet1!A:R');
+        $this->skipRows = (int) config('google.skip_rows', 0); // Skip old data rows
+
+        $credentialsPath = config('google.credentials_path', storage_path('app/google-sheets-credentials.json'));
         
         if (!file_exists($credentialsPath)) {
             throw new Exception('Google Sheets credentials file not found: ' . $credentialsPath);

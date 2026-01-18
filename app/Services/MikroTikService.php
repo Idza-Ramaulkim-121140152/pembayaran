@@ -21,11 +21,11 @@ class MikroTikService
 
     public function __construct($host = null, $user = null, $pass = null, $port = null, $timeout = null)
     {
-        $this->host = $host ?? env('MIKROTIK_HOST', '192.168.88.1');
-        $this->user = $user ?? env('MIKROTIK_USER', 'admin');
-        $this->pass = $pass ?? env('MIKROTIK_PASSWORD', '');
-        $this->port = $port ?? env('MIKROTIK_PORT', 8728);
-        $this->timeout = $timeout ?? env('MIKROTIK_TIMEOUT', 5);
+        $this->host = $host ?? config('mikrotik.host', '192.168.88.1');
+        $this->user = $user ?? config('mikrotik.user', 'admin');
+        $this->pass = $pass ?? config('mikrotik.password', '');
+        $this->port = $port ?? config('mikrotik.port', 8728);
+        $this->timeout = $timeout ?? config('mikrotik.timeout', 5);
 
         // Load existing connection from pool if available and valid
         $this->loadFromPool();

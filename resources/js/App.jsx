@@ -22,6 +22,7 @@ import SendNotificationPage from './pages/Settings/SendNotificationPage';
 import NetworkStatusPage from './pages/NetworkStatusPage';
 import Monitoring from './pages/Monitoring';
 import IsolirPage from './pages/Isolir/IsolirPage';
+import MonitoringMaps from './pages/MonitoringMaps';
 
 // Layout wrapper that conditionally shows navbar
 function AppLayout({ children }) {
@@ -100,6 +101,7 @@ function App() {
                     
                     {/* Monitoring */}
                     <Route path="/monitoring" element={<Monitoring />} />
+                    <Route path="/monitoring-maps" element={<MonitoringMaps />} />
                     
                     {/* Isolir */}
                     <Route path="/isolir" element={<IsolirPage />} />
