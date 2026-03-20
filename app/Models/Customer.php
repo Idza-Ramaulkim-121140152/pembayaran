@@ -9,8 +9,17 @@ class Customer extends Model
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
-        'pppoe_username', 'odp', 'installation_fee',
+        'pppoe_username', 'mikrotik_profile', 'odp', 'installation_fee',
         'latitude', 'longitude', 'google_sheets_timestamp'
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',
+        'due_date' => 'date:Y-m-d',
+        'activation_date' => 'date:Y-m-d',
+        'installation_fee' => 'decimal:0',
+        'latitude' => 'decimal:8',
+        'longitude' => 'decimal:8',
     ];
 
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
@@ -63,6 +72,6 @@ class Customer extends Model
 
     public function odp()
     {
-        return $this->belongsTo(\App\Models\Odp::class, 'odp');
+        return $this->belongsTo(\App\Models\Odp::class, 'odp', 'nama');
     }
 }

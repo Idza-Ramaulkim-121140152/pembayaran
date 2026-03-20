@@ -138,7 +138,7 @@ function Dashboard() {
 
     // Customer status doughnut chart
     const customerStatusData = {
-        labels: ['Aktif', 'Nonaktif'],
+        labels: ['Sudah Bayar', 'Belum Bayar'],
         datasets: [
             {
                 data: [stats?.active_customers || 0, (stats?.total_customers || 0) - (stats?.active_customers || 0)],
@@ -554,7 +554,7 @@ function Dashboard() {
                 <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                     <div className="mb-6">
                         <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
-                        <p className="text-sm text-gray-500">Distribusi aktif/nonaktif</p>
+                        <p className="text-sm text-gray-500">Distribusi sudah bayar/belum bayar bulan ini</p>
                     </div>
                     <div className="h-[200px] relative">
                         <Doughnut data={customerStatusData} options={doughnutOptions} />
@@ -568,11 +568,11 @@ function Dashboard() {
                     <div className="flex justify-center gap-6 mt-6">
                         <div className="flex items-center gap-2">
                             <span className="w-3 h-3 bg-green-500 rounded-full"></span>
-                            <span className="text-sm text-gray-600">Aktif ({stats?.active_customers || 0})</span>
+                            <span className="text-sm text-gray-600">Sudah Bayar ({stats?.active_customers || 0})</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="w-3 h-3 bg-red-500 rounded-full"></span>
-                            <span className="text-sm text-gray-600">Nonaktif ({(stats?.total_customers || 0) - (stats?.active_customers || 0)})</span>
+                            <span className="text-sm text-gray-600">Belum Bayar ({(stats?.total_customers || 0) - (stats?.active_customers || 0)})</span>
                         </div>
                     </div>
                 </div>

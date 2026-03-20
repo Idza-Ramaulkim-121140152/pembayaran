@@ -14,6 +14,7 @@ function CustomerVerificationForm() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
     const [odpList, setOdpList] = useState([]);
+    const [packageList, setPackageList] = useState([]);
     const [gettingLocation, setGettingLocation] = useState(false);
     const [sheetsReference, setSheetsReference] = useState(null);
     const [secretInfo, setSecretInfo] = useState(null);
@@ -41,8 +42,19 @@ function CustomerVerificationForm() {
 
     useEffect(() => {
         fetchOdpList();
+        fetchPackageList();
         fetchCustomerData();
     }, [timestamp]);
+
+    const fetchPackageList = async () => {
+        try {
+            const response = await fetch('/api/packages/active');
+            const data = await response.json();
+            setPackageList(data.data || []);
+        } catch (err) {
+            console.error('Failed to load package list', err);
+        }
+    };
 
     const fetchOdpList = async () => {
         try {
@@ -395,10 +407,11 @@ function CustomerVerificationForm() {
                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 >
                                     <option value="">Pilih Paket</option>
-                                    <option value="Paket 150k">Paket 150k</option>
-                                    <option value="Paket 175k">Paket 175k</option>
-                                    <option value="Paket 200k">Paket 200k</option>
-                                    <option value="Paket 250k">Paket 250k</option>
+                                    {packageList.map(pkg => (
+                                        <option key={pkg.id} value={pkg.name}>
+                                            {pkg.name} - {pkg.speed} (Rp {Number(pkg.price).toLocaleString('id-ID')})
+                                        </option>
+                                    ))}
                                     <option value="Custom">Custom</option>
                                 </select>
                             </div>

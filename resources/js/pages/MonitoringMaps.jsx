@@ -6,6 +6,7 @@ function MonitoringMaps() {
     const mapRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markersRef = useRef({ customers: [], odps: [] });
+    const resizeObserverRef = useRef(null);
     
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -78,19 +79,67 @@ function MonitoringMaps() {
         if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return;
 
         const L = window.L;
-        const map = L.map(mapRef.current).setView([-5.6342425, 105.5631682], 14);
+        const map = L.map(mapRef.current, {
+            center: [-5.6342425, 105.5631682],
+            zoom: 14,
+            scrollWheelZoom: true,
+            dragging: true,
+            zoomControl: true,
+        });
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19,
+        // Google Satellite Tiles
+        L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            attribution: '&copy; Google',
+            maxZoom: 20,
+            minZoom: 5,
+            subdomains: ['0', '1', '2', '3'],
+            keepBuffer: 2,
+            updateWhenIdle: false,
+            detectRetina: true,
         }).addTo(map);
+
+        // Force map to recalculate size after initialization
+        setTimeout(() => {
+            map.invalidateSize();
+        }, 100);
+
+        // Setup ResizeObserver to handle dynamic container size changes
+        if (window.ResizeObserver && mapRef.current) {
+            resizeObserverRef.current = new ResizeObserver(() => {
+                if (mapInstanceRef.current) {
+                    mapInstanceRef.current.invalidateSize();
+                }
+            });
+            resizeObserverRef.current.observe(mapRef.current);
+        }
 
         mapInstanceRef.current = map;
 
         return () => {
+            if (resizeObserverRef.current) {
+                resizeObserverRef.current.disconnect();
+            }
             map.remove();
             mapInstanceRef.current = null;
         };
+    }, [mapLoaded]);
+
+    // Re-invalidate map size when loaded
+    useEffect(() => {
+        if (mapInstanceRef.current && mapRef.current) {
+            const timeouts = [100, 300, 500, 1000];
+            const timers = timeouts.map(delay => 
+                setTimeout(() => {
+                    if (mapInstanceRef.current) {
+                        mapInstanceRef.current.invalidateSize();
+                    }
+                }, delay)
+            );
+            
+            return () => {
+                timers.forEach(timer => clearTimeout(timer));
+            };
+        }
     }, [mapLoaded]);
 
     // Update markers based on data and filters
@@ -337,8 +386,13 @@ function MonitoringMaps() {
                 {/* Map */}
                 <div 
                     ref={mapRef} 
-                    style={{ height: '600px', width: '100%' }}
-                    className="relative"
+                    style={{ 
+                        height: '600px', 
+                        width: '100%',
+                        position: 'relative',
+                        zIndex: 0
+                    }}
+                    className="relative bg-gray-100"
                 >
                     {loading && (
                         <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">

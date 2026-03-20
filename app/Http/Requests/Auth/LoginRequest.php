@@ -49,12 +49,12 @@ class LoginRequest extends FormRequest
             ]);
         }
 
-        // Batasi hanya admin yang bisa login
+        // Batasi hanya staff (superadmin, admin, teknisi, finance) yang bisa login
         $user = Auth::user();
-        if ($user->role !== 'admin') {
+        if (!in_array($user->role, \App\Models\User::ROLES)) {
             Auth::logout();
             throw ValidationException::withMessages([
-                'email' => 'Akses hanya untuk admin.',
+                'email' => 'Akses hanya untuk staff.',
             ]);
         }
 

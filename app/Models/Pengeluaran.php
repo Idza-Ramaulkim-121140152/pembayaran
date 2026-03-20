@@ -11,6 +11,11 @@ class Pengeluaran extends Model
         'tanggal', 'jumlah', 'kategori', 'detail', 'user_id'
     ];
 
+    protected $casts = [
+        'tanggal' => 'date:Y-m-d',
+        'jumlah' => 'decimal:0',
+    ];
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(\App\Models\User::class);

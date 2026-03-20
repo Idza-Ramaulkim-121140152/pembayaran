@@ -637,6 +637,11 @@ class MikroTikService
      */
     public function getNextIpAddress()
     {
+        // Ensure connection is established
+        if (!$this->isConnectionValid()) {
+            $this->connect();
+        }
+        
         $lastIp = $this->getLastIpAddress();
         $parts = explode('.', $lastIp);
         $lastOctet = (int)$parts[3];
@@ -677,6 +682,54 @@ class MikroTikService
 
     /**
      * Create PPPoE secret
+    /**
+     * Resolve a package name to an exact MikroTik profile name.
+     * Tries exact match, case-insensitive, and partial number match.
+     * Returns the matched profile name or the original input if no match found.
+     */
+    public function resolveProfileName($packageName)
+    {
+        try {
+            $profiles = $this->command('/ppp/profile/print');
+            $availableProfiles = array_map(fn($p) => $p['name'] ?? '', $profiles);
+
+            // 1. Exact match
+            if (in_array($packageName, $availableProfiles)) {
+                return $packageName;
+            }
+
+            // 2. Case-insensitive match
+            foreach ($availableProfiles as $ap) {
+                if (strtolower($ap) === strtolower($packageName)) {
+                    \Log::info('Profile resolved via case-insensitive match', ['input' => $packageName, 'matched' => $ap]);
+                    return $ap;
+                }
+            }
+
+            // 3. Extract number and match (e.g. "200k" → "Paket 200k", "150K" → "Paket 150k")
+            $number = preg_replace('/[^0-9]/', '', $packageName);
+            if ($number) {
+                foreach ($availableProfiles as $ap) {
+                    if (stripos($ap, $number) !== false && strtolower($ap) !== 'isolir' && strtolower($ap) !== 'default') {
+                        \Log::info('Profile resolved via number match', ['input' => $packageName, 'number' => $number, 'matched' => $ap]);
+                        return $ap;
+                    }
+                }
+            }
+
+            \Log::warning('Could not resolve profile name, using as-is', [
+                'input' => $packageName,
+                'available' => $availableProfiles,
+            ]);
+            return $packageName;
+        } catch (Exception $e) {
+            \Log::warning('Failed to resolve profile name', ['error' => $e->getMessage()]);
+            return $packageName;
+        }
+    }
+
+    /**
+     * Create a PPPoE secret on MikroTik
      */
     public function createPPPoESecret($name, $password, $service, $profile, $remoteAddress)
     {
@@ -688,6 +741,15 @@ class MikroTikService
                 'profile' => $profile,
                 'remote-address' => $remoteAddress
             ]);
+            
+            // Check if remote address is already used
+            if ($this->isIpAddressUsed($remoteAddress)) {
+                \Log::error('IP address already in use', [
+                    'ip' => $remoteAddress,
+                    'username' => $name
+                ]);
+                throw new Exception("IP address '{$remoteAddress}' sudah digunakan. Sistem akan mencoba mencari IP lain.");
+            }
             
             // Check if username already exists
             try {
@@ -776,6 +838,33 @@ class MikroTikService
                 'trace' => $e->getTraceAsString()
             ]);
             throw $e;
+        }
+    }
+
+    /**
+     * Get all PPPoE secrets as a map of username => secret data
+     */
+    public function getAllPPPoESecrets()
+    {
+        try {
+            $response = $this->command('/ppp/secret/print');
+            $secrets = [];
+            foreach ($response as $item) {
+                $name = $item['name'] ?? null;
+                if ($name) {
+                    $secrets[$name] = [
+                        'id' => $item['.id'] ?? null,
+                        'name' => $name,
+                        'profile' => $item['profile'] ?? null,
+                        'disabled' => $item['disabled'] ?? 'false',
+                        'remote_address' => $item['remote-address'] ?? null,
+                    ];
+                }
+            }
+            return $secrets;
+        } catch (Exception $e) {
+            \Log::error('Failed to get all PPPoE secrets', ['error' => $e->getMessage()]);
+            return null;
         }
     }
 

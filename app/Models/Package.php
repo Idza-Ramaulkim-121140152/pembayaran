@@ -9,9 +9,11 @@ class Package extends Model
     protected $fillable = [
         'name',
         'speed',
+        'mikrotik_profile',
         'price',
         'device_count',
         'features',
+        'description',
         'is_popular',
         'is_active',
         'sort_order',

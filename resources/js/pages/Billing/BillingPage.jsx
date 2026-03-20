@@ -53,15 +53,24 @@ function BillingPage() {
     };
 
     const handleIsolateCustomer = async (customerId) => {
+        if (!confirm('Yakin ingin melakukan isolir pelanggan ini?')) return;
         try {
             setSubmitting(true);
-            await billingService.isolateCustomer(customerId);
-            setSuccess('Pelanggan berhasil diisolir');
+            setError(null);
+            setSuccess(null);
+            const response = await billingService.isolateCustomer(customerId);
+            const data = response.data;
+            const savedProfile = data.data?.saved_profile || '';
+            setSuccess(
+                `${data.message || 'Berhasil diisolir'}` +
+                (savedProfile ? ` (profil "${savedProfile}" tersimpan untuk pemulihan)` : '')
+            );
             
             // Refresh data to get updated isolation status
             await fetchBillingData();
         } catch (err) {
-            setError(err.response?.data?.error || 'Gagal melakukan isolir');
+            const msg = err.response?.data?.message || err.response?.data?.error || 'Gagal melakukan isolir';
+            setError(msg);
         } finally {
             setSubmitting(false);
         }
@@ -95,15 +104,18 @@ function BillingPage() {
         e.preventDefault();
         try {
             setSubmitting(true);
+            setError(null);
+            setSuccess(null);
             // Parse paidAmount untuk mendapatkan angka murni (hapus semua titik/koma)
             const numericAmount = paidAmount ? parseInt(paidAmount.toString().replace(/[^\d]/g, ''), 10) : confirmModal.invoice.amount;
-            await billingService.confirmPayment(confirmModal.invoice.id, numericAmount);
+            const response = await billingService.confirmPayment(confirmModal.invoice.id, numericAmount);
             setConfirmModal({ open: false, invoice: null, customer: null });
             setPaidAmount('');
-            setSuccess('Pembayaran berhasil dikonfirmasi');
+            const data = response.data;
+            setSuccess(data.message || 'Pembayaran berhasil dikonfirmasi');
             fetchBillingData();
         } catch (err) {
-            setError(err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran');
+            setError(err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran');
         } finally {
             setSubmitting(false);
         }

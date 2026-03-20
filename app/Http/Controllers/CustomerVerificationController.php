@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Package;
 use App\Services\GoogleSheetsService;
 use App\Services\MikroTikService;
 use Illuminate\Http\Request;
@@ -194,25 +195,97 @@ class CustomerVerificationController extends Controller
                         $validated['pppoe_username'] = $areaCode . '-' . $firstName . $randomDigits;
                     }
 
-                    // Get next available IP
-                    $remoteAddress = $mikrotik->getNextIpAddress();
+                    // Get next available IP with retry
+                    $maxRetries = 3;
+                    $remoteAddress = null;
+                    
+                    for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+                        try {
+                            $remoteAddress = $mikrotik->getNextIpAddress();
+                            \Log::info('Got available IP address', [
+                                'ip' => $remoteAddress,
+                                'attempt' => $attempt
+                            ]);
+                            break;
+                        } catch (Exception $e) {
+                            \Log::warning('Failed to get IP address', [
+                                'attempt' => $attempt,
+                                'error' => $e->getMessage()
+                            ]);
+                            
+                            if ($attempt === $maxRetries) {
+                                throw new Exception('Gagal mendapatkan IP address yang tersedia setelah ' . $maxRetries . ' percobaan: ' . $e->getMessage());
+                            }
+                            
+                            // Wait a bit before retry
+                            sleep(1);
+                        }
+                    }
+                    
+                    if (!$remoteAddress) {
+                        throw new Exception('Tidak dapat menemukan IP address yang tersedia');
+                    }
                     
                     // Use password from request or default to 'admin'
                     $password = $validated['pppoe_password'] ?? 'admin';
                     
-                    // Create secret
-                    $secretInfo = $mikrotik->createPPPoESecret(
-                        $validated['pppoe_username'],
-                        $password,
-                        'pppoe',
-                        $packageType,
-                        $remoteAddress
-                    );
-
-                    \Log::info('PPPoE secret created for verified customer', [
-                        'username' => $validated['pppoe_username'],
-                        'secret' => $secretInfo
-                    ]);
+                    // Resolve MikroTik profile: first check Package table, then fallback to resolveProfileName
+                    $dbPackage = Package::where('name', $packageType)->first();
+                    if ($dbPackage && $dbPackage->mikrotik_profile) {
+                        $profileName = $dbPackage->mikrotik_profile;
+                        \Log::info('Profile resolved from packages table', ['package' => $packageType, 'profile' => $profileName]);
+                    } else {
+                        $profileName = $mikrotik->resolveProfileName($packageType);
+                        \Log::info('Profile resolved via MikroTik lookup', ['package' => $packageType, 'profile' => $profileName]);
+                    }
+                    
+                    // Create secret with retry if IP conflict occurs
+                    $createRetries = 3;
+                    $secretCreated = false;
+                    
+                    for ($createAttempt = 1; $createAttempt <= $createRetries; $createAttempt++) {
+                        try {
+                            $secretInfo = $mikrotik->createPPPoESecret(
+                                $validated['pppoe_username'],
+                                $password,
+                                'pppoe',
+                                $profileName,
+                                $remoteAddress
+                            );
+                            
+                            $secretCreated = true;
+                            \Log::info('PPPoE secret created for verified customer', [
+                                'username' => $validated['pppoe_username'],
+                                'ip' => $remoteAddress,
+                                'attempt' => $createAttempt,
+                                'secret' => $secretInfo
+                            ]);
+                            break;
+                            
+                        } catch (Exception $e) {
+                            // If IP is already in use, get a new one and retry
+                            if (strpos($e->getMessage(), 'sudah digunakan') !== false && $createAttempt < $createRetries) {
+                                \Log::warning('IP conflict detected, getting new IP', [
+                                    'old_ip' => $remoteAddress,
+                                    'attempt' => $createAttempt,
+                                    'error' => $e->getMessage()
+                                ]);
+                                
+                                // Get new IP
+                                $remoteAddress = $mikrotik->getNextIpAddress();
+                                \Log::info('Retrying with new IP', ['new_ip' => $remoteAddress]);
+                                sleep(1);
+                                continue;
+                            }
+                            
+                            // If it's another error or last attempt, throw
+                            throw $e;
+                        }
+                    }
+                    
+                    if (!$secretCreated) {
+                        throw new Exception('Gagal membuat PPPoE secret setelah ' . $createRetries . ' percobaan');
+                    }
 
                 } catch (Exception $e) {
                     \Log::error('Failed to create MikroTik secret during verification: ' . $e->getMessage());
@@ -221,7 +294,8 @@ class CustomerVerificationController extends Controller
                 }
             }
 
-            // Create customer
+            // Create customer (save resolved profile for future isolation restore)
+            $validated['mikrotik_profile'] = $profileName ?? $packageType;
             $customer = Customer::create($validated);
 
             DB::commit();

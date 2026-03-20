@@ -1,3 +1,4 @@
+import axios from 'axios';
 import apiClient from './api';
 
 export const billingService = {
@@ -19,11 +20,18 @@ export const billingService = {
     // Get invoice by link (public)
     getInvoiceByLink: (link) => apiClient.get(`/invoice/${link}`),
 
-    // Upload bukti pembayaran (public)
-    uploadPaymentProof: (invoiceId, formData) => 
-        apiClient.post(`/invoice/${invoiceId}/confirm`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        }),
+    // Upload bukti pembayaran (public - no /api prefix)
+    uploadPaymentProof: (invoiceId, formData) => {
+        const token = document.querySelector('meta[name="csrf-token"]');
+        return axios.post(`/invoice/${invoiceId}/konfirmasi`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+                'X-CSRF-TOKEN': token ? token.getAttribute('content') : '',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            withCredentials: true,
+        });
+    },
 
     // Isolate customer
     isolateCustomer: (customerId) => 

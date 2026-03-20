@@ -12,10 +12,7 @@ use App\Http\Controllers\Auth\VerifyEmailController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('guest')->group(function () {
-    // Serve React app for login/register pages
-    Route::get('register', function () {
-        return view('app');
-    })->name('register');
+    // Register disabled — akun dibuat oleh admin saja
 
     Route::get('login', function () {
         return view('app');

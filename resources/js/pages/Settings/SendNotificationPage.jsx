@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react';
 import {
     Send, Users, MapPin, UserCheck, X, Check, AlertTriangle,
     RefreshCw, Phone, Search, ChevronDown, Wifi, WifiOff,
-    MessageSquare, CheckCircle, XCircle, Clock, Filter, AlertCircle
+    MessageSquare, CheckCircle, XCircle, Clock, Filter, AlertCircle,
+    TestTube, History
 } from 'lucide-react';
+
+const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
 function SendNotificationPage() {
     const [notices, setNotices] = useState([]);
@@ -20,6 +23,18 @@ function SendNotificationPage() {
     const [alertMessage, setAlertMessage] = useState('');
     const [confirmData, setConfirmData] = useState({ validCount: 0, invalidCount: 0 });
 
+    // Test message state
+    const [showTestModal, setShowTestModal] = useState(false);
+    const [testPhone, setTestPhone] = useState('');
+    const [testMessage, setTestMessage] = useState('Halo, ini pesan test dari RumahKitaNet.');
+    const [testSending, setTestSending] = useState(false);
+    const [testResult, setTestResult] = useState(null);
+
+    // Logs state
+    const [showLogsModal, setShowLogsModal] = useState(false);
+    const [logs, setLogs] = useState([]);
+    const [logsLoading, setLogsLoading] = useState(false);
+
     // Mode: 'all', 'area', 'select'
     const [mode, setMode] = useState('all');
     const [selectedNotice, setSelectedNotice] = useState(null);
@@ -29,8 +44,6 @@ function SendNotificationPage() {
     const [customMessage, setCustomMessage] = useState('');
     const [useCustomMessage, setUseCustomMessage] = useState(false);
 
-    const FASTAPI_URL = 'http://localhost:8001';
-
     useEffect(() => {
         fetchData();
         checkWhatsAppStatus();
@@ -39,25 +52,21 @@ function SendNotificationPage() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Fetch notices
-            const noticesRes = await fetch('/api/network-notices?status=active', {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-                },
-            });
+            const headers = {
+                'Accept': 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            };
+
+            // Fetch notices and customers in parallel
+            const [noticesRes, customersRes] = await Promise.all([
+                fetch('/api/network-notices?status=active', { headers }),
+                fetch('/api/customers', { headers }),
+            ]);
+
             const noticesData = await noticesRes.json();
             if (noticesData.success) {
                 setNotices(noticesData.data.data || []);
             }
-
-            // Fetch customers
-            const customersRes = await fetch('/api/customers', {
-                headers: {
-                    'Accept': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-                },
-            });
             const customersData = await customersRes.json();
             if (customersData.data) {
                 setCustomers(customersData.data);
@@ -83,7 +92,12 @@ function SendNotificationPage() {
 
     const checkWhatsAppStatus = async () => {
         try {
-            const res = await fetch(`${FASTAPI_URL}/api/whatsapp/status`);
+            const res = await fetch('/api/whatsapp/status', {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+            });
             const data = await res.json();
             setWaStatus(data);
         } catch (err) {
@@ -175,10 +189,12 @@ function SendNotificationPage() {
                 payload.notice_id = selectedNotice.id;
             }
 
-            const res = await fetch(`${FASTAPI_URL}/api/send/notification`, {
+            const res = await fetch('/api/whatsapp/send-notification', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
                 },
                 body: JSON.stringify(payload),
             });
@@ -207,6 +223,80 @@ function SendNotificationPage() {
         });
     };
 
+    // QR Code handler
+    const [showQRModal, setShowQRModal] = useState(false);
+    const [qrData, setQrData] = useState(null);
+    const [qrLoading, setQrLoading] = useState(false);
+
+    const handleShowQR = async () => {
+        setShowQRModal(true);
+        setQrLoading(true);
+        try {
+            const res = await fetch('/api/whatsapp/qr', {
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            const data = await res.json();
+            setQrData(data);
+        } catch (err) {
+            setQrData({ success: false, message: 'Gagal mengambil QR code' });
+        } finally {
+            setQrLoading(false);
+        }
+    };
+
+    // Restart WA handler
+    const handleRestart = async () => {
+        try {
+            await fetch('/api/whatsapp/restart', {
+                method: 'POST',
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            showAlert('WhatsApp sedang direstart. Tunggu beberapa detik lalu refresh status.');
+            setTimeout(checkWhatsAppStatus, 5000);
+        } catch (err) {
+            showAlert('Gagal restart WhatsApp');
+        }
+    };
+
+    // Send test message
+    const handleSendTest = async () => {
+        if (!testPhone || !testMessage) return;
+        setTestSending(true);
+        setTestResult(null);
+        try {
+            const res = await fetch('/api/whatsapp/send-test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({ phone: testPhone, message: testMessage }),
+            });
+            setTestResult(await res.json());
+        } catch (err) {
+            setTestResult({ success: false, error: err.message });
+        } finally {
+            setTestSending(false);
+        }
+    };
+
+    // Fetch logs
+    const fetchLogs = async () => {
+        setLogsLoading(true);
+        try {
+            const res = await fetch('/api/whatsapp/logs', {
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            const data = await res.json();
+            setLogs(data.data?.data || []);
+        } catch (err) {
+            console.error('Failed to fetch logs', err);
+        } finally {
+            setLogsLoading(false);
+        }
+    };
+
     const selectAllFiltered = () => {
         const filteredIds = filteredCustomers.map(c => c.id);
         setSelectedCustomers(prev => {
@@ -233,9 +323,27 @@ function SendNotificationPage() {
     return (
         <div className="p-6">
             {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold text-gray-900">Kirim Informasi Gangguan</h1>
-                <p className="text-gray-600">Kirim notifikasi gangguan ke pelanggan via WhatsApp</p>
+            <div className="mb-6 flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Kirim Informasi Gangguan</h1>
+                    <p className="text-gray-600">Kirim notifikasi gangguan ke pelanggan via WhatsApp</p>
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => { setShowTestModal(true); setTestResult(null); }}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition"
+                    >
+                        <TestTube size={16} />
+                        Test Pesan
+                    </button>
+                    <button
+                        onClick={() => { setShowLogsModal(true); fetchLogs(); }}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 transition"
+                    >
+                        <History size={16} />
+                        Log Pengiriman
+                    </button>
+                </div>
             </div>
 
             {/* WhatsApp Status */}
@@ -259,26 +367,34 @@ function SendNotificationPage() {
                             )}
                         </div>
                     </div>
-                    <button
-                        onClick={checkWhatsAppStatus}
-                        className="p-2 hover:bg-white/50 rounded-lg transition"
-                        title="Refresh status"
-                    >
-                        <RefreshCw size={18} className={waStatus?.connected ? 'text-green-600' : 'text-red-600'} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleRestart}
+                            className="px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg border border-orange-200 transition"
+                            title="Restart WhatsApp"
+                        >
+                            Restart
+                        </button>
+                        <button
+                            onClick={checkWhatsAppStatus}
+                            className="p-2 hover:bg-white/50 rounded-lg transition"
+                            title="Refresh status"
+                        >
+                            <RefreshCw size={18} className={waStatus?.connected ? 'text-green-600' : 'text-red-600'} />
+                        </button>
+                    </div>
                 </div>
                 {!waStatus?.connected && (
                     <div className="mt-3 p-3 bg-white/50 rounded-lg">
                         <p className="text-sm text-red-700">
                             Pastikan WhatsApp Gateway sudah berjalan dan scan QR code jika belum login.
                         </p>
-                        <a 
-                            href={`${FASTAPI_URL}/api/whatsapp/qr`}
-                            target="_blank"
+                        <button 
+                            onClick={handleShowQR}
                             className="text-sm text-blue-600 hover:underline"
                         >
                             Lihat QR Code →
-                        </a>
+                        </button>
                     </div>
                 )}
             </div>
@@ -708,36 +824,194 @@ function SendNotificationPage() {
             {showAlertModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
                     <div className="flex min-h-full items-center justify-center p-4">
-                        {/* Backdrop */}
                         <div 
                             className="fixed inset-0 bg-black/50 transition-opacity" 
                             onClick={() => setShowAlertModal(false)}
                         ></div>
-                        
-                        {/* Modal */}
                         <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 transform transition-all">
-                            {/* Icon */}
                             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-yellow-100 mb-4">
                                 <AlertCircle className="h-7 w-7 text-yellow-600" />
                             </div>
-                            
-                            {/* Content */}
                             <div className="text-center">
-                                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                                    Perhatian
-                                </h3>
-                                <p className="text-gray-600">
-                                    {alertMessage}
-                                </p>
+                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Perhatian</h3>
+                                <p className="text-gray-600">{alertMessage}</p>
                             </div>
-                            
-                            {/* Action */}
                             <button
                                 onClick={() => setShowAlertModal(false)}
                                 className="w-full mt-6 px-4 py-3 text-white bg-orange-500 hover:bg-orange-600 rounded-xl font-medium transition"
                             >
                                 OK
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* QR Code Modal */}
+            {showQRModal && (
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="flex min-h-full items-center justify-center p-4">
+                        <div className="fixed inset-0 bg-black/50" onClick={() => setShowQRModal(false)}></div>
+                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900">QR Code WhatsApp</h3>
+                                <button onClick={() => setShowQRModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                                    <X size={20} className="text-gray-500" />
+                                </button>
+                            </div>
+                            {qrLoading ? (
+                                <div className="flex justify-center py-8">
+                                    <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            ) : qrData?.qr ? (
+                                <div className="text-center">
+                                    <img src={qrData.qr} alt="QR Code" className="mx-auto w-64 h-64" />
+                                    <p className="mt-3 text-sm text-gray-600">Scan QR code ini dengan WhatsApp di HP Anda</p>
+                                </div>
+                            ) : qrData?.phone ? (
+                                <div className="text-center py-4">
+                                    <CheckCircle className="mx-auto mb-3 text-green-500" size={48} />
+                                    <p className="font-medium text-green-700">WhatsApp sudah terhubung</p>
+                                    <p className="text-sm text-gray-500">Nomor: {qrData.phone}</p>
+                                </div>
+                            ) : (
+                                <div className="text-center py-4">
+                                    <AlertCircle className="mx-auto mb-3 text-yellow-500" size={48} />
+                                    <p className="text-sm text-gray-600">{qrData?.message || 'QR Code belum tersedia. Coba restart WhatsApp.'}</p>
+                                </div>
+                            )}
+                            <button
+                                onClick={handleShowQR}
+                                className="w-full mt-4 px-4 py-2 text-sm text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl font-medium transition flex items-center justify-center gap-2"
+                            >
+                                <RefreshCw size={16} /> Refresh QR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Test Message Modal */}
+            {showTestModal && (
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="flex min-h-full items-center justify-center p-4">
+                        <div className="fixed inset-0 bg-black/50" onClick={() => setShowTestModal(false)}></div>
+                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900">Test Kirim Pesan</h3>
+                                <button onClick={() => setShowTestModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                                    <X size={20} className="text-gray-500" />
+                                </button>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Telepon</label>
+                                    <input
+                                        type="text"
+                                        value={testPhone}
+                                        onChange={(e) => setTestPhone(e.target.value)}
+                                        placeholder="08xxxxxxxxxx"
+                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Pesan</label>
+                                    <textarea
+                                        value={testMessage}
+                                        onChange={(e) => setTestMessage(e.target.value)}
+                                        rows={3}
+                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                    />
+                                </div>
+                                {testResult && (
+                                    <div className={`p-3 rounded-lg text-sm ${testResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                                        {testResult.success ? 'Pesan berhasil terkirim!' : `Gagal: ${testResult.error || 'Unknown error'}`}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex gap-3 mt-6">
+                                <button
+                                    onClick={() => setShowTestModal(false)}
+                                    className="flex-1 px-4 py-2.5 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl font-medium transition"
+                                >
+                                    Tutup
+                                </button>
+                                <button
+                                    onClick={handleSendTest}
+                                    disabled={testSending || !testPhone || !testMessage || !waStatus?.connected}
+                                    className={`flex-1 px-4 py-2.5 rounded-xl font-medium transition flex items-center justify-center gap-2 ${
+                                        testSending || !waStatus?.connected
+                                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                            : 'bg-blue-500 hover:bg-blue-600 text-white'
+                                    }`}
+                                >
+                                    {testSending ? (
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    ) : (
+                                        <Send size={16} />
+                                    )}
+                                    Kirim Test
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Logs Modal */}
+            {showLogsModal && (
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="flex min-h-full items-center justify-center p-4">
+                        <div className="fixed inset-0 bg-black/50" onClick={() => setShowLogsModal(false)}></div>
+                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[80vh] flex flex-col">
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900">Log Pengiriman Notifikasi</h3>
+                                <button onClick={() => setShowLogsModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                                    <X size={20} className="text-gray-500" />
+                                </button>
+                            </div>
+                            {logsLoading ? (
+                                <div className="flex justify-center py-8">
+                                    <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            ) : logs.length === 0 ? (
+                                <p className="text-center text-gray-500 py-8">Belum ada log pengiriman</p>
+                            ) : (
+                                <div className="overflow-y-auto flex-1">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-gray-50 sticky top-0">
+                                            <tr>
+                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Waktu</th>
+                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Pelanggan</th>
+                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Nomor</th>
+                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Status</th>
+                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Error</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {logs.map(log => (
+                                                <tr key={log.id} className="hover:bg-gray-50">
+                                                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
+                                                        {new Date(log.created_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                                    </td>
+                                                    <td className="px-3 py-2">{log.customer?.nama || '-'}</td>
+                                                    <td className="px-3 py-2 text-gray-500">{log.phone}</td>
+                                                    <td className="px-3 py-2">
+                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                            log.status === 'sent' ? 'bg-green-100 text-green-700' :
+                                                            log.status === 'failed' ? 'bg-red-100 text-red-700' :
+                                                            'bg-yellow-100 text-yellow-700'
+                                                        }`}>
+                                                            {log.status === 'sent' ? 'Terkirim' : log.status === 'failed' ? 'Gagal' : 'Dilewati'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-red-500 text-xs truncate max-w-[150px]">{log.error || '-'}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

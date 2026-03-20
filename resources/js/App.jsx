@@ -9,7 +9,10 @@ import ProfilePage from './pages/Profile/ProfilePage';
 import BillingPage from './pages/Billing/BillingPage';
 import InvoicePage from './pages/Invoice/InvoicePage';
 import LoginPage from './pages/Auth/LoginPage';
+import NotFoundPage from './pages/NotFoundPage';
 import PaymentMethodsPage from './pages/Settings/PaymentMethodsPage';
+import PackageManagementPage from './pages/Settings/PackageManagementPage';
+import UserManagementPage from './pages/Settings/UserManagementPage';
 import LandingPage from './pages/LandingPage';
 import PromoManagementPage from './pages/Settings/PromoManagementPage';
 import CustomerLoginPage from './pages/Customer/CustomerLoginPage';
@@ -23,6 +26,7 @@ import NetworkStatusPage from './pages/NetworkStatusPage';
 import Monitoring from './pages/Monitoring';
 import IsolirPage from './pages/Isolir/IsolirPage';
 import MonitoringMaps from './pages/MonitoringMaps';
+import PayrollPage from './pages/Payroll/PayrollPage';
 
 // Layout wrapper that conditionally shows navbar
 function AppLayout({ children }) {
@@ -91,6 +95,8 @@ function App() {
                     
                     {/* Settings */}
                     <Route path="/settings/payment-methods" element={<PaymentMethodsPage />} />
+                    <Route path="/settings/packages" element={<PackageManagementPage />} />
+                    <Route path="/settings/users" element={<UserManagementPage />} />
                     <Route path="/settings/promo" element={<PromoManagementPage />} />
                     <Route path="/settings/network-notices" element={<NetworkNoticePage />} />
                     <Route path="/settings/send-notification" element={<SendNotificationPage />} />
@@ -106,9 +112,15 @@ function App() {
                     {/* Isolir */}
                     <Route path="/isolir" element={<IsolirPage />} />
                     
+                    {/* Payroll */}
+                    <Route path="/payroll" element={<PayrollPage />} />
+                    
                     {/* Customer Portal */}
                     <Route path="/customer/login" element={<CustomerLoginPage />} />
                     <Route path="/customer/dashboard" element={<CustomerDashboard />} />
+                    
+                    {/* 404 */}
+                    <Route path="*" element={<NotFoundPage />} />
                 </Routes>
             </AppLayout>
         </Router>

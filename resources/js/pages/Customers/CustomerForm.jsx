@@ -15,6 +15,7 @@ function CustomerForm() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
     const [odpList, setOdpList] = useState([]);
+    const [packageList, setPackageList] = useState([]);
     const [gettingLocation, setGettingLocation] = useState(false);
 
     const [secretInfo, setSecretInfo] = useState(null);
@@ -45,10 +46,26 @@ function CustomerForm() {
 
     useEffect(() => {
         fetchOdpList();
+        fetchPackageList();
         if (id) {
             fetchCustomer();
         }
     }, [id]);
+
+    const fetchPackageList = async () => {
+        try {
+            const res = await fetch('/api/packages/active', {
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                },
+            });
+            const data = await res.json();
+            setPackageList(data.data || []);
+        } catch (err) {
+            console.error('Failed to fetch packages', err);
+        }
+    };
 
     const fetchOdpList = async () => {
         try {
@@ -387,10 +404,11 @@ function CustomerForm() {
                                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
                                 <option value="">Pilih Paket</option>
-                                <option value="Paket 150k">Paket 150k</option>
-                                <option value="Paket 175k">Paket 175k</option>
-                                <option value="Paket 200k">Paket 200k</option>
-                                <option value="Paket 250k">Paket 250k</option>
+                                {packageList.map(pkg => (
+                                    <option key={pkg.id} value={pkg.name}>
+                                        {pkg.name} - {pkg.speed} ({new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(pkg.price)})
+                                    </option>
+                                ))}
                                 <option value="Custom">Custom</option>
                             </select>
                         </div>

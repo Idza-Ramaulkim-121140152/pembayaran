@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Package;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 
@@ -23,7 +24,41 @@ class CustomerController extends Controller
         
         // Check if this is an API request
         if (request('api') || request()->wantsJson()) {
-            return response()->json(['data' => $query->get()]);
+            $customers = $query->get();
+            
+            // Sync is_active status from MikroTik router
+            try {
+                $mikrotik = new \App\Services\MikroTikService();
+                $mikrotik->connect();
+                $secrets = $mikrotik->getAllPPPoESecrets();
+                $mikrotik->disconnect();
+                
+                if ($secrets !== null) {
+                    foreach ($customers as $customer) {
+                        if (!empty($customer->pppoe_username)) {
+                            $secret = $secrets[$customer->pppoe_username] ?? null;
+                            // Active = secret exists AND disabled=no
+                            $isActive = $secret && ($secret['disabled'] ?? 'false') !== 'true';
+                            
+                            if ($customer->is_active != $isActive) {
+                                $customer->is_active = $isActive;
+                                $customer->saveQuietly();
+                            }
+                        } else {
+                            // No PPPoE username = inactive
+                            if ($customer->is_active) {
+                                $customer->is_active = false;
+                                $customer->saveQuietly();
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                \Log::warning('Could not sync is_active from MikroTik', ['error' => $e->getMessage()]);
+                // Fall back to DB values silently
+            }
+            
+            return response()->json(['data' => $customers]);
         }
         
         $sort = request('sort');
@@ -193,8 +228,15 @@ class CustomerController extends Controller
                 $remoteAddress = $mikrotik->getNextIpAddress();
                 \Log::info('Next IP address', ['ip' => $remoteAddress]);
                 
-                // Map package type to profile (keep original case from user)
-                $profile = $packageType;
+                // Resolve MikroTik profile: first check Package table, then fallback to resolveProfileName
+                $dbPackage = Package::where('name', $packageType)->first();
+                if ($dbPackage && $dbPackage->mikrotik_profile) {
+                    $profile = $dbPackage->mikrotik_profile;
+                    \Log::info('Profile resolved from packages table', ['package' => $packageType, 'profile' => $profile]);
+                } else {
+                    $profile = $mikrotik->resolveProfileName($packageType);
+                    \Log::info('Profile resolved via MikroTik lookup', ['package' => $packageType, 'profile' => $profile]);
+                }
                 
                 // Create secret
                 $secretInfo = $mikrotik->createPPPoESecret(
@@ -207,8 +249,9 @@ class CustomerController extends Controller
                 
                 \Log::info('Secret created successfully', ['secret' => $secretInfo]);
                 
-                // Update validated data with generated username
+                // Update validated data with generated username and resolved profile
                 $validated['pppoe_username'] = $username;
+                $validated['mikrotik_profile'] = $profile;
                 
             } catch (\Exception $e) {
                 \Log::error('Failed to create MikroTik secret: ' . $e->getMessage(), [
@@ -295,15 +338,18 @@ class CustomerController extends Controller
             // Add connection status to secret data
             $secret['is_connected'] = $isConnected;
             
+            // Remove sensitive password from log and response
+            $safeSecret = $secret;
+            unset($safeSecret['password']);
+            
             \Log::info('Secret found', [
                 'username' => $customer->pppoe_username, 
                 'is_connected' => $isConnected,
-                'secret' => $secret
             ]);
             
             return response()->json([
                 'success' => true,
-                'data' => $secret,
+                'data' => $safeSecret,
                 'customer' => [
                     'id' => $customer->id,
                     'name' => $customer->name,

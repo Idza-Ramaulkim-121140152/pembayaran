@@ -1,3 +1,32 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Leaflet Map Fix - Ensure tiles load properly */
+@layer base {
+    .leaflet-container {
+        width: 100% !important;
+        height: 100% !important;
+        position: relative !important;
+        z-index: 0 !important;
+    }
+    
+    .leaflet-tile-container img {
+        max-width: none !important;
+    }
+    
+    .leaflet-tile {
+        image-rendering: auto !important;
+        image-rendering: crisp-edges !important;
+        image-rendering: -webkit-optimize-contrast !important;
+    }
+    
+    /* Prevent tile gaps */
+    .leaflet-fade-anim .leaflet-tile {
+        will-change: opacity;
+    }
+    
+    .leaflet-container img.leaflet-tile {
+        mix-blend-mode: initial;
+    }
+}

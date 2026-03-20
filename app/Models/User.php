@@ -12,6 +12,18 @@ class User extends Authenticatable
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
 
+    const ROLE_SUPERADMIN = 'superadmin';
+    const ROLE_ADMIN = 'admin';
+    const ROLE_TEKNISI = 'teknisi';
+    const ROLE_FINANCE = 'finance';
+
+    const ROLES = [
+        self::ROLE_SUPERADMIN,
+        self::ROLE_ADMIN,
+        self::ROLE_TEKNISI,
+        self::ROLE_FINANCE,
+    ];
+
     /**
      * The attributes that are mass assignable.
      *
@@ -21,8 +33,33 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role', // admin, user, dll
+        'role',
     ];
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === self::ROLE_SUPERADMIN;
+    }
+
+    public function isAdmin(): bool
+    {
+        return in_array($this->role, [self::ROLE_SUPERADMIN, self::ROLE_ADMIN]);
+    }
+
+    public function isTeknisi(): bool
+    {
+        return $this->role === self::ROLE_TEKNISI;
+    }
+
+    public function isFinance(): bool
+    {
+        return $this->role === self::ROLE_FINANCE;
+    }
+
+    public function hasRole(string ...$roles): bool
+    {
+        return in_array($this->role, $roles);
+    }
 
     /**
      * The attributes that should be hidden for serialization.

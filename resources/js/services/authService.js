@@ -1,32 +1,51 @@
+import axios from 'axios';
 import apiClient from './api';
+
+// Auth routes live at / (not /api/), so use a separate client
+const authClient = axios.create({
+    baseURL: '/',
+    headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Content-Type': 'application/json',
+    },
+    withCredentials: true,
+});
+
+authClient.interceptors.request.use((config) => {
+    const token = document.querySelector('meta[name="csrf-token"]');
+    if (token) {
+        config.headers['X-CSRF-TOKEN'] = token.getAttribute('content');
+    }
+    return config;
+});
 
 export const authService = {
     // Login
-    login: (credentials) => apiClient.post('/login', credentials),
+    login: (credentials) => authClient.post('/login', credentials),
 
     // Register
-    register: (data) => apiClient.post('/register', data),
+    register: (data) => authClient.post('/register', data),
 
     // Logout
-    logout: () => apiClient.post('/logout'),
+    logout: () => authClient.post('/logout'),
 
-    // Get current user
+    // Get current user (this one is at /api/user)
     getUser: () => apiClient.get('/user'),
 
     // Update profile
-    updateProfile: (data) => apiClient.patch('/profile', data),
+    updateProfile: (data) => authClient.patch('/profile', data),
 
     // Update password
-    updatePassword: (data) => apiClient.put('/password', data),
+    updatePassword: (data) => authClient.put('/password', data),
 
     // Delete account
-    deleteAccount: (password) => apiClient.delete('/profile', { data: { password } }),
+    deleteAccount: (password) => authClient.delete('/profile', { data: { password } }),
 
     // Forgot password
-    forgotPassword: (email) => apiClient.post('/forgot-password', { email }),
+    forgotPassword: (email) => authClient.post('/forgot-password', { email }),
 
     // Reset password
-    resetPassword: (data) => apiClient.post('/reset-password', data),
+    resetPassword: (data) => authClient.post('/reset-password', data),
 };
 
 export default authService;

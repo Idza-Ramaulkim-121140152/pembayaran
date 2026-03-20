@@ -302,7 +302,7 @@ class MonitoringController extends Controller
     public function refresh()
     {
         Cache::forget('monitoring_data');
-        return redirect()->route('monitoring.index')->with('success', 'Data monitoring berhasil diperbarui');
+        return response()->json(['message' => 'Data monitoring berhasil diperbarui']);
     }
 
     /**

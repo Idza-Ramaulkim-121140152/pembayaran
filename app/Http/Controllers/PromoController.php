@@ -188,7 +188,12 @@ class PromoController extends Controller
      */
     public function updateSettings(Request $request)
     {
-        $data = $request->all();
+        $allowedKeys = [
+            'company_name', 'company_tagline', 'company_phone', 'company_whatsapp',
+            'company_email', 'hero_title', 'hero_subtitle', 'installation_fee',
+        ];
+        
+        $data = $request->only($allowedKeys);
         
         foreach ($data as $key => $value) {
             SiteSetting::set($key, $value);

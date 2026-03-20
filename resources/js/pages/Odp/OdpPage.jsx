@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -6,6 +6,116 @@ import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import MapPicker from '../../components/common/MapPicker';
 import odpService from '../../services/odpService';
+
+// OdpForm component extracted outside to prevent re-creation on every render
+const OdpForm = ({ formData, handleInputChange, onSubmit, isEdit, submitting, previewImage, setPreviewImage, setFormData, onCancel, isModalOpen, mapKey }) => (
+    <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nama ODP *</label>
+            <input
+                type="text"
+                name="nama"
+                value={formData.nama}
+                onChange={handleInputChange}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Contoh: ODP-001"
+            />
+        </div>
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rasio Distribusi *</label>
+            <select
+                name="rasio_distribusi"
+                value={formData.rasio_distribusi}
+                onChange={handleInputChange}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+                <option value="1:2">1:2</option>
+                <option value="1:4">1:4</option>
+                <option value="1:8">1:8</option>
+                <option value="1:16">1:16</option>
+            </select>
+        </div>
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rasio Spesial (opsional)</label>
+            <input
+                type="text"
+                name="rasio_spesial"
+                value={formData.rasio_spesial}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Contoh: 1:32"
+            />
+        </div>
+        
+        {/* Map Picker */}
+        <MapPicker
+            key={mapKey}
+            latitude={formData.latitude}
+            longitude={formData.longitude}
+            onLocationChange={(lat, lng) => {
+                setFormData(prev => ({ ...prev, latitude: lat, longitude: lng }));
+            }}
+            height="300px"
+            isOpen={isModalOpen}
+        />
+        
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Foto ODP</label>
+            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-blue-400 transition-colors">
+                <div className="space-y-1 text-center">
+                    {previewImage ? (
+                        <div className="relative">
+                            <img src={previewImage} alt="Preview" className="mx-auto h-32 w-auto rounded-lg" />
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setPreviewImage(null);
+                                    setFormData(prev => ({ ...prev, foto: null }));
+                                }}
+                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                            <div className="flex text-sm text-gray-600">
+                                <label className="relative cursor-pointer rounded-md font-medium text-blue-600 hover:text-blue-500">
+                                    <span>Upload file</span>
+                                    <input
+                                        type="file"
+                                        name="foto"
+                                        accept="image/*"
+                                        onChange={handleInputChange}
+                                        className="sr-only"
+                                    />
+                                </label>
+                                <p className="pl-1">atau drag and drop</p>
+                            </div>
+                            <p className="text-xs text-gray-500">PNG, JPG hingga 2MB</p>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        <div className="flex justify-end gap-3 pt-4">
+            <Button
+                type="button"
+                variant="secondary"
+                onClick={onCancel}
+            >
+                Batal
+            </Button>
+            <Button type="submit" variant="primary" disabled={submitting}>
+                {submitting ? 'Menyimpan...' : isEdit ? 'Update' : 'Simpan'}
+            </Button>
+        </div>
+    </form>
+);
 
 function OdpPage() {
     const [odps, setOdps] = useState([]);
@@ -159,115 +269,6 @@ function OdpPage() {
         );
     }
 
-    const OdpForm = ({ onSubmit, isEdit = false }) => (
-        <form onSubmit={onSubmit} className="space-y-4">
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nama ODP *</label>
-                <input
-                    type="text"
-                    name="nama"
-                    value={formData.nama}
-                    onChange={handleInputChange}
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Contoh: ODP-001"
-                />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Rasio Distribusi *</label>
-                <select
-                    name="rasio_distribusi"
-                    value={formData.rasio_distribusi}
-                    onChange={handleInputChange}
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                    <option value="1:2">1:2</option>
-                    <option value="1:4">1:4</option>
-                    <option value="1:8">1:8</option>
-                    <option value="1:16">1:16</option>
-                </select>
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Rasio Spesial (opsional)</label>
-                <input
-                    type="text"
-                    name="rasio_spesial"
-                    value={formData.rasio_spesial}
-                    onChange={handleInputChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Contoh: 1:32"
-                />
-            </div>
-            
-            {/* Map Picker */}
-            <MapPicker
-                latitude={formData.latitude}
-                longitude={formData.longitude}
-                onLocationChange={(lat, lng) => {
-                    setFormData(prev => ({ ...prev, latitude: lat, longitude: lng }));
-                }}
-                height="300px"
-            />
-            
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Foto ODP</label>
-                <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-blue-400 transition-colors">
-                    <div className="space-y-1 text-center">
-                        {previewImage ? (
-                            <div className="relative">
-                                <img src={previewImage} alt="Preview" className="mx-auto h-32 w-auto rounded-lg" />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setPreviewImage(null);
-                                        setFormData(prev => ({ ...prev, foto: null }));
-                                    }}
-                                    className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <Upload className="mx-auto h-12 w-12 text-gray-400" />
-                                <div className="flex text-sm text-gray-600">
-                                    <label className="relative cursor-pointer rounded-md font-medium text-blue-600 hover:text-blue-500">
-                                        <span>Upload file</span>
-                                        <input
-                                            type="file"
-                                            name="foto"
-                                            accept="image/*"
-                                            onChange={handleInputChange}
-                                            className="sr-only"
-                                        />
-                                    </label>
-                                    <p className="pl-1">atau drag and drop</p>
-                                </div>
-                                <p className="text-xs text-gray-500">PNG, JPG hingga 2MB</p>
-                            </>
-                        )}
-                    </div>
-                </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-                <Button 
-                    type="button" 
-                    variant="secondary" 
-                    onClick={() => {
-                        isEdit ? setEditModal({ open: false, odp: null }) : setCreateModal(false);
-                        resetForm();
-                    }}
-                >
-                    Batal
-                </Button>
-                <Button type="submit" variant="primary" disabled={submitting}>
-                    {submitting ? 'Menyimpan...' : isEdit ? 'Update' : 'Simpan'}
-                </Button>
-            </div>
-        </form>
-    );
-
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -382,12 +383,36 @@ function OdpPage() {
 
             {/* Create Modal */}
             <Modal isOpen={createModal} onClose={() => { setCreateModal(false); resetForm(); }} title="Tambah ODP Baru">
-                <OdpForm onSubmit={handleCreate} />
+                <OdpForm 
+                    formData={formData}
+                    handleInputChange={handleInputChange}
+                    onSubmit={handleCreate}
+                    isEdit={false}
+                    submitting={submitting}
+                    previewImage={previewImage}
+                    setPreviewImage={setPreviewImage}
+                    setFormData={setFormData}
+                    onCancel={() => { setCreateModal(false); resetForm(); }}
+                    isModalOpen={createModal}
+                    mapKey="create"
+                />
             </Modal>
 
             {/* Edit Modal */}
             <Modal isOpen={editModal.open} onClose={() => { setEditModal({ open: false, odp: null }); resetForm(); }} title="Edit ODP">
-                <OdpForm onSubmit={handleEdit} isEdit />
+                <OdpForm 
+                    formData={formData}
+                    handleInputChange={handleInputChange}
+                    onSubmit={handleEdit}
+                    isEdit={true}
+                    submitting={submitting}
+                    previewImage={previewImage}
+                    setPreviewImage={setPreviewImage}
+                    setFormData={setFormData}
+                    onCancel={() => { setEditModal({ open: false, odp: null }); resetForm(); }}
+                    isModalOpen={editModal.open}
+                    mapKey={editModal.odp?.id ? `edit-${editModal.odp.id}` : 'edit'}
+                />
             </Modal>
 
             {/* View Modal */}

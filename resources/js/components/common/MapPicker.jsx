@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { MapPin, Navigation } from 'lucide-react';
 
-function MapPicker({ latitude, longitude, onLocationChange, height = '400px' }) {
+function MapPicker({ latitude, longitude, onLocationChange, height = '400px', isOpen = true }) {
     const mapRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markerRef = useRef(null);
+    const resizeObserverRef = useRef(null);
     const [currentLocation, setCurrentLocation] = useState({ lat: latitude || -7.2575, lng: longitude || 112.7521 }); // Default: Surabaya
     const [isLoadingLocation, setIsLoadingLocation] = useState(false);
     const [mapLoaded, setMapLoaded] = useState(false);
@@ -46,12 +47,28 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px' }) 
         if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return;
 
         const L = window.L;
-        const map = L.map(mapRef.current).setView([currentLocation.lat, currentLocation.lng], 13);
+        const map = L.map(mapRef.current, {
+            center: [currentLocation.lat, currentLocation.lng],
+            zoom: 13,
+            scrollWheelZoom: true,
+            dragging: true,
+            zoomControl: true,
+        });
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxZoom: 19,
+            minZoom: 5,
+            keepBuffer: 2,
+            updateWhenIdle: false,
+            updateWhenZooming: false,
+            detectRetina: true,
         }).addTo(map);
+
+        // Force map to recalculate size after initialization
+        setTimeout(() => {
+            map.invalidateSize();
+        }, 100);
 
         // Add marker
         const marker = L.marker([currentLocation.lat, currentLocation.lng], {
@@ -83,11 +100,62 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px' }) 
         mapInstanceRef.current = map;
         markerRef.current = marker;
 
+        // Setup ResizeObserver to handle dynamic container size changes
+        if (window.ResizeObserver && mapRef.current) {
+            resizeObserverRef.current = new ResizeObserver(() => {
+                if (mapInstanceRef.current) {
+                    mapInstanceRef.current.invalidateSize();
+                }
+            });
+            resizeObserverRef.current.observe(mapRef.current);
+        }
+
         return () => {
+            if (resizeObserverRef.current) {
+                resizeObserverRef.current.disconnect();
+            }
             map.remove();
             mapInstanceRef.current = null;
         };
     }, [mapLoaded]);
+
+    // Re-invalidate map size when container becomes visible or changes
+    useEffect(() => {
+        if (mapInstanceRef.current && mapRef.current) {
+            // Multiple attempts to ensure map renders properly
+            const timeouts = [100, 300, 500, 1000];
+            const timers = timeouts.map(delay => 
+                setTimeout(() => {
+                    if (mapInstanceRef.current) {
+                        mapInstanceRef.current.invalidateSize();
+                    }
+                }, delay)
+            );
+            
+            return () => {
+                timers.forEach(timer => clearTimeout(timer));
+            };
+        }
+    }, [mapLoaded]);
+
+    // Trigger invalidateSize when modal opens (isOpen changes to true)
+    useEffect(() => {
+        if (isOpen && mapInstanceRef.current) {
+            // Wait for modal animation to complete before invalidating size
+            const timeouts = [50, 150, 300, 600];
+            const timers = timeouts.map(delay => 
+                setTimeout(() => {
+                    if (mapInstanceRef.current) {
+                        mapInstanceRef.current.invalidateSize();
+                    }
+                }, delay)
+            );
+            
+            return () => {
+                timers.forEach(timer => clearTimeout(timer));
+            };
+        }
+    }, [isOpen]);
 
     // Update marker position when latitude/longitude props change
     useEffect(() => {
@@ -198,8 +266,13 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px' }) 
 
             <div 
                 ref={mapRef} 
-                style={{ height }} 
-                className="rounded-lg border border-gray-300 overflow-hidden"
+                style={{ 
+                    height, 
+                    width: '100%',
+                    position: 'relative',
+                    zIndex: 0
+                }} 
+                className="rounded-lg border border-gray-300 overflow-hidden bg-gray-100"
             />
 
             <p className="text-xs text-gray-500">
