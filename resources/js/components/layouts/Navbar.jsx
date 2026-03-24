@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users } from 'lucide-react';
+import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 // Role-based access: which roles can see each menu
@@ -10,6 +10,7 @@ const ACCESS = {
     verifikasi: ['superadmin', 'admin', 'teknisi'],
     pengeluaran: ['superadmin', 'admin', 'finance'],
     payroll: ['superadmin', 'admin', 'finance'],
+    mutasi: ['superadmin', 'admin', 'finance'],
     odp: ['superadmin', 'admin', 'teknisi'],
     monitoring: ['superadmin', 'admin', 'teknisi'],
     monitoringMaps: ['superadmin', 'admin', 'teknisi'],
@@ -75,6 +76,7 @@ export function Navbar() {
         if (path === '/odp') return location.pathname.startsWith('/odp');
         if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
         if (path === '/payroll') return location.pathname.startsWith('/payroll');
+        if (path === '/mutasi') return location.pathname.startsWith('/mutasi');
         if (path === '/complaints') return location.pathname.startsWith('/complaints') || location.pathname.startsWith('/aduan');
         if (path === '/monitoring') return location.pathname === '/monitoring';
         if (path === '/monitoring-maps') return location.pathname === '/monitoring-maps';
@@ -146,6 +148,12 @@ export function Navbar() {
                             <Link to="/payroll" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/payroll') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
                                 <span>Payroll</span>
+                            </Link>
+                        )}
+                        {can('mutasi') && (
+                            <Link to="/mutasi" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/mutasi') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
+                                <Wallet size={18} />
+                                <span>Mutasi</span>
                             </Link>
                         )}
                     </div>
@@ -307,6 +315,12 @@ export function Navbar() {
                             <Link to="/payroll" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/payroll') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
                                 <span>Payroll</span>
+                            </Link>
+                        )}
+                        {can('mutasi') && (
+                            <Link to="/mutasi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/mutasi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                <Wallet size={20} />
+                                <span>Mutasi</span>
                             </Link>
                         )}
                         

@@ -9,8 +9,10 @@ class Customer extends Model
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
-        'pppoe_username', 'mikrotik_profile', 'odp', 'installation_fee',
-        'latitude', 'longitude', 'google_sheets_timestamp'
+        'pppoe_username', 'mikrotik_profile', 'home_router_type', 'home_router_host',
+        'home_router_port', 'home_router_username', 'home_router_password',
+        'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
+        'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp'
     ];
 
     protected $casts = [
@@ -20,9 +22,13 @@ class Customer extends Model
         'installation_fee' => 'decimal:0',
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
+        'home_router_port' => 'integer',
+        'home_router_monitoring_enabled' => 'boolean',
+        'home_router_password' => 'encrypted',
     ];
 
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
+    protected $hidden = ['home_router_password'];
 
     // Accessor untuk kompatibilitas dengan field lama
     public function getNamaAttribute()

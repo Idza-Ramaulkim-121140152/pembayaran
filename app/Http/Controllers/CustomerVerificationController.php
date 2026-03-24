@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Package;
+use App\Services\FinancialLedgerService;
 use App\Services\GoogleSheetsService;
 use App\Services\MikroTikService;
 use Illuminate\Http\Request;
@@ -13,14 +14,17 @@ use Exception;
 class CustomerVerificationController extends Controller
 {
     protected $sheetsService;
+    protected $sheetsError;
 
     public function __construct()
     {
         try {
             $this->sheetsService = new GoogleSheetsService();
+            $this->sheetsError = null;
         } catch (Exception $e) {
             \Log::error('Failed to initialize GoogleSheetsService: ' . $e->getMessage());
             $this->sheetsService = null;
+            $this->sheetsError = $e->getMessage();
         }
     }
 
@@ -46,7 +50,8 @@ class CustomerVerificationController extends Controller
         if (!$this->sheetsService) {
             return response()->json([
                 'error' => 'Google Sheets integration is not configured',
-                'message' => 'Please setup Google Sheets API credentials'
+                'message' => 'Please setup Google Sheets API credentials',
+                'details' => $this->sheetsError,
             ], 503);
         }
 
@@ -135,26 +140,8 @@ class CustomerVerificationController extends Controller
      */
     public function verifyCustomer(Request $request)
     {
-        $validated = $request->validate([
-            'google_sheets_timestamp' => 'required|string',
-            'name' => 'required|string|max:255',
-            'area_code' => 'required|string|max:10',
-            'phone' => 'required|string|max:20',
-            'email' => 'nullable|email',
-            'address' => 'nullable|string',
-            'gender' => 'nullable|in:male,female',
-            'package_type' => 'required|string',
-            'custom_package' => 'nullable|string',
-            'activation_date' => 'required|date',
-            'due_date' => 'nullable|date',
-            'pppoe_username' => 'nullable|string|max:64',
-            'pppoe_password' => 'nullable|string|max:64',
-            'odp' => 'nullable|string|max:64',
-            'installation_fee' => 'nullable|numeric',
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
-            'is_active' => 'nullable|boolean',
-        ]);
+        $validated = $request->validate($this->verificationValidationRules());
+        $validated = $this->normalizeHomeRouterInput($validated);
 
         DB::beginTransaction();
 
@@ -298,6 +285,16 @@ class CustomerVerificationController extends Controller
             $validated['mikrotik_profile'] = $profileName ?? $packageType;
             $customer = Customer::create($validated);
 
+            // Auto-post installation fee as income to unified ledger.
+            try {
+                app(FinancialLedgerService::class)->syncCustomerInstallationIncome($customer, auth()->id());
+            } catch (Exception $ledgerException) {
+                \Log::warning('Failed to sync installation income on customer verification', [
+                    'customer_id' => $customer->id,
+                    'error' => $ledgerException->getMessage(),
+                ]);
+            }
+
             DB::commit();
 
             return response()->json([
@@ -334,5 +331,71 @@ class CustomerVerificationController extends Controller
             'timestamps' => $timestamps,
             'count' => count($timestamps)
         ]);
+    }
+
+    private function verificationValidationRules(): array
+    {
+        return [
+            'google_sheets_timestamp' => 'required|string',
+            'name' => 'required|string|max:255',
+            'area_code' => 'required|string|max:10',
+            'phone' => 'required|string|max:20',
+            'email' => 'nullable|email',
+            'address' => 'nullable|string',
+            'gender' => 'nullable|in:male,female',
+            'package_type' => 'required|string',
+            'custom_package' => 'nullable|string',
+            'activation_date' => 'required|date',
+            'due_date' => 'nullable|date',
+            'pppoe_username' => 'nullable|string|max:64',
+            'pppoe_password' => 'nullable|string|max:64',
+            'odp' => 'nullable|string|max:64',
+            'installation_fee' => 'nullable|numeric',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'is_active' => 'nullable|boolean',
+            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01',
+            'home_router_host' => 'nullable|string|max:255',
+            'home_router_port' => 'nullable|integer|min:1|max:65535',
+            'home_router_username' => 'nullable|string|max:255',
+            'home_router_password' => 'nullable|string|max:255',
+            'home_router_wan_interface' => 'nullable|string|max:64',
+            'home_router_monitoring_enabled' => 'nullable|boolean',
+        ];
+    }
+
+    private function normalizeHomeRouterInput(array $validated): array
+    {
+        $nullableFields = [
+            'home_router_type',
+            'home_router_host',
+            'home_router_port',
+            'home_router_username',
+            'home_router_wan_interface',
+        ];
+
+        foreach ($nullableFields as $field) {
+            if (array_key_exists($field, $validated) && $validated[$field] === '') {
+                $validated[$field] = null;
+            }
+        }
+
+        if (isset($validated['home_router_type'])) {
+            $validated['home_router_type'] = strtolower((string) $validated['home_router_type']);
+        }
+
+        if (($validated['home_router_monitoring_enabled'] ?? false) && empty($validated['home_router_type'])) {
+            $validated['home_router_type'] = 'mikrotik';
+        }
+
+        if (($validated['home_router_monitoring_enabled'] ?? false) && empty($validated['home_router_port'])) {
+            $validated['home_router_port'] = 8728;
+        }
+
+        if (array_key_exists('home_router_password', $validated) && ($validated['home_router_password'] === '' || $validated['home_router_password'] === null)) {
+            unset($validated['home_router_password']);
+        }
+
+        return $validated;
     }
 }

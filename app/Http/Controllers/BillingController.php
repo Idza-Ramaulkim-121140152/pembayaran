@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Invoice;
+use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -10,9 +12,27 @@ use Illuminate\Support\Facades\Storage;
 
 class BillingController extends Controller
 {
+    public function __construct(private FinancialLedgerService $ledgerService)
+    {
+    }
+
+    private function canCurrentUserConfirmPayments(): bool
+    {
+        return Auth::check() && Auth::user()->canConfirmPayments();
+    }
+
+    private function ensureCanConfirmPayments(): void
+    {
+        if (!$this->canCurrentUserConfirmPayments()) {
+            abort(response()->json([
+                'message' => 'Anda tidak memiliki izin untuk konfirmasi pembayaran. Hubungi superadmin.',
+            ], 403));
+        }
+    }
+
     public function confirmPayment($invoiceId)
     {
-        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        $invoice = Invoice::findOrFail($invoiceId);
         $paidAmount = request()->input('paid_amount');
         if ($paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
@@ -28,7 +48,7 @@ class BillingController extends Controller
 
 
         // Jika admin (dari dashboard) konfirmasi, bisa kapan saja
-        if (Auth::check() && Auth::user()->role === 'admin') {
+        if ($this->canCurrentUserConfirmPayments()) {
             $invoice->status = 'paid';
             $invoice->paid_at = now();
             $invoice->tolak_info = null; // reset info tolak jika sudah dikonfirmasi
@@ -113,9 +133,10 @@ class BillingController extends Controller
         }
 
         $invoice->save();
+        $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
 
         // Redirect sesuai asal request
-        if (Auth::check() && Auth::user()->role === 'admin') {
+        if ($this->canCurrentUserConfirmPayments()) {
             return redirect()->route('billing.index')->with('success', 'Pembayaran dikonfirmasi.');
         }
         $invoice_link = $invoice->invoice_link;
@@ -230,7 +251,7 @@ class BillingController extends Controller
 
     public function tolakPembayaran($invoiceId)
     {
-        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        $invoice = Invoice::findOrFail($invoiceId);
         // Hapus file bukti jika ada
         if ($invoice->bukti_pembayaran) {
             Storage::disk('public')->delete($invoice->bukti_pembayaran);
@@ -240,6 +261,7 @@ class BillingController extends Controller
         $invoice->paid_at = null;
         $invoice->tolak_info = 'Bukti pembayaran Anda ditolak. Silakan upload ulang bukti pembayaran yang valid.';
         $invoice->save();
+        $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
         // Jika admin, redirect ke halaman billing.index, jika publik redirect ke invoice
         if (Auth::check() && Auth::user()->role === 'admin') {
             return redirect()->route('billing.index')->with('error', 'Bukti pembayaran ditolak.');
@@ -352,7 +374,9 @@ class BillingController extends Controller
 
     public function confirmPaymentApi($invoiceId)
     {
-        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        $this->ensureCanConfirmPayments();
+
+        $invoice = Invoice::findOrFail($invoiceId);
         $paidAmount = request()->input('paid_amount');
         
         if ($paidAmount && $paidAmount > 0) {
@@ -462,8 +486,33 @@ class BillingController extends Controller
         }
 
         $invoice->save();
+        $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
 
         return response()->json(['message' => 'Pembayaran berhasil dikonfirmasi', 'data' => $invoice]);
+    }
+
+    public function updateInvoiceAmountApi(Request $request, $invoiceId)
+    {
+        if (!Auth::check()) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1',
+        ]);
+
+        $invoice = Invoice::findOrFail($invoiceId);
+        $invoice->amount = $validated['amount'];
+        $invoice->save();
+
+        if ($invoice->status === 'paid') {
+            $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+        }
+
+        return response()->json([
+            'message' => 'Nominal invoice berhasil diperbarui.',
+            'data' => $invoice,
+        ]);
     }
 
     public function isolateCustomer($customerId)
@@ -580,7 +629,9 @@ class BillingController extends Controller
 
     public function rejectPaymentApi($invoiceId)
     {
-        $invoice = \App\Models\Invoice::findOrFail($invoiceId);
+        $this->ensureCanConfirmPayments();
+
+        $invoice = Invoice::findOrFail($invoiceId);
         $reason = request()->input('reason') ?: 'Bukti pembayaran Anda ditolak. Silakan upload ulang bukti pembayaran yang valid.';
         
         if ($invoice->bukti_pembayaran) {
@@ -592,6 +643,7 @@ class BillingController extends Controller
         $invoice->paid_at = null;
         $invoice->tolak_info = $reason;
         $invoice->save();
+        $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
 
         return response()->json(['message' => 'Pembayaran ditolak', 'data' => $invoice]);
     }

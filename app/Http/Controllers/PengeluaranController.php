@@ -3,11 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Models\Pengeluaran;
+use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class PengeluaranController extends Controller
 {
+    public function __construct(private FinancialLedgerService $ledgerService)
+    {
+    }
+
     public function index()
     {
         $pengeluarans = Pengeluaran::with('user')->orderByDesc('tanggal')->get();
@@ -49,6 +54,7 @@ class PengeluaranController extends Controller
         $validated['user_id'] = Auth::id();
         
         $pengeluaran = Pengeluaran::create($validated);
+        $this->ledgerService->syncPengeluaran($pengeluaran, Auth::id());
         $pengeluaran->load('user');
         
         return response()->json(['data' => $pengeluaran, 'message' => 'Pengeluaran berhasil dicatat'], 201);
@@ -66,6 +72,7 @@ class PengeluaranController extends Controller
         $validated['jumlah'] = (int)str_replace(',', '', $validated['jumlah']);
         
         $pengeluaran->update($validated);
+        $this->ledgerService->syncPengeluaran($pengeluaran, Auth::id());
         $pengeluaran->load('user');
         
         return response()->json(['data' => $pengeluaran, 'message' => 'Pengeluaran berhasil diupdate']);
@@ -73,6 +80,7 @@ class PengeluaranController extends Controller
 
     public function apiDestroy(Pengeluaran $pengeluaran)
     {
+        $this->ledgerService->removePengeluaran($pengeluaran);
         $pengeluaran->delete();
         return response()->json(['message' => 'Pengeluaran berhasil dihapus']);
     }

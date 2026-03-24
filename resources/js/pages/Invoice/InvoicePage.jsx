@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { 
     Clock, Download, Upload, Phone, CheckCircle, AlertCircle, XCircle,
     QrCode, Building2, Copy, Check, CreditCard, ChevronRight, Wifi,
-    Calendar, User, MapPin, FileText
+    Calendar, User, MapPin, FileText, Printer
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -104,6 +104,310 @@ function InvoicePage() {
         setTimeout(() => setCopied(false), 2000);
     };
 
+    const handlePrintInvoice = () => {
+        if (!invoice) return;
+
+        const printWindow = window.open('', '_blank', 'width=1200,height=800');
+        if (!printWindow) {
+            setError('Popup cetak diblokir browser. Izinkan popup lalu coba lagi.');
+            return;
+        }
+
+        const formatRupiah = (num) => `Rp. ${Number(num || 0).toLocaleString('id-ID')}`;
+        const formatDatePrint = (date) => {
+            if (!date) return '-';
+            return new Date(date).toLocaleDateString('id-ID', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+            });
+        };
+
+        const invoiceNumber = invoice.invoice_number || invoice.invoice_link || invoiceLink;
+        const issueDate = formatDatePrint(invoice?.invoice_date || new Date());
+        const customerName = invoice?.customer?.name || '-';
+        const customerPhone = invoice?.customer?.phone || '-';
+        const customerAddress = invoice?.customer?.address || '-';
+        const packageName = invoice?.customer?.package_type || 'Layanan Internet';
+        const logoUrl = `${window.location.origin}/logo_baru.png`;
+        const signatureUrl = `${window.location.origin}/CamScanner_26-06-2024_12.05-removebg-preview.png`;
+
+        const totalAmount = Number(invoice?.amount || 0);
+        const installationFee = Number(invoice?.customer?.installation_fee || 0);
+
+        const rows = [];
+        if (installationFee > 0 && installationFee < totalAmount) {
+            rows.push({ name: 'Biaya Pemasangan', amount: installationFee });
+            rows.push({ name: `Biaya Layanan Internet ${packageName}`, amount: totalAmount - installationFee });
+        } else {
+            rows.push({ name: `Biaya Layanan Internet ${packageName}`, amount: totalAmount });
+        }
+
+        const splitTax = (gross) => {
+            const base = Math.round(gross / 1.11);
+            const tax = gross - base;
+            return { base, tax, gross };
+        };
+
+        const rowHtml = rows
+            .map((item, index) => {
+                const calc = splitTax(item.amount);
+                return `
+                    <tr>
+                        <td class="col-no">${index + 1}</td>
+                        <td class="col-name">${item.name}</td>
+                        <td class="col-num">${formatRupiah(calc.base)}</td>
+                        <td class="col-num">${formatRupiah(calc.tax)}</td>
+                        <td class="col-num">${formatRupiah(calc.gross)}</td>
+                    </tr>`;
+            })
+            .join('');
+
+        const baseTotal = rows.reduce((sum, item) => sum + splitTax(item.amount).base, 0);
+        const taxTotal = rows.reduce((sum, item) => sum + splitTax(item.amount).tax, 0);
+        const grossTotal = rows.reduce((sum, item) => sum + splitTax(item.amount).gross, 0);
+
+        const html = `
+<!doctype html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Invoice ${invoiceNumber}</title>
+    <style>
+        @page {
+            size: 986px 699px;
+            margin: 0;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #e9e9e9;
+            font-family: Arial, sans-serif;
+            color: #000;
+            padding: 0;
+        }
+        .paper {
+            width: 986px;
+            height: 699px;
+            margin: 0 auto;
+            background: #e9e9e9;
+            position: relative;
+            overflow: hidden;
+            padding: 16px 20px 12px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .company-wrap {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .logo { height: 78px; width: auto; }
+        .company-name {
+            font-size: 39px;
+            font-weight: 700;
+            margin: 0;
+            line-height: 1.02;
+            letter-spacing: .1px;
+            white-space: nowrap;
+        }
+        .company-address { font-size: 19px; line-height: 1.28; margin: 2px 0 0; }
+        .invoice-title {
+            font-size: 58px;
+            font-weight: 700;
+            letter-spacing: 1.2px;
+            margin-top: 10px;
+            white-space: nowrap;
+            padding-right: 8px;
+        }
+        .line { margin-top: 10px; border-top: 4px solid #111; }
+
+        .meta {
+            margin-top: 18px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 36px;
+            font-size: 16px;
+            line-height: 1.32;
+        }
+        .meta table { width: 100%; border-collapse: collapse; }
+        .meta td { padding: 1px 0; vertical-align: top; }
+        .meta .label { width: 110px; white-space: nowrap; }
+        .meta .sep { width: 16px; text-align: center; }
+
+        .table-wrap {
+            margin-top: 14px;
+            position: relative;
+            padding-bottom: 65px;
+        }
+        .watermark {
+            position: absolute;
+            top: 58%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: .15;
+            z-index: 0;
+            pointer-events: none;
+        }
+        .watermark img { width: 340px; display: block; }
+
+        .invoice-table {
+            width: 100%;
+            border-collapse: collapse;
+            position: relative;
+            z-index: 1;
+            font-family: "Times New Roman", serif;
+            font-size: 16px;
+            border-left: 2px dashed #222;
+            border-right: 2px dashed #222;
+            border-bottom: 2px dashed #222;
+            table-layout: fixed;
+            background: transparent;
+        }
+        .invoice-table th,
+        .invoice-table td {
+            padding: 5px 7px;
+            border-right: 2px dashed #222;
+            vertical-align: top;
+        }
+        .invoice-table th:last-child,
+        .invoice-table td:last-child { border-right: 0; }
+        .invoice-table thead th {
+            text-align: left;
+            font-weight: 700;
+            border-bottom: 2px dashed #222;
+            white-space: nowrap;
+        }
+        .invoice-table .col-no { width: 4%; }
+        .invoice-table .col-name { width: 43%; }
+        .invoice-table .col-num { text-align: left; width: 17.67%; }
+        .invoice-table tbody tr:nth-child(2) td { padding-bottom: 12px; }
+        .invoice-table tfoot td {
+            border-top: 2px dashed #222;
+            font-weight: 700;
+            vertical-align: middle;
+        }
+        .tfoot-label { text-align: right; font-weight: 700; }
+        .tfoot-final { font-weight: 700; }
+
+        .sign-area {
+            position: absolute;
+            right: 38px;
+            bottom: 68px;
+            width: 280px;
+        }
+        .sign-box {
+            width: 100%;
+            text-align: center;
+            font-size: 16px;
+        }
+        .sign-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 2px;
+            letter-spacing: .2px;
+        }
+        .sign-image {
+            display: block;
+            width: 92px;
+            height: auto;
+            margin: 2px auto 4px;
+        }
+        .sign-line {
+            margin: 6px auto 4px;
+            width: 145px;
+            border-top: 2px solid #222;
+        }
+        .sign-name { font-size: 15px; }
+
+        @media print {
+            body { padding: 0; }
+            .paper { margin: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="paper">
+        <div class="header">
+            <div class="company-wrap">
+                <img src="${logoUrl}" alt="Rumah Kita Network" class="logo" />
+                <div>
+                    <p class="company-name">RUMAH KITA NETWORK</p>
+                    <p class="company-address">Jl. H. M. Yunus, Kebun Agung Selatan, Desa Taman Agung, Kalianda, Lampung Selatan, Lampung</p>
+                    <p class="company-address">Telp: +6285158025553</p>
+                </div>
+            </div>
+            <div class="invoice-title">INVOICE</div>
+        </div>
+        <div class="line"></div>
+
+        <div class="meta">
+            <table>
+                <tr><td class="label">Kepada Yth</td><td class="sep">:</td><td></td></tr>
+                <tr><td class="label">Nama</td><td class="sep">:</td><td>${customerName}</td></tr>
+                <tr><td class="label">Telp./HP</td><td class="sep">:</td><td>${customerPhone}</td></tr>
+                <tr><td class="label">Alamat</td><td class="sep">:</td><td>${customerAddress}</td></tr>
+            </table>
+            <table>
+                <tr><td class="label">No. Invoice</td><td class="sep">:</td><td>${invoiceNumber}</td></tr>
+                <tr><td class="label">Tangal Inv.</td><td class="sep">:</td><td>${issueDate}</td></tr>
+            </table>
+        </div>
+
+        <div class="table-wrap">
+            <div class="watermark">
+                <img src="${logoUrl}" alt="watermark" />
+            </div>
+            <table class="invoice-table">
+                <thead>
+                    <tr>
+                        <th class="col-no">No</th>
+                        <th class="col-name">Nama</th>
+                        <th class="col-num">Harga</th>
+                        <th class="col-num">PPN 11%</th>
+                        <th class="col-num">Jumlah</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowHtml}
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="2" class="tfoot-label">Jumlah</td>
+                        <td>${formatRupiah(baseTotal)}</td>
+                        <td>${formatRupiah(taxTotal)}</td>
+                        <td class="tfoot-final">${formatRupiah(grossTotal)}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <div class="sign-area">
+            <div class="sign-box">
+                <div class="sign-title">RUMAH KITA NETWORK</div>
+                <img src="${signatureUrl}" alt="Tanda Tangan" class="sign-image" />
+                <div class="sign-line"></div>
+                <div class="sign-name">Idza Ramaukim</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+            printWindow.print();
+        }, 400);
+    };
+
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
     };
@@ -175,6 +479,13 @@ function InvoicePage() {
                         <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-14 mx-auto mb-3" />
                         <h1 className="text-xl font-bold text-gray-900">Invoice Pembayaran</h1>
                         <p className="text-sm text-gray-500">#{invoice?.invoice_number || invoiceLink.slice(0, 8).toUpperCase()}</p>
+                        <button
+                            type="button"
+                            onClick={handlePrintInvoice}
+                            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium"
+                        >
+                            <Printer size={16} /> Cetak Invoice
+                        </button>
                     </div>
 
                     {/* Status Badge */}

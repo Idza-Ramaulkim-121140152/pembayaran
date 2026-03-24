@@ -34,6 +34,8 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'can_confirm_payments',
+        'can_edit_mutations',
     ];
 
     public function isSuperAdmin(): bool
@@ -81,6 +83,18 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'can_confirm_payments' => 'boolean',
+            'can_edit_mutations' => 'boolean',
         ];
+    }
+
+    public function canConfirmPayments(): bool
+    {
+        return $this->isSuperAdmin() || (bool) $this->can_confirm_payments;
+    }
+
+    public function canEditMutations(): bool
+    {
+        return $this->isSuperAdmin() || (bool) $this->can_edit_mutations;
     }
 }

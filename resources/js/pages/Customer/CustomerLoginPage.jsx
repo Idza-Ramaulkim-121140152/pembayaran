@@ -170,15 +170,6 @@ function CustomerLoginPage() {
                     </div>
                 </div>
 
-                {/* Admin Login Link */}
-                <div className="mt-6 text-center">
-                    <a 
-                        href="/login" 
-                        className="text-sm text-gray-500 hover:text-gray-700"
-                    >
-                        Login sebagai Admin →
-                    </a>
-                </div>
             </div>
         </div>
     );

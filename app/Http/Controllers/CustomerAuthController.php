@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Services\CustomerPortalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Session;
 
@@ -94,7 +95,7 @@ class CustomerAuthController extends Controller
     /**
      * Get customer dashboard data
      */
-    public function dashboard(Request $request)
+    public function dashboard(Request $request, CustomerPortalService $customerPortalService)
     {
         $customerId = Session::get('customer_id');
         
@@ -108,41 +109,18 @@ class CustomerAuthController extends Controller
         $customer = Customer::with(['odp'])->find($customerId);
         
         if (!$customer) {
+            Session::forget('customer_id');
+            Session::forget('customer_logged_in');
+
             return response()->json([
                 'success' => false,
                 'message' => 'Customer not found'
             ], 404);
         }
 
-        // Get invoice history
-        $invoices = $customer->invoices()
-            ->orderBy('created_at', 'desc')
-            ->take(12)
-            ->get();
-
-        // Get complaints
-        $complaints = $customer->complaints()
-            ->orderBy('created_at', 'desc')
-            ->take(10)
-            ->get();
-
-        return response()->json([
+        return response()->json(array_merge([
             'success' => true,
-            'customer' => [
-                'id' => $customer->id,
-                'nama' => $customer->nama,
-                'alamat' => $customer->alamat,
-                'no_telp' => $customer->no_telp,
-                'user_pppoe' => $customer->user_pppoe,
-                'paket' => $customer->paket,
-                'harga' => $customer->harga,
-                'tanggal_jatuh_tempo' => $customer->tanggal_jatuh_tempo,
-                'is_active' => $customer->is_active,
-                'odp' => $customer->odp ? $customer->odp->nama : null,
-            ],
-            'invoices' => $invoices,
-            'complaints' => $complaints,
-        ]);
+        ], $customerPortalService->buildDashboard($customer)));
     }
 
     /**

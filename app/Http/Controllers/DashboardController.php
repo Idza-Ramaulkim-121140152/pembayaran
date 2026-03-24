@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Invoice;
 use App\Models\Complaint;
+use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
@@ -83,6 +84,9 @@ class DashboardController extends Controller
 
     public function api()
     {
+        $ledgerService = app(FinancialLedgerService::class);
+        $financeSummary = $ledgerService->getSummary();
+
         // Ringkasan pendapatan bulan ini
         $now = Carbon::now();
         $startOfMonth = $now->copy()->startOfMonth();
@@ -173,6 +177,7 @@ class DashboardController extends Controller
                 'pending_complaints' => $pendingComplaints,
                 'in_progress_complaints' => $inProgressComplaints,
                 'total_active_complaints' => $totalActiveComplaints,
+                'finance_summary' => $financeSummary,
             ]
         ]);
     }

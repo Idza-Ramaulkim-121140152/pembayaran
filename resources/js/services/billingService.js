@@ -13,6 +13,10 @@ export const billingService = {
     confirmPayment: (invoiceId, paidAmount) => 
         apiClient.post(`/billing/invoice/${invoiceId}/confirm`, { paid_amount: paidAmount }),
 
+    // Update nominal invoice
+    updateInvoiceAmount: (invoiceId, amount) =>
+        apiClient.put(`/billing/invoice/${invoiceId}/amount`, { amount }),
+
     // Tolak pembayaran
     rejectPayment: (invoiceId, reason) => 
         apiClient.post(`/billing/invoice/${invoiceId}/reject`, { reason }),

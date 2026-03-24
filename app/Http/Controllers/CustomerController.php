@@ -103,6 +103,7 @@ class CustomerController extends Controller
         $customerData = $customer->toArray();
         $customerData['last_payment_date'] = $lastPaidInvoice ? \Carbon\Carbon::parse($lastPaidInvoice->paid_at)->format('Y-m-d') : null;
         $customerData['active_until'] = $activeUntil;
+        $customerData['home_router_password_configured'] = !empty($customer->getRawOriginal('home_router_password'));
         
         return response()->json(['data' => $customerData]);
     }
@@ -117,24 +118,8 @@ class CustomerController extends Controller
     public function update(Request $request, $customerId)
     {
         $customer = Customer::findOrFail($customerId);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'area_code' => 'nullable|string|max:10',
-            'activation_date' => 'nullable|date',
-            'due_date' => 'nullable|string|max:10',
-            'gender' => 'nullable|in:male,female,Pria,Wanita',
-            'address' => 'nullable|string',
-            'package_type' => 'nullable|string',
-            'custom_package' => 'nullable|string',
-            'pppoe_username' => 'nullable|string|max:64',
-            'odp' => 'nullable|string|max:64',
-            'phone' => 'nullable|string|max:20',
-            'installation_fee' => 'nullable|numeric',
-            'email' => 'nullable|email',
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
-            'is_active' => 'nullable',
-        ]);
+        $validated = $request->validate($this->customerValidationRules(false));
+        $validated = $this->normalizeHomeRouterInput($validated, $customer);
 
         $customer->update($validated);
         
@@ -172,24 +157,8 @@ class CustomerController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'area_code' => 'required|string|max:10',
-            'activation_date' => 'nullable|date',
-            'due_date' => 'nullable|string|max:10',
-            'gender' => 'nullable|in:male,female,Pria,Wanita',
-            'address' => 'nullable|string',
-            'package_type' => 'nullable|string',
-            'custom_package' => 'nullable|string',
-            'pppoe_username' => 'nullable|string|max:64',
-            'odp' => 'nullable|string|max:64',
-            'phone' => 'nullable|string|max:20',
-            'installation_fee' => 'nullable|numeric',
-            'email' => 'nullable|email',
-            'latitude' => 'nullable|numeric',
-            'longitude' => 'nullable|numeric',
-            'is_active' => 'nullable',
-        ]);
+        $validated = $request->validate($this->customerValidationRules(true));
+        $validated = $this->normalizeHomeRouterInput($validated);
 
         $validated['is_active'] = $validated['is_active'] ?? true;
         
@@ -461,5 +430,73 @@ class CustomerController extends Controller
             return response()->json(['message' => 'Customer deleted successfully']);
         }
         return redirect()->route('customers.list')->with('success', 'Pelanggan berhasil dihapus.');
+    }
+
+    private function customerValidationRules(bool $requireAreaCode): array
+    {
+        return [
+            'name' => 'required|string|max:255',
+            'area_code' => ($requireAreaCode ? 'required' : 'nullable') . '|string|max:10',
+            'activation_date' => 'nullable|date',
+            'due_date' => 'nullable|string|max:10',
+            'gender' => 'nullable|in:male,female,Pria,Wanita',
+            'address' => 'nullable|string',
+            'package_type' => 'nullable|string',
+            'custom_package' => 'nullable|string',
+            'pppoe_username' => 'nullable|string|max:64',
+            'odp' => 'nullable|string|max:64',
+            'phone' => 'nullable|string|max:20',
+            'installation_fee' => 'nullable|numeric',
+            'email' => 'nullable|email',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'is_active' => 'nullable|boolean',
+            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01',
+            'home_router_host' => 'nullable|string|max:255',
+            'home_router_port' => 'nullable|integer|min:1|max:65535',
+            'home_router_username' => 'nullable|string|max:255',
+            'home_router_password' => 'nullable|string|max:255',
+            'home_router_wan_interface' => 'nullable|string|max:64',
+            'home_router_monitoring_enabled' => 'nullable|boolean',
+        ];
+    }
+
+    private function normalizeHomeRouterInput(array $validated, ?Customer $customer = null): array
+    {
+        $nullableFields = [
+            'home_router_type',
+            'home_router_host',
+            'home_router_port',
+            'home_router_username',
+            'home_router_wan_interface',
+        ];
+
+        foreach ($nullableFields as $field) {
+            if (array_key_exists($field, $validated) && $validated[$field] === '') {
+                $validated[$field] = null;
+            }
+        }
+
+        if (isset($validated['home_router_type'])) {
+            $validated['home_router_type'] = strtolower((string) $validated['home_router_type']);
+        }
+
+        if (($validated['home_router_monitoring_enabled'] ?? false) && empty($validated['home_router_type'])) {
+            $validated['home_router_type'] = 'mikrotik';
+        }
+
+        if (($validated['home_router_monitoring_enabled'] ?? false) && empty($validated['home_router_port'])) {
+            $validated['home_router_port'] = 8728;
+        }
+
+        if (array_key_exists('home_router_password', $validated)) {
+            if ($validated['home_router_password'] === '' || $validated['home_router_password'] === null) {
+                unset($validated['home_router_password']);
+            }
+        } elseif ($customer && !empty($customer->getRawOriginal('home_router_password'))) {
+            unset($validated['home_router_password']);
+        }
+
+        return $validated;
     }
 }

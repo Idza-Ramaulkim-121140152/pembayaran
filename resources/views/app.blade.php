@@ -20,6 +20,7 @@
         window.appUser = @json(auth()->user()->name);
         window.appUserRole = @json(auth()->user()->role);
         window.appUserEmail = @json(auth()->user()->email);
+        window.appCanEditMutations = @json(auth()->user()->canEditMutations());
         window.isAuthenticated = true;
     </script>
     @else

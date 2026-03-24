@@ -27,6 +27,8 @@ function UserManagementPage() {
         email: '',
         password: '',
         role: 'admin',
+        can_confirm_payments: false,
+        can_edit_mutations: false,
     });
 
     useEffect(() => {
@@ -61,7 +63,7 @@ function UserManagementPage() {
 
     const openAddModal = () => {
         setEditingUser(null);
-        setFormData({ name: '', email: '', password: '', role: 'admin' });
+        setFormData({ name: '', email: '', password: '', role: 'admin', can_confirm_payments: false, can_edit_mutations: false });
         setShowPassword(false);
         setShowModal(true);
         setError(null);
@@ -69,7 +71,14 @@ function UserManagementPage() {
 
     const openEditModal = (user) => {
         setEditingUser(user);
-        setFormData({ name: user.name, email: user.email, password: '', role: user.role });
+        setFormData({
+            name: user.name,
+            email: user.email,
+            password: '',
+            role: user.role,
+            can_confirm_payments: !!user.can_confirm_payments,
+            can_edit_mutations: !!user.can_edit_mutations,
+        });
         setShowPassword(false);
         setShowModal(true);
         setError(null);
@@ -350,6 +359,30 @@ function UserManagementPage() {
                                     ))}
                                 </select>
                             </div>
+                            <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={!!formData.can_confirm_payments}
+                                    onChange={e => setFormData({ ...formData, can_confirm_payments: e.target.checked })}
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-800">Izinkan Konfirmasi Pembayaran</p>
+                                    <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat konfirmasi/menolak pembayaran invoice.</p>
+                                </div>
+                            </label>
+                            <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={!!formData.can_edit_mutations}
+                                    onChange={e => setFormData({ ...formData, can_edit_mutations: e.target.checked })}
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-800">Izinkan Edit Mutasi</p>
+                                    <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat tambah/edit/hapus mutasi.</p>
+                                </div>
+                            </label>
                             <div className="flex gap-3 pt-2">
                                 <button
                                     type="button"

@@ -22,6 +22,9 @@ return [
     
     'credentials_path' => env('GOOGLE_SHEETS_CREDENTIALS_PATH', storage_path('app/google-sheets-credentials.json')),
 
+    // Use only for local Windows SSL CA issues (cURL error 60).
+    'insecure_ssl' => env('GOOGLE_SHEETS_INSECURE_SSL', false),
+
     /*
     |--------------------------------------------------------------------------
     | Google Forms Configuration

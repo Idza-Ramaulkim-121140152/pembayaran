@@ -5,12 +5,17 @@ namespace App\Http\Controllers;
 use App\Models\PayrollMember;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
+use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PayrollController extends Controller
 {
+    public function __construct(private FinancialLedgerService $ledgerService)
+    {
+    }
+
     /**
      * Dashboard payroll: ringkasan gaji belum dibayar + daftar proyek
      */
@@ -279,6 +284,8 @@ class PayrollController extends Controller
                 'nominal' => $nominal,
                 'catatan' => $validated['catatan'] ?? null,
             ]);
+
+            $this->ledgerService->syncPayrollPayment($payment, auth()->id());
 
             $newRemaining = $remaining - $nominal;
 

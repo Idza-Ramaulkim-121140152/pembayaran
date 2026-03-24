@@ -108,6 +108,52 @@ class MikroTikService
     }
 
     /**
+     * Extract the first numeric counter available from a MikroTik response item.
+     */
+    private function extractNumericCounter(array $item, array $keys)
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $item) || $item[$key] === null || $item[$key] === '') {
+                continue;
+            }
+
+            $value = trim((string) $item[$key]);
+
+            if ($value !== '' && preg_match('/^-?\d+$/', $value)) {
+                return (int) $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Normalize common RouterOS yes/no and true/false values.
+     */
+    private function normalizeBooleanValue($value): ?bool
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+
+        if (in_array($normalized, ['true', 'yes', '1'], true)) {
+            return true;
+        }
+
+        if (in_array($normalized, ['false', 'no', '0'], true)) {
+            return false;
+        }
+
+        return null;
+    }
+
+    /**
      * Check if connection is still valid
      */
     public function isConnectionValid()
@@ -465,6 +511,30 @@ class MikroTikService
                 \Log::debug('MikroTik PPPoE Active Raw Response:', ['response' => $response1]);
                 
                 foreach ($response1 as $item) {
+                    $bytesIn = $this->extractNumericCounter($item, [
+                        'bytes-in',
+                        'bytes_in',
+                        'rx-byte',
+                        'input-byte',
+                        'input-bytes',
+                    ]);
+                    $bytesOut = $this->extractNumericCounter($item, [
+                        'bytes-out',
+                        'bytes_out',
+                        'tx-byte',
+                        'output-byte',
+                        'output-bytes',
+                    ]);
+                    $totalBytes = $this->extractNumericCounter($item, [
+                        'bytes',
+                        'total-bytes',
+                        'bytes-total',
+                    ]);
+
+                    if ($totalBytes === null && ($bytesIn !== null || $bytesOut !== null)) {
+                        $totalBytes = (int) (($bytesIn ?? 0) + ($bytesOut ?? 0));
+                    }
+
                     $connections[] = [
                         'id' => $item['.id'] ?? null,
                         'name' => $item['name'] ?? null,
@@ -476,6 +546,23 @@ class MikroTikService
                         'session_id' => $item['session-id'] ?? null,
                         'limit_bytes_in' => $item['limit-bytes-in'] ?? null,
                         'limit_bytes_out' => $item['limit-bytes-out'] ?? null,
+                        'bytes_in' => $bytesIn,
+                        'bytes_out' => $bytesOut,
+                        'total_bytes' => $totalBytes,
+                        'packets_in' => $this->extractNumericCounter($item, [
+                            'packets-in',
+                            'packets_in',
+                            'rx-packet',
+                            'input-packet',
+                            'input-packets',
+                        ]),
+                        'packets_out' => $this->extractNumericCounter($item, [
+                            'packets-out',
+                            'packets_out',
+                            'tx-packet',
+                            'output-packet',
+                            'output-packets',
+                        ]),
                         'source' => 'ppp-active'
                     ];
                 }
@@ -513,6 +600,11 @@ class MikroTikService
                                 'session_id' => null,
                                 'limit_bytes_in' => null,
                                 'limit_bytes_out' => null,
+                                'bytes_in' => null,
+                                'bytes_out' => null,
+                                'total_bytes' => null,
+                                'packets_in' => null,
+                                'packets_out' => null,
                                 'source' => 'pppoe-interface'
                             ];
                         }
@@ -573,6 +665,208 @@ class MikroTikService
             return $response[0]['name'] ?? 'Unknown';
         } catch (Exception $e) {
             return 'Unknown';
+        }
+    }
+
+    /**
+     * Get interface list, optionally including traffic statistics when available.
+     */
+    public function getInterfaces(bool $includeStats = false)
+    {
+        try {
+            $response = $includeStats
+                ? $this->command('/interface/print', ['stats' => ''])
+                : $this->command('/interface/print');
+
+            $interfaces = [];
+
+            foreach ($response as $item) {
+                $rxBytes = $this->extractNumericCounter($item, [
+                    'rx-byte',
+                    'rx-bytes',
+                    'driver-rx-byte',
+                    'driver-rx-bytes',
+                ]);
+                $txBytes = $this->extractNumericCounter($item, [
+                    'tx-byte',
+                    'tx-bytes',
+                    'driver-tx-byte',
+                    'driver-tx-bytes',
+                ]);
+
+                $interfaces[] = [
+                    'id' => $item['.id'] ?? null,
+                    'name' => $item['name'] ?? null,
+                    'type' => $item['type'] ?? null,
+                    'running' => $this->normalizeBooleanValue($item['running'] ?? null),
+                    'disabled' => $this->normalizeBooleanValue($item['disabled'] ?? null),
+                    'default_name' => $item['default-name'] ?? null,
+                    'slave' => $this->normalizeBooleanValue($item['slave'] ?? null),
+                    'dynamic' => $this->normalizeBooleanValue($item['dynamic'] ?? null),
+                    'comment' => $item['comment'] ?? null,
+                    'mac_address' => $item['mac-address'] ?? null,
+                    'actual_mtu' => $item['actual-mtu'] ?? null,
+                    'last_link_up_time' => $item['last-link-up-time'] ?? null,
+                    'last_link_down_time' => $item['last-link-down-time'] ?? null,
+                    'rx_bytes' => $rxBytes,
+                    'tx_bytes' => $txBytes,
+                    'total_bytes' => $rxBytes !== null || $txBytes !== null
+                        ? (int) (($rxBytes ?? 0) + ($txBytes ?? 0))
+                        : null,
+                ];
+            }
+
+            return $interfaces;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get interfaces: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get PPPoE client interfaces on the router.
+     */
+    public function getPPPoEClientInterfaces()
+    {
+        try {
+            $response = $this->command('/interface/pppoe-client/print');
+            $clients = [];
+
+            foreach ($response as $item) {
+                $clients[] = [
+                    'id' => $item['.id'] ?? null,
+                    'name' => $item['name'] ?? null,
+                    'running' => $this->normalizeBooleanValue($item['running'] ?? null),
+                    'disabled' => $this->normalizeBooleanValue($item['disabled'] ?? null),
+                    'interface' => $item['interface'] ?? null,
+                    'service_name' => $item['service-name'] ?? null,
+                    'user' => $item['user'] ?? null,
+                    'profile' => $item['profile'] ?? null,
+                    'uptime' => $item['uptime'] ?? null,
+                    'status' => $item['status'] ?? null,
+                    'add_default_route' => $this->normalizeBooleanValue($item['add-default-route'] ?? null),
+                    'remote_address' => $item['remote-address'] ?? null,
+                    'local_address' => $item['local-address'] ?? null,
+                ];
+            }
+
+            return $clients;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get PPPoE client interfaces: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get DHCP client interfaces on the router.
+     */
+    public function getDhcpClients()
+    {
+        try {
+            $response = $this->command('/ip/dhcp-client/print');
+            $clients = [];
+
+            foreach ($response as $item) {
+                $clients[] = [
+                    'id' => $item['.id'] ?? null,
+                    'interface' => $item['interface'] ?? null,
+                    'status' => $item['status'] ?? null,
+                    'disabled' => $this->normalizeBooleanValue($item['disabled'] ?? null),
+                    'add_default_route' => $this->normalizeBooleanValue($item['add-default-route'] ?? null),
+                    'use_peer_dns' => $this->normalizeBooleanValue($item['use-peer-dns'] ?? null),
+                    'address' => $item['address'] ?? null,
+                    'gateway' => $item['gateway'] ?? null,
+                ];
+            }
+
+            return $clients;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get DHCP clients: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get DHCP leases from the router.
+     */
+    public function getDhcpLeases()
+    {
+        try {
+            $response = $this->command('/ip/dhcp-server/lease/print');
+            $leases = [];
+
+            foreach ($response as $item) {
+                $leases[] = [
+                    'id' => $item['.id'] ?? null,
+                    'address' => $item['address'] ?? null,
+                    'mac_address' => $item['mac-address'] ?? null,
+                    'host_name' => $item['host-name'] ?? null,
+                    'server' => $item['server'] ?? null,
+                    'status' => $item['status'] ?? null,
+                    'dynamic' => $this->normalizeBooleanValue($item['dynamic'] ?? null),
+                    'disabled' => $this->normalizeBooleanValue($item['disabled'] ?? null),
+                    'blocked' => $this->normalizeBooleanValue($item['blocked'] ?? null),
+                    'active_address' => $item['active-address'] ?? null,
+                    'active_mac_address' => $item['active-mac-address'] ?? null,
+                ];
+            }
+
+            return $leases;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get DHCP leases: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get bridge host entries from the router.
+     */
+    public function getBridgeHosts()
+    {
+        try {
+            $response = $this->command('/interface/bridge/host/print');
+            $hosts = [];
+
+            foreach ($response as $item) {
+                $hosts[] = [
+                    'id' => $item['.id'] ?? null,
+                    'bridge' => $item['bridge'] ?? null,
+                    'interface' => $item['interface'] ?? null,
+                    'on_interface' => $item['on-interface'] ?? null,
+                    'mac_address' => $item['mac-address'] ?? null,
+                    'local' => $this->normalizeBooleanValue($item['local'] ?? null),
+                    'dynamic' => $this->normalizeBooleanValue($item['dynamic'] ?? null),
+                    'age' => $item['age'] ?? null,
+                ];
+            }
+
+            return $hosts;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get bridge hosts: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get ARP table entries from the router.
+     */
+    public function getArpEntries()
+    {
+        try {
+            $response = $this->command('/ip/arp/print');
+            $entries = [];
+
+            foreach ($response as $item) {
+                $entries[] = [
+                    'id' => $item['.id'] ?? null,
+                    'address' => $item['address'] ?? null,
+                    'mac_address' => $item['mac-address'] ?? null,
+                    'interface' => $item['interface'] ?? null,
+                    'dynamic' => $this->normalizeBooleanValue($item['dynamic'] ?? null),
+                    'complete' => $this->normalizeBooleanValue($item['complete'] ?? null),
+                    'disabled' => $this->normalizeBooleanValue($item['disabled'] ?? null),
+                    'published' => $this->normalizeBooleanValue($item['published'] ?? null),
+                ];
+            }
+
+            return $entries;
+        } catch (Exception $e) {
+            throw new Exception("Failed to get ARP entries: " . $e->getMessage());
         }
     }
 

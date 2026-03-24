@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Google\Auth\Credentials\ServiceAccountCredentials;
+use Google\Auth\HttpHandler\HttpHandlerFactory;
 use GuzzleHttp\Client as HttpClient;
 use Exception;
 use App\Models\Customer;
@@ -25,14 +26,59 @@ class GoogleSheetsService
         $this->range = config('google.range', 'Sheet1!A:R');
         $this->skipRows = (int) config('google.skip_rows', 0); // Skip old data rows
 
-        $credentialsPath = config('google.credentials_path', storage_path('app/google-sheets-credentials.json'));
-        
-        if (!file_exists($credentialsPath)) {
-            throw new Exception('Google Sheets credentials file not found: ' . $credentialsPath);
+        $credentialsPath = $this->resolveCredentialsPath(
+            config('google.credentials_path', storage_path('app/google-sheets-credentials.json'))
+        );
+
+        if (!$credentialsPath || !file_exists($credentialsPath)) {
+            throw new Exception('Google Sheets credentials file not found. Checked path: ' . (string) config('google.credentials_path'));
         }
 
-        $this->httpClient = new HttpClient();
+        $this->httpClient = new HttpClient([
+            'verify' => !$this->shouldUseInsecureSsl(),
+        ]);
         $this->accessToken = $this->getAccessToken($credentialsPath);
+    }
+
+    private function shouldUseInsecureSsl(): bool
+    {
+        return (bool) config('google.insecure_ssl', false);
+    }
+
+    /**
+     * Resolve credentials path from .env with safe fallbacks.
+     */
+    private function resolveCredentialsPath(?string $configuredPath): ?string
+    {
+        $fallback = storage_path('app/google-sheets-credentials.json');
+
+        $candidates = [];
+
+        if (!empty($configuredPath)) {
+            $normalized = str_replace(['"', "'"], '', trim($configuredPath));
+            $normalized = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $normalized);
+
+            $candidates[] = $normalized;
+
+            // Handle absolute-like paths from another OS, e.g. /var/www/... on Windows
+            $trimmed = ltrim($normalized, DIRECTORY_SEPARATOR);
+            if ($trimmed !== $normalized) {
+                $candidates[] = base_path($trimmed);
+            }
+
+            // Handle relative paths like storage/app/...
+            $candidates[] = base_path($normalized);
+        }
+
+        $candidates[] = $fallback;
+
+        foreach ($candidates as $path) {
+            if ($path && file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -45,7 +91,13 @@ class GoogleSheetsService
         $scope = 'https://www.googleapis.com/auth/spreadsheets.readonly';
         
         $serviceAccount = new ServiceAccountCredentials($scope, $credentials);
-        $token = $serviceAccount->fetchAuthToken();
+        if ($this->shouldUseInsecureSsl()) {
+            $insecureClient = new HttpClient(['verify' => false]);
+            $httpHandler = HttpHandlerFactory::build($insecureClient);
+            $token = $serviceAccount->fetchAuthToken($httpHandler);
+        } else {
+            $token = $serviceAccount->fetchAuthToken();
+        }
         
         if (isset($token['access_token'])) {
             return $token['access_token'];

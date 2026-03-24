@@ -4,7 +4,35 @@ import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle } from 'lucide-rea
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
+import { HOME_ROUTER_OPTIONS, getHomeRouterPreset } from '../../constants/homeRouterPresets';
 import odpService from '../../services/odpService';
+
+const DEFAULT_FORM_DATA = {
+    google_sheets_timestamp: '',
+    name: '',
+    area_code: '',
+    email: '',
+    phone: '',
+    address: '',
+    gender: '',
+    package_type: '',
+    custom_package: '',
+    activation_date: '',
+    due_date: '',
+    pppoe_username: '',
+    home_router_type: 'mikrotik',
+    home_router_host: '',
+    home_router_port: '8728',
+    home_router_username: '',
+    home_router_password: '',
+    home_router_wan_interface: '',
+    home_router_monitoring_enabled: false,
+    odp: '',
+    installation_fee: '',
+    is_active: true,
+    latitude: '',
+    longitude: '',
+};
 
 function CustomerVerificationForm() {
     const { timestamp } = useParams();
@@ -20,25 +48,8 @@ function CustomerVerificationForm() {
     const [secretInfo, setSecretInfo] = useState(null);
     const [showSecretModal, setShowSecretModal] = useState(false);
 
-    const [formData, setFormData] = useState({
-        google_sheets_timestamp: '',
-        name: '',
-        area_code: '',
-        email: '',
-        phone: '',
-        address: '',
-        gender: '',
-        package_type: '',
-        custom_package: '',
-        activation_date: '',
-        due_date: '',
-        pppoe_username: '',
-        odp: '',
-        installation_fee: '',
-        is_active: true,
-        latitude: '',
-        longitude: '',
-    });
+    const [formData, setFormData] = useState(DEFAULT_FORM_DATA);
+    const selectedRouterPreset = getHomeRouterPreset(formData.home_router_type);
 
     useEffect(() => {
         fetchOdpList();
@@ -88,7 +99,10 @@ function CustomerVerificationForm() {
                 sanitizedData[key] = data.customer_data[key] ?? '';
             }
             
-            setFormData(sanitizedData);
+            setFormData({
+                ...DEFAULT_FORM_DATA,
+                ...sanitizedData,
+            });
             setSheetsReference(data.sheets_reference);
         } catch (err) {
             setError(err.message || 'Gagal memuat data pelanggan');
@@ -111,6 +125,27 @@ function CustomerVerificationForm() {
                 [name]: value,
                 due_date: dueDate,
             }));
+            return;
+        }
+
+        if (name === 'home_router_type') {
+            const nextPreset = getHomeRouterPreset(value);
+
+            setFormData((prev) => {
+                const currentPreset = getHomeRouterPreset(prev.home_router_type);
+                const shouldReplacePort = !prev.home_router_port || prev.home_router_port === currentPreset.defaultPort;
+                const shouldReplaceUsername = !prev.home_router_username || prev.home_router_username === currentPreset.defaultUsername;
+                const shouldReplacePassword = !prev.home_router_password || prev.home_router_password === currentPreset.defaultPassword;
+
+                return {
+                    ...prev,
+                    home_router_type: value,
+                    home_router_port: shouldReplacePort ? nextPreset.defaultPort : prev.home_router_port,
+                    home_router_username: shouldReplaceUsername ? nextPreset.defaultUsername : prev.home_router_username,
+                    home_router_password: shouldReplacePassword ? nextPreset.defaultPassword : prev.home_router_password,
+                };
+            });
+
             return;
         }
         
@@ -474,6 +509,122 @@ function CustomerVerificationForm() {
                                 />
                                 <p className="text-xs text-gray-500 mt-1">Tanggal jatuh tempo otomatis +30 hari dari tanggal aktivasi</p>
                             </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">Router Rumah Pelanggan</h2>
+                                <p className="mt-1 text-sm text-gray-600">
+                                    Opsional, tapi disarankan jika portal pelanggan ingin menampilkan traffic WAN dan jumlah perangkat langsung dari rumah.
+                                </p>
+                            </div>
+                            <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
+                                <input
+                                    type="checkbox"
+                                    name="home_router_monitoring_enabled"
+                                    checked={formData.home_router_monitoring_enabled}
+                                    onChange={handleChange}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                                />
+                                <span className="text-sm font-medium text-gray-700">Monitoring router rumah aktif</span>
+                            </label>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Tipe Router
+                                </label>
+                                <select
+                                    name="home_router_type"
+                                    value={formData.home_router_type}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                    {HOME_ROUTER_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="mt-1 text-xs text-gray-500">{selectedRouterPreset.helper}</p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Host / IP Router
+                                </label>
+                                <input
+                                    type="text"
+                                    name="home_router_host"
+                                    value={formData.home_router_host}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="192.168.88.1"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Port API
+                                </label>
+                                <input
+                                    type="number"
+                                    name="home_router_port"
+                                    value={formData.home_router_port}
+                                    onChange={handleChange}
+                                    min="1"
+                                    max="65535"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="8728"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Username API
+                                </label>
+                                <input
+                                    type="text"
+                                    name="home_router_username"
+                                    value={formData.home_router_username}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="admin"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Password API
+                                </label>
+                                <input
+                                    type="password"
+                                    name="home_router_password"
+                                    value={formData.home_router_password}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Password router"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Interface WAN
+                                </label>
+                                <input
+                                    type="text"
+                                    name="home_router_wan_interface"
+                                    value={formData.home_router_wan_interface}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="pppoe-out1"
+                                />
+                                <p className="mt-1 text-xs text-gray-500">Opsional. Kosongkan jika ingin dideteksi otomatis.</p>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 rounded-2xl border border-dashed border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                            {selectedRouterPreset.managementMode === 'api'
+                                ? 'Monitoring langsung dari router rumah paling akurat jika pelanggan memakai MikroTik dengan API port 8728 yang bisa dijangkau server.'
+                                : 'Untuk router web-managed seperti VSOL/GL-01, portal akan probe panel admin dan menyiapkan pembacaan status model-specific.'}
                         </div>
                     </div>
 

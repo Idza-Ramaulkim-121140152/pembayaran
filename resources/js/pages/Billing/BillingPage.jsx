@@ -7,6 +7,9 @@ import Modal from '../../components/common/Modal';
 import billingService from '../../services/billingService';
 
 function BillingPage() {
+    const userRole = window.appUserRole || 'admin';
+    const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
+
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -17,13 +20,16 @@ function BillingPage() {
     // Modal states
     const [createModal, setCreateModal] = useState({ open: false, customer: null });
     const [confirmModal, setConfirmModal] = useState({ open: false, invoice: null, customer: null });
+    const [permissionModal, setPermissionModal] = useState({ open: false, message: '' });
     const [rejectModal, setRejectModal] = useState({ open: false, invoice: null });
     const [linkModal, setLinkModal] = useState({ open: false, invoice: null, customer: null });
     const [resultModal, setResultModal] = useState({ open: false, data: null });
+    const [editAmountModal, setEditAmountModal] = useState({ open: false, invoice: null, customer: null });
     
     // Form states
     const [amount, setAmount] = useState('');
     const [paidAmount, setPaidAmount] = useState('');
+    const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
     const [rejectReason, setRejectReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
 
@@ -115,7 +121,19 @@ function BillingPage() {
             setSuccess(data.message || 'Pembayaran berhasil dikonfirmasi');
             fetchBillingData();
         } catch (err) {
-            setError(err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran');
+            const status = err.response?.status;
+            const message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
+
+            if (status === 403) {
+                setConfirmModal({ open: false, invoice: null, customer: null });
+                setPaidAmount('');
+                setPermissionModal({
+                    open: true,
+                    message: message || 'Anda tidak diizinkan melakukan konfirmasi pembayaran.',
+                });
+            } else {
+                setError(message);
+            }
         } finally {
             setSubmitting(false);
         }
@@ -132,6 +150,29 @@ function BillingPage() {
             fetchBillingData();
         } catch (err) {
             setError(err.response?.data?.error || 'Gagal menolak pembayaran');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleUpdateInvoiceAmount = async (e) => {
+        e.preventDefault();
+
+        const numericAmount = newInvoiceAmount ? parseInt(newInvoiceAmount.toString().replace(/[^\d]/g, ''), 10) : 0;
+        if (!numericAmount || numericAmount <= 0) {
+            setError('Nominal invoice harus lebih dari 0');
+            return;
+        }
+
+        try {
+            setSubmitting(true);
+            const response = await billingService.updateInvoiceAmount(editAmountModal.invoice.id, numericAmount);
+            setSuccess(response.data?.message || 'Nominal invoice berhasil diperbarui');
+            setEditAmountModal({ open: false, invoice: null, customer: null });
+            setNewInvoiceAmount('');
+            fetchBillingData();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memperbarui nominal invoice');
         } finally {
             setSubmitting(false);
         }
@@ -379,6 +420,20 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     <Eye size={14} className="mr-1" />
                                     <span className="hidden sm:inline">Lihat</span>
                                 </Button>
+                                {canEditInvoiceAmount && (
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => {
+                                            setEditAmountModal({ open: true, invoice, customer });
+                                            const amount = parseFloat(invoice.amount);
+                                            setNewInvoiceAmount(isNaN(amount) ? '' : Math.round(amount).toString());
+                                        }}
+                                    >
+                                        <FileText size={14} className="mr-1" />
+                                        <span className="hidden sm:inline">Nominal</span>
+                                    </Button>
+                                )}
                                 {invoice.status === 'menunggu konfirmasi' && invoice.bukti_pembayaran && (
                                     <Button
                                         size="sm"
@@ -591,6 +646,30 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 )}
             </Modal>
 
+            {/* Unauthorized Confirm Payment Modal */}
+            <Modal
+                isOpen={permissionModal.open}
+                onClose={() => setPermissionModal({ open: false, message: '' })}
+                title="Akses Ditolak"
+            >
+                <div className="space-y-4">
+                    <div className="bg-red-50 rounded-lg p-4">
+                        <p className="text-sm text-red-700">
+                            {permissionModal.message || 'Anda tidak diizinkan melakukan konfirmasi pembayaran.'}
+                        </p>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setPermissionModal({ open: false, message: '' })}
+                        >
+                            Tutup
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
+
             {/* Reject Payment Modal */}
             <Modal
                 isOpen={rejectModal.open}
@@ -668,6 +747,45 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             </Button>
                         </div>
                     </div>
+                )}
+            </Modal>
+
+            {/* Edit Invoice Amount Modal */}
+            <Modal
+                isOpen={editAmountModal.open}
+                onClose={() => setEditAmountModal({ open: false, invoice: null, customer: null })}
+                title="Ubah Nominal Invoice"
+            >
+                {editAmountModal.invoice && (
+                    <form onSubmit={handleUpdateInvoiceAmount} className="space-y-4">
+                        <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">
+                            <p className="font-semibold text-gray-900">{editAmountModal.customer?.name || '-'}</p>
+                            <p>Status invoice: {editAmountModal.invoice.status}</p>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Baru</label>
+                            <input
+                                type="text"
+                                value={formatNumberWithComma(newInvoiceAmount)}
+                                onChange={(e) => handleAmountChange(e, setNewInvoiceAmount)}
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Masukkan nominal"
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => setEditAmountModal({ open: false, invoice: null, customer: null })}
+                            >
+                                Batal
+                            </Button>
+                            <Button type="submit" variant="primary" disabled={submitting}>
+                                {submitting ? 'Menyimpan...' : 'Simpan Nominal'}
+                            </Button>
+                        </div>
+                    </form>
                 )}
             </Modal>
         </div>

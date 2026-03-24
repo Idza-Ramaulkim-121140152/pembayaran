@@ -21,6 +21,7 @@ use App\Http\Controllers\PayrollController;
 use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\PackageController;
 use App\Http\Controllers\UserManagementController;
+use App\Http\Controllers\FinancialTransactionController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -186,8 +187,16 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');
         Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->name('api.billing.confirm');
         Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->name('api.billing.reject');
+        Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->name('api.billing.update-amount');
         Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
+
+        // Unified finance transactions
+        Route::get('/api/finance/transactions', [FinancialTransactionController::class, 'index'])->name('api.finance.transactions.index');
+        Route::post('/api/finance/manual-income', [FinancialTransactionController::class, 'storeManualIncome'])->name('api.finance.manual-income.store');
+        Route::post('/api/finance/balance-adjustments', [FinancialTransactionController::class, 'adjustBalance'])->name('api.finance.adjustments.store');
+        Route::put('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'update'])->name('api.finance.transactions.update');
+        Route::delete('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'destroy'])->name('api.finance.transactions.destroy');
 
         // Pengeluaran API
         Route::get('/api/pengeluaran', [PengeluaranController::class, 'apiIndex'])->name('api.pengeluaran.index');

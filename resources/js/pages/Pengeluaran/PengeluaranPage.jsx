@@ -15,14 +15,96 @@ const KATEGORI_OPTIONS = [
     'Lainnya'
 ];
 
+function PengeluaranForm({
+    onSubmit,
+    isEdit = false,
+    formData,
+    setFormData,
+    handleInputChange,
+    submitting,
+    onCancel,
+}) {
+    return (
+        <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal *</label>
+                <input
+                    type="date"
+                    name="tanggal"
+                    value={formData.tanggal}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Jumlah (Rp) *</label>
+                <input
+                    type="number"
+                    inputMode="numeric"
+                    name="jumlah"
+                    value={formData.jumlah}
+                    onChange={(e) => {
+                        const value = e.target.value.replace(/[^0-9]/g, '');
+                        setFormData(prev => ({ ...prev, jumlah: value }));
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                        }
+                    }}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="0"
+                    min="0"
+                />
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kategori *</label>
+                <select
+                    name="kategori"
+                    value={formData.kategori}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                    {KATEGORI_OPTIONS.map(kat => (
+                        <option key={kat} value={kat}>{kat}</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Detail/Keterangan</label>
+                <textarea
+                    name="detail"
+                    value={formData.detail}
+                    onChange={handleInputChange}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Keterangan pengeluaran..."
+                />
+            </div>
+            <div className="flex justify-end gap-2 pt-4">
+                <Button type="button" variant="secondary" onClick={onCancel}>
+                    Batal
+                </Button>
+                <Button type="submit" variant="primary" disabled={submitting}>
+                    {submitting ? 'Menyimpan...' : isEdit ? 'Update' : 'Simpan'}
+                </Button>
+            </div>
+        </form>
+    );
+}
+
 function PengeluaranPage() {
+    const currentMonth = new Date().toISOString().slice(0, 7);
     const [pengeluarans, setPengeluarans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [search, setSearch] = useState('');
     const [filterKategori, setFilterKategori] = useState('');
-    const [filterMonth, setFilterMonth] = useState('');
+    const [filterMonth, setFilterMonth] = useState(currentMonth);
     
     // Modal states
     const [createModal, setCreateModal] = useState(false);
@@ -75,7 +157,7 @@ function PengeluaranPage() {
             setSubmitting(true);
             const data = {
                 ...formData,
-                jumlah: formData.jumlah.toString().replace(/,/g, ''),
+                jumlah: formData.jumlah.toString().replace(/[^0-9]/g, ''),
             };
             await pengeluaranService.create(data);
             setCreateModal(false);
@@ -95,7 +177,7 @@ function PengeluaranPage() {
             setSubmitting(true);
             const data = {
                 ...formData,
-                jumlah: formData.jumlah.toString().replace(/,/g, ''),
+                jumlah: formData.jumlah.toString().replace(/[^0-9]/g, ''),
             };
             await pengeluaranService.update(editModal.item.id, data);
             setEditModal({ open: false, item: null });
@@ -163,77 +245,6 @@ function PengeluaranPage() {
             </div>
         );
     }
-
-    const PengeluaranForm = ({ onSubmit, isEdit = false }) => (
-        <form onSubmit={onSubmit} className="space-y-4">
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal *</label>
-                <input
-                    type="date"
-                    name="tanggal"
-                    value={formData.tanggal}
-                    onChange={handleInputChange}
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Jumlah (Rp) *</label>
-                <input
-                    type="text"
-                    name="jumlah"
-                    value={formData.jumlah}
-                    onChange={(e) => {
-                        const value = e.target.value.replace(/[^0-9]/g, '');
-                        setFormData(prev => ({ ...prev, jumlah: value ? parseInt(value).toLocaleString('id-ID') : '' }));
-                    }}
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="0"
-                />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Kategori *</label>
-                <select
-                    name="kategori"
-                    value={formData.kategori}
-                    onChange={handleInputChange}
-                    required
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                    {KATEGORI_OPTIONS.map(kat => (
-                        <option key={kat} value={kat}>{kat}</option>
-                    ))}
-                </select>
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Detail/Keterangan</label>
-                <textarea
-                    name="detail"
-                    value={formData.detail}
-                    onChange={handleInputChange}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="Keterangan pengeluaran..."
-                />
-            </div>
-            <div className="flex justify-end gap-2 pt-4">
-                <Button 
-                    type="button" 
-                    variant="secondary" 
-                    onClick={() => {
-                        isEdit ? setEditModal({ open: false, item: null }) : setCreateModal(false);
-                        resetForm();
-                    }}
-                >
-                    Batal
-                </Button>
-                <Button type="submit" variant="primary" disabled={submitting}>
-                    {submitting ? 'Menyimpan...' : isEdit ? 'Update' : 'Simpan'}
-                </Button>
-            </div>
-        </form>
-    );
 
     return (
         <div className="space-y-6">
@@ -315,6 +326,16 @@ function PengeluaranPage() {
                         />
                     </div>
                 </div>
+                <div className="mt-3 flex items-center justify-between text-sm text-gray-500">
+                    <span>Menampilkan data: {filterMonth ? new Date(`${filterMonth}-01`).toLocaleDateString('id-ID', { month: 'long', year: 'numeric' }) : 'Semua bulan'}</span>
+                    <button
+                        type="button"
+                        onClick={() => setFilterMonth(currentMonth)}
+                        className="text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                        Kembali ke bulan ini
+                    </button>
+                </div>
             </div>
 
             {/* Table */}
@@ -386,12 +407,33 @@ function PengeluaranPage() {
 
             {/* Create Modal */}
             <Modal isOpen={createModal} onClose={() => { setCreateModal(false); resetForm(); }} title="Catat Pengeluaran Baru">
-                <PengeluaranForm onSubmit={handleCreate} />
+                <PengeluaranForm
+                    onSubmit={handleCreate}
+                    formData={formData}
+                    setFormData={setFormData}
+                    handleInputChange={handleInputChange}
+                    submitting={submitting}
+                    onCancel={() => {
+                        setCreateModal(false);
+                        resetForm();
+                    }}
+                />
             </Modal>
 
             {/* Edit Modal */}
             <Modal isOpen={editModal.open} onClose={() => { setEditModal({ open: false, item: null }); resetForm(); }} title="Edit Pengeluaran">
-                <PengeluaranForm onSubmit={handleEdit} isEdit />
+                <PengeluaranForm
+                    onSubmit={handleEdit}
+                    isEdit
+                    formData={formData}
+                    setFormData={setFormData}
+                    handleInputChange={handleInputChange}
+                    submitting={submitting}
+                    onCancel={() => {
+                        setEditModal({ open: false, item: null });
+                        resetForm();
+                    }}
+                />
             </Modal>
 
             {/* Delete Confirmation Modal */}

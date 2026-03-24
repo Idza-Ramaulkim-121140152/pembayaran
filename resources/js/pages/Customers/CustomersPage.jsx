@@ -13,6 +13,8 @@ import Button from '../../components/common/Button';
 import customerService from '../../services/customerService';
 
 function CustomersPage() {
+    const userRole = window.appUserRole || 'admin';
+    const isTeknisi = userRole === 'teknisi';
     const [customers, setCustomers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -268,13 +270,15 @@ function CustomersPage() {
                     <p className="text-gray-600 mt-1">Total {customers.length} pelanggan terdaftar</p>
                 </div>
                 <div className="flex gap-2">
-                    <button
-                        onClick={handleExport}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition"
-                    >
-                        <Download size={20} />
-                        Export Data
-                    </button>
+                    {!isTeknisi && (
+                        <button
+                            onClick={handleExport}
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition"
+                        >
+                            <Download size={20} />
+                            Export Data
+                        </button>
+                    )}
                     <Link to="/customer-verification">
                         <Button className="flex items-center gap-2">
                             <Plus size={20} />
