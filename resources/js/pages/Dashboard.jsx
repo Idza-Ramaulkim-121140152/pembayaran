@@ -325,6 +325,9 @@ function Dashboard() {
     const percentageChange = getPercentageChange();
     const isPositive = percentageChange >= 0;
     const financeSummary = stats?.finance_summary || { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 };
+    const monthlyInstallations = Number(
+        stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
+    );
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', {
@@ -642,7 +645,7 @@ function Dashboard() {
 
             {/* Stats Grid */}
             {stats && (
-                <div className={`grid grid-cols-2 ${isFinance ? 'lg:grid-cols-3' : isTeknisi ? 'lg:grid-cols-3' : 'lg:grid-cols-5'} gap-4 md:gap-6`}>
+                <div className={`grid grid-cols-2 ${isFinance ? 'lg:grid-cols-3' : isTeknisi ? 'lg:grid-cols-4' : 'lg:grid-cols-6'} gap-4 md:gap-6`}>
                     {/* Total Customers */}
                     {!isFinance && (
                         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-5 md:p-6 text-white shadow-lg shadow-blue-500/30 relative overflow-hidden">
@@ -695,6 +698,23 @@ function Dashboard() {
                                 <p className="text-violet-100 text-sm font-medium">Pendapatan Bulan Ini</p>
                                 <p className="text-2xl md:text-3xl font-bold mt-1">
                                     Rp {new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+
+                    {!isFinance && (
+                        <div className="bg-gradient-to-br from-cyan-500 to-sky-600 rounded-2xl p-5 md:p-6 text-white shadow-lg shadow-cyan-500/30 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+                            <div className="relative">
+                                <div className="flex items-center gap-3 mb-3">
+                                    <div className="bg-white/20 backdrop-blur-sm p-2.5 rounded-xl">
+                                        <TrendingUp size={22} />
+                                    </div>
+                                </div>
+                                <p className="text-cyan-100 text-sm font-medium">Pemasangan Bulan Ini</p>
+                                <p className="text-3xl md:text-4xl font-bold mt-1">
+                                    {monthlyInstallations}
                                 </p>
                             </div>
                         </div>

@@ -103,7 +103,7 @@ class BillingController extends Controller
                             $oldDue = \Carbon\Carbon::parse($invoice->due_date);
                             $customer->due_date = $oldDue->copy()->addDays(32)->format('Y-m-d');
                         } else {
-                            $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                            $customer->due_date = now()->addDays(30)->format('Y-m-d');
                         }
                     }
                     
@@ -116,7 +116,7 @@ class BillingController extends Controller
                     
                     if ($invoice->due_date) {
                         $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                        $customer->due_date = $oldDue->copy()->addDays(32)->format('Y-m-d');
+                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
                     } else {
                         $customer->due_date = now()->addDays(32)->format('Y-m-d');
                     }

@@ -5,12 +5,24 @@ namespace App\Http\Controllers;
 
 use App\Models\Invoice;
 use App\Models\Complaint;
+use App\Models\Customer;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
+    private function countNewInstallationsForPeriod(Carbon $start, Carbon $end): int
+    {
+        return Customer::where(function ($query) use ($start, $end) {
+            $query->whereBetween('activation_date', [$start, $end])
+                ->orWhere(function ($fallbackQuery) use ($start, $end) {
+                    $fallbackQuery->whereNull('activation_date')
+                        ->whereBetween('created_at', [$start, $end]);
+                });
+        })->count();
+    }
+
     public function index()
     {
         // Ringkasan pendapatan bulan ini
@@ -36,7 +48,7 @@ class DashboardController extends Controller
         $monthlyIncome = [];
         $monthLabels = [];
         for ($i = 11; $i >= 0; $i--) {
-            $month = $now->copy()->subMonths($i);
+            $month = $now->copy()->startOfMonth()->subMonths($i);
             $start = $month->copy()->startOfMonth();
             $end = $month->copy()->endOfMonth();
             $income = Invoice::whereBetween('paid_at', [$start, $end])
@@ -50,10 +62,10 @@ class DashboardController extends Controller
         $monthlyInstalls = [];
         $installLabels = [];
         for ($i = 11; $i >= 0; $i--) {
-            $month = $now->copy()->subMonths($i);
+            $month = $now->copy()->startOfMonth()->subMonths($i);
             $start = $month->copy()->startOfMonth();
             $end = $month->copy()->endOfMonth();
-            $count = \App\Models\Customer::whereBetween('activation_date', [$start, $end])->count();
+            $count = $this->countNewInstallationsForPeriod($start, $end);
             $monthlyInstalls[] = $count;
             $installLabels[] = $month->format('M Y');
         }
@@ -113,7 +125,7 @@ class DashboardController extends Controller
         // Revenue untuk 6 bulan terakhir
         $revenueByMonth = [];
         for ($i = 5; $i >= 0; $i--) {
-            $month = $now->copy()->subMonths($i);
+            $month = $now->copy()->startOfMonth()->subMonths($i);
             $start = $month->copy()->startOfMonth();
             $end = $month->copy()->endOfMonth();
             $revenue = \App\Models\Invoice::whereBetween('paid_at', [$start, $end])
@@ -125,12 +137,14 @@ class DashboardController extends Controller
         // Pemasangan baru untuk 6 bulan terakhir
         $newInstallations = [];
         for ($i = 5; $i >= 0; $i--) {
-            $month = $now->copy()->subMonths($i);
+            $month = $now->copy()->startOfMonth()->subMonths($i);
             $start = $month->copy()->startOfMonth();
             $end = $month->copy()->endOfMonth();
-            $count = \App\Models\Customer::whereBetween('activation_date', [$start, $end])->count();
+            $count = $this->countNewInstallationsForPeriod($start, $end);
             $newInstallations[] = (int) $count;
         }
+
+        $monthlyInstallations = $this->countNewInstallationsForPeriod($startOfMonth, $endOfMonth);
 
         // Complaint statistics
         $pendingComplaints = Complaint::where('status', 'pending')->count();
@@ -174,6 +188,7 @@ class DashboardController extends Controller
                 'recent_customers' => $recentCustomers,
                 'revenue_by_month' => $revenueByMonth,
                 'new_installations' => $newInstallations,
+                'monthly_installations' => (int) $monthlyInstallations,
                 'pending_complaints' => $pendingComplaints,
                 'in_progress_complaints' => $inProgressComplaints,
                 'total_active_complaints' => $totalActiveComplaints,
