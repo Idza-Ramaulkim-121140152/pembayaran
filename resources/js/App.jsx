@@ -28,6 +28,7 @@ import IsolirPage from './pages/Isolir/IsolirPage';
 import MonitoringMaps from './pages/MonitoringMaps';
 import PayrollPage from './pages/Payroll/PayrollPage';
 import MutasiPage from './pages/Finance/MutasiPage';
+import DistributionRoutePage from './pages/DistributionRoute/DistributionRoutePage';
 
 // Layout wrapper that conditionally shows navbar
 function AppLayout({ children }) {
@@ -118,6 +119,9 @@ function App() {
 
                     {/* Mutasi */}
                     <Route path="/mutasi" element={<MutasiPage />} />
+
+                    {/* Jalur Distribusi */}
+                    <Route path="/jalur-distribusi" element={<DistributionRoutePage />} />
                     
                     {/* Customer Portal */}
                     <Route path="/customer/login" element={<CustomerLoginPage />} />

@@ -78,8 +78,9 @@ function MutasiPage() {
         const sourceText = String(item.source || '').toLowerCase();
         const descText = String(item.description || '').toLowerCase();
         const typeText = String(item.type || '').toLowerCase();
+        const creatorText = String(item.creator?.name || '').toLowerCase();
 
-        return sourceText.includes(kw) || descText.includes(kw) || typeText.includes(kw);
+        return sourceText.includes(kw) || descText.includes(kw) || typeText.includes(kw) || creatorText.includes(kw);
     });
 
     const statementTotals = visibleItems.reduce(
@@ -289,7 +290,7 @@ function MutasiPage() {
                             type="text"
                             value={filters.keyword}
                             onChange={(e) => setFilters((p) => ({ ...p, keyword: e.target.value }))}
-                            placeholder="deskripsi/sumber/jenis"
+                            placeholder="deskripsi/sumber/jenis/penanggung jawab"
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                         />
                     </div>
@@ -309,6 +310,7 @@ function MutasiPage() {
                                 <th className="px-4 py-3 text-left">Jenis</th>
                                 <th className="px-4 py-3 text-left">Sumber</th>
                                 <th className="px-4 py-3 text-left">Deskripsi</th>
+                                <th className="px-4 py-3 text-left">Penanggung Jawab</th>
                                 <th className="px-4 py-3 text-right">Pemasukan</th>
                                 <th className="px-4 py-3 text-right">Pengeluaran</th>
                                 {canEditMutations && <th className="px-4 py-3 text-right">Aksi</th>}
@@ -317,7 +319,7 @@ function MutasiPage() {
                         <tbody className="divide-y divide-gray-100">
                             {visibleItems.length === 0 && (
                                 <tr>
-                                    <td colSpan={canEditMutations ? 7 : 6} className="px-4 py-10 text-center text-gray-500">
+                                    <td colSpan={canEditMutations ? 8 : 7} className="px-4 py-10 text-center text-gray-500">
                                         Belum ada mutasi.
                                     </td>
                                 </tr>
@@ -336,6 +338,7 @@ function MutasiPage() {
                                         </td>
                                         <td className="px-4 py-3">{item.source}</td>
                                         <td className="px-4 py-3">{item.description || '-'}</td>
+                                        <td className="px-4 py-3">{item.creator?.name || 'Sistem'}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-green-700">
                                             {isIncome ? formatCurrency(Math.abs(amount)) : '-'}
                                         </td>
@@ -360,7 +363,7 @@ function MutasiPage() {
                         </tbody>
                         <tfoot className="bg-gray-50 border-t border-gray-200">
                             <tr>
-                                <td colSpan={4} className="px-4 py-3 text-sm font-semibold text-gray-700">
+                                <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-gray-700">
                                     Total Halaman Ini
                                 </td>
                                 <td className="px-4 py-3 text-right text-sm font-bold text-green-700">

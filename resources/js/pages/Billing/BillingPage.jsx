@@ -95,9 +95,16 @@ function BillingPage() {
         try {
             setSubmitting(true);
             const response = await billingService.createInvoice(createModal.customer.id, numericAmount);
+            const createdInvoiceData = response.data.data;
             setCreateModal({ open: false, customer: null });
             setAmount('');
-            setResultModal({ open: true, data: response.data.data });
+            setResultModal({
+                open: true,
+                data: {
+                    ...createdInvoiceData,
+                    customer: createModal.customer,
+                },
+            });
             fetchBillingData();
         } catch (err) {
             setError(err.response?.data?.error || 'Gagal membuat tagihan');
@@ -238,9 +245,15 @@ Salam Hangat,
 Tim Layanan Pelanggan Rumah Kita Net`;
     };
 
-    const getWhatsAppLink = (customer, invoice) => {
+    const getWhatsAppLink = (customer, invoiceOrLink) => {
         const phone = customer.phone?.replace(/[^0-9]/g, '');
-        const template = generateTemplate(customer, invoice);
+        const invoiceLink = typeof invoiceOrLink === 'string'
+            ? invoiceOrLink
+            : `${window.location.origin}/invoice/${invoiceOrLink.invoice_link}`;
+
+        const template = generateTemplate(customer, {
+            invoice_link: invoiceLink,
+        });
         return `https://wa.me/${phone}?text=${encodeURIComponent(template)}`;
     };
 
@@ -714,6 +727,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <div className="bg-green-50 rounded-lg p-4">
                             <p className="text-sm text-green-700">Tagihan berhasil dibuat! Kirim link ke pelanggan melalui WhatsApp.</p>
                         </div>
+                        <div className="bg-gray-50 rounded-lg p-4">
+                            <p className="font-semibold text-gray-900">{resultModal.data.customer?.name || '-'}</p>
+                            <p className="text-sm text-gray-600">PPPoE: {resultModal.data.customer?.pppoe_username || '-'}</p>
+                            <p className="text-sm text-gray-600">No. WA: {resultModal.data.customer?.phone || '-'}</p>
+                        </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Link Invoice</label>
                             <div className="flex gap-2">
@@ -741,7 +759,15 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
                             />
                         </div>
-                        <div className="flex justify-end">
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <a
+                                href={resultModal.data.customer ? getWhatsAppLink(resultModal.data.customer, resultModal.data.invoice_link) : '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={`inline-flex items-center px-4 py-2 rounded-lg font-medium transition-colors ${resultModal.data.customer ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-300 text-gray-500 pointer-events-none'}`}
+                            >
+                                <Send size={16} className="mr-1" /> Kirim ke WhatsApp
+                            </a>
                             <Button type="button" variant="secondary" onClick={() => setResultModal({ open: false, data: null })}>
                                 Tutup
                             </Button>

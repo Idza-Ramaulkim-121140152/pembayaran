@@ -5,6 +5,7 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import MapPicker from '../../components/common/MapPicker';
+import apiClient from '../../services/api';
 import odpService from '../../services/odpService';
 
 // OdpForm component extracted outside to prevent re-creation on every render
@@ -119,10 +120,15 @@ const OdpForm = ({ formData, handleInputChange, onSubmit, isEdit, submitting, pr
 
 function OdpPage() {
     const [odps, setOdps] = useState([]);
+    const [customers, setCustomers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [managerLoading, setManagerLoading] = useState(false);
+    const [managerSubmitting, setManagerSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
+    const [managerError, setManagerError] = useState(null);
     const [search, setSearch] = useState('');
+    const [customerSearch, setCustomerSearch] = useState('');
     
     // Modal states
     const [createModal, setCreateModal] = useState(false);
@@ -141,21 +147,71 @@ function OdpPage() {
     });
     const [submitting, setSubmitting] = useState(false);
     const [previewImage, setPreviewImage] = useState(null);
+    const [selectedCustomerId, setSelectedCustomerId] = useState('');
+    const [selectedOdpCustomers, setSelectedOdpCustomers] = useState([]);
 
     useEffect(() => {
-        fetchOdps();
+        fetchInitialData();
     }, []);
 
-    const fetchOdps = async () => {
+    useEffect(() => {
+        if (viewModal.open && viewModal.odp?.id) {
+            loadSelectedOdp(viewModal.odp.id);
+        }
+    }, [viewModal.open, viewModal.odp?.id]);
+
+    const fetchInitialData = async () => {
         try {
             setLoading(true);
-            const response = await odpService.getAll();
-            setOdps(response.data.data || []);
+            const [odpResponse, customerResponse] = await Promise.all([
+                odpService.getAll(),
+                apiClient.get('/customers?api=1'),
+            ]);
+
+            setOdps(odpResponse.data.data || []);
+            setCustomers(customerResponse.data.data || []);
         } catch (err) {
             setError('Gagal memuat data ODP');
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchOdps = async () => {
+        try {
+            const response = await odpService.getAll();
+            setOdps(response.data.data || []);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const fetchCustomers = async () => {
+        try {
+            const response = await apiClient.get('/customers?api=1');
+            setCustomers(response.data.data || []);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const loadSelectedOdp = async (odpId) => {
+        try {
+            setManagerLoading(true);
+            setManagerError(null);
+            const response = await odpService.getById(odpId);
+            const odpData = response.data?.data;
+            if (odpData) {
+                setViewModal({ open: true, odp: odpData });
+                setSelectedOdpCustomers(odpData.customers || []);
+                setSelectedCustomerId('');
+                setCustomerSearch('');
+            }
+        } catch (err) {
+            setManagerError('Gagal memuat pelanggan pada ODP terpilih');
+        } finally {
+            setManagerLoading(false);
         }
     };
 
@@ -222,7 +278,7 @@ function OdpPage() {
             setEditModal({ open: false, odp: null });
             resetForm();
             setSuccess('ODP berhasil diupdate');
-            fetchOdps();
+            fetchInitialData();
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal mengupdate ODP');
         } finally {
@@ -236,7 +292,7 @@ function OdpPage() {
             await odpService.delete(deleteModal.odp.id);
             setDeleteModal({ open: false, odp: null });
             setSuccess('ODP berhasil dihapus');
-            fetchOdps();
+            fetchInitialData();
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menghapus ODP');
         } finally {
@@ -257,9 +313,80 @@ function OdpPage() {
         setEditModal({ open: true, odp });
     };
 
+    const closeViewModal = () => {
+        setViewModal({ open: false, odp: null });
+        setSelectedOdpCustomers([]);
+        setSelectedCustomerId('');
+        setCustomerSearch('');
+        setManagerError(null);
+    };
+
+    const handleOpenView = (odp) => {
+        setViewModal({ open: true, odp });
+    };
+
+    const handleAttachCustomer = async () => {
+        if (!viewModal.odp?.id || !selectedCustomerId) {
+            return;
+        }
+
+        try {
+            setManagerSubmitting(true);
+            setManagerError(null);
+            await apiClient.post(`/odp/${viewModal.odp.id}/customers`, {
+                customer_id: selectedCustomerId,
+            });
+            await Promise.all([loadSelectedOdp(viewModal.odp.id), fetchOdps(), fetchCustomers()]);
+            setSuccess('Pelanggan berhasil ditambahkan ke ODP');
+        } catch (err) {
+            setManagerError(err.response?.data?.message || 'Gagal menambahkan pelanggan ke ODP');
+        } finally {
+            setManagerSubmitting(false);
+        }
+    };
+
+    const handleDetachCustomer = async (customerId) => {
+        if (!viewModal.odp?.id) {
+            return;
+        }
+
+        try {
+            setManagerSubmitting(true);
+            setManagerError(null);
+            await apiClient.delete(`/odp/${viewModal.odp.id}/customers`, {
+                data: { customer_id: customerId },
+            });
+            await Promise.all([loadSelectedOdp(viewModal.odp.id), fetchOdps(), fetchCustomers()]);
+            setSuccess('Pelanggan berhasil dihapus dari ODP');
+        } catch (err) {
+            setManagerError(err.response?.data?.message || 'Gagal menghapus pelanggan dari ODP');
+        } finally {
+            setManagerSubmitting(false);
+        }
+    };
+
     const filteredOdps = odps.filter(odp => 
         odp.nama.toLowerCase().includes(search.toLowerCase())
     );
+
+    const selectedOdpAvailableCustomers = customers.filter(customer => {
+        const alreadyAttached = selectedOdpCustomers.some(item => item.id === customer.id);
+        const customerPppoe = (customer.pppoe_username || '').trim().toLowerCase();
+        const query = customerSearch.trim().toLowerCase();
+        const matchesSearch = customerPppoe.includes(query);
+
+        return !alreadyAttached && matchesSearch;
+    });
+
+    const recommendedCustomers = selectedOdpAvailableCustomers
+        .slice()
+        .sort((left, right) => (left.name || '').localeCompare(right.name || ''))
+        .slice(0, 8);
+
+    const handlePickCustomer = (customerId, customerName) => {
+        setSelectedCustomerId(String(customerId));
+        setCustomerSearch(customerName || '');
+    };
 
     if (loading) {
         return (
@@ -355,7 +482,7 @@ function OdpPage() {
                                     <Button 
                                         size="sm" 
                                         variant="secondary"
-                                        onClick={() => setViewModal({ open: true, odp })}
+                                        onClick={() => handleOpenView(odp)}
                                         className="flex-1"
                                     >
                                         <Eye size={14} className="mr-1" /> Detail
@@ -416,16 +543,17 @@ function OdpPage() {
             </Modal>
 
             {/* View Modal */}
-            <Modal isOpen={viewModal.open} onClose={() => setViewModal({ open: false, odp: null })} title="Detail ODP" size="lg">
+            <Modal isOpen={viewModal.open} onClose={closeViewModal} title="Detail ODP" size="lg">
                 {viewModal.odp && (
                     <div className="space-y-4">
                         {viewModal.odp.foto && (
-                            <img 
-                                src={`/storage/${viewModal.odp.foto}`} 
+                            <img
+                                src={`/storage/${viewModal.odp.foto}`}
                                 alt={viewModal.odp.nama}
-                                className="w-full h-64 object-cover rounded-lg"
+                                className="h-64 w-full rounded-lg object-cover"
                             />
                         )}
+
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <p className="text-sm text-gray-500">Nama ODP</p>
@@ -445,7 +573,7 @@ function OdpPage() {
                                 <p className="text-sm text-gray-500">Jumlah Pelanggan</p>
                                 <p className="font-semibold">{viewModal.odp.customers_count || 0} pelanggan</p>
                             </div>
-                            {(viewModal.odp.latitude && viewModal.odp.longitude) && (
+                            {viewModal.odp.latitude && viewModal.odp.longitude && (
                                 <>
                                     <div>
                                         <p className="text-sm text-gray-500">Latitude</p>
@@ -458,12 +586,123 @@ function OdpPage() {
                                 </>
                             )}
                         </div>
-                        
-                        {/* Display map in view modal */}
-                        {(viewModal.odp.latitude && viewModal.odp.longitude) && (
+
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <h4 className="font-semibold text-gray-900">Kelola Pelanggan ODP</h4>
+                                    <p className="text-sm text-gray-500">Pelanggan yang ditambahkan di sini otomatis tersimpan sebagai data pelanggan ODP.</p>
+                                </div>
+                                {managerLoading && <span className="text-xs text-slate-500">Memuat data...</span>}
+                            </div>
+
+                            {managerError && (
+                                <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                                    {managerError}
+                                </div>
+                            )}
+
+                            <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+                                <div>
+                                    <label className="mb-1 block text-sm font-medium text-gray-700">Tambah pelanggan ke ODP</label>
+                                    <input
+                                        type="text"
+                                        value={customerSearch}
+                                        onChange={(e) => setCustomerSearch(e.target.value)}
+                                        className="mb-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                                        placeholder="Cari PPPoE pelanggan"
+                                    />
+                                    <select
+                                        value={selectedCustomerId}
+                                        onChange={(e) => setSelectedCustomerId(e.target.value)}
+                                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                                    >
+                                        <option value="">Pilih pelanggan</option>
+                                        {selectedOdpAvailableCustomers.map((customer) => (
+                                            <option key={customer.id} value={customer.id}>
+                                                {customer.name}{customer.pppoe_username ? ` - ${customer.pppoe_username}` : ''}{customer.phone ? ` - ${customer.phone}` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <div className="mt-2 max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                        {customerSearch.trim() === '' ? (
+                                            <div className="p-3 text-xs text-gray-500">Ketik PPPoE pelanggan untuk melihat rekomendasi.</div>
+                                        ) : recommendedCustomers.length === 0 ? (
+                                            <div className="p-3 text-xs text-gray-500">Tidak ada pelanggan yang cocok dengan PPPoE ini.</div>
+                                        ) : (
+                                            recommendedCustomers.map((customer) => (
+                                                <button
+                                                    key={customer.id}
+                                                    type="button"
+                                                    onClick={() => handlePickCustomer(customer.id, customer.name)}
+                                                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-blue-50"
+                                                >
+                                                    <div className="flex flex-col">
+                                                        <span className="font-medium text-gray-900">{customer.pppoe_username || '-'}</span>
+                                                        <span className="text-xs text-gray-500">{customer.name}</span>
+                                                    </div>
+                                                    <span className="text-xs text-gray-500">Pilih</span>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex items-end">
+                                    <Button
+                                        type="button"
+                                        variant="primary"
+                                        onClick={handleAttachCustomer}
+                                        disabled={managerSubmitting || !selectedCustomerId}
+                                        className="w-full md:w-auto"
+                                    >
+                                        {managerSubmitting ? 'Menyimpan...' : 'Tambah'}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className="mt-4">
+                                <h4 className="font-semibold text-gray-900">Pelanggan Terhubung</h4>
+                                <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+                                    {selectedOdpCustomers.length === 0 ? (
+                                        <div className="p-4 text-sm text-gray-500">Belum ada pelanggan pada ODP ini.</div>
+                                    ) : (
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-gray-50 text-gray-600">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left">Nama</th>
+                                                    <th className="px-3 py-2 text-left">PPPoE</th>
+                                                    <th className="px-3 py-2 text-right">Aksi</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                                {selectedOdpCustomers.map((customer) => (
+                                                    <tr key={customer.id}>
+                                                        <td className="px-3 py-2">{customer.name}</td>
+                                                        <td className="px-3 py-2">{customer.pppoe_username || '-'}</td>
+                                                        <td className="px-3 py-2 text-right">
+                                                            <Button
+                                                                type="button"
+                                                                size="sm"
+                                                                variant="danger"
+                                                                onClick={() => handleDetachCustomer(customer.id)}
+                                                                disabled={managerSubmitting}
+                                                            >
+                                                                Hapus
+                                                            </Button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {viewModal.odp.latitude && viewModal.odp.longitude && (
                             <div>
-                                <p className="text-sm font-medium text-gray-700 mb-2 flex items-center">
-                                    <MapPin className="w-4 h-4 mr-1" />
+                                <p className="mb-2 flex items-center text-sm font-medium text-gray-700">
+                                    <MapPin className="mr-1 h-4 w-4" />
                                     Lokasi ODP
                                 </p>
                                 <MapPicker
@@ -471,30 +710,6 @@ function OdpPage() {
                                     longitude={parseFloat(viewModal.odp.longitude)}
                                     height="250px"
                                 />
-                            </div>
-                        )}
-                        
-                        {viewModal.odp.customers && viewModal.odp.customers.length > 0 && (
-                            <div>
-                                <h4 className="font-semibold text-gray-900 mb-2">Daftar Pelanggan</h4>
-                                <div className="max-h-48 overflow-y-auto">
-                                    <table className="w-full text-sm">
-                                        <thead className="bg-gray-50">
-                                            <tr>
-                                                <th className="px-3 py-2 text-left">Nama</th>
-                                                <th className="px-3 py-2 text-left">PPPoE</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
-                                            {viewModal.odp.customers.map(customer => (
-                                                <tr key={customer.id}>
-                                                    <td className="px-3 py-2">{customer.name}</td>
-                                                    <td className="px-3 py-2">{customer.pppoe_username}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
                             </div>
                         )}
                     </div>

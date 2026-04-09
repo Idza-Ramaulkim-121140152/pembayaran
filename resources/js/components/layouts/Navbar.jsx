@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet } from 'lucide-react';
+import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 // Role-based access: which roles can see each menu
@@ -12,6 +12,7 @@ const ACCESS = {
     payroll: ['superadmin', 'admin', 'finance'],
     mutasi: ['superadmin', 'admin', 'finance'],
     odp: ['superadmin', 'admin', 'teknisi'],
+    distributionRoute: ['superadmin', 'admin', 'teknisi'],
     monitoring: ['superadmin', 'admin', 'teknisi'],
     monitoringMaps: ['superadmin', 'admin', 'teknisi'],
     isolir: ['superadmin', 'admin', 'teknisi'],
@@ -74,6 +75,7 @@ export function Navbar() {
         if (path === '/customers') return location.pathname === '/customers';
         if (path === '/customers/create') return location.pathname === '/customers/create';
         if (path === '/odp') return location.pathname.startsWith('/odp');
+        if (path === '/jalur-distribusi') return location.pathname.startsWith('/jalur-distribusi');
         if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
         if (path === '/payroll') return location.pathname.startsWith('/payroll');
         if (path === '/mutasi') return location.pathname.startsWith('/mutasi');
@@ -210,6 +212,12 @@ export function Navbar() {
                                                 <span>Kelola ODP</span>
                                             </Link>
                                         )}
+                                        {can('distributionRoute') && (
+                                            <Link to="/jalur-distribusi" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                                <GitBranch size={18} />
+                                                <span>Jalur Distribusi</span>
+                                            </Link>
+                                        )}
                                         {can('promo') && (
                                             <Link to="/settings/promo" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/promo') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                                 <Megaphone size={18} />
@@ -323,7 +331,6 @@ export function Navbar() {
                                 <span>Mutasi</span>
                             </Link>
                         )}
-                        
                         <div className="border-t border-gray-200 my-2 pt-2">
                             <p className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Pengaturan</p>
                             {can('profile') && (
@@ -354,6 +361,12 @@ export function Navbar() {
                                 <Link to="/odp" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/odp') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                     <MapPin size={20} />
                                     <span>Kelola ODP</span>
+                                </Link>
+                            )}
+                            {can('distributionRoute') && (
+                                <Link to="/jalur-distribusi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                    <GitBranch size={20} />
+                                    <span>Jalur Distribusi</span>
                                 </Link>
                             )}
                             {can('promo') && (

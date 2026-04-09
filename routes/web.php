@@ -22,6 +22,7 @@ use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\PackageController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\FinancialTransactionController;
+use App\Http\Controllers\DistributionRouteController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -137,6 +138,13 @@ Route::middleware('auth')->group(function () {
         Route::get('/customer-verification', fn() => view('app'))->name('customer-verification.index');
         Route::get('/customer-verification/verify/{timestamp}', fn() => view('app'))->name('customer-verification.form');
 
+        // Distribution Route Page (React SPA)
+        Route::get('/jalur-distribusi', fn() => view('app'))->name('distribution.route');
+
+        // Distribution Route API
+        Route::get('/api/distribution-routes/latest', [DistributionRouteController::class, 'latest'])->name('api.distribution-routes.latest');
+        Route::post('/api/distribution-routes/save', [DistributionRouteController::class, 'save'])->name('api.distribution-routes.save');
+
         // ODP API
         Route::get('/api/odp', [OdpController::class, 'apiIndex'])->name('api.odp.index');
         Route::post('/api/odp', [OdpController::class, 'apiStore'])->name('api.odp.store');
@@ -144,6 +152,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/odp/{odp}', [OdpController::class, 'apiUpdate'])->name('api.odp.update');
         Route::put('/api/odp/{odp}', [OdpController::class, 'apiUpdate'])->name('api.odp.update.put');
         Route::delete('/api/odp/{odp}', [OdpController::class, 'apiDestroy'])->name('api.odp.destroy');
+        Route::get('/api/odp/{odp}/customers', [OdpController::class, 'apiCustomers'])->name('api.odp.customers');
+        Route::post('/api/odp/{odp}/customers', [OdpController::class, 'apiAttachCustomer'])->name('api.odp.customers.attach');
+        Route::delete('/api/odp/{odp}/customers', [OdpController::class, 'apiDetachCustomer'])->name('api.odp.customers.detach');
 
         // Complaints API
         Route::get('/api/complaints', [ComplaintController::class, 'index'])->name('api.complaints.index');
