@@ -23,6 +23,7 @@ use App\Http\Controllers\PackageController;
 use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\FinancialTransactionController;
 use App\Http\Controllers\DistributionRouteController;
+use App\Http\Controllers\InventoryController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -101,6 +102,23 @@ Route::middleware('auth')->group(function () {
 
         // Packages active list (needed in customer form by teknisi)
         Route::get('/api/packages/active', [PackageController::class, 'active'])->name('api.packages.active');
+
+        // Payroll lite members list (needed in customer verification for pelaksana checklist)
+        Route::get('/api/payroll/members-lite', [PayrollController::class, 'members'])->name('api.payroll.members.lite');
+
+        // Inventory Pages
+        Route::get('/inventori', fn() => view('app'))->name('inventory.index');
+
+        // Inventory API
+        Route::get('/api/inventory/summary', [InventoryController::class, 'summary'])->name('api.inventory.summary');
+        Route::get('/api/inventory/items/options', [InventoryController::class, 'itemOptions'])->name('api.inventory.items.options');
+        Route::get('/api/inventory/items/install-options', [InventoryController::class, 'installationItemOptions'])->name('api.inventory.items.install-options');
+        Route::get('/api/inventory/movements', [InventoryController::class, 'movements'])->name('api.inventory.movements');
+        Route::post('/api/inventory/incoming', [InventoryController::class, 'storeIncoming'])->name('api.inventory.incoming.store');
+        Route::post('/api/inventory/outgoing', [InventoryController::class, 'storeOutgoing'])->name('api.inventory.outgoing.store');
+        Route::get('/api/inventory/debts', [InventoryController::class, 'debts'])->name('api.inventory.debts.index');
+        Route::post('/api/inventory/debts/{debt}/pay', [InventoryController::class, 'payDebt'])->name('api.inventory.debts.pay');
+        Route::post('/api/inventory/debts/pay-bulk', [InventoryController::class, 'payDebtBulk'])->name('api.inventory.debts.pay-bulk');
     });
 
     // Technical routes: admin + teknisi (superadmin always has access via RoleMiddleware)
@@ -263,6 +281,21 @@ Route::middleware('auth')->group(function () {
 
     // Superadmin-only routes (User Management)
     Route::middleware('role:superadmin')->group(function () {
+        Route::get('/inventori/master', fn() => view('app'))->name('inventory.master');
+
+        Route::get('/api/inventory/master/types', [InventoryController::class, 'itemTypesIndex'])->name('api.inventory.master.types.index');
+        Route::post('/api/inventory/master/types', [InventoryController::class, 'itemTypesStore'])->name('api.inventory.master.types.store');
+        Route::put('/api/inventory/master/types/{type}', [InventoryController::class, 'itemTypesUpdate'])->name('api.inventory.master.types.update');
+        Route::delete('/api/inventory/master/types/{type}', [InventoryController::class, 'itemTypesDestroy'])->name('api.inventory.master.types.destroy');
+
+        Route::get('/api/inventory/master/items', [InventoryController::class, 'itemsIndex'])->name('api.inventory.master.items.index');
+        Route::post('/api/inventory/master/items', [InventoryController::class, 'itemsStore'])->name('api.inventory.master.items.store');
+        Route::put('/api/inventory/master/items/{item}', [InventoryController::class, 'itemsUpdate'])->name('api.inventory.master.items.update');
+        Route::delete('/api/inventory/master/items/{item}', [InventoryController::class, 'itemsDestroy'])->name('api.inventory.master.items.destroy');
+
+        Route::get('/api/inventory/master/default-pricing', [InventoryController::class, 'defaultPricing'])->name('api.inventory.master.default-pricing.show');
+        Route::put('/api/inventory/master/default-pricing', [InventoryController::class, 'updateDefaultPricing'])->name('api.inventory.master.default-pricing.update');
+
         Route::get('/api/users', [UserManagementController::class, 'index'])->name('api.users.index');
         Route::post('/api/users', [UserManagementController::class, 'store'])->name('api.users.store');
         Route::put('/api/users/{user}', [UserManagementController::class, 'update'])->name('api.users.update');

@@ -32,6 +32,13 @@ const DEFAULT_FORM_DATA = {
     is_active: true,
     latitude: '',
     longitude: '',
+    installer_member_ids: [],
+    installation_router_item_id: '',
+    installation_cable_item_id: '',
+    installation_cable_used: '',
+    installation_labor_fee: '',
+    installation_cable_rate: '',
+    installation_notes: '',
 };
 
 function CustomerVerificationForm() {
@@ -47,13 +54,32 @@ function CustomerVerificationForm() {
     const [sheetsReference, setSheetsReference] = useState(null);
     const [secretInfo, setSecretInfo] = useState(null);
     const [showSecretModal, setShowSecretModal] = useState(false);
+    const [payrollMembers, setPayrollMembers] = useState([]);
+    const [installInventoryOptions, setInstallInventoryOptions] = useState({
+        all_items: [],
+        router_items: [],
+        cable_items: [],
+        default_pricing: {
+            installation_labor_fee_default: 0,
+            installation_cable_rate_default: 0,
+        },
+    });
 
     const [formData, setFormData] = useState(DEFAULT_FORM_DATA);
     const selectedRouterPreset = getHomeRouterPreset(formData.home_router_type);
 
+    const routerStockOptions = installInventoryOptions.router_items?.length > 0
+        ? installInventoryOptions.router_items
+        : installInventoryOptions.all_items;
+    const cableStockOptions = installInventoryOptions.cable_items?.length > 0
+        ? installInventoryOptions.cable_items
+        : installInventoryOptions.all_items;
+
     useEffect(() => {
         fetchOdpList();
         fetchPackageList();
+        fetchPayrollMembers();
+        fetchInstallInventoryOptions();
         fetchCustomerData();
     }, [timestamp]);
 
@@ -73,6 +99,75 @@ function CustomerVerificationForm() {
             setOdpList(response.data.data || []);
         } catch (err) {
             console.error('Failed to load ODP list', err);
+        }
+    };
+
+    const fetchPayrollMembers = async () => {
+        try {
+            const response = await fetch('/api/payroll/members-lite', {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat data pelaksana payroll');
+            }
+
+            const data = await response.json();
+            setPayrollMembers(data.data || []);
+        } catch (err) {
+            console.error('Failed to load payroll members', err);
+        }
+    };
+
+    const fetchInstallInventoryOptions = async () => {
+        try {
+            const response = await fetch('/api/inventory/items/install-options', {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat opsi stok inventori instalasi');
+            }
+
+            const data = await response.json();
+            const defaultPricing = {
+                installation_labor_fee_default: data?.default_pricing?.installation_labor_fee_default ?? 0,
+                installation_cable_rate_default: data?.default_pricing?.installation_cable_rate_default ?? 0,
+            };
+
+            setInstallInventoryOptions({
+                all_items: data.all_items || [],
+                router_items: data.router_items || [],
+                cable_items: data.cable_items || [],
+                default_pricing: defaultPricing,
+            });
+
+            setFormData((prev) => {
+                const hasLaborFee = prev.installation_labor_fee !== ''
+                    && prev.installation_labor_fee !== null
+                    && prev.installation_labor_fee !== undefined;
+                const hasCableRate = prev.installation_cable_rate !== ''
+                    && prev.installation_cable_rate !== null
+                    && prev.installation_cable_rate !== undefined;
+
+                return {
+                    ...prev,
+                    installation_labor_fee: hasLaborFee
+                        ? prev.installation_labor_fee
+                        : String(defaultPricing.installation_labor_fee_default ?? 0),
+                    installation_cable_rate: hasCableRate
+                        ? prev.installation_cable_rate
+                        : String(defaultPricing.installation_cable_rate_default ?? 0),
+                };
+            });
+        } catch (err) {
+            console.error('Failed to load inventory install options', err);
         }
     };
 
@@ -98,11 +193,24 @@ function CustomerVerificationForm() {
             for (const key in data.customer_data) {
                 sanitizedData[key] = data.customer_data[key] ?? '';
             }
+
+            const hasSanitizedLaborFee = sanitizedData.installation_labor_fee !== ''
+                && sanitizedData.installation_labor_fee !== null
+                && sanitizedData.installation_labor_fee !== undefined;
+            const hasSanitizedCableRate = sanitizedData.installation_cable_rate !== ''
+                && sanitizedData.installation_cable_rate !== null
+                && sanitizedData.installation_cable_rate !== undefined;
             
-            setFormData({
+            setFormData((prev) => ({
                 ...DEFAULT_FORM_DATA,
                 ...sanitizedData,
-            });
+                installation_labor_fee: hasSanitizedLaborFee
+                    ? sanitizedData.installation_labor_fee
+                    : prev.installation_labor_fee,
+                installation_cable_rate: hasSanitizedCableRate
+                    ? sanitizedData.installation_cable_rate
+                    : prev.installation_cable_rate,
+            }));
             setSheetsReference(data.sheets_reference);
         } catch (err) {
             setError(err.message || 'Gagal memuat data pelanggan');
@@ -155,6 +263,25 @@ function CustomerVerificationForm() {
         }));
     };
 
+    const handleInstallerToggle = (memberId) => {
+        setFormData((prev) => {
+            const current = Array.isArray(prev.installer_member_ids) ? prev.installer_member_ids : [];
+            const numericMemberId = Number(memberId);
+
+            if (current.includes(numericMemberId)) {
+                return {
+                    ...prev,
+                    installer_member_ids: current.filter((id) => id !== numericMemberId),
+                };
+            }
+
+            return {
+                ...prev,
+                installer_member_ids: [...current, numericMemberId],
+            };
+        });
+    };
+
     const getCurrentLocation = () => {
         if (!navigator.geolocation) {
             setError('Geolocation tidak didukung oleh browser Anda');
@@ -184,6 +311,19 @@ function CustomerVerificationForm() {
         setError(null);
 
         try {
+            const payload = {
+                ...formData,
+                installer_member_ids: Array.isArray(formData.installer_member_ids)
+                    ? formData.installer_member_ids
+                    : [],
+                installation_router_item_id: formData.installation_router_item_id || null,
+                installation_cable_item_id: formData.installation_cable_item_id || null,
+                installation_cable_used: formData.installation_cable_used === '' ? null : formData.installation_cable_used,
+                installation_labor_fee: formData.installation_labor_fee === '' ? null : formData.installation_labor_fee,
+                installation_cable_rate: formData.installation_cable_rate === '' ? null : formData.installation_cable_rate,
+                installation_notes: formData.installation_notes || null,
+            };
+
             const response = await fetch('/api/customer-verification/verify', {
                 method: 'POST',
                 headers: {
@@ -191,7 +331,7 @@ function CustomerVerificationForm() {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
                     'Accept': 'application/json',
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify(payload),
             });
 
             if (!response.ok) {
@@ -682,6 +822,152 @@ function CustomerVerificationForm() {
                                 Lihat di Google Maps →
                             </a>
                         )}
+                    </div>
+
+                    {/* Installation Team & Material Details */}
+                    <div>
+                        <h2 className="text-xl font-bold text-gray-900 mb-4">Pelaksana Pemasangan</h2>
+
+                        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+                            Pilih teknisi pelaksana dan detail material instalasi. Saat verifikasi disimpan, data ini otomatis masuk ke payroll proyek pemasangan dan inventori (stok router/kabel berkurang sesuai pemakaian).
+                        </div>
+
+                        <div className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Checklist Pelaksana (Teknisi)
+                                </label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                                    {payrollMembers.length === 0 ? (
+                                        <p className="text-sm text-gray-500">Belum ada data anggota payroll. Tambahkan anggota di menu Payroll terlebih dahulu.</p>
+                                    ) : payrollMembers.map((member) => {
+                                        const checked = Array.isArray(formData.installer_member_ids)
+                                            ? formData.installer_member_ids.includes(Number(member.id))
+                                            : false;
+
+                                        return (
+                                            <label key={member.id} className="flex items-center gap-2 text-sm text-gray-700">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() => handleInstallerToggle(member.id)}
+                                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                                                />
+                                                <span>{member.nama}</span>
+                                                {member.telepon && (
+                                                    <span className="text-xs text-gray-400">({member.telepon})</span>
+                                                )}
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Router dari Stok Inventori
+                                    </label>
+                                    <select
+                                        name="installation_router_item_id"
+                                        value={formData.installation_router_item_id}
+                                        onChange={handleChange}
+                                        required
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="">Tidak dipilih</option>
+                                        {routerStockOptions.map((item) => (
+                                            <option key={item.id} value={item.id}>
+                                                {item.name} ({item.type_name || 'Tanpa jenis'}) - stok {Number(item.current_stock || 0).toLocaleString('id-ID')} {item.unit || ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-1">Saat verifikasi, stok router ini akan berkurang 1 unit.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Kabel dari Stok Inventori
+                                    </label>
+                                    <select
+                                        name="installation_cable_item_id"
+                                        value={formData.installation_cable_item_id}
+                                        onChange={handleChange}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="">Tidak dipilih</option>
+                                        {cableStockOptions.map((item) => (
+                                            <option key={item.id} value={item.id}>
+                                                {item.name} ({item.type_name || 'Tanpa jenis'}) - stok {Number(item.current_stock || 0).toLocaleString('id-ID')} {item.unit || ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Habis Kabel
+                                    </label>
+                                    <input
+                                        type="number"
+                                        step="any"
+                                        min="0"
+                                        name="installation_cable_used"
+                                        value={formData.installation_cable_used}
+                                        onChange={handleChange}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="Contoh: 35"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Jika diisi, stok kabel terpilih otomatis berkurang sesuai angka ini.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Biaya Pasang (Payroll)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        name="installation_labor_fee"
+                                        value={formData.installation_labor_fee}
+                                        onChange={handleChange}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="0"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Nilai default diambil dari master data inventori, tetap bisa diubah.</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Harga Kabel (Payroll)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        name="installation_cable_rate"
+                                        value={formData.installation_cable_rate}
+                                        onChange={handleChange}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        placeholder="0"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">Nilai default diambil dari master data inventori, tetap bisa diubah.</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Catatan Pemasangan
+                                </label>
+                                <textarea
+                                    name="installation_notes"
+                                    value={formData.installation_notes}
+                                    onChange={handleChange}
+                                    rows={2}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Catatan tambahan instalasi"
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     {/* Status */}

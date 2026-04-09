@@ -2,17 +2,23 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\InventoryItem;
 use App\Models\PayrollMember;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
 use App\Services\FinancialLedgerService;
+use App\Services\InventoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class PayrollController extends Controller
 {
-    public function __construct(private FinancialLedgerService $ledgerService)
+    public function __construct(
+        private FinancialLedgerService $ledgerService,
+        private InventoryService $inventoryService,
+    )
     {
     }
 
@@ -38,7 +44,7 @@ class PayrollController extends Controller
             ->get();
 
         // Daftar proyek
-        $query = PayrollProject::with(['members', 'details'])
+        $query = PayrollProject::with(['members', 'details.inventoryItem.type'])
             ->orderByDesc('tanggal')
             ->orderByDesc('id');
 
@@ -123,12 +129,24 @@ class PayrollController extends Controller
             'details' => 'required|array|min:1',
             'details.*.tipe' => 'required|in:pemasangan,kabel,kustom',
             'details.*.deskripsi' => 'nullable|string',
+            'details.*.inventory_item_id' => 'nullable|integer|exists:inventory_items,id',
             'details.*.jumlah' => 'required|numeric|min:0',
             'details.*.harga_satuan' => 'required|numeric|min:0',
         ]);
 
         try {
             DB::beginTransaction();
+
+            $inventoryItemIds = collect($validated['details'])
+                ->pluck('inventory_item_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            $inventoryItemNames = $inventoryItemIds->count() > 0
+                ? InventoryItem::whereIn('id', $inventoryItemIds)->pluck('name', 'id')
+                : collect();
 
             $project = PayrollProject::create([
                 'tanggal' => $validated['tanggal'],
@@ -145,10 +163,18 @@ class PayrollController extends Controller
             // Create details
             foreach ($validated['details'] as $detail) {
                 $subtotal = $detail['jumlah'] * $detail['harga_satuan'];
+                $inventoryItemId = !empty($detail['inventory_item_id']) ? (int) $detail['inventory_item_id'] : null;
+                $description = $detail['deskripsi'] ?? null;
+
+                if (!$description && $inventoryItemId) {
+                    $description = $inventoryItemNames->get($inventoryItemId);
+                }
+
                 PayrollProjectDetail::create([
                     'payroll_project_id' => $project->id,
                     'tipe' => $detail['tipe'],
-                    'deskripsi' => $detail['deskripsi'] ?? null,
+                    'deskripsi' => $description,
+                    'inventory_item_id' => $inventoryItemId,
                     'jumlah' => $detail['jumlah'],
                     'harga_satuan' => $detail['harga_satuan'],
                     'subtotal' => $subtotal,
@@ -157,11 +183,15 @@ class PayrollController extends Controller
 
             // Recalculate total and distribute to members
             $project->recalculate();
+            $this->inventoryService->syncPayrollProjectOutflow($project, auth()->id());
 
             DB::commit();
 
-            $project->load(['members', 'details']);
+            $project->load(['members', 'details.inventoryItem.type']);
             return response()->json(['data' => $project, 'message' => 'Proyek berhasil ditambahkan'], 201);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            return response()->json(['message' => $e->getMessage(), 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Failed to create payroll project', ['error' => $e->getMessage()]);
@@ -182,12 +212,24 @@ class PayrollController extends Controller
             'details' => 'required|array|min:1',
             'details.*.tipe' => 'required|in:pemasangan,kabel,kustom',
             'details.*.deskripsi' => 'nullable|string',
+            'details.*.inventory_item_id' => 'nullable|integer|exists:inventory_items,id',
             'details.*.jumlah' => 'required|numeric|min:0',
             'details.*.harga_satuan' => 'required|numeric|min:0',
         ]);
 
         try {
             DB::beginTransaction();
+
+            $inventoryItemIds = collect($validated['details'])
+                ->pluck('inventory_item_id')
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            $inventoryItemNames = $inventoryItemIds->count() > 0
+                ? InventoryItem::whereIn('id', $inventoryItemIds)->pluck('name', 'id')
+                : collect();
 
             $project = PayrollProject::findOrFail($id);
 
@@ -207,10 +249,18 @@ class PayrollController extends Controller
             $project->details()->delete();
             foreach ($validated['details'] as $detail) {
                 $subtotal = $detail['jumlah'] * $detail['harga_satuan'];
+                $inventoryItemId = !empty($detail['inventory_item_id']) ? (int) $detail['inventory_item_id'] : null;
+                $description = $detail['deskripsi'] ?? null;
+
+                if (!$description && $inventoryItemId) {
+                    $description = $inventoryItemNames->get($inventoryItemId);
+                }
+
                 PayrollProjectDetail::create([
                     'payroll_project_id' => $project->id,
                     'tipe' => $detail['tipe'],
-                    'deskripsi' => $detail['deskripsi'] ?? null,
+                    'deskripsi' => $description,
+                    'inventory_item_id' => $inventoryItemId,
                     'jumlah' => $detail['jumlah'],
                     'harga_satuan' => $detail['harga_satuan'],
                     'subtotal' => $subtotal,
@@ -219,11 +269,15 @@ class PayrollController extends Controller
 
             // Recalculate
             $project->recalculate();
+            $this->inventoryService->syncPayrollProjectOutflow($project, auth()->id());
 
             DB::commit();
 
-            $project->load(['members', 'details']);
+            $project->load(['members', 'details.inventoryItem.type']);
             return response()->json(['data' => $project, 'message' => 'Proyek berhasil diperbarui']);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            return response()->json(['message' => $e->getMessage(), 'errors' => $e->errors()], 422);
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Failed to update payroll project', ['error' => $e->getMessage()]);
@@ -321,10 +375,21 @@ class PayrollController extends Controller
      */
     public function destroyProject($id)
     {
-        $project = PayrollProject::findOrFail($id);
-        $project->delete();
+        DB::beginTransaction();
 
-        return response()->json(['message' => 'Proyek berhasil dihapus']);
+        try {
+            $project = PayrollProject::findOrFail($id);
+            $this->inventoryService->removePayrollProjectOutflow($project);
+            $project->delete();
+
+            DB::commit();
+
+            return response()->json(['message' => 'Proyek berhasil dihapus']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to delete payroll project', ['project_id' => $id, 'error' => $e->getMessage()]);
+            return response()->json(['message' => 'Gagal menghapus proyek: ' . $e->getMessage()], 500);
+        }
     }
 
     /**
@@ -332,7 +397,7 @@ class PayrollController extends Controller
      */
     public function showProject($id)
     {
-        $project = PayrollProject::with(['members', 'details'])->findOrFail($id);
+        $project = PayrollProject::with(['members', 'details.inventoryItem.type'])->findOrFail($id);
         return response()->json(['data' => $project]);
     }
 }

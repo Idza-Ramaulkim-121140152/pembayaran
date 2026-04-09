@@ -29,6 +29,8 @@ import MonitoringMaps from './pages/MonitoringMaps';
 import PayrollPage from './pages/Payroll/PayrollPage';
 import MutasiPage from './pages/Finance/MutasiPage';
 import DistributionRoutePage from './pages/DistributionRoute/DistributionRoutePage';
+import InventoryPage from './pages/Inventory/InventoryPage';
+import InventoryMasterPage from './pages/Inventory/InventoryMasterPage';
 
 // Layout wrapper that conditionally shows navbar
 function AppLayout({ children }) {
@@ -116,6 +118,10 @@ function App() {
                     
                     {/* Payroll */}
                     <Route path="/payroll" element={<PayrollPage />} />
+
+                    {/* Inventori */}
+                    <Route path="/inventori" element={<InventoryPage />} />
+                    <Route path="/inventori/master" element={<InventoryMasterPage />} />
 
                     {/* Mutasi */}
                     <Route path="/mutasi" element={<MutasiPage />} />

@@ -8,6 +8,8 @@ const ACCESS = {
     penagihan: ['superadmin', 'admin', 'finance'],
     pelanggan: ['superadmin', 'admin', 'teknisi'],
     verifikasi: ['superadmin', 'admin', 'teknisi'],
+    inventory: ['superadmin', 'admin', 'teknisi', 'finance'],
+    inventoryMaster: ['superadmin'],
     pengeluaran: ['superadmin', 'admin', 'finance'],
     payroll: ['superadmin', 'admin', 'finance'],
     mutasi: ['superadmin', 'admin', 'finance'],
@@ -76,6 +78,8 @@ export function Navbar() {
         if (path === '/customers/create') return location.pathname === '/customers/create';
         if (path === '/odp') return location.pathname.startsWith('/odp');
         if (path === '/jalur-distribusi') return location.pathname.startsWith('/jalur-distribusi');
+        if (path === '/inventori') return location.pathname === '/inventori';
+        if (path === '/inventori/master') return location.pathname === '/inventori/master';
         if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
         if (path === '/payroll') return location.pathname.startsWith('/payroll');
         if (path === '/mutasi') return location.pathname.startsWith('/mutasi');
@@ -138,6 +142,12 @@ export function Navbar() {
                             <Link to="/customer-verification" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${location.pathname.startsWith('/customer-verification') ? 'text-green-600 bg-green-50 font-semibold' : 'text-gray-700 hover:text-green-600 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                                 <span>Verifikasi</span>
+                            </Link>
+                        )}
+                        {can('inventory') && (
+                            <Link to="/inventori" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/inventori') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
+                                <Package size={18} />
+                                <span>Inventori</span>
                             </Link>
                         )}
                         {can('pengeluaran') && (
@@ -204,6 +214,12 @@ export function Navbar() {
                                             <Link to="/settings/packages" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/packages') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                                 <Package size={18} />
                                                 <span>Paket Layanan</span>
+                                            </Link>
+                                        )}
+                                        {can('inventoryMaster') && (
+                                            <Link to="/inventori/master" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/inventori/master') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                                <Shield size={18} />
+                                                <span>Master Inventori</span>
                                             </Link>
                                         )}
                                         {can('odp') && (
@@ -313,6 +329,12 @@ export function Navbar() {
                                 <span>Verifikasi Pelanggan</span>
                             </Link>
                         )}
+                        {can('inventory') && (
+                            <Link to="/inventori" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/inventori') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                <Package size={20} />
+                                <span>Inventori</span>
+                            </Link>
+                        )}
                         {can('pengeluaran') && (
                             <Link to="/pengeluaran" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/pengeluaran') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/></svg>
@@ -355,6 +377,12 @@ export function Navbar() {
                                 <Link to="/settings/packages" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/packages') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                     <Package size={20} />
                                     <span>Paket Layanan</span>
+                                </Link>
+                            )}
+                            {can('inventoryMaster') && (
+                                <Link to="/inventori/master" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/inventori/master') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                    <Shield size={20} />
+                                    <span>Master Inventori</span>
                                 </Link>
                             )}
                             {can('odp') && (

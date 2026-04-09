@@ -250,13 +250,13 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
 }
 
 // ==================== PROJECT FORM MODAL ====================
-function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, onAddMember }) {
+function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, inventoryItems, onAddMember }) {
     const [tanggal, setTanggal] = useState('');
     const [catatan, setCatatan] = useState('');
     const [selectedMembers, setSelectedMembers] = useState([]);
     const [details, setDetails] = useState([
-        { tipe: 'pemasangan', deskripsi: '', jumlah: '', harga_satuan: 30000 },
-        { tipe: 'kabel', deskripsi: '', jumlah: '', harga_satuan: 150 },
+        { tipe: 'pemasangan', deskripsi: '', inventory_item_id: '', jumlah: '', harga_satuan: 30000 },
+        { tipe: 'kabel', deskripsi: '', inventory_item_id: '', jumlah: '', harga_satuan: 150 },
     ]);
     const [saving, setSaving] = useState(false);
     const [memberSearch, setMemberSearch] = useState('');
@@ -271,6 +271,7 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
                     setDetails(editProject.details.map(d => ({
                         tipe: d.tipe,
                         deskripsi: d.deskripsi || '',
+                        inventory_item_id: d.inventory_item_id || '',
                         jumlah: d.jumlah,
                         harga_satuan: d.harga_satuan,
                     })));
@@ -280,8 +281,8 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
                 setCatatan('');
                 setSelectedMembers([]);
                 setDetails([
-                    { tipe: 'pemasangan', deskripsi: '', jumlah: '', harga_satuan: 30000 },
-                    { tipe: 'kabel', deskripsi: '', jumlah: '', harga_satuan: 150 },
+                    { tipe: 'pemasangan', deskripsi: '', inventory_item_id: '', jumlah: '', harga_satuan: 30000 },
+                    { tipe: 'kabel', deskripsi: '', inventory_item_id: '', jumlah: '', harga_satuan: 150 },
                 ]);
             }
             setMemberSearch('');
@@ -303,7 +304,7 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
     };
 
     const addCustomDetail = () => {
-        setDetails(prev => [...prev, { tipe: 'kustom', deskripsi: '', jumlah: '', harga_satuan: '' }]);
+        setDetails(prev => [...prev, { tipe: 'kustom', deskripsi: '', inventory_item_id: '', jumlah: '', harga_satuan: '' }]);
     };
 
     const removeDetail = (index) => {
@@ -340,6 +341,7 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
                     details: validDetails.map(d => ({
                         tipe: d.tipe,
                         deskripsi: d.deskripsi || null,
+                        inventory_item_id: d.inventory_item_id ? Number(d.inventory_item_id) : null,
                         jumlah: parseFloat(d.jumlah),
                         harga_satuan: parseFloat(d.harga_satuan),
                     })),
@@ -366,6 +368,11 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
             case 'kustom': return 'Kustom';
             default: return tipe;
         }
+    };
+
+    const inventoryLabel = (item) => {
+        if (!item) return '';
+        return `${item.name} (${item.type_name || 'Tanpa jenis'})`;
     };
 
     return (
@@ -449,6 +456,19 @@ function ProjectFormModal({ isOpen, onClose, onSaved, editProject, allMembers, o
                                             className="w-full border rounded-lg px-3 py-2 text-sm mb-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                         />
                                     )}
+                                    <div className="mb-2">
+                                        <label className="text-xs text-gray-500">Barang Inventori (opsional)</label>
+                                        <select
+                                            value={d.inventory_item_id || ''}
+                                            onChange={e => updateDetail(i, 'inventory_item_id', e.target.value)}
+                                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                        >
+                                            <option value="">Tanpa barang inventori</option>
+                                            {inventoryItems.map(item => (
+                                                <option key={item.id} value={item.id}>{inventoryLabel(item)}</option>
+                                            ))}
+                                        </select>
+                                    </div>
                                     <div className="grid grid-cols-3 gap-2">
                                         <div>
                                             <label className="text-xs text-gray-500">
@@ -522,6 +542,7 @@ export default function PayrollPage() {
     const [data, setData] = useState({ unpaid_summary: [], projects: [] });
     const [loading, setLoading] = useState(true);
     const [members, setMembers] = useState([]);
+    const [inventoryItems, setInventoryItems] = useState([]);
     const [showProjectModal, setShowProjectModal] = useState(false);
     const [showMemberModal, setShowMemberModal] = useState(false);
     const [editProject, setEditProject] = useState(null);
@@ -533,9 +554,10 @@ export default function PayrollPage() {
 
     const fetchData = useCallback(async () => {
         try {
-            const [payrollRes, membersRes] = await Promise.all([
+            const [payrollRes, membersRes, inventoryRes] = await Promise.all([
                 fetch('/api/payroll', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' }),
                 fetch('/api/payroll/members', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' }),
+                fetch('/api/inventory/items/options', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' }),
             ]);
             if (!payrollRes.ok || !membersRes.ok) {
                 console.error('Payroll API error', payrollRes.status, membersRes.status);
@@ -543,8 +565,10 @@ export default function PayrollPage() {
             }
             const payroll = await payrollRes.json();
             const membersData = await membersRes.json();
+            const inventoryData = inventoryRes.ok ? await inventoryRes.json() : { data: [] };
             setData({ unpaid_summary: payroll.unpaid_summary || [], projects: payroll.projects || [] });
             setMembers(membersData.data || []);
+            setInventoryItems(inventoryData.data || []);
         } catch (err) {
             console.error('Failed to fetch payroll data', err);
         } finally {
@@ -756,7 +780,9 @@ export default function PayrollPage() {
                                                     {project.details?.map((d, i) => (
                                                         <tr key={i} className="border-b last:border-b-0">
                                                             <td className="px-3 py-2 text-gray-800">
-                                                                {d.tipe === 'pemasangan' ? 'Pemasangan' : d.tipe === 'kabel' ? 'Kabel' : (d.deskripsi || 'Kustom')}
+                                                                {d.inventory_item?.name
+                                                                    ? `${d.inventory_item.name} (${d.inventory_item.type_name || d.inventory_item.type?.name || 'Inventori'})`
+                                                                    : (d.tipe === 'pemasangan' ? 'Pemasangan' : d.tipe === 'kabel' ? 'Kabel' : (d.deskripsi || 'Kustom'))}
                                                             </td>
                                                             <td className="px-3 py-2 text-right text-gray-600">
                                                                 {d.tipe === 'kabel' ? `${d.jumlah} m` : d.jumlah}
@@ -835,6 +861,7 @@ export default function PayrollPage() {
                 onSaved={fetchData}
                 editProject={editProject}
                 allMembers={members}
+                inventoryItems={inventoryItems}
                 onAddMember={() => setShowMemberModal(true)}
             />
             <AddMemberModal

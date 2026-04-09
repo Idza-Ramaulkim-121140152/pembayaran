@@ -3,16 +3,25 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\InventoryItem;
 use App\Models\Package;
+use App\Models\PayrollProject;
+use App\Models\PayrollProjectDetail;
+use App\Models\SiteSetting;
 use App\Services\FinancialLedgerService;
 use App\Services\GoogleSheetsService;
+use App\Services\InventoryService;
 use App\Services\MikroTikService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
+use Illuminate\Validation\ValidationException;
 
 class CustomerVerificationController extends Controller
 {
+    private const SETTING_DEFAULT_INSTALLATION_LABOR_FEE = 'default_installation_labor_fee_payroll';
+    private const SETTING_DEFAULT_INSTALLATION_CABLE_RATE = 'default_installation_cable_rate_payroll';
+
     protected $sheetsService;
     protected $sheetsError;
 
@@ -143,6 +152,12 @@ class CustomerVerificationController extends Controller
         $validated = $request->validate($this->verificationValidationRules());
         $validated = $this->normalizeHomeRouterInput($validated);
 
+        if ($this->hasInstallationPayrollInput($validated) && empty($validated['installer_member_ids'])) {
+            throw ValidationException::withMessages([
+                'installer_member_ids' => 'Pilih minimal 1 pelaksana agar detail pemasangan bisa masuk ke payroll.',
+            ]);
+        }
+
         DB::beginTransaction();
 
         try {
@@ -150,6 +165,7 @@ class CustomerVerificationController extends Controller
             $existingCustomer = Customer::where('google_sheets_timestamp', $validated['google_sheets_timestamp'])->first();
             
             if ($existingCustomer) {
+                DB::rollBack();
                 return response()->json([
                     'error' => 'Customer already verified',
                     'customer' => $existingCustomer
@@ -295,15 +311,40 @@ class CustomerVerificationController extends Controller
                 ]);
             }
 
+            $payrollProject = $this->createInstallationPayrollProject($customer, $validated);
+
+            if ($this->shouldRecordInstallationOutflow($validated)) {
+                app(InventoryService::class)->recordInstallationOutgoing(
+                    $customer,
+                    [
+                        'router_item_id' => $validated['installation_router_item_id'] ?? null,
+                        'cable_item_id' => $validated['installation_cable_item_id'] ?? null,
+                        'cable_used' => $validated['installation_cable_used'] ?? 0,
+                        'notes' => $validated['installation_notes'] ?? null,
+                        'payroll_project_id' => $payrollProject?->id,
+                    ],
+                    (int) auth()->id()
+                );
+            }
+
             DB::commit();
 
             return response()->json([
                 'success' => true,
                 'message' => 'Customer verified and saved successfully',
                 'customer' => $customer,
-                'secret' => $secretInfo
+                'secret' => $secretInfo,
+                'payroll_project' => $payrollProject,
             ]);
 
+        } catch (ValidationException $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'error' => 'Validation failed',
+                'message' => $e->getMessage(),
+                'errors' => $e->errors(),
+            ], 422);
         } catch (Exception $e) {
             DB::rollBack();
             \Log::error('Failed to verify customer: ' . $e->getMessage());
@@ -361,7 +402,138 @@ class CustomerVerificationController extends Controller
             'home_router_password' => 'nullable|string|max:255',
             'home_router_wan_interface' => 'nullable|string|max:64',
             'home_router_monitoring_enabled' => 'nullable|boolean',
+            'installer_member_ids' => 'nullable|array',
+            'installer_member_ids.*' => 'integer|exists:payroll_members,id',
+            'installation_router_item_id' => 'required|integer|exists:inventory_items,id',
+            'installation_cable_item_id' => 'nullable|integer|exists:inventory_items,id',
+            'installation_cable_used' => 'nullable|numeric|min:0',
+            'installation_labor_fee' => 'nullable|numeric|min:0',
+            'installation_cable_rate' => 'nullable|numeric|min:0',
+            'installation_notes' => 'nullable|string|max:500',
         ];
+    }
+
+    private function createInstallationPayrollProject(Customer $customer, array $validated): ?PayrollProject
+    {
+        $memberIds = collect($validated['installer_member_ids'] ?? [])
+            ->filter(fn ($id) => (int) $id > 0)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($memberIds->isEmpty()) {
+            return null;
+        }
+
+        $projectDate = !empty($validated['activation_date'])
+            ? \Carbon\Carbon::parse($validated['activation_date'])->toDateString()
+            : now()->toDateString();
+
+        $project = PayrollProject::create([
+            'tanggal' => $projectDate,
+            'catatan' => $this->buildInstallationProjectNotes($customer, $validated['installation_notes'] ?? null),
+            'total' => 0,
+            'status' => 'unpaid',
+        ]);
+
+        foreach ($memberIds as $memberId) {
+            $project->members()->attach($memberId, ['bagian' => 0]);
+        }
+
+        $laborFee = $this->resolveInstallationLaborFee($validated);
+
+        PayrollProjectDetail::create([
+            'payroll_project_id' => $project->id,
+            'tipe' => 'pemasangan',
+            'deskripsi' => 'Pemasangan pelanggan ' . $customer->name,
+            'inventory_item_id' => null,
+            'jumlah' => 1,
+            'harga_satuan' => $laborFee,
+            'subtotal' => $laborFee,
+        ]);
+
+        $cableUsed = (float) ($validated['installation_cable_used'] ?? 0);
+        if ($cableUsed > 0) {
+            $cableRate = $this->resolveInstallationCableRate($validated);
+            $cableItemId = !empty($validated['installation_cable_item_id'])
+                ? (int) $validated['installation_cable_item_id']
+                : null;
+
+            $cableItemName = null;
+            if ($cableItemId) {
+                $cableItemName = InventoryItem::query()->where('id', $cableItemId)->value('name');
+            }
+
+            $cableDescription = 'Pemakaian kabel pelanggan ' . $customer->name;
+            if ($cableItemName) {
+                $cableDescription = $cableItemName . ' - ' . $cableDescription;
+            }
+
+            PayrollProjectDetail::create([
+                'payroll_project_id' => $project->id,
+                'tipe' => 'kabel',
+                'deskripsi' => $cableDescription,
+                'inventory_item_id' => null,
+                'jumlah' => $cableUsed,
+                'harga_satuan' => $cableRate,
+                'subtotal' => $cableUsed * $cableRate,
+            ]);
+        }
+
+        $project->recalculate();
+
+        $project->load(['members', 'details.inventoryItem']);
+
+        return $project;
+    }
+
+    private function resolveInstallationLaborFee(array $validated): float
+    {
+        if (array_key_exists('installation_labor_fee', $validated)
+            && $validated['installation_labor_fee'] !== null
+            && $validated['installation_labor_fee'] !== '') {
+            return (float) $validated['installation_labor_fee'];
+        }
+
+        return (float) SiteSetting::get(self::SETTING_DEFAULT_INSTALLATION_LABOR_FEE, 0);
+    }
+
+    private function resolveInstallationCableRate(array $validated): float
+    {
+        if (array_key_exists('installation_cable_rate', $validated)
+            && $validated['installation_cable_rate'] !== null
+            && $validated['installation_cable_rate'] !== '') {
+            return (float) $validated['installation_cable_rate'];
+        }
+
+        return (float) SiteSetting::get(self::SETTING_DEFAULT_INSTALLATION_CABLE_RATE, 0);
+    }
+
+    private function hasInstallationPayrollInput(array $validated): bool
+    {
+        return (float) ($validated['installation_labor_fee'] ?? 0) > 0
+            || (float) ($validated['installation_cable_used'] ?? 0) > 0
+            || !empty($validated['installation_notes']);
+    }
+
+    private function shouldRecordInstallationOutflow(array $validated): bool
+    {
+        $hasRouter = !empty($validated['installation_router_item_id']);
+        $hasCable = !empty($validated['installation_cable_item_id'])
+            && (float) ($validated['installation_cable_used'] ?? 0) > 0;
+
+        return $hasRouter || $hasCable;
+    }
+
+    private function buildInstallationProjectNotes(Customer $customer, ?string $installationNotes): string
+    {
+        $base = 'Proyek pemasangan pelanggan ' . $customer->name;
+
+        if (!$installationNotes) {
+            return $base;
+        }
+
+        return $base . ' | Catatan: ' . $installationNotes;
     }
 
     private function normalizeHomeRouterInput(array $validated): array
@@ -372,6 +544,12 @@ class CustomerVerificationController extends Controller
             'home_router_port',
             'home_router_username',
             'home_router_wan_interface',
+            'installation_router_item_id',
+            'installation_cable_item_id',
+            'installation_cable_used',
+            'installation_labor_fee',
+            'installation_cable_rate',
+            'installation_notes',
         ];
 
         foreach ($nullableFields as $field) {
