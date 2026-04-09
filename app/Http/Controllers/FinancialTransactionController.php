@@ -25,30 +25,69 @@ class FinancialTransactionController extends Controller
     public function index(Request $request)
     {
         if (!$this->isLedgerReady()) {
-            return response()->json(['data' => ['data' => []]]);
+            return response()->json([
+                'data' => ['data' => []],
+                'summary' => [
+                    'income' => 0,
+                    'expense' => 0,
+                    'net' => 0,
+                ],
+            ]);
         }
 
-        $query = FinancialTransaction::query()->with(['creator:id,name', 'updater:id,name']);
+        $baseQuery = FinancialTransaction::query();
+        $perPage = max(10, min($request->integer('per_page', 50), 100));
 
         if ($request->filled('type')) {
-            $query->where('type', $request->string('type'));
+            $baseQuery->where('type', $request->string('type'));
         }
 
         if ($request->filled('source')) {
-            $query->where('source', $request->string('source'));
+            $baseQuery->where('source', $request->string('source'));
         }
 
         if ($request->filled('start_date')) {
-            $query->whereDate('transaction_date', '>=', $request->string('start_date'));
+            $baseQuery->whereDate('transaction_date', '>=', $request->string('start_date'));
         }
 
         if ($request->filled('end_date')) {
-            $query->whereDate('transaction_date', '<=', $request->string('end_date'));
+            $baseQuery->whereDate('transaction_date', '<=', $request->string('end_date'));
         }
 
-        $transactions = $query->orderByDesc('transaction_date')->orderByDesc('id')->paginate(50);
+        if ($request->filled('keyword')) {
+            $keyword = trim((string) $request->string('keyword'));
 
-        return response()->json(['data' => $transactions]);
+            $baseQuery->where(function ($query) use ($keyword) {
+                $query->where('source', 'like', "%{$keyword}%")
+                    ->orWhere('description', 'like', "%{$keyword}%")
+                    ->orWhere('type', 'like', "%{$keyword}%")
+                    ->orWhereHas('creator', function ($creatorQuery) use ($keyword) {
+                        $creatorQuery->where('name', 'like', "%{$keyword}%");
+                    });
+            });
+        }
+
+        $summaryRow = (clone $baseQuery)
+            ->selectRaw("\n                COALESCE(SUM(CASE WHEN type = 'income' OR (type = 'adjustment' AND amount > 0) THEN ABS(amount) ELSE 0 END), 0) AS income,\n                COALESCE(SUM(CASE WHEN type = 'expense' OR (type = 'adjustment' AND amount < 0) THEN ABS(amount) ELSE 0 END), 0) AS expense\n            ")
+            ->first();
+
+        $summaryIncome = (float) ($summaryRow->income ?? 0);
+        $summaryExpense = (float) ($summaryRow->expense ?? 0);
+
+        $transactions = (clone $baseQuery)
+            ->with(['creator:id,name', 'updater:id,name'])
+            ->orderByDesc('transaction_date')
+            ->orderByDesc('id')
+            ->paginate($perPage);
+
+        return response()->json([
+            'data' => $transactions,
+            'summary' => [
+                'income' => $summaryIncome,
+                'expense' => $summaryExpense,
+                'net' => $summaryIncome - $summaryExpense,
+            ],
+        ]);
     }
 
     public function storeManualIncome(Request $request)

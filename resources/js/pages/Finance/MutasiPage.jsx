@@ -19,7 +19,9 @@ function MutasiPage() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selected, setSelected] = useState(null);
+    const [pageSize, setPageSize] = useState(50);
     const [pageInfo, setPageInfo] = useState({ current: 1, last: 1, total: 0 });
+    const [statementTotals, setStatementTotals] = useState({ income: 0, expense: 0 });
     const [filters, setFilters] = useState({
         type: '',
         source: '',
@@ -41,19 +43,26 @@ function MutasiPage() {
         transaction_date: new Date().toISOString().split('T')[0],
     });
 
-    const loadData = async (page = 1, filterOverride = null) => {
+    const loadData = async (page = 1, filterOverride = null, pageSizeOverride = null) => {
         try {
             setLoading(true);
             const activeFilters = filterOverride || filters;
-            const params = { page };
+            const activePageSize = pageSizeOverride || pageSize;
+            const params = { page, per_page: activePageSize };
             if (activeFilters.type) params.type = activeFilters.type;
             if (activeFilters.source) params.source = activeFilters.source;
             if (activeFilters.start_date) params.start_date = activeFilters.start_date;
             if (activeFilters.end_date) params.end_date = activeFilters.end_date;
+            if (activeFilters.keyword?.trim()) params.keyword = activeFilters.keyword.trim();
 
             const res = await apiClient.get('/finance/transactions', { params });
             const list = res.data?.data?.data || [];
+            const summary = res.data?.summary || {};
             setItems(list);
+            setStatementTotals({
+                income: Number(summary.income || 0),
+                expense: Number(summary.expense || 0),
+            });
             setPageInfo({
                 current: res.data?.data?.current_page || 1,
                 last: res.data?.data?.last_page || 1,
@@ -61,6 +70,8 @@ function MutasiPage() {
             });
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memuat data mutasi');
+            setItems([]);
+            setStatementTotals({ income: 0, expense: 0 });
         } finally {
             setLoading(false);
         }
@@ -71,19 +82,9 @@ function MutasiPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const visibleItems = items.filter((item) => {
-        const kw = filters.keyword.trim().toLowerCase();
-        if (!kw) return true;
+    const visibleItems = items;
 
-        const sourceText = String(item.source || '').toLowerCase();
-        const descText = String(item.description || '').toLowerCase();
-        const typeText = String(item.type || '').toLowerCase();
-        const creatorText = String(item.creator?.name || '').toLowerCase();
-
-        return sourceText.includes(kw) || descText.includes(kw) || typeText.includes(kw) || creatorText.includes(kw);
-    });
-
-    const statementTotals = visibleItems.reduce(
+    const pageTotals = visibleItems.reduce(
         (acc, item) => {
             const amount = Number(item.amount || 0);
             const isIncome = item.type === 'income' || (item.type === 'adjustment' && amount > 0);
@@ -197,6 +198,12 @@ function MutasiPage() {
         };
         setFilters(resetValues);
         loadData(1, resetValues);
+    };
+
+    const handlePageSizeChange = (e) => {
+        const nextPageSize = Number(e.target.value);
+        setPageSize(nextPageSize);
+        loadData(1, null, nextPageSize);
     };
 
     if (loading) {
@@ -367,10 +374,10 @@ function MutasiPage() {
                                     Total Halaman Ini
                                 </td>
                                 <td className="px-4 py-3 text-right text-sm font-bold text-green-700">
-                                    {formatCurrency(statementTotals.income)}
+                                    {formatCurrency(pageTotals.income)}
                                 </td>
                                 <td className="px-4 py-3 text-right text-sm font-bold text-red-600">
-                                    {formatCurrency(statementTotals.expense)}
+                                    {formatCurrency(pageTotals.expense)}
                                 </td>
                                 {canEditMutations && <td className="px-4 py-3" />}
                             </tr>
@@ -400,7 +407,22 @@ function MutasiPage() {
             </div>
 
             <div className="flex flex-col md:flex-row items-center justify-between gap-3 text-sm text-gray-600">
-                <div>Total data: {pageInfo.total}</div>
+                <div className="flex flex-wrap items-center gap-3">
+                    <div>Total data: {pageInfo.total}</div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-gray-600">Data ditampilkan:</label>
+                        <select
+                            value={pageSize}
+                            onChange={handlePageSizeChange}
+                            className="px-2 py-1.5 border border-gray-300 rounded-lg bg-white text-sm"
+                        >
+                            <option value={10}>10</option>
+                            <option value={25}>25</option>
+                            <option value={50}>50</option>
+                            <option value={100}>100</option>
+                        </select>
+                    </div>
+                </div>
                 <div className="flex items-center gap-2">
                     <Button
                         type="button"
