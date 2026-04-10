@@ -66,6 +66,24 @@ client.on('ready', () => {
 // Event: Authenticated
 client.on('authenticated', () => {
     console.log('🔐 Autentikasi berhasil!');
+    waStatus.error = null;
+});
+
+// Event: Connection state change
+client.on('change_state', (state) => {
+    console.log(`🔄 State berubah: ${state}`);
+
+    if (state === 'CONNECTED') {
+        waStatus.ready = true;
+        waStatus.error = null;
+
+        if (client.info && client.info.wid) {
+            waStatus.phone = client.info.wid.user;
+        }
+    } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
+        waStatus.ready = false;
+        waStatus.phone = null;
+    }
 });
 
 // Event: Auth Failure
@@ -94,16 +112,42 @@ client.on('message', async (msg) => {
     console.log(`📩 Pesan masuk dari ${msg.from}: ${msg.body.substring(0, 50)}...`);
 });
 
-// ==================== API ENDPOINTS ====================
+// Derive status from runtime state to avoid relying only on event timing.
+async function getRealtimeStatus() {
+    let state = null;
 
-// Status endpoint
-app.get('/status', (req, res) => {
-    res.json({
+    try {
+        state = await client.getState();
+    } catch (err) {
+        // getState() can throw while client is still initializing.
+    }
+
+    if (!waStatus.phone && client.info && client.info.wid) {
+        waStatus.phone = client.info.wid.user;
+    }
+
+    if (state === 'CONNECTED' || !!waStatus.phone) {
+        waStatus.ready = true;
+        waStatus.error = null;
+        waStatus.qr = null;
+        waStatus.qrBase64 = null;
+    }
+
+    return {
         ready: waStatus.ready,
         phone: waStatus.phone,
         hasQR: !!waStatus.qrBase64,
-        error: waStatus.error
-    });
+        error: waStatus.error,
+        state
+    };
+}
+
+// ==================== API ENDPOINTS ====================
+
+// Status endpoint
+app.get('/status', async (req, res) => {
+    const current = await getRealtimeStatus();
+    res.json(current);
 });
 
 // QR Code endpoint
@@ -132,11 +176,15 @@ app.get('/qr', (req, res) => {
 // Kirim pesan
 app.post('/send', async (req, res) => {
     const { phone, message } = req.body;
-    
-    if (!waStatus.ready) {
+
+    const current = await getRealtimeStatus();
+
+    if (!current.ready) {
         return res.status(503).json({
             success: false,
-            error: 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
+            error: current.hasQR
+                ? 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
+                : `WhatsApp belum siap (state: ${current.state || 'unknown'})`
         });
     }
     
@@ -180,7 +228,7 @@ app.post('/send', async (req, res) => {
         }
         
         // Kirim pesan
-        await client.sendMessage(chatId, message);
+        await client.sendMessage(chatId, message, { sendSeen: false });
         
         console.log(`✅ Pesan terkirim ke ${formattedPhone}`);
         
@@ -203,11 +251,15 @@ app.post('/send', async (req, res) => {
 // Kirim bulk (multiple recipients)
 app.post('/send-bulk', async (req, res) => {
     const { recipients, message, delay = 2000 } = req.body;
-    
-    if (!waStatus.ready) {
+
+    const current = await getRealtimeStatus();
+
+    if (!current.ready) {
         return res.status(503).json({
             success: false,
-            error: 'WhatsApp belum siap'
+            error: current.hasQR
+                ? 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
+                : `WhatsApp belum siap (state: ${current.state || 'unknown'})`
         });
     }
     
@@ -265,7 +317,7 @@ app.post('/send-bulk', async (req, res) => {
             }
             
             // Kirim
-            await client.sendMessage(chatId, personalizedMessage);
+            await client.sendMessage(chatId, personalizedMessage, { sendSeen: false });
             
             console.log(`✅ Terkirim ke ${name} (${formattedPhone})`);
             
