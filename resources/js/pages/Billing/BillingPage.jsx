@@ -227,7 +227,24 @@ function BillingPage() {
         setter(rawValue);
     };
 
-    const generateTemplate = (customer, invoice) => {
+    const resolveInvoiceUrl = (invoiceOrLink) => {
+        const rawLink = typeof invoiceOrLink === 'string'
+            ? invoiceOrLink
+            : invoiceOrLink?.invoice_link;
+
+        if (!rawLink) return '';
+
+        const link = rawLink.toString().trim();
+        if (/^https?:\/\//i.test(link)) {
+            return link;
+        }
+
+        return `${window.location.origin}/invoice/${link}`;
+    };
+
+    const generateTemplate = (customer, invoiceOrLink) => {
+        const invoiceUrl = resolveInvoiceUrl(invoiceOrLink);
+
         return `Yth. Bapak/Ibu ${customer.name.toUpperCase()}
 Username PPPoE: ${customer.pppoe_username || '-'}
 
@@ -235,7 +252,7 @@ Terima kasih telah menjadi bagian dari pelanggan prioritas kami.
 Layanan internet anda aktif sampai ${formatDate(customer.due_date)}.
 
 > ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:
-${window.location.origin}/invoice/${invoice.invoice_link}
+${invoiceUrl}
 
 Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis.
 
@@ -247,13 +264,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
 
     const getWhatsAppLink = (customer, invoiceOrLink) => {
         const phone = customer.phone?.replace(/[^0-9]/g, '');
-        const invoiceLink = typeof invoiceOrLink === 'string'
-            ? invoiceOrLink
-            : `${window.location.origin}/invoice/${invoiceOrLink.invoice_link}`;
-
-        const template = generateTemplate(customer, {
-            invoice_link: invoiceLink,
-        });
+        const template = generateTemplate(customer, invoiceOrLink);
         return `https://wa.me/${phone}?text=${encodeURIComponent(template)}`;
     };
 
@@ -428,7 +439,12 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <Button
                                     size="sm"
                                     variant="secondary"
-                                    onClick={() => window.open(`/invoice/${invoice.invoice_link}`, '_blank')}
+                                    onClick={() => {
+                                        const invoiceUrl = resolveInvoiceUrl(invoice);
+                                        if (invoiceUrl) {
+                                            window.open(invoiceUrl, '_blank');
+                                        }
+                                    }}
                                 >
                                     <Eye size={14} className="mr-1" />
                                     <span className="hidden sm:inline">Lihat</span>
@@ -573,13 +589,13 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <input
                                     type="text"
                                     readOnly
-                                    value={`${window.location.origin}/invoice/${linkModal.invoice.invoice_link}`}
+                                    value={resolveInvoiceUrl(linkModal.invoice)}
                                     className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
                                 />
                                 <Button
                                     type="button"
                                     variant="secondary"
-                                    onClick={() => copyToClipboard(`${window.location.origin}/invoice/${linkModal.invoice.invoice_link}`, 'Link')}
+                                    onClick={() => copyToClipboard(resolveInvoiceUrl(linkModal.invoice), 'Link')}
                                 >
                                     <Copy size={16} />
                                 </Button>
@@ -738,13 +754,13 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <input
                                     type="text"
                                     readOnly
-                                    value={resultModal.data.invoice_link}
+                                    value={resolveInvoiceUrl(resultModal.data.invoice_link)}
                                     className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
                                 />
                                 <Button
                                     type="button"
                                     variant="secondary"
-                                    onClick={() => copyToClipboard(resultModal.data.invoice_link, 'Link')}
+                                    onClick={() => copyToClipboard(resolveInvoiceUrl(resultModal.data.invoice_link), 'Link')}
                                 >
                                     <Copy size={16} />
                                 </Button>
