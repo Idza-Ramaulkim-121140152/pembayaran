@@ -461,6 +461,7 @@ function InvoicePage() {
     }
 
     const isPaid = invoice?.status === 'paid';
+    const isCancelled = invoice?.status === 'cancelled';
     const isWaiting = invoice?.status === 'menunggu konfirmasi';
     const isRejected = invoice?.tolak_info;
     const timeRemaining = getTimeRemaining(invoice?.due_date);
@@ -495,6 +496,11 @@ function InvoicePage() {
                                 <CheckCircle size={18} />
                                 <span className="font-semibold">Lunas</span>
                             </div>
+                        ) : isCancelled ? (
+                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slate-500 to-gray-500 text-white rounded-full shadow-lg shadow-slate-500/30">
+                                <XCircle size={18} />
+                                <span className="font-semibold">Invoice Tidak Aktif</span>
+                            </div>
                         ) : isWaiting ? (
                             <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full shadow-lg shadow-blue-500/30 animate-pulse">
                                 <Clock size={18} />
@@ -516,6 +522,18 @@ function InvoicePage() {
                                 <div>
                                     <p className="font-semibold text-red-700">Pembayaran Ditolak</p>
                                     <p className="text-sm text-red-600 mt-1">{invoice.tolak_info}</p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {isCancelled && (
+                        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-6">
+                            <div className="flex items-start gap-3">
+                                <AlertCircle className="text-gray-500 shrink-0 mt-0.5" size={20} />
+                                <div>
+                                    <p className="font-semibold text-gray-700">Invoice Sudah Dinonaktifkan</p>
+                                    <p className="text-sm text-gray-600 mt-1">Tagihan ini sudah digantikan oleh invoice baru. Silakan gunakan link invoice terbaru dari admin.</p>
                                 </div>
                             </div>
                         </div>
@@ -575,7 +593,7 @@ function InvoicePage() {
                 </div>
 
                 {/* Payment Methods Section - Only show if not paid */}
-                {!isPaid && (
+                {!isPaid && !isCancelled && (
                     <div className="bg-gray-50 px-6 py-6">
                         <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                             <CreditCard size={20} className="text-indigo-600" />
@@ -630,7 +648,7 @@ function InvoicePage() {
                 )}
 
                 {/* Payment Details - Only show if not paid and method selected */}
-                {!isPaid && selectedMethod && (
+                {!isPaid && !isCancelled && selectedMethod && (
                     <div className="bg-white px-6 py-6 border-t border-gray-100">
                         {selectedMethod.type === 'qris' ? (
                             <div className="text-center">
@@ -719,7 +737,7 @@ function InvoicePage() {
                 )}
 
                 {/* Confirmation Button - Only show if not paid and method selected */}
-                {!isPaid && selectedMethod && (invoice?.status === 'unpaid' || isRejected) && (
+                {!isPaid && !isCancelled && selectedMethod && (invoice?.status === 'unpaid' || isRejected) && (
                     <div className="bg-white px-6 pb-6">
                         <button
                             onClick={() => setShowConfirmModal(true)}

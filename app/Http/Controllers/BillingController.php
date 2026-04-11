@@ -8,6 +8,7 @@ use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class BillingController extends Controller
@@ -90,7 +91,7 @@ class BillingController extends Controller
                         }
                         
                         $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                        $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
                         $customer->mikrotik_profile = null;
                         
                         \Log::info('User restored from isolation after payment confirmation', [
@@ -101,7 +102,7 @@ class BillingController extends Controller
                     } else {
                         if ($invoice->due_date) {
                             $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                            $customer->due_date = $oldDue->copy()->addDays(32)->format('Y-m-d');
+                            $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
                         } else {
                             $customer->due_date = now()->addDays(30)->format('Y-m-d');
                         }
@@ -118,7 +119,7 @@ class BillingController extends Controller
                         $oldDue = \Carbon\Carbon::parse($invoice->due_date);
                         $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
                     } else {
-                        $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
                     }
                 }
                 
@@ -214,13 +215,28 @@ class BillingController extends Controller
             }
             return redirect()->back()->with('error', 'Nominal tagihan harus diisi.');
         }
-        $invoice = $customer->invoices()->create([
-            'invoice_date' => now(),
-            'due_date' => $customer->due_date ?? now()->addDays(7),
-            'amount' => $amount,
-            'status' => 'unpaid',
-            'invoice_link' => uniqid('inv_'),
-        ]);
+
+        $cancelledPreviousInvoices = 0;
+        $invoice = null;
+
+        DB::transaction(function () use ($customer, $amount, &$cancelledPreviousInvoices, &$invoice) {
+            // Nonaktifkan invoice lama yang masih terbuka agar tidak dobel tagihan
+            $cancelledPreviousInvoices = $customer->invoices()
+                ->whereNotIn('status', ['paid', 'cancelled'])
+                ->update([
+                    'status' => 'cancelled',
+                    'paid_at' => null,
+                    'tolak_info' => null,
+                ]);
+
+            $invoice = $customer->invoices()->create([
+                'invoice_date' => now(),
+                'due_date' => $customer->due_date ?? now()->addDays(7),
+                'amount' => $amount,
+                'status' => 'unpaid',
+                'invoice_link' => uniqid('inv_'),
+            ]);
+        });
 
         // TODO: Kirim link invoice ke pelanggan jika perlu
 
@@ -242,11 +258,17 @@ class BillingController extends Controller
                     'invoice_link' => $link,
                     'template' => $template,
                     'amount' => $invoice->amount,
+                    'cancelled_previous_invoices' => (int) $cancelledPreviousInvoices,
                 ]
             ]);
         }
 
-        return redirect()->route('billing.index')->with('success', 'Tagihan berhasil dibuat.');
+        $successMessage = 'Tagihan berhasil dibuat.';
+        if ($cancelledPreviousInvoices > 0) {
+            $successMessage .= ' ' . $cancelledPreviousInvoices . ' tagihan lama dinonaktifkan.';
+        }
+
+        return redirect()->route('billing.index')->with('success', $successMessage);
     }
 
     public function tolakPembayaran($invoiceId)
@@ -445,8 +467,8 @@ class BillingController extends Controller
                     
                     $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
                     
-                    // Due date = confirmation date (today) + 32 days
-                    $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                    // Due date = confirmation date (today) + 30 days
+                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
                     // Clear saved profile since restored
                     $customer->mikrotik_profile = null;
                     
@@ -457,12 +479,12 @@ class BillingController extends Controller
                         'confirmed_at' => now()->format('Y-m-d H:i:s')
                     ]);
                 } else {
-                    // User is NOT isolated, due date = old due date + 32 days
+                    // User is NOT isolated, due date = old due date + 30 days
                     if ($invoice->due_date) {
                         $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                        $customer->due_date = $oldDue->copy()->addDays(32)->format('Y-m-d');
+                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
                     } else {
-                        $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
                     }
                 }
                 
@@ -473,12 +495,12 @@ class BillingController extends Controller
                     'error' => $e->getMessage()
                 ]);
                 
-                // Fallback: use old due date + 32 days
+                // Fallback: use old due date + 30 days
                 if ($invoice->due_date) {
                     $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                    $customer->due_date = $oldDue->copy()->addDays(32)->format('Y-m-d');
+                    $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
                 } else {
-                    $customer->due_date = now()->addDays(32)->format('Y-m-d');
+                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
                 }
             }
             

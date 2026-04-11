@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { 
     Users, DollarSign, TrendingUp, AlertCircle, Plus, FileText, Settings,
-    ArrowUpRight, ArrowDownRight, Wallet, Activity, Calendar, Zap, MessageSquare, AlertTriangle, Edit2, Trash2
+    ArrowUpRight, ArrowDownRight, Wallet, Activity, Calendar, Zap, MessageSquare, AlertTriangle, Edit2, Trash2, Brain, Target, RefreshCw
 } from 'lucide-react';
 import { Line, Bar, Doughnut } from 'react-chartjs-2';
 import {
@@ -36,6 +36,33 @@ ChartJS.register(
     Legend,
     Filler
 );
+
+function formatDateInputLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getDefaultForecastRange() {
+    const today = new Date();
+    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 6);
+
+    return {
+        start_date: formatDateInputLocal(today),
+        end_date: formatDateInputLocal(end),
+    };
+}
+
+function getDefaultKpiRange() {
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+
+    return {
+        start_date: formatDateInputLocal(start),
+        end_date: formatDateInputLocal(today),
+    };
+}
 
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
@@ -72,6 +99,54 @@ function Dashboard() {
         amount: '',
         transaction_date: new Date().toISOString().split('T')[0],
     });
+    const [kpiRange, setKpiRange] = useState(getDefaultKpiRange());
+    const [kpiData, setKpiData] = useState(null);
+    const [kpiLoading, setKpiLoading] = useState(false);
+    const [kpiError, setKpiError] = useState(null);
+    const [forecastRange, setForecastRange] = useState(getDefaultForecastRange());
+    const [forecastData, setForecastData] = useState(null);
+    const [forecastLoading, setForecastLoading] = useState(false);
+    const [forecastError, setForecastError] = useState(null);
+
+    const fetchManagementKpis = async (range = kpiRange) => {
+        try {
+            setKpiLoading(true);
+            setKpiError(null);
+
+            const response = await apiClient.get('/dashboard/management-kpis', {
+                params: {
+                    start_date: range.start_date,
+                    end_date: range.end_date,
+                },
+            });
+
+            setKpiData(response.data?.data || null);
+        } catch (err) {
+            setKpiError(err.response?.data?.message || 'Gagal memuat KPI manajemen.');
+        } finally {
+            setKpiLoading(false);
+        }
+    };
+
+    const fetchRevenueForecast = async (range = forecastRange) => {
+        try {
+            setForecastLoading(true);
+            setForecastError(null);
+
+            const response = await apiClient.get('/dashboard/revenue-forecast', {
+                params: {
+                    start_date: range.start_date,
+                    end_date: range.end_date,
+                },
+            });
+
+            setForecastData(response.data?.data || null);
+        } catch (err) {
+            setForecastError(err.response?.data?.message || 'Gagal memuat prediksi pendapatan.');
+        } finally {
+            setForecastLoading(false);
+        }
+    };
 
     useEffect(() => {
         const fetchStats = async () => {
@@ -120,6 +195,10 @@ function Dashboard() {
         };
 
         fetchStats();
+        if (!isTeknisi) {
+            fetchManagementKpis(getDefaultKpiRange());
+            fetchRevenueForecast(getDefaultForecastRange());
+        }
     }, []);
 
     if (loading) {
@@ -182,12 +261,18 @@ function Dashboard() {
         ]
     };
 
+    const activeCustomerCount = Number(stats?.active_customers || 0);
+    const totalCustomerCount = Number(stats?.total_customers || 0);
+    const inactiveCustomerCount = Number(
+        stats?.inactive_customers ?? Math.max(0, totalCustomerCount - activeCustomerCount)
+    );
+
     // Customer status doughnut chart
     const customerStatusData = {
-        labels: ['Sudah Bayar', 'Belum Bayar'],
+        labels: ['Aktif', 'Tidak Aktif'],
         datasets: [
             {
-                data: [stats?.active_customers || 0, (stats?.total_customers || 0) - (stats?.active_customers || 0)],
+                data: [activeCustomerCount, inactiveCustomerCount],
                 backgroundColor: [
                     'rgba(34, 197, 94, 0.9)',
                     'rgba(239, 68, 68, 0.9)',
@@ -311,6 +396,68 @@ function Dashboard() {
         },
     };
 
+    const forecastChartData = {
+        labels: forecastData?.daily_forecast?.map((item) =>
+            new Date(`${item.date}T00:00:00`).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })
+        ) || [],
+        datasets: [
+            {
+                label: 'Prediksi Pendapatan',
+                data: forecastData?.daily_forecast?.map((item) => item.predicted_revenue) || [],
+                borderColor: '#0f766e',
+                backgroundColor: 'rgba(15, 118, 110, 0.18)',
+                borderWidth: 3,
+                fill: true,
+                tension: 0.3,
+                pointBackgroundColor: '#0f766e',
+                pointRadius: 4,
+                pointHoverRadius: 6,
+            },
+        ],
+    };
+
+    const forecastChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: {
+                    label: (context) => `Rp ${Number(context.raw || 0).toLocaleString('id-ID')}`,
+                },
+            },
+        },
+        scales: {
+            x: {
+                grid: { display: false },
+                ticks: {
+                    color: '#6b7280',
+                    font: { size: 11, weight: '500' },
+                },
+            },
+            y: {
+                beginAtZero: true,
+                grid: {
+                    color: 'rgba(148, 163, 184, 0.15)',
+                    drawBorder: false,
+                },
+                ticks: {
+                    color: '#6b7280',
+                    callback: (value) => {
+                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
+                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
+                        return value;
+                    },
+                },
+            },
+        },
+    };
+
     // Calculate percentage change (mock for now)
     const getPercentageChange = () => {
         const revenueData = stats?.revenue_by_month || [];
@@ -325,9 +472,149 @@ function Dashboard() {
     const percentageChange = getPercentageChange();
     const isPositive = percentageChange >= 0;
     const financeSummary = stats?.finance_summary || { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 };
+    const kpiSummary = kpiData?.summary || null;
+    const kpiAging = kpiData?.aging || null;
+    const kpiVariance = kpiData?.variance || null;
+    const forecastSummary = forecastData?.summary || null;
+    const forecastContext = forecastData?.historical_context || null;
     const monthlyInstallations = Number(
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
+
+    const kpiAgingAmountChartData = {
+        labels: (kpiAging?.buckets || []).map((bucket) => bucket.label),
+        datasets: [
+            {
+                label: 'Nilai Piutang',
+                data: (kpiAging?.buckets || []).map((bucket) => Number(bucket.amount || 0)),
+                backgroundColor: [
+                    'rgba(14, 165, 233, 0.85)',
+                    'rgba(34, 197, 94, 0.85)',
+                    'rgba(245, 158, 11, 0.85)',
+                    'rgba(249, 115, 22, 0.85)',
+                    'rgba(239, 68, 68, 0.85)',
+                ],
+                borderRadius: 10,
+                borderSkipped: false,
+            },
+        ],
+    };
+
+    const kpiVarianceChartData = {
+        labels: (kpiVariance?.daily || []).map((item) =>
+            new Date(`${item.date}T00:00:00`).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })
+        ),
+        datasets: [
+            {
+                label: 'Forecast',
+                data: (kpiVariance?.daily || []).map((item) => Number(item.predicted_revenue || 0)),
+                borderColor: '#0f766e',
+                backgroundColor: 'rgba(15, 118, 110, 0.12)',
+                borderWidth: 2,
+                tension: 0.3,
+                pointRadius: 3,
+            },
+            {
+                label: 'Realisasi',
+                data: (kpiVariance?.daily || []).map((item) => Number(item.actual_revenue || 0)),
+                borderColor: '#1d4ed8',
+                backgroundColor: 'rgba(29, 78, 216, 0.12)',
+                borderWidth: 2,
+                tension: 0.3,
+                pointRadius: 3,
+            },
+        ],
+    };
+
+    const kpiBarCurrencyOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: {
+                    label: (context) => `Rp ${Number(context.raw || 0).toLocaleString('id-ID')}`,
+                },
+            },
+        },
+        scales: {
+            x: {
+                grid: { display: false },
+                ticks: {
+                    color: '#6b7280',
+                    font: { size: 11, weight: '500' },
+                },
+            },
+            y: {
+                beginAtZero: true,
+                grid: {
+                    color: 'rgba(148, 163, 184, 0.15)',
+                    drawBorder: false,
+                },
+                ticks: {
+                    color: '#6b7280',
+                    callback: (value) => {
+                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
+                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
+                        return value;
+                    },
+                },
+            },
+        },
+    };
+
+    const kpiLineCurrencyOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    boxWidth: 12,
+                    color: '#4b5563',
+                },
+            },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                padding: 12,
+                cornerRadius: 10,
+                callbacks: {
+                    label: (context) => `${context.dataset.label}: Rp ${Number(context.raw || 0).toLocaleString('id-ID')}`,
+                },
+            },
+        },
+        scales: {
+            x: {
+                grid: { display: false },
+                ticks: {
+                    color: '#6b7280',
+                    font: { size: 11, weight: '500' },
+                },
+            },
+            y: {
+                beginAtZero: true,
+                grid: {
+                    color: 'rgba(148, 163, 184, 0.15)',
+                    drawBorder: false,
+                },
+                ticks: {
+                    color: '#6b7280',
+                    callback: (value) => {
+                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
+                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
+                        return value;
+                    },
+                },
+            },
+        },
+    };
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', {
@@ -335,6 +622,79 @@ function Dashboard() {
             currency: 'IDR',
             minimumFractionDigits: 0,
         }).format(Number(amount || 0));
+    };
+
+    const formatPercent = (value, digits = 1) => {
+        const numericValue = Number(value || 0);
+        return `${numericValue.toFixed(digits)}%`;
+    };
+
+    const handleApplyKpiRange = async () => {
+        if (!kpiRange.start_date || !kpiRange.end_date) {
+            setKpiError('Rentang tanggal KPI wajib diisi.');
+            return;
+        }
+
+        const start = new Date(`${kpiRange.start_date}T00:00:00`);
+        const end = new Date(`${kpiRange.end_date}T00:00:00`);
+
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            setKpiError('Format tanggal KPI tidak valid.');
+            return;
+        }
+
+        if (start > end) {
+            setKpiError('Tanggal mulai KPI tidak boleh melebihi tanggal akhir.');
+            return;
+        }
+
+        const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        if (totalDays > 120) {
+            setKpiError('Rentang KPI maksimal 120 hari.');
+            return;
+        }
+
+        await fetchManagementKpis(kpiRange);
+    };
+
+    const handleResetKpiRange = async () => {
+        const defaultRange = getDefaultKpiRange();
+        setKpiRange(defaultRange);
+        await fetchManagementKpis(defaultRange);
+    };
+
+    const handleApplyForecastRange = async () => {
+        if (!forecastRange.start_date || !forecastRange.end_date) {
+            setForecastError('Rentang tanggal prediksi wajib diisi.');
+            return;
+        }
+
+        const start = new Date(`${forecastRange.start_date}T00:00:00`);
+        const end = new Date(`${forecastRange.end_date}T00:00:00`);
+
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            setForecastError('Format tanggal tidak valid.');
+            return;
+        }
+
+        if (start > end) {
+            setForecastError('Tanggal mulai tidak boleh melebihi tanggal akhir.');
+            return;
+        }
+
+        const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        if (totalDays > 60) {
+            setForecastError('Rentang prediksi maksimal 60 hari.');
+            return;
+        }
+
+        await fetchRevenueForecast(forecastRange);
+    };
+
+    const handleResetForecastRange = async () => {
+        const defaultRange = getDefaultForecastRange();
+        setForecastRange(defaultRange);
+        await fetchRevenueForecast(defaultRange);
     };
 
     const handleAdjustBalance = async (e) => {
@@ -357,6 +717,7 @@ function Dashboard() {
             setStats(refreshed.data.data);
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
+            await fetchManagementKpis(kpiRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menyimpan penyesuaian saldo');
         } finally {
@@ -387,6 +748,7 @@ function Dashboard() {
             setStats(refreshed.data.data);
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
+            await fetchManagementKpis(kpiRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menambah pemasukan manual');
         } finally {
@@ -421,6 +783,7 @@ function Dashboard() {
             setStats(refreshed.data.data);
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
+            await fetchManagementKpis(kpiRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memperbarui transaksi');
         } finally {
@@ -437,6 +800,7 @@ function Dashboard() {
             setStats(refreshed.data.data);
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
+            await fetchManagementKpis(kpiRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menghapus transaksi');
         }
@@ -676,8 +1040,9 @@ function Dashboard() {
                                 </div>
                                 <p className="text-emerald-100 text-sm font-medium">Pelanggan Aktif</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {stats.active_customers || 0}
+                                    {activeCustomerCount}
                                 </p>
+                                <p className="text-emerald-100 text-xs mt-1">Di luar pelanggan lewat jatuh tempo atau isolir</p>
                             </div>
                         </div>
                     )}
@@ -766,6 +1131,377 @@ function Dashboard() {
             )}
 
             {!isTeknisi && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div>
+                            <h2 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
+                                <Target size={20} className="text-blue-700" />
+                                KPI Manajemen
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Collection rate, aging piutang, churn, ARPU, dan variance forecast vs realisasi.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Tanggal Mulai</label>
+                                <input
+                                    type="date"
+                                    value={kpiRange.start_date}
+                                    onChange={(e) => setKpiRange((prev) => ({ ...prev, start_date: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Tanggal Akhir</label>
+                                <input
+                                    type="date"
+                                    value={kpiRange.end_date}
+                                    onChange={(e) => setKpiRange((prev) => ({ ...prev, end_date: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleApplyKpiRange}
+                                disabled={kpiLoading}
+                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-60"
+                            >
+                                {kpiLoading ? 'Memproses...' : 'Terapkan'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleResetKpiRange}
+                                disabled={kpiLoading}
+                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-60 inline-flex items-center gap-2"
+                            >
+                                <RefreshCw size={14} className={kpiLoading ? 'animate-spin' : ''} />
+                                30 Hari Default
+                            </button>
+                        </div>
+                    </div>
+
+                    {kpiError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+                            {kpiError}
+                        </div>
+                    )}
+
+                    {kpiLoading && !kpiSummary && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                            Memproses KPI manajemen berdasarkan data invoice dan pelanggan...
+                        </div>
+                    )}
+
+                    {!kpiLoading && !kpiError && !kpiSummary && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                            Data KPI belum tersedia. Pilih rentang tanggal lalu klik Terapkan.
+                        </div>
+                    )}
+
+                    {kpiSummary && (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                                <div className="rounded-xl bg-green-50 border border-green-100 p-4">
+                                    <p className="text-xs font-medium text-green-700">Collection Rate</p>
+                                    <p className="text-2xl font-bold text-green-900 mt-1">
+                                        {formatPercent(kpiSummary.collection_rate, 2)}
+                                    </p>
+                                    <p className={`text-xs mt-1 ${Number(kpiSummary.collection_rate_delta_vs_previous || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                        Delta: {Number(kpiSummary.collection_rate_delta_vs_previous || 0) >= 0 ? '+' : ''}{formatPercent(kpiSummary.collection_rate_delta_vs_previous, 2)}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
+                                    <p className="text-xs font-medium text-amber-700">Aging Overdue</p>
+                                    <p className="text-2xl font-bold text-amber-900 mt-1">
+                                        {formatCurrency(kpiSummary.aging_total_overdue_amount)}
+                                    </p>
+                                    <p className="text-xs text-amber-700 mt-1">
+                                        {kpiSummary.aging_total_overdue_invoices || 0} invoice overdue
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
+                                    <p className="text-xs font-medium text-rose-700">Churn (Pembayaran)</p>
+                                    <p className="text-2xl font-bold text-rose-900 mt-1">
+                                        {formatPercent(kpiSummary.churn_rate, 2)}
+                                    </p>
+                                    <p className="text-xs text-rose-700 mt-1">
+                                        {kpiSummary.churned_customers || 0} pelanggan churn
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
+                                    <p className="text-xs font-medium text-indigo-700">ARPU (Pelanggan Bayar)</p>
+                                    <p className="text-2xl font-bold text-indigo-900 mt-1">
+                                        {formatCurrency(kpiSummary.arpu_paid_customer)}
+                                    </p>
+                                    <p className={`text-xs mt-1 ${Number(kpiSummary.arpu_delta_vs_previous || 0) >= 0 ? 'text-indigo-700' : 'text-red-700'}`}>
+                                        Delta: {Number(kpiSummary.arpu_delta_vs_previous || 0) >= 0 ? '+' : ''}{formatCurrency(kpiSummary.arpu_delta_vs_previous)}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-xs font-medium text-slate-600">Variance Forecast</p>
+                                    <p className={`text-2xl font-bold mt-1 ${Number(kpiSummary.variance_percentage || 0) >= 0 ? 'text-slate-900' : 'text-red-700'}`}>
+                                        {kpiSummary.variance_available
+                                            ? `${Number(kpiSummary.variance_percentage || 0) >= 0 ? '+' : ''}${formatPercent(kpiSummary.variance_percentage, 2)}`
+                                            : '-'}
+                                    </p>
+                                    <p className="text-xs text-slate-600 mt-1">
+                                        {kpiSummary.variance_available
+                                            ? `Akurasi ${formatPercent(kpiSummary.variance_accuracy_score, 1)}`
+                                            : 'Data realisasi historis belum cukup'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                <div className="border border-gray-100 rounded-xl p-4">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Aging Piutang (Nilai)</p>
+                                            <p className="text-xs text-gray-500">Snapshot per {kpiAging?.as_of_date || '-'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="h-[240px]">
+                                        <Bar data={kpiAgingAmountChartData} options={kpiBarCurrencyOptions} />
+                                    </div>
+                                </div>
+
+                                <div className="border border-gray-100 rounded-xl p-4">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Forecast vs Realisasi</p>
+                                            <p className="text-xs text-gray-500">
+                                                {(kpiVariance?.range?.start_date && kpiVariance?.range?.end_date)
+                                                    ? `${kpiVariance.range.start_date} s.d. ${kpiVariance.range.end_date}`
+                                                    : 'Belum ada data backtest'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {kpiSummary.variance_available && (kpiVariance?.daily || []).length > 0 ? (
+                                        <div className="h-[240px]">
+                                            <Line data={kpiVarianceChartData} options={kpiLineCurrencyOptions} />
+                                        </div>
+                                    ) : (
+                                        <div className="h-[240px] rounded-lg bg-gray-50 border border-dashed border-gray-200 flex items-center justify-center text-sm text-gray-500">
+                                            Data variance belum tersedia untuk rentang yang dipilih.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+                                    <p className="text-xs font-medium text-gray-600">Piutang Outstanding</p>
+                                    <p className="text-xl font-bold text-gray-900 mt-1">
+                                        {formatCurrency(kpiSummary.aging_total_outstanding_amount)}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">Total piutang (termasuk belum jatuh tempo)</p>
+                                </div>
+
+                                <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+                                    <p className="text-xs font-medium text-gray-600">Pendapatan Realisasi</p>
+                                    <p className="text-xl font-bold text-gray-900 mt-1">
+                                        {formatCurrency(kpiSummary.realized_revenue)}
+                                    </p>
+                                    <p className={`text-xs mt-1 ${Number(kpiSummary.revenue_growth_vs_previous || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                        Growth: {Number(kpiSummary.revenue_growth_vs_previous || 0) >= 0 ? '+' : ''}{formatPercent(kpiSummary.revenue_growth_vs_previous, 2)}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+                                    <p className="text-xs font-medium text-gray-600">Pelanggan Bayar</p>
+                                    <p className="text-xl font-bold text-gray-900 mt-1">
+                                        {kpiSummary.paid_customers || 0}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">Basis perhitungan ARPU periode ini</p>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {!isTeknisi && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div>
+                            <h2 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
+                                <Brain size={20} className="text-teal-700" />
+                                Prediksi Pendapatan
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Analisis invoice paid historis dengan default rentang 7 hari ke depan.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Tanggal Mulai</label>
+                                <input
+                                    type="date"
+                                    value={forecastRange.start_date}
+                                    onChange={(e) => setForecastRange((prev) => ({ ...prev, start_date: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Tanggal Akhir</label>
+                                <input
+                                    type="date"
+                                    value={forecastRange.end_date}
+                                    onChange={(e) => setForecastRange((prev) => ({ ...prev, end_date: e.target.value }))}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleApplyForecastRange}
+                                disabled={forecastLoading}
+                                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-medium disabled:opacity-60"
+                            >
+                                {forecastLoading ? 'Menganalisis...' : 'Terapkan'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleResetForecastRange}
+                                disabled={forecastLoading}
+                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-60 inline-flex items-center gap-2"
+                            >
+                                <RefreshCw size={14} className={forecastLoading ? 'animate-spin' : ''} />
+                                7 Hari Default
+                            </button>
+                        </div>
+                    </div>
+
+                    {forecastError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+                            {forecastError}
+                        </div>
+                    )}
+
+                    {forecastLoading && !forecastSummary && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                            Memproses prediksi pendapatan berdasarkan histori invoice...
+                        </div>
+                    )}
+
+                    {!forecastLoading && !forecastError && !forecastSummary && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                            Data prediksi belum tersedia. Silakan pilih rentang tanggal lalu klik Terapkan.
+                        </div>
+                    )}
+
+                    {forecastSummary && (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                                <div className="rounded-xl bg-teal-50 border border-teal-100 p-4">
+                                    <p className="text-xs font-medium text-teal-700">Total Prediksi Rentang</p>
+                                    <p className="text-2xl font-bold text-teal-900 mt-1">
+                                        {formatCurrency(forecastSummary.predicted_total_revenue)}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-xs font-medium text-slate-600">Rata-Rata Prediksi / Hari</p>
+                                    <p className="text-2xl font-bold text-slate-900 mt-1">
+                                        {formatCurrency(forecastSummary.predicted_daily_average)}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
+                                    <p className="text-xs font-medium text-blue-700">Tren 6 Bulan</p>
+                                    <p className={`text-2xl font-bold mt-1 ${forecastSummary.trend_percentage_6m >= 0 ? 'text-blue-900' : 'text-red-700'}`}>
+                                        {forecastSummary.trend_percentage_6m >= 0 ? '+' : ''}{forecastSummary.trend_percentage_6m}%
+                                    </p>
+                                </div>
+                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                    <p className="text-xs font-medium text-emerald-700">Confidence Rata-Rata</p>
+                                    <p className="text-2xl font-bold text-emerald-900 mt-1">
+                                        {forecastSummary.average_confidence}%
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                                <div className="xl:col-span-2 border border-gray-100 rounded-xl p-4">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Grafik Prediksi Harian</p>
+                                            <p className="text-xs text-gray-500">
+                                                {forecastData?.range?.start_date} s.d. {forecastData?.range?.end_date}
+                                            </p>
+                                        </div>
+                                        <div className="text-xs text-gray-500 inline-flex items-center gap-1">
+                                            <Target size={14} />
+                                            Berbasis histori 12 bulan
+                                        </div>
+                                    </div>
+                                    <div className="h-[250px]">
+                                        <Line data={forecastChartData} options={forecastChartOptions} />
+                                    </div>
+                                </div>
+
+                                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                                    <p className="text-sm font-semibold text-gray-900">Insight Analisis</p>
+                                    <div className="text-xs text-gray-600 space-y-1">
+                                        <p>Rata-rata historis harian: <span className="font-semibold text-gray-900">{formatCurrency(forecastSummary.historical_daily_average)}</span></p>
+                                        <p>Rata-rata 30 hari terakhir: <span className="font-semibold text-gray-900">{formatCurrency(forecastSummary.recent_30d_daily_average)}</span></p>
+                                        <p>Hari terkuat: <span className="font-semibold text-gray-900">{forecastSummary.best_weekday}</span></p>
+                                        <p>Invoice paid historis: <span className="font-semibold text-gray-900">{forecastSummary.historical_paid_invoices}</span></p>
+                                        <p>Volatilitas: <span className="font-semibold text-gray-900">{forecastContext?.volatility_index ?? 0}%</span></p>
+                                    </div>
+
+                                    <div className="pt-2 border-t border-gray-100">
+                                        <p className="text-xs font-semibold text-gray-700 mb-2">Catatan Prediksi</p>
+                                        <ul className="space-y-2 text-xs text-gray-600">
+                                            {(forecastSummary.analysis_notes || []).map((note, index) => (
+                                                <li key={index} className="flex gap-2">
+                                                        <span className="text-teal-600 font-bold">-</span>
+                                                    <span>{note}</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto border border-gray-100 rounded-xl">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-gray-50 text-gray-600 text-left">
+                                        <tr>
+                                            <th className="px-4 py-3">Tanggal</th>
+                                            <th className="px-4 py-3">Hari</th>
+                                            <th className="px-4 py-3 text-right">Prediksi</th>
+                                            <th className="px-4 py-3 text-right">Confidence</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(forecastData?.daily_forecast || []).map((item) => (
+                                            <tr key={item.date} className="border-t border-gray-100">
+                                                <td className="px-4 py-2.5">{item.date}</td>
+                                                <td className="px-4 py-2.5">{item.day_name}</td>
+                                                <td className="px-4 py-2.5 text-right font-semibold text-gray-900">
+                                                    {formatCurrency(item.predicted_revenue)}
+                                                </td>
+                                                <td className="px-4 py-2.5 text-right">
+                                                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs bg-teal-100 text-teal-700 font-medium">
+                                                        {item.confidence}%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {!isTeknisi && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Revenue Chart - Takes 2 columns */}
                     <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -788,7 +1524,7 @@ function Dashboard() {
                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                         <div className="mb-6">
                             <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
-                            <p className="text-sm text-gray-500">Distribusi sudah bayar/belum bayar bulan ini</p>
+                            <p className="text-sm text-gray-500">Distribusi aktif dan tidak aktif (lewat jatuh tempo atau isolir)</p>
                         </div>
                         <div className="h-[200px] relative">
                             <Doughnut data={customerStatusData} options={doughnutOptions} />
@@ -802,11 +1538,11 @@ function Dashboard() {
                         <div className="flex justify-center gap-6 mt-6">
                             <div className="flex items-center gap-2">
                                 <span className="w-3 h-3 bg-green-500 rounded-full"></span>
-                                <span className="text-sm text-gray-600">Sudah Bayar ({stats?.active_customers || 0})</span>
+                                <span className="text-sm text-gray-600">Aktif ({activeCustomerCount})</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="w-3 h-3 bg-red-500 rounded-full"></span>
-                                <span className="text-sm text-gray-600">Belum Bayar ({(stats?.total_customers || 0) - (stats?.active_customers || 0)})</span>
+                                <span className="text-sm text-gray-600">Tidak Aktif ({inactiveCustomerCount})</span>
                             </div>
                         </div>
                     </div>

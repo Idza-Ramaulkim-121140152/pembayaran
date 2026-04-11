@@ -30,4 +30,16 @@ return [
 
     'connection_lifetime' => env('MIKROTIK_CONNECTION_LIFETIME', 3600), // 1 hour in seconds
 
+    /*
+    |--------------------------------------------------------------------------
+    | Real-time Read Mode
+    |--------------------------------------------------------------------------
+    |
+    | When enabled, read commands use a fresh MikroTik API session so status
+    | data (PPPoE active/isolir/resource) reflects latest router state.
+    |
+    */
+
+    'force_fresh_reads' => env('MIKROTIK_FORCE_FRESH_READS', true),
+
 ];

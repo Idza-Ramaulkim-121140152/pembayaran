@@ -124,13 +124,30 @@ function SendNotificationPage() {
         );
     });
 
+    const isCustomerServiceActive = (customer) => {
+        if (typeof customer?.is_service_active === 'boolean') {
+            return customer.is_service_active;
+        }
+
+        const todayString = new Date().toISOString().split('T')[0];
+        const dueDate = customer?.due_date ? String(customer.due_date).slice(0, 10) : null;
+        const isOverdue = !!dueDate && dueDate < todayString;
+        const isIsolated = customer?.is_service_isolated === true;
+
+        if (typeof customer?.is_service_inactive === 'boolean') {
+            return !customer.is_service_inactive;
+        }
+
+        return !isOverdue && !isIsolated;
+    };
+
     const getTargetCustomers = () => {
         if (mode === 'all') {
-            return customers.filter(c => c.is_active);
+            return customers.filter(c => isCustomerServiceActive(c));
         } else if (mode === 'area' && selectedArea) {
-            return getCustomersByArea(selectedArea).filter(c => c.is_active);
+            return getCustomersByArea(selectedArea).filter(c => isCustomerServiceActive(c));
         } else if (mode === 'select') {
-            return customers.filter(c => selectedCustomers.includes(c.id));
+            return customers.filter(c => selectedCustomers.includes(c.id) && isCustomerServiceActive(c));
         }
         return [];
     };
@@ -541,7 +558,7 @@ function SendNotificationPage() {
                                 {selectedArea && (
                                     <div className="mt-3 p-3 bg-gray-50 rounded-lg">
                                         <p className="text-sm text-gray-600">
-                                            <span className="font-medium">{getCustomersByArea(selectedArea).filter(c => c.is_active).length}</span> pelanggan aktif di area {selectedArea}
+                                            <span className="font-medium">{getCustomersByArea(selectedArea).filter(c => isCustomerServiceActive(c)).length}</span> pelanggan aktif layanan di area {selectedArea}
                                         </p>
                                     </div>
                                 )}

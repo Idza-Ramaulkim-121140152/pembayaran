@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Services\MikroTikService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Exception;
@@ -93,20 +94,35 @@ class MonitoringController extends Controller
         }
 
         $activeConnections = [];
+        $isolatedUsernameMap = [];
         try {
             // Get active PPPoE connections from MikroTik
             $mikrotikPPP = new MikroTikService();
             $activeConnections = $mikrotikPPP->getActivePPPoEConnections();
+
+            $isolatedSecrets = $mikrotikPPP->getIsolatedSecrets();
+            foreach ($isolatedSecrets as $secret) {
+                $username = strtolower(trim((string) ($secret['name'] ?? '')));
+                if ($username !== '') {
+                    $isolatedUsernameMap[$username] = true;
+                }
+            }
         } catch (Exception $e) {
             $errorMessage = ($errorMessage ? $errorMessage . " | " : "") . "PPPoE connections error: " . $e->getMessage();
             \Log::error("Failed to get PPPoE connections: " . $e->getMessage());
         }
 
+        $activitySummary = $this->buildCustomerActivitySummary(Carbon::today(), $isolatedUsernameMap);
+
         // Get customers from database and match with MikroTik
-        $customerData = $this->getCustomersWithConnectionStatus($activeConnections);
+        $customerData = $this->getCustomersWithConnectionStatus(
+            $activeConnections,
+            $isolatedUsernameMap,
+            $activitySummary['active_username_map']
+        );
 
         // Generate summary
-        $summary = $this->generateSummary($customerData, $activeConnections);
+        $summary = $this->generateSummary($customerData, $activeConnections, $activitySummary);
 
         return [
             'error' => $errorMessage,
@@ -169,23 +185,42 @@ class MonitoringController extends Controller
     /**
      * Get customers from database and match with MikroTik connections
      */
-    private function getCustomersWithConnectionStatus($activeConnections)
+    private function getCustomersWithConnectionStatus($activeConnections, array $isolatedUsernameMap = [], array $activeUsernameMap = [])
     {
         // Create lookup array for active connections (pppoe_username => connection data)
         $connectionMap = [];
         foreach ($activeConnections as $connection) {
-            $connectionMap[$connection['name']] = $connection;
+            $username = strtolower(trim((string) ($connection['name'] ?? '')));
+            if ($username !== '') {
+                $connectionMap[$username] = $connection;
+            }
         }
 
-        // Get all active customers from database
-        $customers = Customer::where('is_active', true)
-            ->whereNotNull('pppoe_username')
-            ->get();
+        // Get customers with PPPoE username from database
+        $customers = Customer::whereNotNull('pppoe_username')
+            ->where('pppoe_username', '!=', '')
+            ->get(['id', 'name', 'pppoe_username', 'phone', 'address', 'package_type', 'due_date']);
 
         $result = [];
+        $today = Carbon::today()->startOfDay();
+        $activeUsernameMap = array_fill_keys($activeUsernameMap, true);
+
         foreach ($customers as $customer) {
-            $isOnline = isset($connectionMap[$customer->pppoe_username]);
-            $connection = $isOnline ? $connectionMap[$customer->pppoe_username] : null;
+            $normalizedUsername = strtolower(trim((string) $customer->pppoe_username));
+            $isOnline = $normalizedUsername !== '' && isset($connectionMap[$normalizedUsername]);
+            $connection = $isOnline ? $connectionMap[$normalizedUsername] : null;
+
+            $isOverdue = $customer->due_date
+                ? Carbon::parse($customer->due_date)->startOfDay()->lt($today)
+                : false;
+            $isIsolated = $normalizedUsername !== '' && isset($isolatedUsernameMap[$normalizedUsername]);
+            $isServiceActive = $normalizedUsername !== ''
+                ? isset($activeUsernameMap[$normalizedUsername])
+                : !($isOverdue || $isIsolated);
+
+            if (!$isServiceActive) {
+                continue;
+            }
 
             $result[] = [
                 'customer_id' => $customer->id,
@@ -194,7 +229,9 @@ class MonitoringController extends Controller
                 'customer_phone' => $customer->phone,
                 'customer_address' => $customer->address,
                 'package_type' => $customer->package_type,
-                'is_active' => $customer->is_active,
+                'is_active' => true,
+                'is_overdue' => $isOverdue,
+                'is_isolated' => $isIsolated,
                 'is_online' => $isOnline,
                 // Data from MikroTik (if online)
                 'ip_address' => $isOnline ? ($connection['address'] ?? 'N/A') : '-',
@@ -205,6 +242,54 @@ class MonitoringController extends Controller
         }
 
         return $result;
+    }
+
+    private function buildCustomerActivitySummary(Carbon $asOfDate, array $isolatedUsernameMap = []): array
+    {
+        $customers = Customer::get(['id', 'due_date', 'pppoe_username']);
+        $asOfDay = $asOfDate->copy()->startOfDay();
+
+        $inactiveCustomers = 0;
+        $overdueCustomers = 0;
+        $isolatedCustomers = 0;
+        $activeUsernameMap = [];
+
+        foreach ($customers as $customer) {
+            $isOverdue = $customer->due_date
+                ? Carbon::parse($customer->due_date)->startOfDay()->lt($asOfDay)
+                : false;
+
+            $username = strtolower(trim((string) ($customer->pppoe_username ?? '')));
+            $isIsolated = $username !== '' && isset($isolatedUsernameMap[$username]);
+
+            if ($isOverdue) {
+                $overdueCustomers++;
+            }
+
+            if ($isIsolated) {
+                $isolatedCustomers++;
+            }
+
+            if ($isOverdue || $isIsolated) {
+                $inactiveCustomers++;
+                continue;
+            }
+
+            if ($username !== '') {
+                $activeUsernameMap[$username] = true;
+            }
+        }
+
+        $totalCustomers = $customers->count();
+
+        return [
+            'total_customers' => $totalCustomers,
+            'active_customers' => max(0, $totalCustomers - $inactiveCustomers),
+            'inactive_customers' => $inactiveCustomers,
+            'overdue_customers' => $overdueCustomers,
+            'isolated_customers' => $isolatedCustomers,
+            'active_username_map' => array_keys($activeUsernameMap),
+        ];
     }
 
     /**
@@ -242,7 +327,7 @@ class MonitoringController extends Controller
     /**
      * Generate summary statistics
      */
-    private function generateSummary($customerData, $activeConnections)
+    private function generateSummary($customerData, $activeConnections, ?array $activitySummary = null)
     {
         $totalCustomers = count($customerData);
         $onlineCustomers = collect($customerData)->where('is_online', true)->count();
@@ -259,9 +344,11 @@ class MonitoringController extends Controller
         $unmatchedConnections = $totalMikroTikConnections - $matchedConnections;
         
         // Total customers di database
-        $totalCustomersDb = Customer::count();
-        $activeCustomersDb = Customer::where('is_active', true)->count();
-        $inactiveCustomersDb = Customer::where('is_active', false)->count();
+        $totalCustomersDb = (int) ($activitySummary['total_customers'] ?? Customer::count());
+        $activeCustomersDb = (int) ($activitySummary['active_customers'] ?? Customer::where('is_active', true)->count());
+        $inactiveCustomersDb = (int) ($activitySummary['inactive_customers'] ?? Customer::where('is_active', false)->count());
+        $overdueCustomersDb = (int) ($activitySummary['overdue_customers'] ?? 0);
+        $isolatedCustomersDb = (int) ($activitySummary['isolated_customers'] ?? 0);
 
         return [
             // Database perspective (main data source)
@@ -279,6 +366,8 @@ class MonitoringController extends Controller
             'total_customers_db' => $totalCustomersDb,
             'active_customers_db' => $activeCustomersDb,
             'inactive_customers_db' => $inactiveCustomersDb,
+            'overdue_customers_db' => $overdueCustomersDb,
+            'isolated_customers_db' => $isolatedCustomersDb,
         ];
     }
 

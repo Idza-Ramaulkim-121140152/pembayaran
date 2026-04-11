@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Package;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
 
@@ -25,6 +26,8 @@ class CustomerController extends Controller
         // Check if this is an API request
         if (request('api') || request()->wantsJson()) {
             $customers = $query->get();
+            $isolatedUsernameMap = [];
+            $today = Carbon::today()->startOfDay();
             
             // Sync is_active status from MikroTik router
             try {
@@ -34,6 +37,14 @@ class CustomerController extends Controller
                 $mikrotik->disconnect();
                 
                 if ($secrets !== null) {
+                    foreach ($secrets as $secretUsername => $secretData) {
+                        $normalizedUsername = strtolower(trim((string) $secretUsername));
+                        $profile = strtolower(trim((string) ($secretData['profile'] ?? '')));
+                        if ($normalizedUsername !== '' && $profile === 'isolir') {
+                            $isolatedUsernameMap[$normalizedUsername] = true;
+                        }
+                    }
+
                     foreach ($customers as $customer) {
                         if (!empty($customer->pppoe_username)) {
                             $secret = $secrets[$customer->pppoe_username] ?? null;
@@ -56,6 +67,20 @@ class CustomerController extends Controller
             } catch (\Exception $e) {
                 \Log::warning('Could not sync is_active from MikroTik', ['error' => $e->getMessage()]);
                 // Fall back to DB values silently
+            }
+
+            foreach ($customers as $customer) {
+                $normalizedUsername = strtolower(trim((string) ($customer->pppoe_username ?? '')));
+                $isOverdue = $customer->due_date
+                    ? Carbon::parse($customer->due_date)->startOfDay()->lt($today)
+                    : false;
+                $isIsolated = $normalizedUsername !== '' && isset($isolatedUsernameMap[$normalizedUsername]);
+                $isServiceInactive = $isOverdue || $isIsolated;
+
+                $customer->setAttribute('is_service_overdue', $isOverdue);
+                $customer->setAttribute('is_service_isolated', $isIsolated);
+                $customer->setAttribute('is_service_inactive', $isServiceInactive);
+                $customer->setAttribute('is_service_active', !$isServiceInactive);
             }
             
             return response()->json(['data' => $customers]);

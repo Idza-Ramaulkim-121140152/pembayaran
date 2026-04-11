@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\NetworkNotice;
 use App\Models\NotificationLog;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -139,7 +140,7 @@ class WhatsAppController extends Controller
         $message = $request->custom_message ?: $this->formatNoticeMessage($notice);
 
         // Get target customers
-        $query = Customer::where('is_active', true);
+        $query = Customer::query();
         if ($request->customer_ids && count($request->customer_ids) > 0) {
             $query->whereIn('id', $request->customer_ids);
         } elseif ($notice && $notice->affected_odp) {
@@ -150,10 +151,17 @@ class WhatsAppController extends Controller
 
         $customers = $query->get();
 
+        $today = Carbon::today()->startOfDay();
+        $isolatedUsernameMap = $this->fetchIsolatedUsernameMap();
+
+        $customers = $customers->filter(function (Customer $customer) use ($today, $isolatedUsernameMap) {
+            return $this->isCustomerServiceActive($customer, $today, $isolatedUsernameMap);
+        })->values();
+
         if ($customers->isEmpty()) {
             return response()->json([
                 'success' => true,
-                'message' => 'Tidak ada pelanggan yang perlu dikirim notifikasi.',
+                'message' => 'Tidak ada pelanggan aktif layanan yang perlu dikirim notifikasi.',
                 'total_customers' => 0,
                 'sent_count' => 0,
                 'failed_count' => 0,
@@ -328,6 +336,42 @@ class WhatsAppController extends Controller
             'success' => true,
             'data' => $logs,
         ]);
+    }
+
+    private function fetchIsolatedUsernameMap(): array
+    {
+        try {
+            $mikrotik = app(\App\Services\MikroTikService::class);
+            $isolatedSecrets = $mikrotik->getIsolatedSecrets();
+
+            $isolatedUsernameMap = [];
+            foreach ($isolatedSecrets as $secret) {
+                $username = strtolower(trim((string) ($secret['name'] ?? '')));
+                if ($username !== '') {
+                    $isolatedUsernameMap[$username] = true;
+                }
+            }
+
+            return $isolatedUsernameMap;
+        } catch (\Exception $e) {
+            Log::warning('Could not fetch isolated usernames for WhatsApp recipients', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return [];
+        }
+    }
+
+    private function isCustomerServiceActive(Customer $customer, Carbon $today, array $isolatedUsernameMap): bool
+    {
+        $isOverdue = $customer->due_date
+            ? Carbon::parse($customer->due_date)->startOfDay()->lt($today)
+            : false;
+
+        $username = strtolower(trim((string) ($customer->pppoe_username ?? '')));
+        $isIsolated = $username !== '' && isset($isolatedUsernameMap[$username]);
+
+        return !($isOverdue || $isIsolated);
     }
 
     /**

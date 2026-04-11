@@ -211,6 +211,9 @@ Route::middleware('auth')->group(function () {
 
     // Finance routes: admin + finance
     Route::middleware('role:finance')->group(function () {
+        Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
+        Route::get('/api/dashboard/management-kpis', [DashboardController::class, 'managementKpis'])->name('api.dashboard.management-kpis');
+
         // Billing/Penagihan API
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
         Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');
