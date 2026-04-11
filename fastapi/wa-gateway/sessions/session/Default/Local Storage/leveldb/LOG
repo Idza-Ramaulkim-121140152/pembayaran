@@ -1,6 +1,3 @@
-2025/12/17-10:29:46.422 b18 Reusing MANIFEST D:\Projek\pembayaran\fastapi\wa-gateway\sessions\session\Default\Local Storage\leveldb/MANIFEST-000001
-2025/12/17-10:29:46.423 b18 Recovering log #3
-2025/12/17-10:29:46.425 b18 Reusing old log D:\Projek\pembayaran\fastapi\wa-gateway\sessions\session\Default\Local Storage\leveldb/000003.log 
-2025/12/17-17:43:29.805 5720 Level-0 table #5: started
-2025/12/17-17:43:29.819 5720 Level-0 table #5: 21566 bytes OK
-2025/12/17-17:43:29.824 5720 Delete type=0 #3
+2026/04/10-09:13:59.183 347b Reusing MANIFEST /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/MANIFEST-000427
+2026/04/10-09:13:59.191 347b Recovering log #431
+2026/04/10-09:13:59.192 347b Reusing old log /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/000431.log 

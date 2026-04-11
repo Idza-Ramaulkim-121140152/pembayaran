@@ -1,2 +1,5 @@
-2025/12/17-10:11:38.668 4298 Creating DB D:\Projek\pembayaran\fastapi\wa-gateway\sessions\session\Default\shared_proto_db since it was missing.
-2025/12/17-10:11:38.672 4298 Reusing MANIFEST D:\Projek\pembayaran\fastapi\wa-gateway\sessions\session\Default\shared_proto_db/MANIFEST-000001
+2026/04/07-14:21:37.584 927 Recovering log #36
+2026/04/07-14:21:37.606 927 Level-0 table #38: started
+2026/04/07-14:21:37.606 927 Level-0 table #38: 0 bytes OK
+2026/04/07-14:21:37.804 927 Delete type=3 #34
+2026/04/07-14:21:37.804 927 Delete type=0 #36
