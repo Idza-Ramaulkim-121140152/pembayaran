@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\FinancialTransaction;
+use App\Models\PaymentReceiptOption;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 
 class FinancialTransactionController extends Controller
 {
@@ -98,19 +100,43 @@ class FinancialTransactionController extends Controller
 
         $this->ensureCanEditMutations();
 
-        $validated = $request->validate([
+        $rules = [
             'source' => 'required|in:pembayaran,pemasangan,manual',
             'category' => 'nullable|string|max:50',
             'description' => 'required|string|max:255',
             'amount' => 'required|numeric|min:1',
             'transaction_date' => 'required|date',
-        ]);
+            'payment_receipt_option_id' => 'nullable',
+        ];
+
+        if (Schema::hasTable('payment_receipt_options')) {
+            $rules['payment_receipt_option_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('payment_receipt_options', 'id')->where(fn ($query) => $query->where('is_active', true)),
+            ];
+        }
+
+        $validated = $request->validate($rules);
 
         $sourceMap = [
             'pembayaran' => 'manual_payment_income',
             'pemasangan' => 'installation_income',
             'manual' => 'manual_income',
         ];
+
+        $receiptOption = null;
+        if (!empty($validated['payment_receipt_option_id']) && Schema::hasTable('payment_receipt_options')) {
+            $receiptOption = PaymentReceiptOption::find($validated['payment_receipt_option_id']);
+        }
+
+        $meta = null;
+        if ($receiptOption) {
+            $meta = [
+                'received_via_id' => $receiptOption->id,
+                'received_via_name' => $receiptOption->name,
+            ];
+        }
 
         $transaction = FinancialTransaction::create([
             'type' => 'income',
@@ -121,6 +147,7 @@ class FinancialTransactionController extends Controller
             'transaction_date' => $validated['transaction_date'],
             'created_by' => auth()->id(),
             'updated_by' => auth()->id(),
+            'meta' => $meta,
         ]);
 
         return response()->json([
@@ -168,12 +195,39 @@ class FinancialTransactionController extends Controller
 
         $this->ensureCanEditMutations();
 
-        $validated = $request->validate([
+        $rules = [
             'description' => 'required|string|max:255',
             'amount' => 'required|numeric|not_in:0',
             'transaction_date' => 'required|date',
             'category' => 'nullable|string|max:50',
-        ]);
+            'payment_receipt_option_id' => 'nullable',
+        ];
+
+        if (Schema::hasTable('payment_receipt_options')) {
+            $rules['payment_receipt_option_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('payment_receipt_options', 'id')->where(fn ($query) => $query->where('is_active', true)),
+            ];
+        }
+
+        $validated = $request->validate($rules);
+
+        $meta = is_array($financialTransaction->meta) ? $financialTransaction->meta : [];
+        if (array_key_exists('payment_receipt_option_id', $validated)) {
+            $receiptOption = null;
+
+            if (!empty($validated['payment_receipt_option_id']) && Schema::hasTable('payment_receipt_options')) {
+                $receiptOption = PaymentReceiptOption::find($validated['payment_receipt_option_id']);
+            }
+
+            if ($receiptOption) {
+                $meta['received_via_id'] = $receiptOption->id;
+                $meta['received_via_name'] = $receiptOption->name;
+            } else {
+                unset($meta['received_via_id'], $meta['received_via_name']);
+            }
+        }
 
         $financialTransaction->update([
             'description' => $validated['description'],
@@ -181,6 +235,7 @@ class FinancialTransactionController extends Controller
             'transaction_date' => $validated['transaction_date'],
             'category' => $validated['category'] ?? $financialTransaction->category,
             'updated_by' => auth()->id(),
+            'meta' => $meta !== [] ? $meta : null,
         ]);
 
         return response()->json([

@@ -27,6 +27,17 @@ class FinancialLedgerService
             ? $invoice->customer
             : $invoice->customer()->first();
 
+        $receivedViaOption = $invoice->relationLoaded('receivedViaPaymentReceiptOption')
+            ? $invoice->receivedViaPaymentReceiptOption
+            : $invoice->receivedViaPaymentReceiptOption()->first();
+
+        $receivedViaPaymentMethod = $invoice->relationLoaded('receivedViaPaymentMethod')
+            ? $invoice->receivedViaPaymentMethod
+            : $invoice->receivedViaPaymentMethod()->first();
+
+        $receivedViaName = $receivedViaOption?->name
+            ?: $receivedViaPaymentMethod?->display_name;
+
         $pppoeUsername = trim((string) ($customer->pppoe_username ?? ''));
         $description = $pppoeUsername !== ''
             ? 'Pembayaran PPPoE ' . $pppoeUsername
@@ -63,6 +74,8 @@ class FinancialLedgerService
                     'customer_id' => $invoice->customer_id,
                     'pppoe_username' => $pppoeUsername,
                     'status' => $invoice->status,
+                    'received_via_id' => $receivedViaOption?->id,
+                    'received_via_name' => $receivedViaName,
                 ],
             ]
         );

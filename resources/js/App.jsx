@@ -11,6 +11,7 @@ import InvoicePage from './pages/Invoice/InvoicePage';
 import LoginPage from './pages/Auth/LoginPage';
 import NotFoundPage from './pages/NotFoundPage';
 import PaymentMethodsPage from './pages/Settings/PaymentMethodsPage';
+import PaymentReceiptsPage from './pages/Settings/PaymentReceiptsPage';
 import PackageManagementPage from './pages/Settings/PackageManagementPage';
 import UserManagementPage from './pages/Settings/UserManagementPage';
 import LandingPage from './pages/LandingPage';
@@ -99,6 +100,7 @@ function App() {
                     
                     {/* Settings */}
                     <Route path="/settings/payment-methods" element={<PaymentMethodsPage />} />
+                    <Route path="/settings/payment-receipts" element={<PaymentReceiptsPage />} />
                     <Route path="/settings/packages" element={<PackageManagementPage />} />
                     <Route path="/settings/users" element={<UserManagementPage />} />
                     <Route path="/settings/promo" element={<PromoManagementPage />} />

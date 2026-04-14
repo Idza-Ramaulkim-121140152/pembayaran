@@ -11,6 +11,8 @@ function BillingPage() {
     const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
 
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
+    const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
+    const [loadingPaymentReceiptOptions, setLoadingPaymentReceiptOptions] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
@@ -29,6 +31,7 @@ function BillingPage() {
     // Form states
     const [amount, setAmount] = useState('');
     const [paidAmount, setPaidAmount] = useState('');
+    const [paymentReceiptOptionId, setPaymentReceiptOptionId] = useState('');
     const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
     const [rejectReason, setRejectReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -39,6 +42,59 @@ function BillingPage() {
     useEffect(() => {
         fetchBillingData();
     }, [search]);
+
+    useEffect(() => {
+        fetchPaymentReceiptOptions();
+    }, []);
+
+    useEffect(() => {
+        if (!confirmModal.open || paymentReceiptOptionId || paymentReceiptOptions.length === 0) {
+            return;
+        }
+
+        setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
+    }, [confirmModal.open, paymentReceiptOptionId, paymentReceiptOptions]);
+
+    const fetchPaymentReceiptOptions = async () => {
+        try {
+            setLoadingPaymentReceiptOptions(true);
+            const response = await billingService.getActivePaymentReceiptOptions();
+            setPaymentReceiptOptions(Array.isArray(response.data) ? response.data : []);
+        } catch (err) {
+            console.error('Gagal memuat opsi penerimaan pembayaran aktif', err);
+        } finally {
+            setLoadingPaymentReceiptOptions(false);
+        }
+    };
+
+    const resolveDefaultPaymentReceiptOptionId = (options) => {
+        if (!Array.isArray(options) || options.length === 0) {
+            return '';
+        }
+
+        const defaultOption = options.find((option) => option.is_default) || options[0];
+        return defaultOption ? String(defaultOption.id) : '';
+    };
+
+    const getPaymentReceiptOptionLabel = (option) => {
+        if (!option) return '-';
+        return option.name || '-';
+    };
+
+    const closeConfirmModal = () => {
+        setConfirmModal({ open: false, invoice: null, customer: null });
+        setPaidAmount('');
+        setPaymentReceiptOptionId('');
+    };
+
+    const openConfirmModal = (invoice, customer) => {
+        setConfirmModal({ open: true, invoice, customer });
+
+        // Parse amount dari invoice (handle decimal dari database)
+        const amount = parseFloat(invoice.amount);
+        setPaidAmount(isNaN(amount) ? '' : Math.round(amount).toString());
+        setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
+    };
 
     const fetchBillingData = async () => {
         try {
@@ -115,15 +171,28 @@ function BillingPage() {
 
     const handleConfirmPayment = async (e) => {
         e.preventDefault();
+
+        if (paymentReceiptOptions.length > 0 && !paymentReceiptOptionId) {
+            setError('Pilih metode pada Terima via sebelum konfirmasi pembayaran.');
+            return;
+        }
+
         try {
             setSubmitting(true);
             setError(null);
             setSuccess(null);
             // Parse paidAmount untuk mendapatkan angka murni (hapus semua titik/koma)
             const numericAmount = paidAmount ? parseInt(paidAmount.toString().replace(/[^\d]/g, ''), 10) : confirmModal.invoice.amount;
-            const response = await billingService.confirmPayment(confirmModal.invoice.id, numericAmount);
-            setConfirmModal({ open: false, invoice: null, customer: null });
-            setPaidAmount('');
+            const selectedPaymentReceiptOptionId = paymentReceiptOptionId ? parseInt(paymentReceiptOptionId, 10) : null;
+            const normalizedPaymentReceiptOptionId = Number.isNaN(selectedPaymentReceiptOptionId) ? null : selectedPaymentReceiptOptionId;
+
+            const response = await billingService.confirmPayment(
+                confirmModal.invoice.id,
+                numericAmount,
+                normalizedPaymentReceiptOptionId
+            );
+
+            closeConfirmModal();
             const data = response.data;
             setSuccess(data.message || 'Pembayaran berhasil dikonfirmasi');
             fetchBillingData();
@@ -132,8 +201,7 @@ function BillingPage() {
             const message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
 
             if (status === 403) {
-                setConfirmModal({ open: false, invoice: null, customer: null });
-                setPaidAmount('');
+                closeConfirmModal();
                 setPermissionModal({
                     open: true,
                     message: message || 'Anda tidak diizinkan melakukan konfirmasi pembayaran.',
@@ -424,12 +492,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                         <Button
                                             size="sm"
                                             variant="warning"
-                                            onClick={() => {
-                                                setConfirmModal({ open: true, invoice, customer });
-                                                // Parse amount dari invoice (handle decimal dari database)
-                                                const amount = parseFloat(invoice.amount);
-                                                setPaidAmount(isNaN(amount) ? '' : Math.round(amount).toString());
-                                            }}
+                                            onClick={() => openConfirmModal(invoice, customer)}
                                         >
                                             <Check size={14} className="mr-1" />
                                             <span className="hidden sm:inline">Konfirmasi</span>
@@ -634,7 +697,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {/* Confirm Payment Modal */}
             <Modal
                 isOpen={confirmModal.open}
-                onClose={() => setConfirmModal({ open: false, invoice: null, customer: null })}
+                onClose={closeConfirmModal}
                 title="Konfirmasi Pembayaran"
             >
                 {confirmModal.invoice && (
@@ -663,8 +726,35 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             />
                             <p className="text-xs text-gray-500 mt-1">Rp {formatNumberWithComma(paidAmount)} - Nominal default sesuai invoice, bisa diubah jika pembayaran berbeda.</p>
                         </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Terima via</label>
+                            <select
+                                value={paymentReceiptOptionId}
+                                onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
+                                required={paymentReceiptOptions.length > 0}
+                                disabled={loadingPaymentReceiptOptions}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                            >
+                                <option value="">
+                                    {loadingPaymentReceiptOptions
+                                        ? 'Memuat opsi penerimaan pembayaran...'
+                                        : paymentReceiptOptions.length > 0
+                                            ? 'Pilih metode penerimaan'
+                                            : 'Belum ada opsi penerimaan aktif'}
+                                </option>
+                                {paymentReceiptOptions.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                        {getPaymentReceiptOptionLabel(option)}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">Daftar diambil dari menu Pengaturan Penerimaan Pembayaran.</p>
+                            {!loadingPaymentReceiptOptions && paymentReceiptOptions.length === 0 && (
+                                <p className="text-xs text-amber-600 mt-1">Tambahkan atau aktifkan opsi penerimaan pembayaran di menu pengaturan terlebih dahulu.</p>
+                            )}
+                        </div>
                         <div className="flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={() => setConfirmModal({ open: false, invoice: null, customer: null })}>
+                            <Button type="button" variant="secondary" onClick={closeConfirmModal}>
                                 Batal
                             </Button>
                             <Button type="submit" variant="warning" disabled={submitting}>

@@ -9,7 +9,9 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
@@ -398,11 +400,45 @@ class BillingController extends Controller
     {
         $this->ensureCanConfirmPayments();
 
+        $rules = [
+            'paid_amount' => 'nullable|numeric|min:1',
+            'payment_receipt_option_id' => 'nullable',
+            'payment_method_id' => 'nullable',
+        ];
+
+        if (Schema::hasTable('payment_receipt_options')) {
+            $rules['payment_receipt_option_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('payment_receipt_options', 'id')->where(fn ($query) => $query->where('is_active', true)),
+            ];
+        }
+
+        if (Schema::hasTable('payment_methods')) {
+            $rules['payment_method_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('payment_methods', 'id')->where(fn ($query) => $query->where('is_active', true)),
+            ];
+        }
+
+        $validated = request()->validate($rules);
+
         $invoice = Invoice::findOrFail($invoiceId);
-        $paidAmount = request()->input('paid_amount');
+        $paidAmount = $validated['paid_amount'] ?? null;
+        $paymentReceiptOptionId = $validated['payment_receipt_option_id'] ?? null;
+        $paymentMethodId = $validated['payment_method_id'] ?? null;
         
         if ($paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
+        }
+
+        if (Schema::hasColumn('invoices', 'received_via_payment_method_id')) {
+            $invoice->received_via_payment_method_id = $paymentMethodId;
+        }
+
+        if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id')) {
+            $invoice->received_via_payment_receipt_option_id = $paymentReceiptOptionId;
         }
 
         $invoice->status = 'paid';
@@ -509,6 +545,8 @@ class BillingController extends Controller
 
         $invoice->save();
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+        $invoice->loadMissing('receivedViaPaymentMethod');
+        $invoice->loadMissing('receivedViaPaymentReceiptOption');
 
         return response()->json(['message' => 'Pembayaran berhasil dikonfirmasi', 'data' => $invoice]);
     }
@@ -664,6 +702,15 @@ class BillingController extends Controller
         $invoice->status = 'unpaid';
         $invoice->paid_at = null;
         $invoice->tolak_info = $reason;
+
+        if (Schema::hasColumn('invoices', 'received_via_payment_method_id')) {
+            $invoice->received_via_payment_method_id = null;
+        }
+
+        if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id')) {
+            $invoice->received_via_payment_receipt_option_id = null;
+        }
+
         $invoice->save();
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
 

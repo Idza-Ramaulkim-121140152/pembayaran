@@ -16,6 +16,7 @@ function MutasiPage() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [items, setItems] = useState([]);
+    const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [selected, setSelected] = useState(null);
@@ -35,13 +36,24 @@ function MutasiPage() {
         description: '',
         amount: '',
         transaction_date: new Date().toISOString().split('T')[0],
+        payment_receipt_option_id: '',
     });
 
     const [editForm, setEditForm] = useState({
         description: '',
         amount: '',
         transaction_date: new Date().toISOString().split('T')[0],
+        payment_receipt_option_id: '',
     });
+
+    const loadPaymentReceiptOptions = async () => {
+        try {
+            const res = await apiClient.get('/payment-receipt-options/active');
+            setPaymentReceiptOptions(Array.isArray(res.data) ? res.data : []);
+        } catch (err) {
+            setPaymentReceiptOptions([]);
+        }
+    };
 
     const loadData = async (page = 1, filterOverride = null, pageSizeOverride = null) => {
         try {
@@ -79,6 +91,7 @@ function MutasiPage() {
 
     useEffect(() => {
         loadData(1);
+        loadPaymentReceiptOptions();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -104,6 +117,10 @@ function MutasiPage() {
 
     const netMutation = statementTotals.income - statementTotals.expense;
 
+    const getReceivedViaName = (item) => {
+        return item?.meta?.received_via_name || '-';
+    };
+
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', {
             style: 'currency',
@@ -121,6 +138,9 @@ function MutasiPage() {
                 description: createForm.description,
                 amount: Number(createForm.amount),
                 transaction_date: createForm.transaction_date,
+                payment_receipt_option_id: createForm.payment_receipt_option_id
+                    ? Number(createForm.payment_receipt_option_id)
+                    : null,
             });
             setSuccess('Mutasi pemasukan berhasil ditambahkan.');
             setShowCreateModal(false);
@@ -129,6 +149,7 @@ function MutasiPage() {
                 description: '',
                 amount: '',
                 transaction_date: new Date().toISOString().split('T')[0],
+                payment_receipt_option_id: '',
             });
             loadData(pageInfo.current);
         } catch (err) {
@@ -144,6 +165,7 @@ function MutasiPage() {
             description: item.description || '',
             amount: item.amount,
             transaction_date: item.transaction_date,
+            payment_receipt_option_id: item?.meta?.received_via_id ? String(item.meta.received_via_id) : '',
         });
         setShowEditModal(true);
     };
@@ -159,6 +181,9 @@ function MutasiPage() {
                 amount: Number(editForm.amount),
                 transaction_date: editForm.transaction_date,
                 category: selected.category,
+                payment_receipt_option_id: editForm.payment_receipt_option_id
+                    ? Number(editForm.payment_receipt_option_id)
+                    : null,
             });
             setSuccess('Mutasi berhasil diperbarui.');
             setShowEditModal(false);
@@ -317,6 +342,7 @@ function MutasiPage() {
                                 <th className="px-4 py-3 text-left">Jenis</th>
                                 <th className="px-4 py-3 text-left">Sumber</th>
                                 <th className="px-4 py-3 text-left">Deskripsi</th>
+                                <th className="px-4 py-3 text-left">Penerimaan Via</th>
                                 <th className="px-4 py-3 text-left">Penanggung Jawab</th>
                                 <th className="px-4 py-3 text-right">Pemasukan</th>
                                 <th className="px-4 py-3 text-right">Pengeluaran</th>
@@ -326,7 +352,7 @@ function MutasiPage() {
                         <tbody className="divide-y divide-gray-100">
                             {visibleItems.length === 0 && (
                                 <tr>
-                                    <td colSpan={canEditMutations ? 8 : 7} className="px-4 py-10 text-center text-gray-500">
+                                    <td colSpan={canEditMutations ? 9 : 8} className="px-4 py-10 text-center text-gray-500">
                                         Belum ada mutasi.
                                     </td>
                                 </tr>
@@ -345,6 +371,7 @@ function MutasiPage() {
                                         </td>
                                         <td className="px-4 py-3">{item.source}</td>
                                         <td className="px-4 py-3">{item.description || '-'}</td>
+                                        <td className="px-4 py-3">{getReceivedViaName(item)}</td>
                                         <td className="px-4 py-3">{item.creator?.name || 'Sistem'}</td>
                                         <td className="px-4 py-3 text-right font-semibold text-green-700">
                                             {isIncome ? formatCurrency(Math.abs(amount)) : '-'}
@@ -370,7 +397,7 @@ function MutasiPage() {
                         </tbody>
                         <tfoot className="bg-gray-50 border-t border-gray-200">
                             <tr>
-                                <td colSpan={5} className="px-4 py-3 text-sm font-semibold text-gray-700">
+                                <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-gray-700">
                                     Total Halaman Ini
                                 </td>
                                 <td className="px-4 py-3 text-right text-sm font-bold text-green-700">
@@ -479,6 +506,19 @@ function MutasiPage() {
                         />
                     </div>
                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Penerimaan Via</label>
+                        <select
+                            value={createForm.payment_receipt_option_id}
+                            onChange={(e) => setCreateForm((p) => ({ ...p, payment_receipt_option_id: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        >
+                            <option value="">Pilih (opsional)</option>
+                            {paymentReceiptOptions.map((option) => (
+                                <option key={option.id} value={option.id}>{option.name}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
                         <input
                             type="date"
@@ -516,6 +556,19 @@ function MutasiPage() {
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                             required
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Penerimaan Via</label>
+                        <select
+                            value={editForm.payment_receipt_option_id}
+                            onChange={(e) => setEditForm((p) => ({ ...p, payment_receipt_option_id: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        >
+                            <option value="">Pilih (opsional)</option>
+                            {paymentReceiptOptions.map((option) => (
+                                <option key={option.id} value={option.id}>{option.name}</option>
+                            ))}
+                        </select>
                     </div>
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>

@@ -22,6 +22,7 @@ const ACCESS = {
     networkNotices: ['superadmin', 'admin', 'teknisi'],
     waNotification: ['superadmin', 'admin', 'teknisi'],
     paymentMethods: ['superadmin', 'admin', 'finance'],
+    paymentReceipts: ['superadmin', 'admin', 'finance'],
     packages: ['superadmin', 'admin'],
     promo: ['superadmin', 'admin'],
     userManagement: ['superadmin'],
@@ -89,6 +90,7 @@ export function Navbar() {
         if (path === '/isolir') return location.pathname.startsWith('/isolir');
         if (path === '/profile') return location.pathname === '/profile';
         if (path === '/settings/payment-methods') return location.pathname === '/settings/payment-methods';
+        if (path === '/settings/payment-receipts') return location.pathname === '/settings/payment-receipts';
         if (path === '/settings/packages') return location.pathname === '/settings/packages';
         if (path === '/settings/promo') return location.pathname === '/settings/promo';
         if (path === '/settings/network-notices') return location.pathname === '/settings/network-notices';
@@ -208,6 +210,12 @@ export function Navbar() {
                                             <Link to="/settings/payment-methods" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/payment-methods') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                                 <CreditCard size={18} />
                                                 <span>Metode Pembayaran</span>
+                                            </Link>
+                                        )}
+                                        {can('paymentReceipts') && (
+                                            <Link to="/settings/payment-receipts" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/payment-receipts') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                                <Wallet size={18} />
+                                                <span>Penerimaan Pembayaran</span>
                                             </Link>
                                         )}
                                         {can('packages') && (
@@ -371,6 +379,12 @@ export function Navbar() {
                                 <Link to="/settings/payment-methods" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/payment-methods') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                     <CreditCard size={20} />
                                     <span>Metode Pembayaran</span>
+                                </Link>
+                            )}
+                            {can('paymentReceipts') && (
+                                <Link to="/settings/payment-receipts" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/payment-receipts') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                    <Wallet size={20} />
+                                    <span>Penerimaan Pembayaran</span>
                                 </Link>
                             )}
                             {can('packages') && (

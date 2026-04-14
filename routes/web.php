@@ -9,6 +9,7 @@ use App\Http\Controllers\BillingController;
 use App\Http\Controllers\OdpController;
 use App\Http\Controllers\PengeluaranController;
 use App\Http\Controllers\PaymentMethodController;
+use App\Http\Controllers\PaymentReceiptOptionController;
 use App\Http\Controllers\LandingPageController;
 use App\Http\Controllers\PromoController;
 use App\Http\Controllers\CustomerAuthController;
@@ -243,6 +244,14 @@ Route::middleware('auth')->group(function () {
         Route::delete('/api/payment-methods/{paymentMethod}', [PaymentMethodController::class, 'destroy'])->name('api.payment-methods.destroy');
         Route::patch('/api/payment-methods/{paymentMethod}/toggle', [PaymentMethodController::class, 'toggleActive'])->name('api.payment-methods.toggle');
         Route::post('/api/payment-methods/reorder', [PaymentMethodController::class, 'reorder'])->name('api.payment-methods.reorder');
+
+        // Payment Receipt Options API
+        Route::get('/api/payment-receipt-options', [PaymentReceiptOptionController::class, 'index'])->name('api.payment-receipt-options.index');
+        Route::get('/api/payment-receipt-options/active', [PaymentReceiptOptionController::class, 'activeList'])->name('api.payment-receipt-options.active');
+        Route::post('/api/payment-receipt-options', [PaymentReceiptOptionController::class, 'store'])->name('api.payment-receipt-options.store');
+        Route::put('/api/payment-receipt-options/{paymentReceiptOption}', [PaymentReceiptOptionController::class, 'update'])->name('api.payment-receipt-options.update');
+        Route::delete('/api/payment-receipt-options/{paymentReceiptOption}', [PaymentReceiptOptionController::class, 'destroy'])->name('api.payment-receipt-options.destroy');
+        Route::patch('/api/payment-receipt-options/{paymentReceiptOption}/toggle', [PaymentReceiptOptionController::class, 'toggleActive'])->name('api.payment-receipt-options.toggle');
 
         // Payroll API
         Route::get('/api/payroll', [PayrollController::class, 'index'])->name('api.payroll.index');

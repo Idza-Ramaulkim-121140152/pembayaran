@@ -10,8 +10,15 @@ export const billingService = {
         apiClient.post(`/billing/${customerId}/create-invoice`, { amount }),
 
     // Konfirmasi pembayaran
-    confirmPayment: (invoiceId, paidAmount) => 
-        apiClient.post(`/billing/invoice/${invoiceId}/confirm`, { paid_amount: paidAmount }),
+    confirmPayment: (invoiceId, paidAmount, paymentReceiptOptionId = null) =>
+        apiClient.post(`/billing/invoice/${invoiceId}/confirm`, {
+            paid_amount: paidAmount,
+            payment_receipt_option_id: paymentReceiptOptionId,
+        }),
+
+    // Get active payment receipt options for receive-via selector
+    getActivePaymentReceiptOptions: () =>
+        apiClient.get('/payment-receipt-options/active'),
 
     // Update nominal invoice
     updateInvoiceAmount: (invoiceId, amount) =>
