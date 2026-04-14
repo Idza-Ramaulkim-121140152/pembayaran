@@ -15,6 +15,14 @@ use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
+    private const INVOICE_MANAGEMENT_STATUSES = [
+        'unpaid',
+        'paid',
+        'menunggu konfirmasi',
+        'cancelled',
+        'overdue',
+    ];
+
     public function __construct(private FinancialLedgerService $ledgerService)
     {
     }
@@ -572,6 +580,133 @@ class BillingController extends Controller
         return response()->json([
             'message' => 'Nominal invoice berhasil diperbarui.',
             'data' => $invoice,
+        ]);
+    }
+
+    public function invoiceManagementIndex(Request $request)
+    {
+        $validated = $request->validate([
+            'search' => 'nullable|string|max:100',
+            'status' => [
+                'nullable',
+                'string',
+                Rule::in(array_merge(['all'], self::INVOICE_MANAGEMENT_STATUSES)),
+            ],
+            'month' => 'nullable|date_format:Y-m',
+            'per_page' => 'nullable|integer|min:10|max:100',
+        ]);
+
+        $search = trim((string) ($validated['search'] ?? ''));
+        $status = $validated['status'] ?? 'all';
+        $month = $validated['month'] ?? null;
+        $perPage = (int) ($validated['per_page'] ?? 20);
+
+        $query = Invoice::query()
+            ->with([
+                'customer:id,name,pppoe_username,phone',
+            ])
+            ->orderByDesc('invoice_date')
+            ->orderByDesc('id');
+
+        if ($search !== '') {
+            $query->where(function ($invoiceQuery) use ($search) {
+                $invoiceQuery->where('invoice_link', 'like', "%{$search}%")
+                    ->orWhere('status', 'like', "%{$search}%")
+                    ->orWhereHas('customer', function ($customerQuery) use ($search) {
+                        $customerQuery->where('name', 'like', "%{$search}%")
+                            ->orWhere('pppoe_username', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%");
+                    });
+
+                if (ctype_digit($search)) {
+                    $invoiceQuery->orWhere('id', (int) $search);
+                }
+            });
+        }
+
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($month) {
+            [$year, $monthNumber] = explode('-', $month);
+            $query->whereYear('invoice_date', (int) $year)
+                ->whereMonth('invoice_date', (int) $monthNumber);
+        }
+
+        $invoices = $query->paginate($perPage)->withQueryString();
+
+        return response()->json([
+            'data' => $invoices,
+            'meta' => [
+                'allowed_statuses' => self::INVOICE_MANAGEMENT_STATUSES,
+            ],
+        ]);
+    }
+
+    public function updateInvoiceManagementApi(Request $request, Invoice $invoice)
+    {
+        $validated = $request->validate([
+            'invoice_date' => 'required|date',
+            'due_date' => 'required|date|after_or_equal:invoice_date',
+            'amount' => 'required|numeric|min:1',
+            'status' => ['required', 'string', Rule::in(self::INVOICE_MANAGEMENT_STATUSES)],
+        ]);
+
+        $newStatus = $validated['status'];
+
+        DB::transaction(function () use ($invoice, $validated, $newStatus) {
+            $invoice->invoice_date = $validated['invoice_date'];
+            $invoice->due_date = $validated['due_date'];
+            $invoice->amount = $validated['amount'];
+            $invoice->status = $newStatus;
+
+            if ($newStatus === 'paid') {
+                $invoice->paid_at = $invoice->paid_at ?: now();
+                $invoice->tolak_info = null;
+            } else {
+                $invoice->paid_at = null;
+
+                if (Schema::hasColumn('invoices', 'received_via_payment_method_id')) {
+                    $invoice->received_via_payment_method_id = null;
+                }
+
+                if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id')) {
+                    $invoice->received_via_payment_receipt_option_id = null;
+                }
+            }
+
+            $invoice->save();
+            $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+        });
+
+        $invoice->load('customer:id,name,pppoe_username,phone');
+
+        return response()->json([
+            'message' => 'Invoice berhasil diperbarui.',
+            'data' => $invoice,
+        ]);
+    }
+
+    public function deleteInvoiceManagementApi(Invoice $invoice)
+    {
+        if (strtolower((string) $invoice->status) !== 'unpaid') {
+            return response()->json([
+                'message' => 'Invoice hanya bisa dihapus jika status masih unpaid.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($invoice) {
+            if ($invoice->bukti_pembayaran) {
+                Storage::disk('public')->delete($invoice->bukti_pembayaran);
+            }
+
+            $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+            $invoice->delete();
+        });
+
+        return response()->json([
+            'message' => 'Invoice berhasil dihapus.',
         ]);
     }
 

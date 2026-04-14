@@ -214,6 +214,8 @@ Route::middleware('auth')->group(function () {
     Route::middleware('role:finance')->group(function () {
         Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
         Route::get('/api/dashboard/management-kpis', [DashboardController::class, 'managementKpis'])->name('api.dashboard.management-kpis');
+        Route::get('/api/dashboard/financial-projection', [DashboardController::class, 'financialProjection'])->name('api.dashboard.financial-projection');
+        Route::get('/api/dashboard/financial-targets', [DashboardController::class, 'financialTargets'])->name('api.dashboard.financial-targets.index');
 
         // Billing/Penagihan API
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
@@ -293,6 +295,16 @@ Route::middleware('auth')->group(function () {
 
     // Superadmin-only routes (User Management)
     Route::middleware('role:superadmin')->group(function () {
+        Route::get('/settings/invoice-management', fn() => view('app'))->name('invoice.management');
+
+        Route::get('/api/billing/invoice-management', [BillingController::class, 'invoiceManagementIndex'])->name('api.billing.invoice-management.index');
+        Route::put('/api/billing/invoice-management/{invoice}', [BillingController::class, 'updateInvoiceManagementApi'])->name('api.billing.invoice-management.update');
+        Route::delete('/api/billing/invoice-management/{invoice}', [BillingController::class, 'deleteInvoiceManagementApi'])->name('api.billing.invoice-management.destroy');
+
+        Route::post('/api/dashboard/financial-targets', [DashboardController::class, 'storeFinancialTarget'])->name('api.dashboard.financial-targets.store');
+        Route::put('/api/dashboard/financial-targets/{financialTarget}', [DashboardController::class, 'updateFinancialTarget'])->name('api.dashboard.financial-targets.update');
+        Route::delete('/api/dashboard/financial-targets/{financialTarget}', [DashboardController::class, 'destroyFinancialTarget'])->name('api.dashboard.financial-targets.destroy');
+
         Route::get('/inventori/master', fn() => view('app'))->name('inventory.master');
 
         Route::get('/api/inventory/master/types', [InventoryController::class, 'itemTypesIndex'])->name('api.inventory.master.types.index');

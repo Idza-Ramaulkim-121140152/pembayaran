@@ -44,6 +44,50 @@ function formatDateInputLocal(date) {
     return `${year}-${month}-${day}`;
 }
 
+function formatMonthInputLocal(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+}
+
+function getCurrentMonthValue() {
+    return formatMonthInputLocal(new Date());
+}
+
+function getMonthRangeFromMonthValue(monthValue) {
+    const [yearString, monthString] = String(monthValue || '').split('-');
+    const year = Number(yearString);
+    const month = Number(monthString);
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        const fallback = new Date();
+        return {
+            start_date: formatDateInputLocal(new Date(fallback.getFullYear(), fallback.getMonth(), 1)),
+            end_date: formatDateInputLocal(new Date(fallback.getFullYear(), fallback.getMonth() + 1, 0)),
+        };
+    }
+
+    return {
+        start_date: formatDateInputLocal(new Date(year, month - 1, 1)),
+        end_date: formatDateInputLocal(new Date(year, month, 0)),
+    };
+}
+
+function formatMonthLabel(monthValue) {
+    const [yearString, monthString] = String(monthValue || '').split('-');
+    const year = Number(yearString);
+    const month = Number(monthString);
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+        return '-';
+    }
+
+    return new Date(year, month - 1, 1).toLocaleDateString('id-ID', {
+        month: 'long',
+        year: 'numeric',
+    });
+}
+
 function getDefaultForecastRange() {
     const today = new Date();
     const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 6);
@@ -64,11 +108,16 @@ function getDefaultKpiRange() {
     };
 }
 
+function getDefaultFinancialProjectionRange() {
+    return getMonthRangeFromMonthValue(getCurrentMonthValue());
+}
+
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
     const canEditMutations = !!window.appCanEditMutations;
     const isTeknisi = userRole === 'teknisi';
     const isFinance = userRole === 'finance';
+    const isSuperAdmin = userRole === 'superadmin';
     const canViewBalance = !isTeknisi;
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -107,6 +156,30 @@ function Dashboard() {
     const [forecastData, setForecastData] = useState(null);
     const [forecastLoading, setForecastLoading] = useState(false);
     const [forecastError, setForecastError] = useState(null);
+    const [financialProjectionMonth, setFinancialProjectionMonth] = useState(getCurrentMonthValue());
+    const [financialProjectionRange, setFinancialProjectionRange] = useState(getDefaultFinancialProjectionRange());
+    const [financialProjectionData, setFinancialProjectionData] = useState(null);
+    const [financialProjectionLoading, setFinancialProjectionLoading] = useState(false);
+    const [financialProjectionError, setFinancialProjectionError] = useState(null);
+    const [financialTargets, setFinancialTargets] = useState([]);
+    const [financialTargetsLoading, setFinancialTargetsLoading] = useState(false);
+    const [targetSubmitting, setTargetSubmitting] = useState(false);
+    const [targetModal, setTargetModal] = useState({ open: false, mode: 'create', item: null });
+    const [targetForm, setTargetForm] = useState({
+        type: 'mandatory_expense',
+        name: '',
+        description: '',
+        amount: '',
+        target_date: '',
+        start_date: '',
+        end_date: '',
+        monthly_day: String(new Date().getDate()),
+        is_recurring_monthly: false,
+        recurrence_until: '',
+        recurrence_forever: false,
+        is_active: true,
+        priority: 100,
+    });
 
     const fetchManagementKpis = async (range = kpiRange) => {
         try {
@@ -145,6 +218,162 @@ function Dashboard() {
             setForecastError(err.response?.data?.message || 'Gagal memuat prediksi pendapatan.');
         } finally {
             setForecastLoading(false);
+        }
+    };
+
+    const fetchFinancialProjection = async (range = financialProjectionRange) => {
+        try {
+            setFinancialProjectionLoading(true);
+            setFinancialProjectionError(null);
+
+            const response = await apiClient.get('/dashboard/financial-projection', {
+                params: {
+                    start_date: range.start_date,
+                    end_date: range.end_date,
+                },
+            });
+
+            setFinancialProjectionData(response.data?.data || null);
+        } catch (err) {
+            setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat prediksi keuangan lanjutan.');
+        } finally {
+            setFinancialProjectionLoading(false);
+        }
+    };
+
+    const fetchFinancialTargets = async (includeInactive = false) => {
+        try {
+            setFinancialTargetsLoading(true);
+
+            const response = await apiClient.get('/dashboard/financial-targets', {
+                params: {
+                    include_inactive: includeInactive,
+                },
+            });
+
+            setFinancialTargets(Array.isArray(response.data?.data) ? response.data.data : []);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memuat target keuangan.');
+        } finally {
+            setFinancialTargetsLoading(false);
+        }
+    };
+
+    const resetTargetForm = () => {
+        setTargetForm({
+            type: 'mandatory_expense',
+            name: '',
+            description: '',
+            amount: '',
+            target_date: '',
+            start_date: '',
+            end_date: '',
+            monthly_day: String(new Date().getDate()),
+            is_recurring_monthly: false,
+            recurrence_until: '',
+            recurrence_forever: false,
+            is_active: true,
+            priority: 100,
+        });
+    };
+
+    const openCreateTargetModal = () => {
+        resetTargetForm();
+        setTargetModal({ open: true, mode: 'create', item: null });
+    };
+
+    const openEditTargetModal = (item) => {
+        const fallbackMonthlyDay = item.end_date ? String(Number(String(item.end_date).split('-')[2] || 1)) : '';
+
+        setTargetForm({
+            type: item.type || 'mandatory_expense',
+            name: item.name || '',
+            description: item.description || '',
+            amount: item.amount ? String(Math.round(Number(item.amount))) : '',
+            target_date: item.target_date || '',
+            start_date: item.start_date || '',
+            end_date: item.end_date || '',
+            monthly_day: item?.meta?.monthly_day ? String(item.meta.monthly_day) : fallbackMonthlyDay,
+            is_recurring_monthly: !!item.is_recurring_monthly,
+            recurrence_until: item.recurrence_until || '',
+            recurrence_forever: !!item.recurrence_forever,
+            is_active: item.is_active !== false,
+            priority: item.priority || 100,
+        });
+        setTargetModal({ open: true, mode: 'edit', item });
+    };
+
+    const closeTargetModal = () => {
+        setTargetModal({ open: false, mode: 'create', item: null });
+        resetTargetForm();
+    };
+
+    const handleSaveTarget = async (event) => {
+        event.preventDefault();
+
+        const payload = {
+            type: targetForm.type,
+            name: targetForm.name,
+            description: targetForm.description || null,
+            amount: Number(targetForm.amount || 0),
+            target_date: targetForm.target_date || null,
+            start_date: targetForm.start_date || null,
+            end_date: targetForm.end_date || null,
+            monthly_day: targetForm.monthly_day ? Number(targetForm.monthly_day) : null,
+            is_recurring_monthly: !!targetForm.is_recurring_monthly,
+            recurrence_until: targetForm.recurrence_until || null,
+            recurrence_forever: !!targetForm.recurrence_forever,
+            is_active: !!targetForm.is_active,
+            priority: Number(targetForm.priority || 100),
+        };
+
+        if (!payload.amount || payload.amount <= 0) {
+            setError('Nominal target harus lebih dari 0.');
+            return;
+        }
+
+        if (
+            payload.type === 'mandatory_expense'
+            && payload.is_recurring_monthly
+            && payload.recurrence_forever
+            && (!payload.monthly_day || payload.monthly_day < 1 || payload.monthly_day > 31)
+        ) {
+            setError('Tanggal setiap bulan wajib diisi (1-31) untuk mode bulanan selamanya.');
+            return;
+        }
+
+        try {
+            setTargetSubmitting(true);
+            setError(null);
+
+            if (targetModal.mode === 'edit' && targetModal.item) {
+                await apiClient.put(`/dashboard/financial-targets/${targetModal.item.id}`, payload);
+            } else {
+                await apiClient.post('/dashboard/financial-targets', payload);
+            }
+
+            closeTargetModal();
+            await fetchFinancialTargets(isSuperAdmin);
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            const fallback = targetModal.mode === 'edit'
+                ? 'Gagal memperbarui target keuangan.'
+                : 'Gagal menambah target keuangan.';
+            setError(err.response?.data?.message || fallback);
+        } finally {
+            setTargetSubmitting(false);
+        }
+    };
+
+    const handleDeleteTarget = async (item) => {
+        if (!window.confirm(`Hapus target "${item.name}"?`)) return;
+
+        try {
+            await apiClient.delete(`/dashboard/financial-targets/${item.id}`);
+            await fetchFinancialTargets(isSuperAdmin);
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menghapus target keuangan.');
         }
     };
 
@@ -198,6 +427,8 @@ function Dashboard() {
         if (!isTeknisi) {
             fetchManagementKpis(getDefaultKpiRange());
             fetchRevenueForecast(getDefaultForecastRange());
+            fetchFinancialProjection(getDefaultFinancialProjectionRange());
+            fetchFinancialTargets(isSuperAdmin);
         }
     }, []);
 
@@ -477,6 +708,9 @@ function Dashboard() {
     const kpiVariance = kpiData?.variance || null;
     const forecastSummary = forecastData?.summary || null;
     const forecastContext = forecastData?.historical_context || null;
+    const projectionSummary = financialProjectionData?.summary || null;
+    const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
+    const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
     const monthlyInstallations = Number(
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
@@ -697,6 +931,25 @@ function Dashboard() {
         await fetchRevenueForecast(defaultRange);
     };
 
+    const handleApplyFinancialProjectionRange = async () => {
+        if (!/^\d{4}-\d{2}$/.test(financialProjectionMonth)) {
+            setFinancialProjectionError('Format bulan tidak valid.');
+            return;
+        }
+
+        const nextRange = getMonthRangeFromMonthValue(financialProjectionMonth);
+        setFinancialProjectionRange(nextRange);
+        await fetchFinancialProjection(nextRange);
+    };
+
+    const handleResetFinancialProjectionRange = async () => {
+        const defaultMonth = getCurrentMonthValue();
+        const defaultRange = getMonthRangeFromMonthValue(defaultMonth);
+        setFinancialProjectionMonth(defaultMonth);
+        setFinancialProjectionRange(defaultRange);
+        await fetchFinancialProjection(defaultRange);
+    };
+
     const handleAdjustBalance = async (e) => {
         e.preventDefault();
         try {
@@ -718,6 +971,7 @@ function Dashboard() {
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
             await fetchManagementKpis(kpiRange);
+            await fetchFinancialProjection(financialProjectionRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menyimpan penyesuaian saldo');
         } finally {
@@ -749,6 +1003,7 @@ function Dashboard() {
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
             await fetchManagementKpis(kpiRange);
+            await fetchFinancialProjection(financialProjectionRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menambah pemasukan manual');
         } finally {
@@ -784,6 +1039,7 @@ function Dashboard() {
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
             await fetchManagementKpis(kpiRange);
+            await fetchFinancialProjection(financialProjectionRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memperbarui transaksi');
         } finally {
@@ -801,6 +1057,7 @@ function Dashboard() {
             const trxRes = await apiClient.get('/finance/transactions');
             setTransactions(trxRes.data?.data?.data || []);
             await fetchManagementKpis(kpiRange);
+            await fetchFinancialProjection(financialProjectionRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menghapus transaksi');
         }
@@ -1304,9 +1561,12 @@ function Dashboard() {
                                 </div>
 
                                 <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
-                                    <p className="text-xs font-medium text-gray-600">Pendapatan Realisasi</p>
+                                    <p className="text-xs font-medium text-gray-600">Pendapatan Realisasi (Invoice + Pemasangan)</p>
                                     <p className="text-xl font-bold text-gray-900 mt-1">
                                         {formatCurrency(kpiSummary.realized_revenue)}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Invoice: {formatCurrency(kpiSummary.invoice_revenue)} | Pemasangan: {formatCurrency(kpiSummary.installation_income)}
                                     </p>
                                     <p className={`text-xs mt-1 ${Number(kpiSummary.revenue_growth_vs_previous || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                                         Growth: {Number(kpiSummary.revenue_growth_vs_previous || 0) >= 0 ? '+' : ''}{formatPercent(kpiSummary.revenue_growth_vs_previous, 2)}
@@ -1498,6 +1758,266 @@ function Dashboard() {
                             </div>
                         </>
                     )}
+                </div>
+            )}
+
+            {!isTeknisi && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                        <div>
+                            <h2 className="text-lg md:text-xl font-bold text-gray-900 flex items-center gap-2">
+                                <Target size={20} className="text-indigo-700" />
+                                Prediksi Keuangan, Pengeluaran Wajib, dan Target Pembelian
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Fokus bulanan: ringkasan kelayakan pengeluaran wajib dan target pembelian per bulan.
+                            </p>
+                            <p className="text-xs text-indigo-600 mt-1">Periode aktif: {formatMonthLabel(financialProjectionMonth)}</p>
+                        </div>
+
+                        <div className="flex flex-wrap items-end gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">Bulan</label>
+                                <input
+                                    type="month"
+                                    value={financialProjectionMonth}
+                                    onChange={(e) => setFinancialProjectionMonth(e.target.value)}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleApplyFinancialProjectionRange}
+                                disabled={financialProjectionLoading}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-60"
+                            >
+                                {financialProjectionLoading ? 'Memproses...' : 'Tampilkan Bulan'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleResetFinancialProjectionRange}
+                                disabled={financialProjectionLoading}
+                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium disabled:opacity-60 inline-flex items-center gap-2"
+                            >
+                                <RefreshCw size={14} className={financialProjectionLoading ? 'animate-spin' : ''} />
+                                Bulan Ini
+                            </button>
+                            {isSuperAdmin && (
+                                <button
+                                    type="button"
+                                    onClick={openCreateTargetModal}
+                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2"
+                                >
+                                    <Plus size={14} />
+                                    Tambah Target
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    {financialProjectionError && (
+                        <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+                            {financialProjectionError}
+                        </div>
+                    )}
+
+                    {financialProjectionLoading && !projectionSummary && (
+                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                            Memproses prediksi gabungan pendapatan dan pengeluaran wajib...
+                        </div>
+                    )}
+
+                    {projectionSummary && (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                                <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                                    <p className="text-xs font-medium text-slate-600">Saldo Awal Proyeksi</p>
+                                    <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(projectionSummary.opening_balance)}</p>
+                                </div>
+                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                    <p className="text-xs font-medium text-emerald-700">Prediksi Pendapatan</p>
+                                    <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(projectionSummary.predicted_income)}</p>
+                                </div>
+                                <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
+                                    <p className="text-xs font-medium text-rose-700">Total Pengeluaran Wajib</p>
+                                    <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(projectionSummary.mandatory_expense)}</p>
+                                </div>
+                                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
+                                    <p className="text-xs font-medium text-indigo-700">Sisa Setelah Wajib</p>
+                                    <p className="text-2xl font-bold text-indigo-900 mt-1">{formatCurrency(projectionSummary.net_after_mandatory)}</p>
+                                </div>
+                                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
+                                    <p className="text-xs font-medium text-amber-700">Estimasi Saldo Akhir</p>
+                                    <p className="text-2xl font-bold text-amber-900 mt-1">{formatCurrency(projectionSummary.projected_ending_balance)}</p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-semibold text-gray-900">Indikator Pengeluaran Wajib</p>
+                                        <span className="text-xs text-gray-500">
+                                            Coverage: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
+                                            {' '}
+                                            ({formatPercent(projectionSummary.mandatory_coverage_rate || 0, 1)})
+                                        </span>
+                                    </div>
+                                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                        <table className="w-full text-sm min-w-[760px]">
+                                            <thead className="bg-gray-50 text-gray-600 text-left">
+                                                <tr>
+                                                    <th className="px-3 py-2">Nama Target</th>
+                                                    <th className="px-3 py-2">Periode</th>
+                                                    <th className="px-3 py-2">Jatuh Tempo</th>
+                                                    <th className="px-3 py-2 text-right">Nominal</th>
+                                                    <th className="px-3 py-2 text-right">Saldo Sebelum</th>
+                                                    <th className="px-3 py-2 text-center">Indikator</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {mandatoryProjectionRows.length === 0 ? (
+                                                    <tr>
+                                                        <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                            Belum ada kejadian pengeluaran wajib pada rentang ini.
+                                                        </td>
+                                                    </tr>
+                                                ) : mandatoryProjectionRows.map((row) => (
+                                                    <tr key={row.event_id} className="border-t border-gray-100">
+                                                        <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
+                                                        <td className="px-3 py-2 text-gray-600">{row.period_start} s.d. {row.period_end}</td>
+                                                        <td className="px-3 py-2 text-gray-600">{row.due_date}</td>
+                                                        <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
+                                                        <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.available_before)}</td>
+                                                        <td className="px-3 py-2 text-center">
+                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.can_cover ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                                {row.can_cover ? 'Aman' : 'Risiko'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-sm font-semibold text-gray-900">Target Pembelian / Keinginan</p>
+                                        <span className="text-xs text-gray-500">
+                                            Tercapai di rentang: {projectionSummary.purchase_targets_reachable || 0}/{projectionSummary.purchase_targets_total || 0}
+                                        </span>
+                                    </div>
+                                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                        <table className="w-full text-sm min-w-[680px]">
+                                            <thead className="bg-gray-50 text-gray-600 text-left">
+                                                <tr>
+                                                    <th className="px-3 py-2">Target</th>
+                                                    <th className="px-3 py-2 text-right">Nominal</th>
+                                                    <th className="px-3 py-2">Target Tanggal</th>
+                                                    <th className="px-3 py-2">Prediksi Bisa Dibeli</th>
+                                                    <th className="px-3 py-2 text-center">Indikator</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {purchaseGoalRows.length === 0 ? (
+                                                    <tr>
+                                                        <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
+                                                            Belum ada target pembelian aktif.
+                                                        </td>
+                                                    </tr>
+                                                ) : purchaseGoalRows.map((row) => (
+                                                    <tr key={row.id} className="border-t border-gray-100">
+                                                        <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
+                                                        <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
+                                                        <td className="px-3 py-2 text-gray-600">{row.desired_date || '-'}</td>
+                                                        <td className="px-3 py-2 text-gray-600">{row.predicted_buy_date || 'Belum tercapai di rentang'}</td>
+                                                        <td className="px-3 py-2 text-center">
+                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.indicator === 'siap' ? 'bg-emerald-100 text-emerald-700' : row.indicator === 'menunggu' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                                                                {row.indicator === 'siap' ? 'Siap' : row.indicator === 'menunggu' ? 'Menunggu' : 'Belum'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                            <p className="text-sm font-semibold text-gray-900">Daftar Target Keuangan</p>
+                            <span className="text-xs text-gray-500">Bisa dibuat/diubah hanya oleh superadmin</span>
+                        </div>
+
+                        {financialTargetsLoading ? (
+                            <div className="text-sm text-gray-500 py-4">Memuat daftar target keuangan...</div>
+                        ) : (
+                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                <table className="w-full text-sm min-w-[820px]">
+                                    <thead className="bg-gray-50 text-gray-600 text-left">
+                                        <tr>
+                                            <th className="px-3 py-2">Nama</th>
+                                            <th className="px-3 py-2">Tipe</th>
+                                            <th className="px-3 py-2 text-right">Nominal</th>
+                                            <th className="px-3 py-2">Periode/Tanggal Target</th>
+                                            <th className="px-3 py-2">Status</th>
+                                            {isSuperAdmin && <th className="px-3 py-2 text-right">Aksi</th>}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {financialTargets.length === 0 ? (
+                                            <tr>
+                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={isSuperAdmin ? 6 : 5}>
+                                                    Belum ada target keuangan.
+                                                </td>
+                                            </tr>
+                                        ) : financialTargets.map((item) => (
+                                            <tr key={item.id} className="border-t border-gray-100">
+                                                <td className="px-3 py-2 font-medium text-gray-900">{item.name}</td>
+                                                <td className="px-3 py-2 text-gray-600">{item.type === 'mandatory_expense' ? 'Pengeluaran Wajib' : 'Target Pembelian'}</td>
+                                                <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(item.amount)}</td>
+                                                <td className="px-3 py-2 text-gray-600">
+                                                    {item.type === 'mandatory_expense'
+                                                        ? (item.is_recurring_monthly && item.recurrence_forever
+                                                            ? `Setiap tanggal ${item?.meta?.monthly_day || '-'} tiap bulan (Selamanya)`
+                                                            : `${item.start_date || '-'} s.d. ${item.end_date || '-'}${item.is_recurring_monthly ? ` (Bulanan${item.recurrence_forever ? ' - Selamanya' : item.recurrence_until ? ` sampai ${item.recurrence_until}` : ''})` : ''}`)
+                                                        : (item.target_date || '-')}
+                                                </td>
+                                                <td className="px-3 py-2 text-gray-600">
+                                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-700'}`}>
+                                                        {item.is_active ? 'Aktif' : 'Nonaktif'}
+                                                    </span>
+                                                </td>
+                                                {isSuperAdmin && (
+                                                    <td className="px-3 py-2 text-right">
+                                                        <div className="inline-flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                                                onClick={() => openEditTargetModal(item)}
+                                                            >
+                                                                <Edit2 size={14} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                                                onClick={() => handleDeleteTarget(item)}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                )}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
@@ -1807,6 +2327,204 @@ function Dashboard() {
                     )}
                 </div>
             )}
+
+            <Modal
+                isOpen={targetModal.open}
+                onClose={closeTargetModal}
+                title={targetModal.mode === 'edit' ? 'Edit Target Keuangan' : 'Tambah Target Keuangan'}
+                size="lg"
+            >
+                <form onSubmit={handleSaveTarget} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Target</label>
+                        <select
+                            value={targetForm.type}
+                            onChange={(e) => setTargetForm((prev) => ({ ...prev, type: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        >
+                            <option value="mandatory_expense">Pengeluaran Wajib</option>
+                            <option value="purchase_target">Target Pembelian / Keinginan</option>
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Nama Target</label>
+                            <input
+                                type="text"
+                                value={targetForm.name}
+                                onChange={(e) => setTargetForm((prev) => ({ ...prev, name: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                required
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Nominal</label>
+                            <input
+                                type="number"
+                                value={targetForm.amount}
+                                onChange={(e) => setTargetForm((prev) => ({ ...prev, amount: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                min={1}
+                                required
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi (opsional)</label>
+                        <textarea
+                            value={targetForm.description}
+                            onChange={(e) => setTargetForm((prev) => ({ ...prev, description: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            rows={3}
+                        />
+                    </div>
+
+                    {targetForm.type === 'mandatory_expense' ? (
+                        <>
+                            <div className="space-y-3 border border-gray-200 rounded-lg p-3">
+                                <label className="flex items-center gap-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={targetForm.is_recurring_monthly}
+                                        onChange={(e) => {
+                                            const checked = e.target.checked;
+                                            setTargetForm((prev) => ({
+                                                ...prev,
+                                                is_recurring_monthly: checked,
+                                                recurrence_forever: checked ? prev.recurrence_forever : false,
+                                                recurrence_until: checked ? prev.recurrence_until : '',
+                                            }));
+                                        }}
+                                    />
+                                    Ulangi setiap bulan
+                                </label>
+
+                                {targetForm.is_recurring_monthly && (
+                                    <>
+                                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                                            <input
+                                                type="checkbox"
+                                                checked={targetForm.recurrence_forever}
+                                                onChange={(e) => {
+                                                    const checked = e.target.checked;
+                                                    setTargetForm((prev) => ({
+                                                        ...prev,
+                                                        recurrence_forever: checked,
+                                                        start_date: checked ? '' : prev.start_date,
+                                                        end_date: checked ? '' : prev.end_date,
+                                                        monthly_day: checked ? (prev.monthly_day || String(new Date().getDate())) : prev.monthly_day,
+                                                    }));
+                                                }}
+                                            />
+                                            Ulangi selamanya
+                                        </label>
+
+                                        {!targetForm.recurrence_forever && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Ulangi sampai bulan</label>
+                                                <input
+                                                    type="date"
+                                                    value={targetForm.recurrence_until}
+                                                    onChange={(e) => setTargetForm((prev) => ({ ...prev, recurrence_until: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                                />
+                                            </div>
+                                        )}
+
+                                        {targetForm.recurrence_forever && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal setiap bulan</label>
+                                                <input
+                                                    type="number"
+                                                    min={1}
+                                                    max={31}
+                                                    value={targetForm.monthly_day}
+                                                    onChange={(e) => setTargetForm((prev) => ({ ...prev, monthly_day: e.target.value }))}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                                    placeholder="Contoh: 10"
+                                                    required
+                                                />
+                                                <p className="text-xs text-gray-500 mt-1">Tagihan wajib akan jatuh setiap tanggal ini tiap bulan.</p>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
+                            {!(targetForm.is_recurring_monthly && targetForm.recurrence_forever) && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal Mulai</label>
+                                        <input
+                                            type="date"
+                                            value={targetForm.start_date}
+                                            onChange={(e) => setTargetForm((prev) => ({ ...prev, start_date: e.target.value }))}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal Akhir</label>
+                                        <input
+                                            type="date"
+                                            value={targetForm.end_date}
+                                            onChange={(e) => setTargetForm((prev) => ({ ...prev, end_date: e.target.value }))}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Target Tanggal Pembelian (opsional)</label>
+                            <input
+                                type="date"
+                                value={targetForm.target_date}
+                                onChange={(e) => setTargetForm((prev) => ({ ...prev, target_date: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            />
+                        </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Prioritas (lebih kecil didahulukan)</label>
+                            <input
+                                type="number"
+                                value={targetForm.priority}
+                                onChange={(e) => setTargetForm((prev) => ({ ...prev, priority: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                min={1}
+                                max={1000}
+                            />
+                        </div>
+                        <div className="flex items-end">
+                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                                <input
+                                    type="checkbox"
+                                    checked={targetForm.is_active}
+                                    onChange={(e) => setTargetForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                                />
+                                Target aktif
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2">
+                        <Button type="button" variant="secondary" onClick={closeTargetModal}>
+                            Batal
+                        </Button>
+                        <Button type="submit" variant="primary" disabled={targetSubmitting}>
+                            {targetSubmitting ? 'Menyimpan...' : 'Simpan Target'}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
 
             <Modal
                 isOpen={showAdjustModal}

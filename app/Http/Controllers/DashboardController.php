@@ -6,16 +6,36 @@ namespace App\Http\Controllers;
 use App\Models\Invoice;
 use App\Models\Complaint;
 use App\Models\Customer;
+use App\Models\FinancialPlanningTarget;
+use App\Models\FinancialTransaction;
 use App\Models\User;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class DashboardController extends Controller
 {
     private function canViewFinancialMetrics(?User $user): bool
     {
         return $user !== null && !$user->isTeknisi();
+    }
+
+    private function canManageFinancialTargets(?User $user): bool
+    {
+        return $user !== null && $user->isSuperAdmin();
+    }
+
+    private function isFinancialTargetsReady(): bool
+    {
+        return Schema::hasTable('financial_planning_targets');
+    }
+
+    private function isLedgerReady(): bool
+    {
+        return Schema::hasTable('financial_transactions');
     }
 
     private function countNewInstallationsForPeriod(Carbon $start, Carbon $end): int
@@ -366,6 +386,575 @@ class DashboardController extends Controller
         ]);
     }
 
+    public function financialProjection(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin melihat data keuangan.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+        ]);
+
+        $hasStartDate = isset($validated['start_date']);
+        $hasEndDate = isset($validated['end_date']);
+
+        if ($hasStartDate && $hasEndDate) {
+            $startDate = Carbon::parse($validated['start_date'])->startOfDay();
+            $endDate = Carbon::parse($validated['end_date'])->endOfDay();
+        } elseif ($hasStartDate) {
+            $monthReference = Carbon::parse($validated['start_date']);
+            $startDate = $monthReference->copy()->startOfMonth()->startOfDay();
+            $endDate = $monthReference->copy()->endOfMonth()->endOfDay();
+        } elseif ($hasEndDate) {
+            $monthReference = Carbon::parse($validated['end_date']);
+            $startDate = $monthReference->copy()->startOfMonth()->startOfDay();
+            $endDate = $monthReference->copy()->endOfMonth()->endOfDay();
+        } else {
+            $monthReference = Carbon::today();
+            $startDate = $monthReference->copy()->startOfMonth()->startOfDay();
+            $endDate = $monthReference->copy()->endOfMonth()->endOfDay();
+        }
+
+        if ($startDate->gt($endDate)) {
+            return response()->json([
+                'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+            ], 422);
+        }
+
+        $totalDays = $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
+        if ($totalDays > 365) {
+            return response()->json([
+                'message' => 'Rentang prediksi keuangan maksimal 365 hari.',
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => $this->buildFinancialProjection($startDate, $endDate),
+        ]);
+    }
+
+    public function financialTargets(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin melihat data keuangan.',
+            ], 403);
+        }
+
+        if (!$this->isFinancialTargetsReady()) {
+            return response()->json([
+                'data' => [],
+            ]);
+        }
+
+        $includeInactive = $request->boolean('include_inactive', false)
+            && $this->canManageFinancialTargets($request->user());
+
+        $query = FinancialPlanningTarget::query()
+            ->orderBy('type')
+            ->orderBy('priority')
+            ->orderBy('name');
+
+        if (!$includeInactive) {
+            $query->where('is_active', true);
+        }
+
+        return response()->json([
+            'data' => $query->get(),
+        ]);
+    }
+
+    public function storeFinancialTarget(Request $request)
+    {
+        if (!$this->canManageFinancialTargets($request->user())) {
+            return response()->json([
+                'message' => 'Hanya superadmin yang dapat mengatur target keuangan.',
+            ], 403);
+        }
+
+        if (!$this->isFinancialTargetsReady()) {
+            return response()->json([
+                'message' => 'Tabel financial_planning_targets belum tersedia. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        $payload = $this->validateFinancialTargetPayload($request);
+        $payload['created_by'] = $request->user()?->id;
+        $payload['updated_by'] = $request->user()?->id;
+
+        $target = FinancialPlanningTarget::create($payload);
+
+        return response()->json([
+            'message' => 'Target keuangan berhasil ditambahkan.',
+            'data' => $target,
+        ], 201);
+    }
+
+    public function updateFinancialTarget(Request $request, FinancialPlanningTarget $financialTarget)
+    {
+        if (!$this->canManageFinancialTargets($request->user())) {
+            return response()->json([
+                'message' => 'Hanya superadmin yang dapat mengatur target keuangan.',
+            ], 403);
+        }
+
+        if (!$this->isFinancialTargetsReady()) {
+            return response()->json([
+                'message' => 'Tabel financial_planning_targets belum tersedia. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        $payload = $this->validateFinancialTargetPayload($request);
+        $payload['updated_by'] = $request->user()?->id;
+
+        $financialTarget->update($payload);
+
+        return response()->json([
+            'message' => 'Target keuangan berhasil diperbarui.',
+            'data' => $financialTarget->fresh(),
+        ]);
+    }
+
+    public function destroyFinancialTarget(Request $request, FinancialPlanningTarget $financialTarget)
+    {
+        if (!$this->canManageFinancialTargets($request->user())) {
+            return response()->json([
+                'message' => 'Hanya superadmin yang dapat mengatur target keuangan.',
+            ], 403);
+        }
+
+        if (!$this->isFinancialTargetsReady()) {
+            return response()->json([
+                'message' => 'Tabel financial_planning_targets belum tersedia. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        $financialTarget->delete();
+
+        return response()->json([
+            'message' => 'Target keuangan berhasil dihapus.',
+        ]);
+    }
+
+    private function validateFinancialTargetPayload(Request $request): array
+    {
+        $validator = Validator::make($request->all(), [
+            'type' => ['required', 'string', Rule::in([
+                FinancialPlanningTarget::TYPE_MANDATORY_EXPENSE,
+                FinancialPlanningTarget::TYPE_PURCHASE_TARGET,
+            ])],
+            'name' => 'required|string|max:120',
+            'description' => 'nullable|string|max:1000',
+            'amount' => 'required|numeric|min:1',
+            'target_date' => 'nullable|date',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+            'monthly_day' => 'nullable|integer|min:1|max:31',
+            'is_recurring_monthly' => 'nullable|boolean',
+            'recurrence_until' => 'nullable|date',
+            'recurrence_forever' => 'nullable|boolean',
+            'is_active' => 'nullable|boolean',
+            'priority' => 'nullable|integer|min:1|max:1000',
+        ]);
+
+        $validator->after(function ($validator) use ($request) {
+            $type = (string) $request->input('type');
+            $startDate = $request->input('start_date');
+            $endDate = $request->input('end_date');
+            $monthlyDay = $request->input('monthly_day');
+            $isRecurring = $request->boolean('is_recurring_monthly', false);
+            $recurrenceForever = $request->boolean('recurrence_forever', false);
+            $recurrenceUntil = $request->input('recurrence_until');
+
+            if ($type === FinancialPlanningTarget::TYPE_MANDATORY_EXPENSE) {
+                $usesMonthlyForever = $isRecurring && $recurrenceForever;
+
+                if ($usesMonthlyForever) {
+                    if (!$monthlyDay) {
+                        $validator->errors()->add('monthly_day', 'Tanggal setiap bulan wajib diisi jika target bulanan selamanya.');
+                    }
+                } else {
+                    if (!$startDate) {
+                        $validator->errors()->add('start_date', 'Tanggal mulai wajib diisi untuk target pengeluaran wajib.');
+                    }
+
+                    if (!$endDate) {
+                        $validator->errors()->add('end_date', 'Tanggal akhir wajib diisi untuk target pengeluaran wajib.');
+                    }
+
+                    if ($startDate && $endDate) {
+                        $parsedStart = Carbon::parse($startDate)->startOfDay();
+                        $parsedEnd = Carbon::parse($endDate)->startOfDay();
+                        if ($parsedEnd->lt($parsedStart)) {
+                            $validator->errors()->add('end_date', 'Tanggal akhir tidak boleh sebelum tanggal mulai.');
+                        }
+                    }
+                }
+
+                if ($isRecurring && !$recurrenceForever && !$recurrenceUntil) {
+                    $validator->errors()->add('recurrence_until', 'Isi batas bulan pengulangan atau aktifkan opsi selamanya.');
+                }
+
+                if ($isRecurring && !$recurrenceForever && $recurrenceUntil && $endDate) {
+                    $recurrenceLimit = Carbon::parse($recurrenceUntil)->startOfMonth();
+                    $targetMonth = Carbon::parse($endDate)->startOfMonth();
+                    if ($recurrenceLimit->lt($targetMonth)) {
+                        $validator->errors()->add('recurrence_until', 'Batas pengulangan tidak boleh lebih awal dari bulan target awal.');
+                    }
+                }
+            }
+        });
+
+        $validated = $validator->validate();
+
+        $type = $validated['type'];
+        $isRecurring = (bool) ($validated['is_recurring_monthly'] ?? false);
+        $recurrenceForever = (bool) ($validated['recurrence_forever'] ?? false);
+
+        $payload = [
+            'type' => $type,
+            'name' => trim((string) $validated['name']),
+            'description' => isset($validated['description']) ? trim((string) $validated['description']) : null,
+            'amount' => (float) $validated['amount'],
+            'target_date' => $validated['target_date'] ?? null,
+            'start_date' => $validated['start_date'] ?? null,
+            'end_date' => $validated['end_date'] ?? null,
+            'is_recurring_monthly' => $isRecurring,
+            'recurrence_until' => $validated['recurrence_until'] ?? null,
+            'recurrence_forever' => $recurrenceForever,
+            'is_active' => (bool) ($validated['is_active'] ?? true),
+            'priority' => (int) ($validated['priority'] ?? 100),
+            'meta' => null,
+        ];
+
+        if ($type === FinancialPlanningTarget::TYPE_PURCHASE_TARGET) {
+            $payload['start_date'] = null;
+            $payload['end_date'] = null;
+            $payload['is_recurring_monthly'] = false;
+            $payload['recurrence_until'] = null;
+            $payload['recurrence_forever'] = false;
+            $payload['meta'] = null;
+        }
+
+        if ($type === FinancialPlanningTarget::TYPE_MANDATORY_EXPENSE) {
+            $payload['target_date'] = null;
+
+            if (!$payload['is_recurring_monthly']) {
+                $payload['recurrence_until'] = null;
+                $payload['recurrence_forever'] = false;
+            }
+
+            if ($payload['recurrence_forever']) {
+                $payload['recurrence_until'] = null;
+                $payload['start_date'] = null;
+                $payload['end_date'] = null;
+                $payload['meta'] = [
+                    'monthly_day' => (int) ($validated['monthly_day'] ?? 0),
+                ];
+            } else {
+                $payload['meta'] = null;
+            }
+        }
+
+        return $payload;
+    }
+
+    private function buildFinancialProjection(Carbon $startDate, Carbon $endDate): array
+    {
+        $forecast = $this->buildRevenueForecast($startDate->copy()->startOfDay(), $endDate->copy()->endOfDay());
+        $dailyForecast = $forecast['daily_forecast'] ?? [];
+
+        $openingBalance = 0.0;
+        if ($this->isLedgerReady()) {
+            $openingBalance = (float) (app(FinancialLedgerService::class)->getSummary()['balance'] ?? 0);
+        }
+
+        $activeTargets = collect();
+        if ($this->isFinancialTargetsReady()) {
+            $activeTargets = FinancialPlanningTarget::query()
+                ->where('is_active', true)
+                ->orderBy('priority')
+                ->orderBy('id')
+                ->get();
+        }
+
+        $mandatoryTargets = $activeTargets
+            ->where('type', FinancialPlanningTarget::TYPE_MANDATORY_EXPENSE)
+            ->values();
+        $purchaseTargets = $activeTargets
+            ->where('type', FinancialPlanningTarget::TYPE_PURCHASE_TARGET)
+            ->values();
+
+        $mandatoryEvents = $this->expandMandatoryExpenseEvents($mandatoryTargets, $startDate, $endDate);
+
+        $eventsByDate = [];
+        foreach ($mandatoryEvents as $event) {
+            $eventsByDate[$event['due_date']][] = $event;
+        }
+
+        $dailyIncomeMap = [];
+        foreach ($dailyForecast as $item) {
+            $date = (string) ($item['date'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+
+            $dailyIncomeMap[$date] = (float) ($item['predicted_revenue'] ?? 0);
+        }
+
+        $cash = $openingBalance;
+        $mandatoryExpenseProjection = [];
+        $dailyProjection = [];
+        $mandatoryExpenseTotal = 0.0;
+
+        for ($cursor = $startDate->copy()->startOfDay(); $cursor->lte($endDate); $cursor->addDay()) {
+            $dateKey = $cursor->toDateString();
+            $predictedIncome = (float) ($dailyIncomeMap[$dateKey] ?? 0);
+            $cash += $predictedIncome;
+
+            $mandatorySpentToday = 0.0;
+            foreach (($eventsByDate[$dateKey] ?? []) as $event) {
+                $amount = (float) ($event['amount'] ?? 0);
+                $availableBefore = $cash;
+                $canCover = $availableBefore >= $amount;
+                $cash -= $amount;
+                $mandatorySpentToday += $amount;
+                $mandatoryExpenseTotal += $amount;
+
+                $mandatoryExpenseProjection[] = array_merge($event, [
+                    'available_before' => (int) round($availableBefore),
+                    'projected_balance_after' => (int) round($cash),
+                    'can_cover' => $canCover,
+                    'shortfall' => (int) round(max(0, $amount - $availableBefore)),
+                    'indicator' => $canCover ? 'aman' : 'risiko',
+                ]);
+            }
+
+            $dailyProjection[] = [
+                'date' => $dateKey,
+                'predicted_income' => (int) round($predictedIncome),
+                'mandatory_expense' => (int) round($mandatorySpentToday),
+                'projected_balance' => (int) round($cash),
+            ];
+        }
+
+        $balanceByDate = [];
+        foreach ($dailyProjection as $row) {
+            $balanceByDate[(string) $row['date']] = (float) ($row['projected_balance'] ?? 0);
+        }
+
+        $purchaseGoals = [];
+        foreach ($purchaseTargets as $target) {
+            $amount = (float) ($target->amount ?? 0);
+            $desiredDate = $target->target_date ? Carbon::parse($target->target_date)->toDateString() : null;
+
+            $predictedBuyDate = null;
+            foreach ($dailyProjection as $row) {
+                if ((float) ($row['projected_balance'] ?? 0) >= $amount) {
+                    $predictedBuyDate = (string) $row['date'];
+                    break;
+                }
+            }
+
+            $canExecuteAtDesiredDate = null;
+            if ($desiredDate !== null) {
+                $canExecuteAtDesiredDate = isset($balanceByDate[$desiredDate])
+                    ? ((float) $balanceByDate[$desiredDate] >= $amount)
+                    : null;
+            }
+
+            $indicator = 'belum_terjangkau';
+            if ($canExecuteAtDesiredDate === true || ($desiredDate === null && $predictedBuyDate !== null)) {
+                $indicator = 'siap';
+            } elseif ($predictedBuyDate !== null) {
+                $indicator = 'menunggu';
+            }
+
+            $purchaseGoals[] = [
+                'id' => $target->id,
+                'name' => $target->name,
+                'description' => $target->description,
+                'amount' => (int) round($amount),
+                'desired_date' => $desiredDate,
+                'predicted_buy_date' => $predictedBuyDate,
+                'can_execute_in_range' => $predictedBuyDate !== null,
+                'can_execute_at_desired_date' => $canExecuteAtDesiredDate,
+                'indicator' => $indicator,
+            ];
+        }
+
+        $predictedIncomeTotal = (float) ($forecast['summary']['predicted_total_revenue'] ?? 0);
+        $coveredMandatory = collect($mandatoryExpenseProjection)->where('can_cover', true)->count();
+        $mandatoryTotalEvents = count($mandatoryExpenseProjection);
+        $reachablePurchaseTargets = collect($purchaseGoals)->where('can_execute_in_range', true)->count();
+
+        return [
+            'range' => [
+                'start_date' => $startDate->toDateString(),
+                'end_date' => $endDate->toDateString(),
+                'days' => $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1,
+            ],
+            'summary' => [
+                'opening_balance' => (int) round($openingBalance),
+                'predicted_income' => (int) round($predictedIncomeTotal),
+                'mandatory_expense' => (int) round($mandatoryExpenseTotal),
+                'net_after_mandatory' => (int) round($predictedIncomeTotal - $mandatoryExpenseTotal),
+                'projected_ending_balance' => (int) round($cash),
+                'mandatory_total_events' => $mandatoryTotalEvents,
+                'mandatory_covered_events' => $coveredMandatory,
+                'mandatory_coverage_rate' => $mandatoryTotalEvents > 0
+                    ? round(($coveredMandatory / $mandatoryTotalEvents) * 100, 2)
+                    : 100.0,
+                'purchase_targets_total' => count($purchaseGoals),
+                'purchase_targets_reachable' => $reachablePurchaseTargets,
+            ],
+            'forecast_context' => [
+                'average_confidence' => (int) ($forecast['summary']['average_confidence'] ?? 0),
+                'trend_percentage_6m' => (float) ($forecast['summary']['trend_percentage_6m'] ?? 0),
+                'historical_daily_average' => (int) ($forecast['summary']['historical_daily_average'] ?? 0),
+            ],
+            'daily_projection' => $dailyProjection,
+            'mandatory_expense_projection' => $mandatoryExpenseProjection,
+            'purchase_goals' => $purchaseGoals,
+        ];
+    }
+
+    private function expandMandatoryExpenseEvents($mandatoryTargets, Carbon $startDate, Carbon $endDate): array
+    {
+        $events = [];
+
+        foreach ($mandatoryTargets as $target) {
+            if ($target->is_recurring_monthly && $target->recurrence_forever) {
+                $targetMeta = is_array($target->meta) ? $target->meta : [];
+                $monthlyDay = (int) ($targetMeta['monthly_day'] ?? 0);
+
+                if ($monthlyDay < 1 || $monthlyDay > 31) {
+                    if ($target->end_date) {
+                        $monthlyDay = (int) Carbon::parse($target->end_date)->day;
+                    } else {
+                        continue;
+                    }
+                }
+
+                $monthCursor = $startDate->copy()->startOfMonth();
+                $monthLimit = $endDate->copy()->startOfMonth();
+
+                while ($monthCursor->lte($monthLimit)) {
+                    $dueDate = $monthCursor->copy()->day(min($monthlyDay, $monthCursor->daysInMonth));
+
+                    if ($dueDate->between($startDate->copy()->startOfDay(), $endDate->copy()->endOfDay())) {
+                        $events[] = [
+                            'event_id' => $target->id . '-' . $monthCursor->format('Ym'),
+                            'target_id' => $target->id,
+                            'name' => $target->name,
+                            'description' => $target->description,
+                            'amount' => (float) $target->amount,
+                            'period_start' => $monthCursor->copy()->startOfMonth()->toDateString(),
+                            'period_end' => $dueDate->toDateString(),
+                            'due_date' => $dueDate->toDateString(),
+                            'is_recurring_monthly' => true,
+                            'priority' => (int) ($target->priority ?? 100),
+                        ];
+                    }
+
+                    $monthCursor->addMonthNoOverflow();
+                }
+
+                continue;
+            }
+
+            if (!$target->start_date || !$target->end_date) {
+                continue;
+            }
+
+            $baseStart = Carbon::parse($target->start_date)->startOfDay();
+            $baseEnd = Carbon::parse($target->end_date)->startOfDay();
+
+            if (!$target->is_recurring_monthly) {
+                if ($baseEnd->between($startDate->copy()->startOfDay(), $endDate->copy()->endOfDay())) {
+                    $events[] = [
+                        'event_id' => $target->id . '-0',
+                        'target_id' => $target->id,
+                        'name' => $target->name,
+                        'description' => $target->description,
+                        'amount' => (float) $target->amount,
+                        'period_start' => $baseStart->toDateString(),
+                        'period_end' => $baseEnd->toDateString(),
+                        'due_date' => $baseEnd->toDateString(),
+                        'is_recurring_monthly' => false,
+                        'priority' => (int) ($target->priority ?? 100),
+                    ];
+                }
+
+                continue;
+            }
+
+            $recurrenceLimit = null;
+            if (!$target->recurrence_forever) {
+                if ($target->recurrence_until) {
+                    $recurrenceLimit = Carbon::parse($target->recurrence_until)->endOfMonth();
+                } else {
+                    $recurrenceLimit = $baseEnd->copy();
+                }
+            }
+
+            $index = 0;
+            while (true) {
+                if ($index > 240) {
+                    break;
+                }
+
+                $occurrenceStart = $baseStart->copy()->addMonthsNoOverflow($index);
+                $occurrenceEnd = $baseEnd->copy()->addMonthsNoOverflow($index);
+
+                if ($recurrenceLimit && $occurrenceStart->startOfMonth()->gt($recurrenceLimit->startOfMonth())) {
+                    break;
+                }
+
+                if ($occurrenceStart->gt($endDate->copy()->endOfDay())) {
+                    break;
+                }
+
+                if ($occurrenceEnd->between($startDate->copy()->startOfDay(), $endDate->copy()->endOfDay())) {
+                    $events[] = [
+                        'event_id' => $target->id . '-' . $index,
+                        'target_id' => $target->id,
+                        'name' => $target->name,
+                        'description' => $target->description,
+                        'amount' => (float) $target->amount,
+                        'period_start' => $occurrenceStart->toDateString(),
+                        'period_end' => $occurrenceEnd->toDateString(),
+                        'due_date' => $occurrenceEnd->toDateString(),
+                        'is_recurring_monthly' => true,
+                        'priority' => (int) ($target->priority ?? 100),
+                    ];
+                }
+
+                $index++;
+            }
+        }
+
+        usort($events, function (array $a, array $b) {
+            $dateComparison = strcmp((string) $a['due_date'], (string) $b['due_date']);
+            if ($dateComparison !== 0) {
+                return $dateComparison;
+            }
+
+            $priorityComparison = ((int) $a['priority']) <=> ((int) $b['priority']);
+            if ($priorityComparison !== 0) {
+                return $priorityComparison;
+            }
+
+            return ((int) $a['target_id']) <=> ((int) $b['target_id']);
+        });
+
+        return $events;
+    }
+
     private function buildManagementKpis(Carbon $startDate, Carbon $endDate): array
     {
         $periodDays = $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
@@ -423,6 +1012,8 @@ class DashboardController extends Controller
                 'arpu_paid_customer' => (int) round((float) $arpuCurrent['arpu_paid_customer']),
                 'arpu_operational_active' => (int) round((float) $arpuCurrent['arpu_operational_active']),
                 'arpu_delta_vs_previous' => (int) round($arpuDelta),
+                'invoice_revenue' => (int) round((float) $arpuCurrent['invoice_revenue']),
+                'installation_income' => (int) round((float) $arpuCurrent['installation_income']),
                 'realized_revenue' => (int) round((float) $arpuCurrent['realized_revenue']),
                 'revenue_growth_vs_previous' => round($revenueGrowth, 2),
                 'paid_customers' => (int) $arpuCurrent['paid_customers'],
@@ -640,10 +1231,21 @@ class DashboardController extends Controller
 
     private function computeArpuMetrics(Carbon $startDate, Carbon $endDate, ?array $isolatedUsernameMap = null): array
     {
-        $realizedRevenue = (float) Invoice::where('status', 'paid')
+        $invoiceRevenue = (float) Invoice::where('status', 'paid')
             ->whereNotNull('paid_at')
             ->whereBetween('paid_at', [$startDate->copy()->startOfDay(), $endDate->copy()->endOfDay()])
             ->sum('amount');
+
+        $installationIncome = 0.0;
+        if ($this->isLedgerReady()) {
+            $installationIncome = (float) FinancialTransaction::query()
+                ->where('type', 'income')
+                ->where('source', 'installation_income')
+                ->whereBetween('transaction_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->sum('amount');
+        }
+
+        $realizedRevenue = $invoiceRevenue + $installationIncome;
 
         $paidCustomers = (int) Invoice::where('status', 'paid')
             ->whereNotNull('paid_at')
@@ -656,6 +1258,8 @@ class DashboardController extends Controller
         $operationalInactiveCustomers = (int) $activitySummary['inactive_customers'];
 
         return [
+            'invoice_revenue' => (int) round($invoiceRevenue),
+            'installation_income' => (int) round($installationIncome),
             'realized_revenue' => (int) round($realizedRevenue),
             'paid_customers' => $paidCustomers,
             'operational_active_customers' => $operationalActiveCustomers,

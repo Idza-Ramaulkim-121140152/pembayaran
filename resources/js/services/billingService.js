@@ -24,6 +24,16 @@ export const billingService = {
     updateInvoiceAmount: (invoiceId, amount) =>
         apiClient.put(`/billing/invoice/${invoiceId}/amount`, { amount }),
 
+    // Superadmin invoice management
+    getInvoiceManagement: (params = {}) =>
+        apiClient.get('/billing/invoice-management', { params }),
+
+    updateManagedInvoice: (invoiceId, payload) =>
+        apiClient.put(`/billing/invoice-management/${invoiceId}`, payload),
+
+    deleteManagedInvoice: (invoiceId) =>
+        apiClient.delete(`/billing/invoice-management/${invoiceId}`),
+
     // Tolak pembayaran
     rejectPayment: (invoiceId, reason) => 
         apiClient.post(`/billing/invoice/${invoiceId}/reject`, { reason }),

@@ -14,6 +14,7 @@ import PaymentMethodsPage from './pages/Settings/PaymentMethodsPage';
 import PaymentReceiptsPage from './pages/Settings/PaymentReceiptsPage';
 import PackageManagementPage from './pages/Settings/PackageManagementPage';
 import UserManagementPage from './pages/Settings/UserManagementPage';
+import InvoiceManagementPage from './pages/Settings/InvoiceManagementPage';
 import LandingPage from './pages/LandingPage';
 import PromoManagementPage from './pages/Settings/PromoManagementPage';
 import CustomerLoginPage from './pages/Customer/CustomerLoginPage';
@@ -103,6 +104,7 @@ function App() {
                     <Route path="/settings/payment-receipts" element={<PaymentReceiptsPage />} />
                     <Route path="/settings/packages" element={<PackageManagementPage />} />
                     <Route path="/settings/users" element={<UserManagementPage />} />
+                    <Route path="/settings/invoice-management" element={<InvoiceManagementPage />} />
                     <Route path="/settings/promo" element={<PromoManagementPage />} />
                     <Route path="/settings/network-notices" element={<NetworkNoticePage />} />
                     <Route path="/settings/send-notification" element={<SendNotificationPage />} />
