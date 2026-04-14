@@ -38,7 +38,7 @@ return new class extends Migration
                 $table->index(['type', 'is_active']);
                 $table->index(['target_date']);
                 $table->index(['start_date', 'end_date']);
-                $table->index(['is_recurring_monthly', 'recurrence_until']);
+                $table->index(['is_recurring_monthly', 'recurrence_until'], 'fpt_recurring_until_idx');
             });
         }
     }
