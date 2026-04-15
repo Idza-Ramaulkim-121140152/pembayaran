@@ -163,6 +163,7 @@ function Dashboard() {
     const [financialProjectionError, setFinancialProjectionError] = useState(null);
     const [financialTargets, setFinancialTargets] = useState([]);
     const [financialTargetsLoading, setFinancialTargetsLoading] = useState(false);
+    const [mandatoryActionLoadingKey, setMandatoryActionLoadingKey] = useState(null);
     const [targetSubmitting, setTargetSubmitting] = useState(false);
     const [targetModal, setTargetModal] = useState({ open: false, mode: 'create', item: null });
     const [targetForm, setTargetForm] = useState({
@@ -374,6 +375,70 @@ function Dashboard() {
             await fetchFinancialProjection(financialProjectionRange);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menghapus target keuangan.');
+        }
+    };
+
+    const refreshPostMandatoryAction = async () => {
+        const dashboardResponse = await apiClient.get('/dashboard');
+        setStats(dashboardResponse.data?.data || null);
+
+        const trxResponse = await apiClient.get('/finance/transactions');
+        setTransactions(trxResponse.data?.data?.data || []);
+
+        await fetchFinancialProjection(financialProjectionRange);
+    };
+
+    const handleConfirmMandatoryExecution = async (row) => {
+        if (!row?.target_id || !row?.due_date) return;
+        if (!window.confirm(`Konfirmasi pengeluaran wajib "${row.name}" untuk jatuh tempo ${row.due_date} sebagai terlaksana?`)) {
+            return;
+        }
+
+        const actionKey = `confirm-${row.event_id}`;
+
+        try {
+            setMandatoryActionLoadingKey(actionKey);
+            setError(null);
+
+            await apiClient.post('/dashboard/financial-projection/mandatory-events/confirm', {
+                target_id: Number(row.target_id),
+                due_date: row.due_date,
+                actual_date: formatDateInputLocal(new Date()),
+                amount: Number(row.amount || 0),
+            });
+
+            await refreshPostMandatoryAction();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal mengonfirmasi pengeluaran wajib.');
+        } finally {
+            setMandatoryActionLoadingKey(null);
+        }
+    };
+
+    const handleRevokeMandatoryExecution = async (row) => {
+        if (!row?.target_id || !row?.due_date) return;
+        if (!window.confirm(`Batalkan konfirmasi pengeluaran wajib "${row.name}" untuk jatuh tempo ${row.due_date}?`)) {
+            return;
+        }
+
+        const actionKey = `revoke-${row.event_id}`;
+
+        try {
+            setMandatoryActionLoadingKey(actionKey);
+            setError(null);
+
+            await apiClient.delete('/dashboard/financial-projection/mandatory-events/confirm', {
+                data: {
+                    target_id: Number(row.target_id),
+                    due_date: row.due_date,
+                },
+            });
+
+            await refreshPostMandatoryAction();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal membatalkan konfirmasi pengeluaran wajib.');
+        } finally {
+            setMandatoryActionLoadingKey(null);
         }
     };
 
@@ -706,9 +771,17 @@ function Dashboard() {
     const kpiSummary = kpiData?.summary || null;
     const kpiAging = kpiData?.aging || null;
     const kpiVariance = kpiData?.variance || null;
+    const kpiCustomerHealth = kpiData?.customer_health || null;
+    const kpiHealthSummary = kpiCustomerHealth?.summary || null;
+    const kpiHealthDistribution = kpiCustomerHealth?.distribution || [];
+    const kpiHealthTopRiskCustomers = kpiCustomerHealth?.top_risk_customers || [];
+    const kpiHealthFactorAverages = kpiCustomerHealth?.factor_averages || [];
+    const kpiHealthRecommendations = kpiCustomerHealth?.recommendations || [];
     const forecastSummary = forecastData?.summary || null;
     const forecastContext = forecastData?.historical_context || null;
     const projectionSummary = financialProjectionData?.summary || null;
+    const projectionForecastContext = financialProjectionData?.forecast_context || null;
+    const projectionAssistant = financialProjectionData?.ai_assistant || null;
     const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
     const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
     const monthlyInstallations = Number(
@@ -758,6 +831,50 @@ function Dashboard() {
                 pointRadius: 3,
             },
         ],
+    };
+
+    const kpiHealthDistributionChartData = {
+        labels: kpiHealthDistribution.map((item) => item.label),
+        datasets: [
+            {
+                data: kpiHealthDistribution.map((item) => Number(item.count || 0)),
+                backgroundColor: [
+                    'rgba(16, 185, 129, 0.9)',
+                    'rgba(245, 158, 11, 0.9)',
+                    'rgba(249, 115, 22, 0.9)',
+                    'rgba(239, 68, 68, 0.9)',
+                ],
+                borderColor: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
+                borderWidth: 3,
+                hoverOffset: 10,
+            },
+        ],
+    };
+
+    const kpiHealthDoughnutOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '72%',
+        plugins: {
+            legend: {
+                position: 'bottom',
+                labels: {
+                    boxWidth: 10,
+                    color: '#4b5563',
+                    font: { size: 11 },
+                },
+            },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                padding: 12,
+                cornerRadius: 8,
+                callbacks: {
+                    label: (context) => `${context.label}: ${context.raw} pelanggan`,
+                },
+            },
+        },
     };
 
     const kpiBarCurrencyOptions = {
@@ -861,6 +978,92 @@ function Dashboard() {
     const formatPercent = (value, digits = 1) => {
         const numericValue = Number(value || 0);
         return `${numericValue.toFixed(digits)}%`;
+    };
+
+    const getMandatoryIndicatorBadge = (indicator) => {
+        switch (indicator) {
+            case 'terlaksana':
+                return 'bg-indigo-100 text-indigo-700';
+            case 'aman':
+                return 'bg-emerald-100 text-emerald-700';
+            case 'waspada':
+                return 'bg-blue-100 text-blue-700';
+            case 'risiko':
+                return 'bg-amber-100 text-amber-700';
+            default:
+                return 'bg-red-100 text-red-700';
+        }
+    };
+
+    const getMandatoryIndicatorLabel = (indicator) => {
+        switch (indicator) {
+            case 'terlaksana':
+                return 'Terlaksana';
+            case 'aman':
+                return 'Aman';
+            case 'waspada':
+                return 'Waspada';
+            case 'risiko':
+                return 'Risiko';
+            default:
+                return 'Kritis';
+        }
+    };
+
+    const getPurchaseIndicatorBadge = (indicator) => {
+        if (indicator === 'siap') return 'bg-emerald-100 text-emerald-700';
+        if (indicator === 'menunggu') return 'bg-amber-100 text-amber-700';
+        if (indicator === 'tertahan_wajib') return 'bg-rose-100 text-rose-700';
+        return 'bg-red-100 text-red-700';
+    };
+
+    const getPurchaseIndicatorLabel = (indicator) => {
+        if (indicator === 'siap') return 'Siap';
+        if (indicator === 'menunggu') return 'Menunggu';
+        if (indicator === 'tertahan_wajib') return 'Tertahan Wajib';
+        return 'Belum';
+    };
+
+    const getAssistantRiskBadge = (riskLevel) => {
+        if (riskLevel === 'rendah') return 'bg-emerald-100 text-emerald-700';
+        if (riskLevel === 'sedang') return 'bg-blue-100 text-blue-700';
+        if (riskLevel === 'tinggi') return 'bg-amber-100 text-amber-700';
+        return 'bg-red-100 text-red-700';
+    };
+
+    const getCustomerHealthRiskBadge = (riskLevel) => {
+        if (riskLevel === 'sehat') return 'bg-emerald-100 text-emerald-700';
+        if (riskLevel === 'waspada') return 'bg-amber-100 text-amber-700';
+        if (riskLevel === 'tinggi') return 'bg-orange-100 text-orange-700';
+        return 'bg-red-100 text-red-700';
+    };
+
+    const getCustomerHealthRiskLabel = (riskLevel) => {
+        if (riskLevel === 'sehat') return 'Sehat';
+        if (riskLevel === 'waspada') return 'Waspada';
+        if (riskLevel === 'tinggi') return 'Tinggi';
+        return 'Kritis';
+    };
+
+    const formatDurationFromSeconds = (seconds) => {
+        const totalSeconds = Number(seconds || 0);
+        if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+            return '-';
+        }
+
+        const days = Math.floor(totalSeconds / 86400);
+        const hours = Math.floor((totalSeconds % 86400) / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+        if (days > 0) {
+            return `${days} hari ${hours} jam`;
+        }
+
+        if (hours > 0) {
+            return `${hours}j ${minutes}m`;
+        }
+
+        return `${minutes}m`;
     };
 
     const handleApplyKpiRange = async () => {
@@ -1829,18 +2032,40 @@ function Dashboard() {
 
                     {projectionSummary && (
                         <>
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                                 <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
                                     <p className="text-xs font-medium text-slate-600">Saldo Awal Proyeksi</p>
                                     <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(projectionSummary.opening_balance)}</p>
                                 </div>
-                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4 xl:col-span-2">
                                     <p className="text-xs font-medium text-emerald-700">Prediksi Pendapatan</p>
                                     <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(projectionSummary.predicted_income)}</p>
+                                    <p className="text-xs text-emerald-700 mt-1">
+                                        Aktual: {formatCurrency(projectionSummary.income_actual_to_date)} | Sisa Forecast: {formatCurrency(projectionSummary.income_forecast_remaining)}
+                                    </p>
                                 </div>
                                 <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
                                     <p className="text-xs font-medium text-rose-700">Total Pengeluaran Wajib</p>
                                     <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(projectionSummary.mandatory_expense)}</p>
+                                </div>
+                                <div className={`rounded-xl border p-4 ${Number(projectionSummary.mandatory_shortfall_total || 0) > 0 ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                                    <p className={`text-xs font-medium ${Number(projectionSummary.mandatory_shortfall_total || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}`}>Shortfall Wajib</p>
+                                    <p className={`text-2xl font-bold mt-1 ${Number(projectionSummary.mandatory_shortfall_total || 0) > 0 ? 'text-red-900' : 'text-emerald-900'}`}>
+                                        {formatCurrency(projectionSummary.mandatory_shortfall_total)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
+                                    <p className="text-xs font-medium text-cyan-700">Budget Operasional Aman</p>
+                                    <p className="text-2xl font-bold text-cyan-900 mt-1">{formatCurrency(projectionSummary.operational_spending_budget)}</p>
+                                    <p className="text-xs text-cyan-700 mt-1">
+                                        Saran pakai: {formatCurrency(projectionSummary.recommended_operational_spending_budget)}
+                                    </p>
+                                    <p className="text-[11px] text-cyan-700 mt-1">
+                                        Berlaku mulai {projectionSummary.operational_budget_as_of_date || '-'}
+                                    </p>
                                 </div>
                                 <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
                                     <p className="text-xs font-medium text-indigo-700">Sisa Setelah Wajib</p>
@@ -1852,18 +2077,81 @@ function Dashboard() {
                                 </div>
                             </div>
 
+                            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 text-sm">
+                                <p className="text-indigo-900 font-medium">
+                                    Metode hitung: {projectionSummary.calculation_mode === 'hybrid_actual_forecast' ? 'Hybrid (aktual + forecast)' : 'Forecast penuh'}
+                                </p>
+                                <p className="text-indigo-700">
+                                    Confidence model: {formatPercent(projectionForecastContext?.average_confidence || 0, 0)} | Volatilitas: {formatPercent(projectionForecastContext?.volatility_index || 0, 1)}
+                                </p>
+                            </div>
+
+                            {projectionAssistant && (
+                                <div className="border border-gray-100 rounded-xl p-4 space-y-3 bg-gradient-to-r from-slate-50 to-blue-50/40">
+                                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                                <Brain size={16} className="text-indigo-700" />
+                                                Asisten AI Proyeksi
+                                            </p>
+                                            <p className="text-xs text-gray-600 mt-1">{projectionAssistant.headline}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getAssistantRiskBadge(projectionAssistant.risk_level)}`}>
+                                                Risiko {projectionAssistant.risk_level}
+                                            </span>
+                                            <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
+                                                Skor {projectionAssistant.score}/100
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                        <div>
+                                            <p className="text-xs font-semibold text-gray-700 mb-2">Temuan Kunci</p>
+                                            <ul className="space-y-1 text-xs text-gray-600">
+                                                {(projectionAssistant.key_findings || []).map((item, index) => (
+                                                    <li key={index} className="flex gap-2">
+                                                        <span className="text-indigo-600 font-bold">-</span>
+                                                        <span>{item}</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-semibold text-gray-700 mb-2">Rekomendasi Aksi</p>
+                                            <div className="space-y-2">
+                                                {(projectionAssistant.recommended_actions || []).map((action, index) => (
+                                                    <div key={index} className="rounded-lg border border-gray-200 bg-white/80 p-2">
+                                                        <div className="flex items-center justify-between gap-2">
+                                                            <p className="text-xs font-semibold text-gray-900">{action.title}</p>
+                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${action.priority === 'tinggi' ? 'bg-red-100 text-red-700' : action.priority === 'menengah' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                                {action.priority}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-xs text-gray-600 mt-1">{action.detail}</p>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                                 <div className="border border-gray-100 rounded-xl p-4 space-y-3">
                                     <div className="flex items-center justify-between">
                                         <p className="text-sm font-semibold text-gray-900">Indikator Pengeluaran Wajib</p>
                                         <span className="text-xs text-gray-500">
-                                            Coverage: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
-                                            {' '}
-                                            ({formatPercent(projectionSummary.mandatory_coverage_rate || 0, 1)})
+                                            Coverage event: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
+                                            {' | '}
+                                            Coverage nominal: {formatPercent(projectionSummary.mandatory_coverage_amount_rate || 0, 1)}
+                                            {' | '}
+                                            Terkonfirmasi: {projectionSummary.mandatory_confirmed_events || 0}
                                         </span>
                                     </div>
                                     <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                        <table className="w-full text-sm min-w-[760px]">
+                                        <table className="w-full text-sm min-w-[1100px]">
                                             <thead className="bg-gray-50 text-gray-600 text-left">
                                                 <tr>
                                                     <th className="px-3 py-2">Nama Target</th>
@@ -1871,13 +2159,16 @@ function Dashboard() {
                                                     <th className="px-3 py-2">Jatuh Tempo</th>
                                                     <th className="px-3 py-2 text-right">Nominal</th>
                                                     <th className="px-3 py-2 text-right">Saldo Sebelum</th>
+                                                    <th className="px-3 py-2 text-right">Coverage</th>
+                                                    <th className="px-3 py-2 text-right">Shortfall</th>
                                                     <th className="px-3 py-2 text-center">Indikator</th>
+                                                    <th className="px-3 py-2 text-right">Aksi</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {mandatoryProjectionRows.length === 0 ? (
                                                     <tr>
-                                                        <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                        <td className="px-3 py-4 text-center text-gray-500" colSpan={9}>
                                                             Belum ada kejadian pengeluaran wajib pada rentang ini.
                                                         </td>
                                                     </tr>
@@ -1888,10 +2179,40 @@ function Dashboard() {
                                                         <td className="px-3 py-2 text-gray-600">{row.due_date}</td>
                                                         <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
                                                         <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.available_before)}</td>
+                                                        <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.coverage_ratio || 0, 1)}</td>
+                                                        <td className={`px-3 py-2 text-right font-semibold ${Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                                                            {formatCurrency(row.shortfall || 0)}
+                                                        </td>
                                                         <td className="px-3 py-2 text-center">
-                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.can_cover ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                                                {row.can_cover ? 'Aman' : 'Risiko'}
+                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorBadge(row.indicator)}`}>
+                                                                {getMandatoryIndicatorLabel(row.indicator)}
                                                             </span>
+                                                            {row.is_confirmed && row.confirmed_transaction_date && (
+                                                                <p className="text-[11px] text-indigo-600 mt-1">
+                                                                    Tercatat: {row.confirmed_transaction_date}
+                                                                </p>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-right">
+                                                            {row.is_confirmed ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRevokeMandatoryExecution(row)}
+                                                                    disabled={mandatoryActionLoadingKey === `revoke-${row.event_id}`}
+                                                                    className="px-2.5 py-1 rounded-md text-xs font-medium bg-rose-100 text-rose-700 hover:bg-rose-200 disabled:opacity-60"
+                                                                >
+                                                                    {mandatoryActionLoadingKey === `revoke-${row.event_id}` ? 'Membatalkan...' : 'Batalkan'}
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleConfirmMandatoryExecution(row)}
+                                                                    disabled={mandatoryActionLoadingKey === `confirm-${row.event_id}`}
+                                                                    className="px-2.5 py-1 rounded-md text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-60"
+                                                                >
+                                                                    {mandatoryActionLoadingKey === `confirm-${row.event_id}` ? 'Menyimpan...' : 'Konfirmasi'}
+                                                                </button>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -1930,10 +2251,15 @@ function Dashboard() {
                                                         <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
                                                         <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
                                                         <td className="px-3 py-2 text-gray-600">{row.desired_date || '-'}</td>
-                                                        <td className="px-3 py-2 text-gray-600">{row.predicted_buy_date || 'Belum tercapai di rentang'}</td>
+                                                        <td className="px-3 py-2 text-gray-600">
+                                                            {row.predicted_buy_date || 'Belum tercapai di rentang'}
+                                                            {row.blocked_by_mandatory && (
+                                                                <p className="text-[11px] text-rose-600 mt-0.5">Tertahan karena coverage wajib belum aman</p>
+                                                            )}
+                                                        </td>
                                                         <td className="px-3 py-2 text-center">
-                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.indicator === 'siap' ? 'bg-emerald-100 text-emerald-700' : row.indicator === 'menunggu' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                                                                {row.indicator === 'siap' ? 'Siap' : row.indicator === 'menunggu' ? 'Menunggu' : 'Belum'}
+                                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getPurchaseIndicatorBadge(row.indicator)}`}>
+                                                                {getPurchaseIndicatorLabel(row.indicator)}
                                                             </span>
                                                         </td>
                                                     </tr>
@@ -2325,6 +2651,140 @@ function Dashboard() {
                             </table>
                         </div>
                     )}
+                </div>
+            )}
+
+            {!isTeknisi && kpiHealthSummary && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-4">
+                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                        <div>
+                            <h2 className="text-lg md:text-xl font-bold text-emerald-900">Health Score Pelanggan</h2>
+                            <p className="text-sm text-emerald-700 mt-1">
+                                Kombinasi sinyal telat bayar, keluhan, isolir, kualitas koneksi, dan gangguan area ODP.
+                            </p>
+                        </div>
+                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                            As of {kpiCustomerHealth?.as_of_date || '-'}
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                            <p className="text-xs text-emerald-700 font-medium">Skor Kesehatan Rata-rata</p>
+                            <p className="text-2xl font-bold text-emerald-900 mt-1">
+                                {Number(kpiHealthSummary.average_health_score || 0).toFixed(1)}
+                            </p>
+                        </div>
+                        <div className="rounded-lg border border-orange-200 bg-orange-50/40 p-3">
+                            <p className="text-xs text-orange-700 font-medium">Pelanggan Risiko Tinggi</p>
+                            <p className="text-2xl font-bold text-orange-900 mt-1">
+                                {kpiHealthSummary.high_risk_customers || 0}
+                            </p>
+                        </div>
+                        <div className="rounded-lg border border-red-200 bg-red-50/40 p-3">
+                            <p className="text-xs text-red-700 font-medium">Pelanggan Kritis</p>
+                            <p className="text-2xl font-bold text-red-900 mt-1">
+                                {kpiHealthSummary.critical_customers || 0}
+                            </p>
+                        </div>
+                        <div className="rounded-lg border border-cyan-200 bg-cyan-50/40 p-3">
+                            <p className="text-xs text-cyan-700 font-medium">Faktor Dominan</p>
+                            <p className="text-base font-semibold text-cyan-900 mt-2">
+                                {kpiHealthSummary.dominant_risk_factor_label || kpiSummary.customer_health_dominant_factor || '-'}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                        <div className="border border-emerald-100 rounded-lg bg-white p-4 space-y-3">
+                            <p className="text-sm font-semibold text-gray-900">Distribusi Risiko</p>
+                            <div className="h-[220px]">
+                                <Doughnut data={kpiHealthDistributionChartData} options={kpiHealthDoughnutOptions} />
+                            </div>
+                        </div>
+
+                        <div className="border border-emerald-100 rounded-lg bg-white p-4 space-y-3">
+                            <p className="text-sm font-semibold text-gray-900">Tekanan Faktor Risiko</p>
+                            <div className="space-y-3">
+                                {(kpiHealthFactorAverages || []).map((factor) => (
+                                    <div key={`health-factor-${factor.key}`}>
+                                        <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                                            <span>{factor.label}</span>
+                                            <span>{Number(factor.average_pressure || 0).toFixed(1)}%</span>
+                                        </div>
+                                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full bg-emerald-500 rounded-full"
+                                                style={{ width: `${Math.min(100, Number(factor.average_pressure || 0))}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="border border-emerald-100 rounded-lg bg-white p-4 space-y-3">
+                            <p className="text-sm font-semibold text-gray-900">Rekomendasi Retensi</p>
+                            <ul className="space-y-2 text-xs text-gray-700 list-disc list-inside">
+                                {(kpiHealthRecommendations || []).slice(0, 4).map((item, index) => (
+                                    <li key={`health-reco-${index}`}>{item}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div className="border border-emerald-100 rounded-lg bg-white p-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm font-semibold text-gray-900">Pelanggan Prioritas Intervensi</p>
+                            <span className="text-xs text-gray-500">Top {Math.min(6, kpiHealthTopRiskCustomers.length)} dari {kpiHealthSummary.total_customers || 0} pelanggan</span>
+                        </div>
+
+                        {(kpiHealthTopRiskCustomers || []).length > 0 ? (
+                            <div className="space-y-3">
+                                {(kpiHealthTopRiskCustomers || []).slice(0, 6).map((row) => (
+                                    <div key={`health-risk-${row.customer_id}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                                            <div>
+                                                <p className="text-sm font-semibold text-gray-900">{row.customer_name}</p>
+                                                <p className="text-xs text-gray-500 mt-0.5">
+                                                    {row.pppoe_username ? `PPPoE: ${row.pppoe_username}` : 'PPPoE: -'}
+                                                    {' • '}
+                                                    {row.odp ? `ODP: ${row.odp}` : 'ODP: belum diisi'}
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-lg font-bold text-gray-900">{row.health_score}</span>
+                                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${getCustomerHealthRiskBadge(row.risk_level)}`}>
+                                                    {getCustomerHealthRiskLabel(row.risk_level)}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-3 text-xs">
+                                            <div className="rounded-md bg-white border border-gray-200 px-2 py-1.5 text-gray-700">
+                                                Faktor Dominan: <span className="font-semibold">{row.dominant_factor?.label || '-'}</span>
+                                            </div>
+                                            <div className="rounded-md bg-white border border-gray-200 px-2 py-1.5 text-gray-700">
+                                                Overdue: <span className="font-semibold">{row.signals?.days_overdue || 0} hari</span> | Aduan Aktif: <span className="font-semibold">{row.signals?.open_complaints || 0}</span>
+                                            </div>
+                                            <div className="rounded-md bg-white border border-gray-200 px-2 py-1.5 text-gray-700">
+                                                Koneksi: <span className="font-semibold">{row.signals?.connection_data_available ? (row.signals?.is_online ? `online (${formatDurationFromSeconds(row.signals?.connection_uptime_seconds)})` : 'offline') : 'data tidak tersedia'}</span>
+                                            </div>
+                                        </div>
+
+                                        <p className="text-xs text-gray-600 mt-2">
+                                            {Array.isArray(row.priority_reasons) && row.priority_reasons.length > 0 ? row.priority_reasons[0] : row.recommended_action}
+                                        </p>
+                                        <p className="text-xs text-emerald-700 mt-1 font-medium">Aksi: {row.recommended_action}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-sm text-gray-500 text-center">
+                                Belum ada pelanggan yang terdeteksi berisiko pada rentang ini.
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
