@@ -227,6 +227,7 @@ Route::middleware('auth')->group(function () {
         Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->name('api.billing.update-amount');
         Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
+        Route::patch('/api/billing/customer/{customer}/service-package', [BillingController::class, 'updateCustomerServicePackage'])->name('api.billing.customer.service-package');
 
         // Unified finance transactions
         Route::get('/api/finance/transactions', [FinancialTransactionController::class, 'index'])->name('api.finance.transactions.index');

@@ -5,9 +5,16 @@ export const billingService = {
     // Get billing data (customers dengan status pembayaran)
     getAll: (params = {}) => apiClient.get('/billing', { params }),
 
+    // Get active packages for billing amount suggestion
+    getActivePackages: () => apiClient.get('/packages/active'),
+
     // Create invoice untuk customer
     createInvoice: (customerId, amount) => 
         apiClient.post(`/billing/${customerId}/create-invoice`, { amount }),
+
+    // Update customer service package from billing flow
+    updateCustomerServicePackage: (customerId, packageId) =>
+        apiClient.patch(`/billing/customer/${customerId}/service-package`, { package_id: packageId }),
 
     // Konfirmasi pembayaran
     confirmPayment: (invoiceId, paidAmount, paymentReceiptOptionId = null) =>

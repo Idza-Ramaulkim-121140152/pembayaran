@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\Package;
 use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -363,6 +364,37 @@ class BillingController extends Controller
                 'paid' => $paid,
                 'isolationStatus' => $isolationStatus,
             ]
+        ]);
+    }
+
+    public function updateCustomerServicePackage(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'package_id' => ['required', 'integer', 'exists:packages,id'],
+        ]);
+
+        $package = Package::query()
+            ->where('id', $validated['package_id'])
+            ->where('is_active', true)
+            ->first();
+
+        if (!$package) {
+            return response()->json([
+                'message' => 'Paket tidak ditemukan atau sedang nonaktif.',
+            ], 422);
+        }
+
+        $customer->package_type = $package->name;
+        $customer->custom_package = null;
+        $customer->mikrotik_profile = $package->mikrotik_profile ?: $package->name;
+        $customer->save();
+
+        return response()->json([
+            'message' => 'Layanan pelanggan berhasil diperbarui.',
+            'data' => [
+                'customer' => $customer->fresh(),
+                'package' => $package,
+            ],
         ]);
     }
 

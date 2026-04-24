@@ -1211,6 +1211,9 @@ class DashboardController extends Controller
 
         $operationalSpendingBudget = (int) round(max(0, $minimumDiscretionaryFromAsOf));
         $recommendedOperationalBudget = (int) round(max(0, $operationalSpendingBudget * 0.9));
+        $currentDiscretionaryBalance = isset($discretionaryBalanceByDate[$budgetReferenceDate])
+            ? (float) $discretionaryBalanceByDate[$budgetReferenceDate]
+            : ($budgetRows->count() > 0 ? (float) ($budgetRows->first()['discretionary_balance'] ?? 0) : 0.0);
 
         $purchaseGoals = [];
         foreach ($purchaseTargets as $target) {
@@ -1218,7 +1221,7 @@ class DashboardController extends Controller
             $desiredDate = $target->target_date ? Carbon::parse($target->target_date)->toDateString() : null;
 
             $predictedBuyDate = null;
-            foreach ($dailyProjection as $row) {
+            foreach ($budgetRows as $row) {
                 if ((float) ($row['discretionary_balance'] ?? 0) >= $amount) {
                     $predictedBuyDate = (string) $row['date'];
                     break;
@@ -1232,14 +1235,16 @@ class DashboardController extends Controller
                 $canExecuteAtDesiredDate = $desiredDateDiscretionaryBalance >= $amount;
             }
 
+            $canExecuteNowByCash = $currentDiscretionaryBalance >= $amount;
             $canExecuteInRangeByCash = $predictedBuyDate !== null;
-            $blockedByMandatory = !$mandatoryFullyCovered && $canExecuteInRangeByCash;
+            $blockedByMandatory = !$mandatoryFullyCovered && ($canExecuteNowByCash || $canExecuteInRangeByCash);
+            $canExecuteNow = $canExecuteNowByCash && !$blockedByMandatory;
             $canExecuteInRange = $canExecuteInRangeByCash && !$blockedByMandatory;
 
             $indicator = 'belum_terjangkau';
             if ($blockedByMandatory) {
                 $indicator = 'tertahan_wajib';
-            } elseif ($canExecuteAtDesiredDate === true || ($desiredDate === null && $predictedBuyDate !== null)) {
+            } elseif ($canExecuteNow) {
                 $indicator = 'siap';
             } elseif ($predictedBuyDate !== null) {
                 $indicator = 'menunggu';
@@ -1252,6 +1257,7 @@ class DashboardController extends Controller
                 'amount' => (int) round($amount),
                 'desired_date' => $desiredDate,
                 'predicted_buy_date' => $predictedBuyDate,
+                'can_execute_now' => $canExecuteNow,
                 'can_execute_in_range' => $canExecuteInRange,
                 'can_execute_at_desired_date' => $canExecuteAtDesiredDate,
                 'blocked_by_mandatory' => $blockedByMandatory,
@@ -1263,6 +1269,7 @@ class DashboardController extends Controller
         }
 
         $reachablePurchaseTargets = collect($purchaseGoals)->where('can_execute_in_range', true)->count();
+        $readyNowPurchaseTargets = collect($purchaseGoals)->where('can_execute_now', true)->count();
 
         return [
             'range' => [
@@ -1295,6 +1302,7 @@ class DashboardController extends Controller
                 'operational_budget_as_of_date' => $budgetReferenceDate,
                 'purchase_targets_total' => count($purchaseGoals),
                 'purchase_targets_reachable' => $reachablePurchaseTargets,
+                'purchase_targets_ready_now' => $readyNowPurchaseTargets,
                 'calculation_mode' => $ledgerReady ? 'hybrid_actual_forecast' : 'forecast_only',
             ],
             'forecast_context' => [
@@ -2976,6 +2984,7 @@ class DashboardController extends Controller
         $averageConfidence = (float) ($forecastContext['average_confidence'] ?? 0);
         $volatilityIndex = (float) ($forecastContext['volatility_index'] ?? 0);
         $purchaseReachable = (int) ($summary['purchase_targets_reachable'] ?? 0);
+        $purchaseReadyNow = (int) ($summary['purchase_targets_ready_now'] ?? 0);
         $purchaseTotal = (int) ($summary['purchase_targets_total'] ?? 0);
         $confirmedMandatory = (int) ($summary['mandatory_confirmed_events'] ?? 0);
         $operationalBudget = (float) ($summary['operational_spending_budget'] ?? 0);
@@ -3026,7 +3035,7 @@ class DashboardController extends Controller
         $keyFindings[] = 'Sisa setelah kewajiban: Rp ' . number_format((int) round($netAfterMandatory), 0, ',', '.') . ', estimasi saldo akhir: Rp ' . number_format((int) round($endingBalance), 0, ',', '.');
         $keyFindings[] = 'Budget operasional aman mulai ' . ($operationalBudgetAsOfDate !== '' ? $operationalBudgetAsOfDate : 'hari ini') . ': Rp ' . number_format((int) round($operationalBudget), 0, ',', '.') . ' (saran pakai: Rp ' . number_format((int) round($recommendedOperationalBudget), 0, ',', '.') . ').';
         $keyFindings[] = 'Akurasi model pendapatan saat ini pada confidence rata-rata ' . number_format($averageConfidence, 0) . '% dengan volatilitas ' . number_format($volatilityIndex, 1) . '%.';
-        $keyFindings[] = 'Target pembelian layak dieksekusi: ' . $purchaseReachable . '/' . $purchaseTotal . '.';
+        $keyFindings[] = 'Target pembelian siap dieksekusi sekarang: ' . $purchaseReadyNow . '/' . $purchaseTotal . ' (tercapai di rentang: ' . $purchaseReachable . '/' . $purchaseTotal . ').';
         $keyFindings[] = 'Event wajib yang sudah dikonfirmasi terlaksana: ' . $confirmedMandatory . ' event.';
         $keyFindings[] = 'Konfirmasi pengeluaran wajib dipakai untuk presisi prediksi dan tidak menambah mutasi ke ledger secara otomatis.';
 

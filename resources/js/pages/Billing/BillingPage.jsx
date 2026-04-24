@@ -11,6 +11,8 @@ function BillingPage() {
     const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
 
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
+    const [activePackages, setActivePackages] = useState([]);
+    const [loadingActivePackages, setLoadingActivePackages] = useState(false);
     const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
     const [loadingPaymentReceiptOptions, setLoadingPaymentReceiptOptions] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -20,7 +22,8 @@ function BillingPage() {
     const [isolationStatus, setIsolationStatus] = useState({});
     
     // Modal states
-    const [createModal, setCreateModal] = useState({ open: false, customer: null });
+    const [createModal, setCreateModal] = useState({ open: false, customer: null, suggestedPackage: null });
+    const [servicePackageModal, setServicePackageModal] = useState({ open: false, customer: null, selectedPackageId: '' });
     const [confirmModal, setConfirmModal] = useState({ open: false, invoice: null, customer: null });
     const [permissionModal, setPermissionModal] = useState({ open: false, message: '' });
     const [rejectModal, setRejectModal] = useState({ open: false, invoice: null });
@@ -35,6 +38,7 @@ function BillingPage() {
     const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
     const [rejectReason, setRejectReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const [updatingCustomerService, setUpdatingCustomerService] = useState(false);
 
     // Collapsed sections
     const [collapsed, setCollapsed] = useState({ late: false, almostLate: false, others: true, paid: true });
@@ -45,6 +49,10 @@ function BillingPage() {
 
     useEffect(() => {
         fetchPaymentReceiptOptions();
+    }, []);
+
+    useEffect(() => {
+        fetchActivePackages();
     }, []);
 
     useEffect(() => {
@@ -64,6 +72,19 @@ function BillingPage() {
             console.error('Gagal memuat opsi penerimaan pembayaran aktif', err);
         } finally {
             setLoadingPaymentReceiptOptions(false);
+        }
+    };
+
+    const fetchActivePackages = async () => {
+        try {
+            setLoadingActivePackages(true);
+            const response = await billingService.getActivePackages();
+            const packageData = Array.isArray(response?.data?.data) ? response.data.data : [];
+            setActivePackages(packageData);
+        } catch (err) {
+            console.error('Gagal memuat data paket aktif', err);
+        } finally {
+            setLoadingActivePackages(false);
         }
     };
 
@@ -114,6 +135,131 @@ function BillingPage() {
         }
     };
 
+    const normalizeServiceLabel = (value) => (value || '').toString().trim().toLowerCase();
+
+    const getCustomerServiceLabel = (customer) => {
+        if (!customer) return '';
+        return customer.package_type || customer.custom_package || '';
+    };
+
+    const findMatchingPackage = (serviceLabel) => {
+        const normalizedService = normalizeServiceLabel(serviceLabel);
+        if (!normalizedService) return null;
+        return activePackages.find((pkg) => normalizeServiceLabel(pkg.name) === normalizedService) || null;
+    };
+
+    const resolveSuggestedAmount = (price) => {
+        const numericPrice = parseFloat(price);
+        if (isNaN(numericPrice) || numericPrice <= 0) return '';
+        return Math.round(numericPrice).toString();
+    };
+
+    const updateCustomerInLists = (updatedCustomer) => {
+        const mergeCustomerItem = (item) => {
+            if (item?.customer?.id !== updatedCustomer.id) return item;
+            return {
+                ...item,
+                customer: {
+                    ...item.customer,
+                    ...updatedCustomer,
+                },
+            };
+        };
+
+        setCustomers((prev) => ({
+            ...prev,
+            late: (prev.late || []).map(mergeCustomerItem),
+            almostLate: (prev.almostLate || []).map(mergeCustomerItem),
+            others: (prev.others || []).map(mergeCustomerItem),
+            paid: (prev.paid || []).map(mergeCustomerItem),
+        }));
+    };
+
+    const openCreateModalWithSuggestion = (customer, matchedPackage) => {
+        const suggestedAmount = resolveSuggestedAmount(matchedPackage?.price);
+        setCreateModal({
+            open: true,
+            customer,
+            suggestedPackage: matchedPackage || null,
+        });
+        setAmount(suggestedAmount);
+    };
+
+    const handleOpenCreateInvoice = (customer) => {
+        if (loadingActivePackages) {
+            setError('Data paket sedang dimuat. Coba lagi beberapa detik.');
+            return;
+        }
+
+        const serviceLabel = getCustomerServiceLabel(customer);
+        const matchedPackage = findMatchingPackage(serviceLabel);
+
+        if (matchedPackage) {
+            openCreateModalWithSuggestion(customer, matchedPackage);
+            return;
+        }
+
+        if (activePackages.length === 0) {
+            setError('Belum ada paket aktif di pengaturan paket. Tambahkan paket terlebih dahulu.');
+            return;
+        }
+
+        setServicePackageModal({
+            open: true,
+            customer,
+            selectedPackageId: String(activePackages[0].id),
+        });
+    };
+
+    const closeCreateModal = () => {
+        setCreateModal({ open: false, customer: null, suggestedPackage: null });
+        setAmount('');
+    };
+
+    const closeServicePackageModal = () => {
+        setServicePackageModal({ open: false, customer: null, selectedPackageId: '' });
+    };
+
+    const handleServicePackageSubmit = async (e) => {
+        e.preventDefault();
+        if (!servicePackageModal.customer?.id) return;
+
+        const selectedPackage = activePackages.find(
+            (pkg) => String(pkg.id) === String(servicePackageModal.selectedPackageId)
+        );
+
+        if (!selectedPackage) {
+            setError('Pilih layanan yang tersedia terlebih dahulu.');
+            return;
+        }
+
+        try {
+            setUpdatingCustomerService(true);
+            setError(null);
+            setSuccess(null);
+
+            const response = await billingService.updateCustomerServicePackage(
+                servicePackageModal.customer.id,
+                selectedPackage.id
+            );
+
+            const updatedCustomer = response?.data?.data?.customer || {
+                ...servicePackageModal.customer,
+                package_type: selectedPackage.name,
+                custom_package: null,
+            };
+
+            updateCustomerInLists(updatedCustomer);
+            closeServicePackageModal();
+            setSuccess(response?.data?.message || `Layanan pelanggan diperbarui ke ${selectedPackage.name}.`);
+            openCreateModalWithSuggestion(updatedCustomer, selectedPackage);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memperbarui layanan pelanggan.');
+        } finally {
+            setUpdatingCustomerService(false);
+        }
+    };
+
     const handleIsolateCustomer = async (customerId) => {
         if (!confirm('Yakin ingin melakukan isolir pelanggan ini?')) return;
         try {
@@ -152,8 +298,7 @@ function BillingPage() {
             setSubmitting(true);
             const response = await billingService.createInvoice(createModal.customer.id, numericAmount);
             const createdInvoiceData = response.data.data;
-            setCreateModal({ open: false, customer: null });
-            setAmount('');
+            closeCreateModal();
             setResultModal({
                 open: true,
                 data: {
@@ -468,10 +613,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             <Button
                                 size="sm"
                                 variant="primary"
-                                onClick={() => {
-                                    setCreateModal({ open: true, customer });
-                                    setAmount('');
-                                }}
+                                onClick={() => handleOpenCreateInvoice(customer)}
                             >
                                 <FileText size={14} className="mr-1" />
                                 <span className="hidden sm:inline">Buat Tagihan</span>
@@ -604,7 +746,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {/* Create Invoice Modal */}
             <Modal
                 isOpen={createModal.open}
-                onClose={() => setCreateModal({ open: false, customer: null })}
+                onClose={closeCreateModal}
                 title="Buat Tagihan"
             >
                 {createModal.customer && (
@@ -625,13 +767,67 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 placeholder="Masukkan nominal tagihan"
                             />
                             {amount && <p className="text-xs text-gray-500 mt-1">Rp {formatNumberWithComma(amount)}</p>}
+                            {createModal.suggestedPackage && (
+                                <p className="text-xs text-blue-600 mt-1">
+                                    Sugesti dari paket {createModal.suggestedPackage.name}: {formatCurrency(createModal.suggestedPackage.price)}.
+                                    Anda tetap bisa ubah nominal jika diperlukan.
+                                </p>
+                            )}
                         </div>
                         <div className="flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={() => setCreateModal({ open: false, customer: null })}>
+                            <Button type="button" variant="secondary" onClick={closeCreateModal}>
                                 Batal
                             </Button>
                             <Button type="submit" variant="primary" disabled={submitting}>
                                 {submitting ? 'Memproses...' : 'Buat Tagihan'}
+                            </Button>
+                        </div>
+                    </form>
+                )}
+            </Modal>
+
+            {/* Select Customer Service Package Modal */}
+            <Modal
+                isOpen={servicePackageModal.open}
+                onClose={closeServicePackageModal}
+                title="Pilih Layanan Pelanggan"
+            >
+                {servicePackageModal.customer && (
+                    <form onSubmit={handleServicePackageSubmit} className="space-y-4">
+                        <div className="bg-amber-50 rounded-lg p-4">
+                            <p className="text-sm text-amber-800">
+                                Layanan pelanggan saat ini tidak ditemukan pada daftar paket aktif.
+                                Pilih layanan yang tersedia untuk memperbarui data pelanggan sebelum membuat tagihan.
+                            </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-4">
+                            <p className="font-semibold text-gray-900">{servicePackageModal.customer.name}</p>
+                            <p className="text-sm text-gray-600">
+                                Layanan saat ini: {getCustomerServiceLabel(servicePackageModal.customer) || '-'}
+                            </p>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Layanan Tersedia</label>
+                            <select
+                                value={servicePackageModal.selectedPackageId}
+                                onChange={(e) => setServicePackageModal((prev) => ({ ...prev, selectedPackageId: e.target.value }))}
+                                required
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                                <option value="">Pilih layanan</option>
+                                {activePackages.map((pkg) => (
+                                    <option key={pkg.id} value={pkg.id}>
+                                        {pkg.name} ({formatCurrency(pkg.price)})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button type="button" variant="secondary" onClick={closeServicePackageModal}>
+                                Batal
+                            </Button>
+                            <Button type="submit" variant="primary" disabled={updatingCustomerService}>
+                                {updatingCustomerService ? 'Menyimpan...' : 'Simpan Layanan'}
                             </Button>
                         </div>
                     </form>

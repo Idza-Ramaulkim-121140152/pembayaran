@@ -17,7 +17,6 @@ import {
     Legend,
     Filler
 } from 'chart.js';
-import LoadingSpinner from '../components/common/LoadingSpinner';
 import Alert from '../components/common/Alert';
 import apiClient from '../services/api';
 import Modal from '../components/common/Modal';
@@ -112,6 +111,35 @@ function getDefaultFinancialProjectionRange() {
     return getMonthRangeFromMonthValue(getCurrentMonthValue());
 }
 
+function getLastSixMonthLabels() {
+    const now = new Date();
+    const labels = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        labels.push(d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }));
+    }
+    return labels;
+}
+
+const DEFAULT_DASHBOARD_STATS = {
+    total_customers: 0,
+    active_customers: 0,
+    inactive_customers: 0,
+    overdue_customers: 0,
+    isolated_customers: 0,
+    online_customers: 0,
+    recent_customers: [],
+    new_installations: [0, 0, 0, 0, 0, 0],
+    monthly_installations: 0,
+    pending_complaints: 0,
+    in_progress_complaints: 0,
+    total_active_complaints: 0,
+    monthly_revenue: 0,
+    pending_invoices: 0,
+    revenue_by_month: [0, 0, 0, 0, 0, 0],
+    finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
+};
+
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
     const canEditMutations = !!window.appCanEditMutations;
@@ -119,11 +147,12 @@ function Dashboard() {
     const isFinance = userRole === 'finance';
     const isSuperAdmin = userRole === 'superadmin';
     const canViewBalance = !isTeknisi;
-    const [stats, setStats] = useState(null);
-    const [loading, setLoading] = useState(true);
+    const [stats, setStats] = useState(DEFAULT_DASHBOARD_STATS);
+    const [statsLoading, setStatsLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [monthLabels, setMonthLabels] = useState([]);
+    const [monthLabels] = useState(getLastSixMonthLabels);
     const [isolatedCount, setIsolatedCount] = useState(0);
+    const [isolatedCountLoading, setIsolatedCountLoading] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
     const [adjustSubmitting, setAdjustSubmitting] = useState(false);
     const [adjustForm, setAdjustForm] = useState({
@@ -260,6 +289,52 @@ function Dashboard() {
         }
     };
 
+    const fetchDashboardStats = async () => {
+        try {
+            setStatsLoading(true);
+            const response = await apiClient.get('/dashboard');
+            const data = response.data?.data || {};
+            setStats((prev) => ({
+                ...prev,
+                ...data,
+            }));
+        } catch (err) {
+            setError('Gagal memuat ringkasan dashboard');
+            console.error(err);
+        } finally {
+            setStatsLoading(false);
+        }
+    };
+
+    const fetchTransactions = async () => {
+        if (isTeknisi) return;
+
+        try {
+            setTransactionsLoading(true);
+            const trxRes = await apiClient.get('/finance/transactions');
+            const trxData = trxRes.data?.data?.data || [];
+            setTransactions(trxData);
+        } catch (trxErr) {
+            console.error('Failed to fetch finance transactions:', trxErr);
+        } finally {
+            setTransactionsLoading(false);
+        }
+    };
+
+    const fetchIsolatedCount = async () => {
+        if (isFinance) return;
+
+        try {
+            setIsolatedCountLoading(true);
+            const isolirResponse = await apiClient.get('/isolir');
+            setIsolatedCount(isolirResponse.data.count || 0);
+        } catch (isolirErr) {
+            console.error('Failed to fetch isolated count:', isolirErr);
+        } finally {
+            setIsolatedCountLoading(false);
+        }
+    };
+
     const resetTargetForm = () => {
         setTargetForm({
             type: 'mandatory_expense',
@@ -379,13 +454,11 @@ function Dashboard() {
     };
 
     const refreshPostMandatoryAction = async () => {
-        const dashboardResponse = await apiClient.get('/dashboard');
-        setStats(dashboardResponse.data?.data || null);
-
-        const trxResponse = await apiClient.get('/finance/transactions');
-        setTransactions(trxResponse.data?.data?.data || []);
-
-        await fetchFinancialProjection(financialProjectionRange);
+        await Promise.all([
+            fetchDashboardStats(),
+            fetchTransactions(),
+            fetchFinancialProjection(financialProjectionRange),
+        ]);
     };
 
     const handleConfirmMandatoryExecution = async (row) => {
@@ -443,52 +516,10 @@ function Dashboard() {
     };
 
     useEffect(() => {
-        const fetchStats = async () => {
-            try {
-                const response = await apiClient.get('/dashboard');
-                const data = response.data.data;
-                setStats(data);
+        fetchDashboardStats();
+        fetchTransactions();
+        fetchIsolatedCount();
 
-                if (!isTeknisi) {
-                    setTransactionsLoading(true);
-                    try {
-                        const trxRes = await apiClient.get('/finance/transactions');
-                        const trxData = trxRes.data?.data?.data || [];
-                        setTransactions(trxData);
-                    } catch (trxErr) {
-                        console.error('Failed to fetch finance transactions:', trxErr);
-                    } finally {
-                        setTransactionsLoading(false);
-                    }
-                }
-
-                // Generate month labels (6 bulan terakhir)
-                const now = new Date();
-                const labels = [];
-                for (let i = 5; i >= 0; i--) {
-                    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                    labels.push(d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }));
-                }
-                setMonthLabels(labels);
-                
-                if (!isFinance) {
-                    // Fetch isolated devices count
-                    try {
-                        const isolirResponse = await apiClient.get('/isolir');
-                        setIsolatedCount(isolirResponse.data.count || 0);
-                    } catch (isolirErr) {
-                        console.error('Failed to fetch isolated count:', isolirErr);
-                    }
-                }
-            } catch (err) {
-                setError('Gagal memuat dashboard');
-                console.error(err);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchStats();
         if (!isTeknisi) {
             fetchManagementKpis(getDefaultKpiRange());
             fetchRevenueForecast(getDefaultForecastRange());
@@ -496,14 +527,6 @@ function Dashboard() {
             fetchFinancialTargets(isSuperAdmin);
         }
     }, []);
-
-    if (loading) {
-        return (
-            <div className="flex justify-center items-center min-h-screen">
-                <LoadingSpinner text="Memuat dashboard..." />
-            </div>
-        );
-    }
 
     // Generate 6 months revenue data dari API
     const revenueChartData = {
@@ -784,6 +807,7 @@ function Dashboard() {
     const projectionAssistant = financialProjectionData?.ai_assistant || null;
     const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
     const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
+    const purchaseTargetsReadyNow = Number(projectionSummary?.purchase_targets_ready_now || 0);
     const monthlyInstallations = Number(
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
@@ -1169,12 +1193,12 @@ function Dashboard() {
                 transaction_date: new Date().toISOString().split('T')[0],
             });
 
-            const refreshed = await apiClient.get('/dashboard');
-            setStats(refreshed.data.data);
-            const trxRes = await apiClient.get('/finance/transactions');
-            setTransactions(trxRes.data?.data?.data || []);
-            await fetchManagementKpis(kpiRange);
-            await fetchFinancialProjection(financialProjectionRange);
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+                fetchManagementKpis(kpiRange),
+                fetchFinancialProjection(financialProjectionRange),
+            ]);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menyimpan penyesuaian saldo');
         } finally {
@@ -1201,12 +1225,12 @@ function Dashboard() {
                 transaction_date: new Date().toISOString().split('T')[0],
             });
 
-            const refreshed = await apiClient.get('/dashboard');
-            setStats(refreshed.data.data);
-            const trxRes = await apiClient.get('/finance/transactions');
-            setTransactions(trxRes.data?.data?.data || []);
-            await fetchManagementKpis(kpiRange);
-            await fetchFinancialProjection(financialProjectionRange);
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+                fetchManagementKpis(kpiRange),
+                fetchFinancialProjection(financialProjectionRange),
+            ]);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menambah pemasukan manual');
         } finally {
@@ -1237,12 +1261,12 @@ function Dashboard() {
             });
 
             setEditTransactionModal({ open: false, item: null });
-            const refreshed = await apiClient.get('/dashboard');
-            setStats(refreshed.data.data);
-            const trxRes = await apiClient.get('/finance/transactions');
-            setTransactions(trxRes.data?.data?.data || []);
-            await fetchManagementKpis(kpiRange);
-            await fetchFinancialProjection(financialProjectionRange);
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+                fetchManagementKpis(kpiRange),
+                fetchFinancialProjection(financialProjectionRange),
+            ]);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memperbarui transaksi');
         } finally {
@@ -1255,12 +1279,12 @@ function Dashboard() {
 
         try {
             await apiClient.delete(`/finance/transactions/${item.id}`);
-            const refreshed = await apiClient.get('/dashboard');
-            setStats(refreshed.data.data);
-            const trxRes = await apiClient.get('/finance/transactions');
-            setTransactions(trxRes.data?.data?.data || []);
-            await fetchManagementKpis(kpiRange);
-            await fetchFinancialProjection(financialProjectionRange);
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+                fetchManagementKpis(kpiRange),
+                fetchFinancialProjection(financialProjectionRange),
+            ]);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal menghapus transaksi');
         }
@@ -1319,6 +1343,14 @@ function Dashboard() {
                 />
             )}
 
+            {statsLoading && (
+                <Alert
+                    type="info"
+                    title="Memuat Dashboard"
+                    message="Ringkasan utama sedang diproses. Panel lain tetap bisa dipakai."
+                />
+            )}
+
             {canViewBalance && (
                 <div className="bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl p-4 md:p-5 text-white shadow-lg shadow-slate-500/30 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2"></div>
@@ -1334,9 +1366,13 @@ function Dashboard() {
                         </div>
 
                         <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                            <p className="text-2xl md:text-3xl font-bold leading-tight">{formatCurrency(financeSummary.balance)}</p>
+                            <p className="text-2xl md:text-3xl font-bold leading-tight">
+                                {statsLoading ? 'Memuat...' : formatCurrency(financeSummary.balance)}
+                            </p>
                             <p className="text-sm text-slate-100 mt-1 font-medium">
-                                Masuk {formatCurrency(financeSummary.total_income)} • Keluar {formatCurrency(financeSummary.total_expense)}
+                                {statsLoading
+                                    ? 'Menghitung ringkasan kas...'
+                                    : `Masuk ${formatCurrency(financeSummary.total_income)} | Keluar ${formatCurrency(financeSummary.total_expense)}`}
                             </p>
                         </div>
                     </div>
@@ -1368,8 +1404,8 @@ function Dashboard() {
                                     <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 flex-1">
                                         <p className="text-purple-100 text-sm font-medium mb-2">Perangkat Online</p>
                                         <div className="flex items-baseline gap-2">
-                                            <span className="text-4xl md:text-5xl font-bold">{stats.online_customers || 0}</span>
-                                            <span className="text-2xl text-purple-200">/ {stats.total_customers || 0}</span>
+                                            <span className="text-4xl md:text-5xl font-bold">{statsLoading ? '...' : (stats.online_customers || 0)}</span>
+                                            <span className="text-2xl text-purple-200">/ {statsLoading ? '...' : (stats.total_customers || 0)}</span>
                                         </div>
                                         <div className="mt-3 w-full bg-white/20 rounded-full h-2">
                                             <div 
@@ -1427,7 +1463,7 @@ function Dashboard() {
                                     <div className="bg-white/10 backdrop-blur-sm rounded-lg p-2.5 flex-1">
                                         <p className="text-red-100 text-xs font-medium mb-1">Total Isolir</p>
                                         <div className="flex items-baseline gap-2">
-                                            <span className="text-xl md:text-2xl font-bold">{isolatedCount}</span>
+                                            <span className="text-xl md:text-2xl font-bold">{isolatedCountLoading ? '...' : isolatedCount}</span>
                                             <span className="text-sm text-red-200">perangkat</span>
                                         </div>
                                     </div>
@@ -1435,7 +1471,12 @@ function Dashboard() {
                                     <div className="bg-white/10 backdrop-blur-sm rounded-lg p-2.5">
                                         <p className="text-red-100 text-xs font-medium mb-1">Status</p>
                                         <div className="flex items-center gap-1.5">
-                                            {isolatedCount > 0 ? (
+                                            {isolatedCountLoading ? (
+                                                <>
+                                                    <div className="w-2 h-2 bg-slate-200 rounded-full animate-pulse"></div>
+                                                    <span className="text-sm font-semibold">Memuat</span>
+                                                </>
+                                            ) : isolatedCount > 0 ? (
                                                 <>
                                                     <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
                                                     <span className="text-sm font-semibold">Warning</span>
@@ -1482,7 +1523,7 @@ function Dashboard() {
                                 </div>
                                 <p className="text-blue-100 text-sm font-medium">Total Pelanggan</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {stats.total_customers || 0}
+                                    {statsLoading ? '...' : (stats.total_customers || 0)}
                                 </p>
                             </div>
                         </div>
@@ -1500,7 +1541,7 @@ function Dashboard() {
                                 </div>
                                 <p className="text-emerald-100 text-sm font-medium">Pelanggan Aktif</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {activeCustomerCount}
+                                    {statsLoading ? '...' : activeCustomerCount}
                                 </p>
                                 <p className="text-emerald-100 text-xs mt-1">Di luar pelanggan lewat jatuh tempo atau isolir</p>
                             </div>
@@ -1517,12 +1558,14 @@ function Dashboard() {
                                     </div>
                                     <span className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full ${isPositive ? 'bg-white/20' : 'bg-red-400/30'}`}>
                                         {isPositive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-                                        {Math.abs(percentageChange)}%
+                                        {statsLoading ? '...' : `${Math.abs(percentageChange)}%`}
                                     </span>
                                 </div>
                                 <p className="text-violet-100 text-sm font-medium">Pendapatan Bulan Ini</p>
                                 <p className="text-2xl md:text-3xl font-bold mt-1">
-                                    Rp {new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}
+                                    {statsLoading
+                                        ? '...'
+                                        : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}`}
                                 </p>
                             </div>
                         </div>
@@ -1539,7 +1582,7 @@ function Dashboard() {
                                 </div>
                                 <p className="text-cyan-100 text-sm font-medium">Pemasangan Bulan Ini</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {monthlyInstallations}
+                                    {statsLoading ? '...' : monthlyInstallations}
                                 </p>
                             </div>
                         </div>
@@ -1556,7 +1599,7 @@ function Dashboard() {
                                 </div>
                                 <p className="text-orange-100 text-sm font-medium">Invoice Tertunda</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {stats.pending_invoices || 0}
+                                    {statsLoading ? '...' : (stats.pending_invoices || 0)}
                                 </p>
                             </div>
                         </div>
@@ -1577,9 +1620,9 @@ function Dashboard() {
                                 </div>
                                 <p className="text-pink-100 text-sm font-medium">Aduan Aktif</p>
                                 <p className="text-3xl md:text-4xl font-bold mt-1">
-                                    {stats.total_active_complaints || 0}
+                                    {statsLoading ? '...' : (stats.total_active_complaints || 0)}
                                 </p>
-                                {stats.pending_complaints > 0 && (
+                                {!statsLoading && stats.pending_complaints > 0 && (
                                     <p className="text-pink-200 text-xs mt-1">
                                         {stats.pending_complaints} menunggu ditangani
                                     </p>
@@ -2225,7 +2268,7 @@ function Dashboard() {
                                     <div className="flex items-center justify-between">
                                         <p className="text-sm font-semibold text-gray-900">Target Pembelian / Keinginan</p>
                                         <span className="text-xs text-gray-500">
-                                            Tercapai di rentang: {projectionSummary.purchase_targets_reachable || 0}/{projectionSummary.purchase_targets_total || 0}
+                                            Tercapai di rentang: {projectionSummary.purchase_targets_reachable || 0}/{projectionSummary.purchase_targets_total || 0} | Siap sekarang: {purchaseTargetsReadyNow}/{projectionSummary.purchase_targets_total || 0}
                                         </span>
                                     </div>
                                     <div className="overflow-x-auto border border-gray-100 rounded-lg">
@@ -2261,6 +2304,9 @@ function Dashboard() {
                                                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getPurchaseIndicatorBadge(row.indicator)}`}>
                                                                 {getPurchaseIndicatorLabel(row.indicator)}
                                                             </span>
+                                                            {!row.blocked_by_mandatory && !row.can_execute_now && row.predicted_buy_date && (
+                                                                <p className="text-[11px] text-amber-600 mt-0.5">Belum siap untuk hari ini</p>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 ))}
