@@ -811,6 +811,106 @@ function DashboardPredictionPage() {
     const monthlyInstallations = Number(
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
+    const forecastValidation = forecastSummary?.validation || null;
+    const ensembleWeights = forecastSummary?.ensemble_weights || null;
+    const clampScore = (value) => Math.max(0, Math.min(100, Number(value || 0)));
+
+    const collectionRate = Number(kpiSummary?.collection_rate || 0);
+    const customerHealthScore = Number(kpiSummary?.customer_health_average_score || 0);
+    const mandatoryCoverageScore = Number(projectionSummary?.mandatory_coverage_amount_rate || 0);
+    const forecastAccuracyScore = Number(
+        forecastValidation?.accuracy?.ensemble_equal
+        ?? kpiSummary?.variance_accuracy_score
+        ?? forecastSummary?.average_confidence
+        ?? 0
+    );
+    const networkAvailabilityScore = totalCustomerCount > 0
+        ? ((Number(stats?.online_customers || 0) / totalCustomerCount) * 100)
+        : 0;
+    const isolationRate = totalCustomerCount > 0
+        ? ((Number(stats?.isolated_customers || 0) / totalCustomerCount) * 100)
+        : 0;
+    const pendingInvoiceCount = Number(stats?.pending_invoices || 0);
+    const churnRate = Number(kpiSummary?.churn_rate || 0);
+
+    const financialHealthScore = clampScore(
+        (mandatoryCoverageScore * 0.45)
+        + (forecastAccuracyScore * 0.30)
+        + (collectionRate * 0.25)
+    );
+    const operationalReadinessScore = clampScore(
+        (networkAvailabilityScore * 0.45)
+        + ((100 - Math.min(100, isolationRate * 2)) * 0.20)
+        + ((100 - Math.min(100, pendingInvoiceCount * 4)) * 0.35)
+    );
+    const customerStabilityScore = clampScore(
+        (customerHealthScore * 0.65)
+        + ((100 - Math.min(100, churnRate * 2.2)) * 0.35)
+    );
+    const overallAdvancedScore = Math.round(clampScore(
+        (financialHealthScore * 0.45)
+        + (operationalReadinessScore * 0.30)
+        + (customerStabilityScore * 0.25)
+    ));
+
+    const predictedRevenueTotal = Number(forecastSummary?.predicted_total_revenue || 0);
+    const mandatoryExpenseTotal = Number(
+        projectionSummary?.mandatory_expense
+        ?? projectionSummary?.mandatory_total_amount
+        ?? 0
+    );
+    const recommendedOperationalBudget = Number(
+        projectionSummary?.recommended_operational_spending_budget
+        ?? projectionSummary?.operational_spending_budget
+        ?? 0
+    );
+
+    const forecastScenarios = [
+        {
+            name: 'Konservatif',
+            revenue_factor: 0.90,
+            opex_factor: 0.85,
+        },
+        {
+            name: 'Baseline',
+            revenue_factor: 1.00,
+            opex_factor: 1.00,
+        },
+        {
+            name: 'Agresif',
+            revenue_factor: 1.10,
+            opex_factor: 1.15,
+        },
+    ].map((scenario) => {
+        const projectedIncome = Math.round(predictedRevenueTotal * scenario.revenue_factor);
+        const projectedOperationalBudget = Math.round(recommendedOperationalBudget * scenario.opex_factor);
+        const projectedNet = projectedIncome - mandatoryExpenseTotal - projectedOperationalBudget;
+
+        return {
+            ...scenario,
+            projected_income: projectedIncome,
+            projected_operational_budget: projectedOperationalBudget,
+            projected_net: projectedNet,
+            risk: projectedNet >= 0 ? 'aman' : projectedNet >= -5000000 ? 'waspada' : 'tinggi',
+        };
+    });
+
+    const advancedRecommendations = [];
+    if (financialHealthScore < 70) {
+        advancedRecommendations.push('Perkuat collection untuk meningkatkan arus kas: fokus pelanggan overdue + reminder terjadwal.');
+    }
+    if (operationalReadinessScore < 70) {
+        advancedRecommendations.push('Turunkan risiko operasional: audit pelanggan isolir dan percepat pemulihan koneksi aktif.');
+    }
+    if (customerStabilityScore < 70) {
+        advancedRecommendations.push('Prioritaskan retensi: tindak lanjut pelanggan risk tinggi dari modul customer health.');
+    }
+    if (forecastAccuracyScore < 75) {
+        advancedRecommendations.push('Tingkatkan akurasi model: evaluasi anomali harian dan validasi receipt/payment timestamp.');
+    }
+    if (advancedRecommendations.length === 0) {
+        advancedRecommendations.push('Semua indikator inti dalam kondisi baik. Pertahankan cadence review mingguan dan kontrol biaya.');
+    }
 
     const kpiAgingAmountChartData = {
         labels: (kpiAging?.buckets || []).map((bucket) => bucket.label),
@@ -1349,6 +1449,121 @@ function DashboardPredictionPage() {
                     title="Memuat Dashboard"
                     message="Ringkasan utama sedang diproses. Panel lain tetap bisa dipakai."
                 />
+            )}
+
+            {!isTeknisi && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 space-y-5">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div>
+                            <h2 className="text-lg font-bold text-gray-900">Analisis Multi-Aspek (Advanced)</h2>
+                            <p className="text-sm text-gray-500">
+                                Menggabungkan KPI collection, akurasi forecast ensemble, kesehatan pelanggan, dan kesiapan operasional.
+                            </p>
+                        </div>
+                        <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${
+                            overallAdvancedScore >= 80
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : overallAdvancedScore >= 65
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-red-100 text-red-700'
+                        }`}>
+                            Skor Menyeluruh: {overallAdvancedScore}/100
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
+                            <p className="text-xs font-medium text-emerald-700">Financial Health</p>
+                            <p className="text-2xl font-bold text-emerald-900 mt-1">{financialHealthScore.toFixed(1)}</p>
+                            <p className="text-xs text-emerald-700 mt-1">Coverage wajib + akurasi prediksi + collection</p>
+                        </div>
+                        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                            <p className="text-xs font-medium text-blue-700">Operational Readiness</p>
+                            <p className="text-2xl font-bold text-blue-900 mt-1">{operationalReadinessScore.toFixed(1)}</p>
+                            <p className="text-xs text-blue-700 mt-1">Online ratio, isolir rate, backlog invoice</p>
+                        </div>
+                        <div className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+                            <p className="text-xs font-medium text-violet-700">Customer Stability</p>
+                            <p className="text-2xl font-bold text-violet-900 mt-1">{customerStabilityScore.toFixed(1)}</p>
+                            <p className="text-xs text-violet-700 mt-1">Customer health score + churn rate</p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-medium text-slate-700">Forecast Accuracy Basis</p>
+                            <p className="text-2xl font-bold text-slate-900 mt-1">{forecastAccuracyScore.toFixed(1)}</p>
+                            <p className="text-xs text-slate-600 mt-1">Prioritas WMAPE ensemble/backtest</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                        <div className="rounded-xl border border-gray-200 p-4">
+                            <h3 className="text-sm font-semibold text-gray-900 mb-3">Diagnostik Model Ensemble</h3>
+                            <div className="text-xs text-gray-600 space-y-1">
+                                <p>Window backtest: <span className="font-semibold text-gray-900">{forecastValidation?.window_days ?? 0} hari</span></p>
+                                <p>Bobot seasonal/momentum/smoothing: <span className="font-semibold text-gray-900">
+                                    {(ensembleWeights?.seasonal ?? 0).toFixed(2)} / {(ensembleWeights?.momentum ?? 0).toFixed(2)} / {(ensembleWeights?.smoothing ?? 0).toFixed(2)}
+                                </span></p>
+                                <p>WMAPE seasonal: <span className="font-semibold text-gray-900">{forecastValidation?.wmape?.seasonal ?? '-'}%</span></p>
+                                <p>WMAPE momentum: <span className="font-semibold text-gray-900">{forecastValidation?.wmape?.momentum ?? '-'}%</span></p>
+                                <p>WMAPE smoothing: <span className="font-semibold text-gray-900">{forecastValidation?.wmape?.smoothing ?? '-'}%</span></p>
+                                <p>Akurasi ensemble equal-weight: <span className="font-semibold text-gray-900">{forecastValidation?.accuracy?.ensemble_equal ?? '-'}%</span></p>
+                            </div>
+                        </div>
+
+                        <div className="rounded-xl border border-gray-200 p-4">
+                            <h3 className="text-sm font-semibold text-gray-900 mb-3">Rekomendasi Eksekusi</h3>
+                            <ul className="space-y-2 text-xs text-gray-700">
+                                {advancedRecommendations.map((item, idx) => (
+                                    <li key={idx} className="flex gap-2">
+                                        <span className="text-indigo-600 font-bold">-</span>
+                                        <span>{item}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl border border-gray-200 p-4">
+                        <h3 className="text-sm font-semibold text-gray-900 mb-3">Simulasi Skenario Operasional</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-xs min-w-[680px]">
+                                <thead className="bg-gray-50 text-gray-600">
+                                    <tr>
+                                        <th className="text-left px-3 py-2">Skenario</th>
+                                        <th className="text-right px-3 py-2">Prediksi Pemasukan</th>
+                                        <th className="text-right px-3 py-2">Budget Operasional</th>
+                                        <th className="text-right px-3 py-2">Kewajiban Wajib</th>
+                                        <th className="text-right px-3 py-2">Net Proyeksi</th>
+                                        <th className="text-center px-3 py-2">Risiko</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {forecastScenarios.map((item) => (
+                                        <tr key={item.name} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 font-medium text-gray-900">{item.name}</td>
+                                            <td className="px-3 py-2 text-right">{formatCurrency(item.projected_income)}</td>
+                                            <td className="px-3 py-2 text-right">{formatCurrency(item.projected_operational_budget)}</td>
+                                            <td className="px-3 py-2 text-right">{formatCurrency(mandatoryExpenseTotal)}</td>
+                                            <td className={`px-3 py-2 text-right font-semibold ${item.projected_net >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                {formatCurrency(item.projected_net)}
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                                                    item.risk === 'aman'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : item.risk === 'waspada'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-red-100 text-red-700'
+                                                }`}>
+                                                    {item.risk}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {canViewBalance && (

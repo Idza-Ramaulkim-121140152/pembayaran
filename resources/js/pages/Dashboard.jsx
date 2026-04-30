@@ -1,21 +1,52 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-    Activity,
-    AlertCircle,
-    ArrowDownRight,
-    ArrowUpRight,
-    Brain,
     Calendar,
+    DollarSign,
     FileText,
-    MessageSquare,
-    Receipt,
-    TrendingDown,
-    TrendingUp,
-    Users,
+    Plus,
+    Settings,
     Wallet,
+    Zap,
 } from 'lucide-react';
+import { Line, Bar, Doughnut } from 'react-chartjs-2';
+import {
+    Chart as ChartJS,
+    CategoryScale,
+    LinearScale,
+    PointElement,
+    LineElement,
+    BarElement,
+    ArcElement,
+    Title,
+    Tooltip,
+    Legend,
+    Filler,
+} from 'chart.js';
 import Alert from '../components/common/Alert';
 import apiClient from '../services/api';
+
+ChartJS.register(
+    CategoryScale,
+    LinearScale,
+    PointElement,
+    LineElement,
+    BarElement,
+    ArcElement,
+    Title,
+    Tooltip,
+    Legend,
+    Filler
+);
+
+function getLastSixMonthLabels() {
+    const now = new Date();
+    const labels = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        labels.push(d.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }));
+    }
+    return labels;
+}
 
 const DEFAULT_STATS = {
     total_customers: 0,
@@ -24,57 +55,39 @@ const DEFAULT_STATS = {
     overdue_customers: 0,
     isolated_customers: 0,
     online_customers: 0,
-    monthly_revenue: 0,
-    monthly_expense: 0,
-    monthly_net: 0,
-    pending_invoices: 0,
+    recent_customers: [],
+    new_installations: [0, 0, 0, 0, 0, 0],
+    monthly_installations: 0,
+    pending_complaints: 0,
+    in_progress_complaints: 0,
     total_active_complaints: 0,
-    monthly_finance: {
-        current_month: {
-            label: '',
-            income: 0,
-            expense: 0,
-            adjustment: 0,
-            net: 0,
-        },
-        previous_month: {
-            label: '',
-            income: 0,
-            expense: 0,
-            adjustment: 0,
-            net: 0,
-        },
-        ratio_income_to_expense: null,
-        comparison: {
-            income_change_percentage: 0,
-            expense_change_percentage: 0,
-            net_change_percentage: 0,
-        },
-    },
+    monthly_revenue: 0,
+    pending_invoices: 0,
+    revenue_by_month: [0, 0, 0, 0, 0, 0],
+    finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
 };
 
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
     const isFinance = userRole === 'finance';
+    const canViewBalance = !isTeknisi;
 
     const [stats, setStats] = useState(DEFAULT_STATS);
+    const [monthLabels] = useState(getLastSixMonthLabels);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [isolatedCount, setIsolatedCount] = useState(0);
+    const [isolatedCountLoading, setIsolatedCountLoading] = useState(false);
+    const [transactions, setTransactions] = useState([]);
+    const [transactionsLoading, setTransactionsLoading] = useState(false);
 
     const fetchDashboardStats = async () => {
         try {
             setLoading(true);
             const response = await apiClient.get('/dashboard');
             const payload = response.data?.data || {};
-            setStats((prev) => ({
-                ...prev,
-                ...payload,
-                monthly_finance: {
-                    ...prev.monthly_finance,
-                    ...(payload.monthly_finance || {}),
-                },
-            }));
+            setStats((prev) => ({ ...prev, ...payload }));
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memuat ringkasan dashboard.');
         } finally {
@@ -82,8 +95,38 @@ function Dashboard() {
         }
     };
 
+    const fetchIsolatedCount = async () => {
+        if (isFinance) return;
+
+        try {
+            setIsolatedCountLoading(true);
+            const response = await apiClient.get('/isolir');
+            setIsolatedCount(Number(response.data?.count || 0));
+        } catch (err) {
+            console.error('Failed to fetch isolated count:', err);
+        } finally {
+            setIsolatedCountLoading(false);
+        }
+    };
+
+    const fetchTransactions = async () => {
+        if (isTeknisi) return;
+
+        try {
+            setTransactionsLoading(true);
+            const response = await apiClient.get('/finance/transactions');
+            setTransactions(response.data?.data?.data || []);
+        } catch (err) {
+            console.error('Failed to fetch transactions:', err);
+        } finally {
+            setTransactionsLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchDashboardStats();
+        fetchIsolatedCount();
+        fetchTransactions();
     }, []);
 
     const formatCurrency = (amount) => {
@@ -94,232 +137,430 @@ function Dashboard() {
         }).format(Number(amount || 0));
     };
 
-    const formatPercent = (value) => {
-        const numeric = Number(value || 0);
-        const prefix = numeric > 0 ? '+' : '';
-        return `${prefix}${numeric.toFixed(1)}%`;
+    const activeCustomerCount = Number(stats?.active_customers || 0);
+    const totalCustomerCount = Number(stats?.total_customers || 0);
+    const inactiveCustomerCount = Number(
+        stats?.inactive_customers ?? Math.max(0, totalCustomerCount - activeCustomerCount)
+    );
+    const monthlyInstallations = Number(
+        stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
+    );
+    const financeSummary = stats?.finance_summary || DEFAULT_STATS.finance_summary;
+
+    const revenueChartData = {
+        labels: monthLabels,
+        datasets: [
+            {
+                label: 'Pemasukan',
+                data: stats?.revenue_by_month || [0, 0, 0, 0, 0, 0],
+                borderColor: '#8b5cf6',
+                backgroundColor: (context) => {
+                    const ctx = context.chart.ctx;
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                    gradient.addColorStop(0, 'rgba(139, 92, 246, 0.4)');
+                    gradient.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+                    return gradient;
+                },
+                borderWidth: 3,
+                fill: true,
+                tension: 0.4,
+                pointBackgroundColor: '#8b5cf6',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 3,
+                pointRadius: 5,
+            },
+        ],
     };
 
-    const monthlyFinance = stats?.monthly_finance || DEFAULT_STATS.monthly_finance;
-    const currentMonth = monthlyFinance.current_month || DEFAULT_STATS.monthly_finance.current_month;
-    const previousMonth = monthlyFinance.previous_month || DEFAULT_STATS.monthly_finance.previous_month;
-    const financeComparison = monthlyFinance.comparison || DEFAULT_STATS.monthly_finance.comparison;
+    const installationChartData = {
+        labels: monthLabels,
+        datasets: [
+            {
+                label: 'Pemasangan Baru',
+                data: stats?.new_installations || [0, 0, 0, 0, 0, 0],
+                backgroundColor: (context) => {
+                    const ctx = context.chart.ctx;
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.9)');
+                    gradient.addColorStop(1, 'rgba(147, 51, 234, 0.9)');
+                    return gradient;
+                },
+                borderRadius: 12,
+                borderSkipped: false,
+            },
+        ],
+    };
 
-    const incomeValue = Number(currentMonth.income ?? stats.monthly_revenue ?? 0);
-    const expenseValue = Number(currentMonth.expense ?? stats.monthly_expense ?? 0);
-    const currentNet = Number(currentMonth.net ?? stats.monthly_net ?? (incomeValue - expenseValue));
+    const customerStatusData = {
+        labels: ['Aktif', 'Tidak Aktif'],
+        datasets: [
+            {
+                data: [activeCustomerCount, inactiveCustomerCount],
+                backgroundColor: ['rgba(34, 197, 94, 0.9)', 'rgba(239, 68, 68, 0.9)'],
+                borderColor: ['#fff', '#fff'],
+                borderWidth: 4,
+                hoverOffset: 10,
+            },
+        ],
+    };
 
-    const chartBase = Math.max(incomeValue, expenseValue, 1);
-    const incomeBarWidth = Math.max(8, Math.round((incomeValue / chartBase) * 100));
-    const expenseBarWidth = Math.max(8, Math.round((expenseValue / chartBase) * 100));
+    const revenueChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                callbacks: {
+                    label: (context) => `Rp ${Number(context.raw || 0).toLocaleString('id-ID')}`,
+                },
+            },
+        },
+        scales: {
+            x: { grid: { display: false }, ticks: { color: '#9ca3af' } },
+            y: {
+                beginAtZero: true,
+                grid: { color: 'rgba(156, 163, 175, 0.1)', drawBorder: false },
+                ticks: {
+                    color: '#9ca3af',
+                    callback: (value) => {
+                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
+                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
+                        return value;
+                    },
+                },
+            },
+        },
+    };
 
-    const shortcuts = useMemo(() => {
-        const items = [];
+    const barChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                callbacks: {
+                    label: (context) => `${context.raw} pelanggan baru`,
+                },
+            },
+        },
+        scales: {
+            x: { grid: { display: false }, ticks: { color: '#9ca3af' } },
+            y: { beginAtZero: true, grid: { color: 'rgba(156, 163, 175, 0.1)', drawBorder: false }, ticks: { color: '#9ca3af', stepSize: 1 } },
+        },
+    };
+
+    const doughnutOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '70%',
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                callbacks: {
+                    label: (context) => `${context.label}: ${context.raw} pelanggan`,
+                },
+            },
+        },
+    };
+
+    const quickActions = useMemo(() => {
+        const actions = [];
+
+        if (!isFinance) {
+            actions.push({ href: '/customers/create', label: 'Aktivasi Pelanggan', desc: 'Tambah pelanggan baru', icon: Plus, color: 'bg-blue-500' });
+        }
 
         if (!isTeknisi) {
-            items.push({ label: 'Penagihan', href: '/penagihan', icon: FileText, desc: 'Kelola invoice pelanggan' });
-            items.push({ label: 'Pengeluaran', href: '/pengeluaran', icon: Receipt, desc: 'Catat biaya operasional' });
-            items.push({ label: 'Mutasi', href: '/mutasi', icon: Wallet, desc: 'Monitor arus kas' });
-            items.push({ label: 'Prediksi', href: '/dashboard/prediksi', icon: Brain, desc: 'Analisa KPI dan proyeksi' });
+            actions.push({ href: '/pengeluaran', label: 'Catat Pengeluaran', desc: 'Input pengeluaran baru', icon: FileText, color: 'bg-emerald-500' });
+            actions.push({ href: '/penagihan', label: 'Kelola Tagihan', desc: 'Lihat & kelola invoice', icon: DollarSign, color: 'bg-violet-500' });
         }
 
         if (!isFinance) {
-            items.push({ label: 'Pelanggan', href: '/customers', icon: Users, desc: 'Data pelanggan aktif' });
-            items.push({ label: 'Monitoring', href: '/monitoring', icon: Activity, desc: 'Status jaringan real-time' });
-            items.push({ label: 'Aduan', href: '/complaints', icon: MessageSquare, desc: 'Tindak lanjuti komplain' });
+            actions.push({ href: '/odp', label: 'Kelola ODP', desc: 'Pengaturan titik distribusi', icon: Settings, color: 'bg-orange-500' });
         }
 
-        return items;
+        return actions;
     }, [isFinance, isTeknisi]);
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard Ringkasan</h1>
+                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard</h1>
                     <p className="text-gray-500 mt-1 flex items-center gap-2">
                         <Calendar size={16} />
-                        {new Date().toLocaleDateString('id-ID', {
-                            weekday: 'long',
-                            day: 'numeric',
-                            month: 'long',
-                            year: 'numeric',
-                        })}
+                        {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                     </p>
                 </div>
             </div>
 
             {error && (
-                <Alert
-                    type="error"
-                    title="Error"
-                    message={error}
-                    onClose={() => setError(null)}
-                />
+                <Alert type="error" title="Error" message={error} onClose={() => setError(null)} />
             )}
 
             {loading && (
-                <Alert
-                    type="info"
-                    title="Memuat Dashboard"
-                    message="Mengambil ringkasan terbaru pelanggan dan keuangan..."
-                />
+                <Alert type="info" title="Memuat Dashboard" message="Ringkasan utama sedang diproses." />
             )}
 
-            <div className={`grid grid-cols-1 ${isTeknisi ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-4'} gap-4`}>
-                {!isFinance && (
-                    <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-500 to-blue-600 p-5 text-white">
-                        <p className="text-sm text-blue-100">Total Pelanggan</p>
-                        <p className="text-3xl font-bold mt-2">{loading ? '...' : Number(stats.total_customers || 0)}</p>
-                    </div>
-                )}
-
-                {!isFinance && (
-                    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-500 to-emerald-600 p-5 text-white">
-                        <p className="text-sm text-emerald-100">Pelanggan Aktif</p>
-                        <p className="text-3xl font-bold mt-2">{loading ? '...' : Number(stats.active_customers || 0)}</p>
-                    </div>
-                )}
-
-                {!isTeknisi && (
-                    <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-500 to-purple-600 p-5 text-white">
-                        <p className="text-sm text-violet-100">Pemasukan Bulan Ini</p>
-                        <p className="text-2xl font-bold mt-2">{loading ? '...' : formatCurrency(incomeValue)}</p>
-                        <p className="text-xs text-violet-100 mt-1">{currentMonth.label || '-'}</p>
-                    </div>
-                )}
-
-                {!isTeknisi && (
-                    <div className="rounded-2xl border border-rose-100 bg-gradient-to-br from-rose-500 to-red-600 p-5 text-white">
-                        <p className="text-sm text-rose-100">Pengeluaran Bulan Ini</p>
-                        <p className="text-2xl font-bold mt-2">{loading ? '...' : formatCurrency(expenseValue)}</p>
-                        <p className="text-xs text-rose-100 mt-1">{currentMonth.label || '-'}</p>
-                    </div>
-                )}
-
-                {!isTeknisi && (
-                    <div className={`rounded-2xl border p-5 ${currentNet >= 0 ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'}`}>
-                        <div className="flex items-center justify-between">
-                            <p className="text-sm text-gray-600">Selisih Bulan Ini</p>
-                            {currentNet >= 0 ? <TrendingUp size={18} className="text-emerald-600" /> : <TrendingDown size={18} className="text-red-600" />}
+            {canViewBalance && (
+                <div className="bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl p-4 md:p-5 text-white shadow-lg shadow-slate-500/30">
+                    <div className="flex items-center gap-2 mb-3">
+                        <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
+                            <Wallet className="w-5 h-5" />
                         </div>
-                        <p className={`text-2xl font-bold mt-2 ${currentNet >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                            {loading ? '...' : formatCurrency(currentNet)}
+                        <div>
+                            <h2 className="text-lg md:text-xl font-bold">Saldo Saat Ini</h2>
+                            <p className="text-slate-100 text-xs">Ringkasan kas pemasukan dan pengeluaran</p>
+                        </div>
+                    </div>
+                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+                        <p className="text-2xl md:text-3xl font-bold">{loading ? 'Memuat...' : formatCurrency(financeSummary.balance)}</p>
+                        <p className="text-sm text-slate-100 mt-1 font-medium">
+                            {loading
+                                ? 'Menghitung ringkasan kas...'
+                                : `Masuk ${formatCurrency(financeSummary.total_income)} | Keluar ${formatCurrency(financeSummary.total_expense)}`}
                         </p>
-                        <p className="text-xs text-gray-500 mt-1">Net = pemasukan - pengeluaran (+/- penyesuaian)</p>
                     </div>
-                )}
+                </div>
+            )}
 
-                {!isTeknisi && (
-                    <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
-                        <div className="flex items-center justify-between">
-                            <p className="text-sm text-orange-700">Invoice Tertunda</p>
-                            <AlertCircle size={18} className="text-orange-600" />
+            {!isFinance && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl p-6 text-white">
+                        <h2 className="text-xl font-bold mb-1">Monitoring Perangkat</h2>
+                        <p className="text-sm text-purple-100">Status perangkat PPPoE real-time</p>
+                        <div className="mt-4 flex items-end gap-2">
+                            <span className="text-4xl font-bold">{loading ? '...' : (stats.online_customers || 0)}</span>
+                            <span className="text-xl text-purple-200">/ {loading ? '...' : (stats.total_customers || 0)}</span>
                         </div>
-                        <p className="text-3xl font-bold text-orange-800 mt-2">{loading ? '...' : Number(stats.pending_invoices || 0)}</p>
+                        <p className="text-sm mt-1">Status: <span className="font-semibold">Live</span></p>
+                        <a href="/monitoring" className="inline-flex mt-4 bg-white text-purple-600 hover:bg-purple-50 px-4 py-2 rounded-lg font-semibold text-sm">
+                            Lihat Monitoring
+                        </a>
                     </div>
-                )}
 
+                    <div className="bg-gradient-to-br from-red-600 to-orange-600 rounded-2xl p-6 text-white">
+                        <h2 className="text-xl font-bold mb-1">Perangkat Isolir</h2>
+                        <p className="text-sm text-red-100">Terbatas karena lewat jatuh tempo</p>
+                        <div className="mt-4 flex items-end gap-2">
+                            <span className="text-4xl font-bold">{isolatedCountLoading ? '...' : isolatedCount}</span>
+                            <span className="text-sm text-red-200">perangkat</span>
+                        </div>
+                        <p className="text-sm mt-1">Status: <span className="font-semibold">{isolatedCount > 0 ? 'Warning' : 'Normal'}</span></p>
+                        <a href="/isolir" className="inline-flex mt-4 bg-white text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold text-sm">
+                            Lihat Detail
+                        </a>
+                    </div>
+                </div>
+            )}
+
+            <div className={`grid grid-cols-2 ${isFinance ? 'lg:grid-cols-3' : isTeknisi ? 'lg:grid-cols-4' : 'lg:grid-cols-6'} gap-4`}>
                 {!isFinance && (
-                    <div className="rounded-2xl border border-pink-100 bg-pink-50 p-5">
-                        <div className="flex items-center justify-between">
-                            <p className="text-sm text-pink-700">Aduan Aktif</p>
-                            <MessageSquare size={18} className="text-pink-600" />
-                        </div>
-                        <p className="text-3xl font-bold text-pink-800 mt-2">{loading ? '...' : Number(stats.total_active_complaints || 0)}</p>
+                    <div className="bg-blue-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-blue-100">Total Pelanggan</p>
+                        <p className="text-3xl font-bold mt-1">{loading ? '...' : totalCustomerCount}</p>
+                    </div>
+                )}
+                {!isFinance && (
+                    <div className="bg-emerald-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-emerald-100">Pelanggan Aktif</p>
+                        <p className="text-3xl font-bold mt-1">{loading ? '...' : activeCustomerCount}</p>
+                        <p className="text-xs text-emerald-100 mt-1">Di luar pelanggan lewat jatuh tempo atau isolir</p>
+                    </div>
+                )}
+                {!isTeknisi && (
+                    <div className="bg-violet-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-violet-100">Pendapatan Bulan Ini</p>
+                        <p className="text-2xl font-bold mt-1">{loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}`}</p>
+                    </div>
+                )}
+                {!isFinance && (
+                    <div className="bg-cyan-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-cyan-100">Pemasangan Bulan Ini</p>
+                        <p className="text-3xl font-bold mt-1">{loading ? '...' : monthlyInstallations}</p>
+                    </div>
+                )}
+                {!isTeknisi && (
+                    <div className="bg-orange-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-orange-100">Invoice Tertunda</p>
+                        <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.pending_invoices || 0)}</p>
+                    </div>
+                )}
+                {!isFinance && (
+                    <div className="bg-pink-600 rounded-2xl p-5 text-white">
+                        <p className="text-sm text-pink-100">Aduan Aktif</p>
+                        <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.total_active_complaints || 0)}</p>
                     </div>
                 )}
             </div>
 
             {!isTeknisi && (
-                <div className="bg-white rounded-2xl border border-gray-100 p-6 space-y-5">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                        <div>
-                            <h2 className="text-lg font-bold text-gray-900">Perbandingan Pemasukan vs Pengeluaran</h2>
-                            <p className="text-sm text-gray-500">Fokus bulan berjalan: {currentMonth.label || '-'}</p>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <h2 className="text-lg font-bold text-gray-900">Tren Pemasukan</h2>
+                                <p className="text-sm text-gray-500">6 bulan terakhir</p>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="w-3 h-3 bg-violet-500 rounded-full"></span>
+                                <span className="text-gray-600">Pemasukan</span>
+                            </div>
                         </div>
-                        <div className="text-sm text-gray-600">
-                            Rasio pemasukan/pengeluaran:{' '}
-                            <span className="font-semibold text-gray-900">
-                                {monthlyFinance.ratio_income_to_expense === null
-                                    ? '-'
-                                    : `${Number(monthlyFinance.ratio_income_to_expense || 0).toFixed(2)}x`}
-                            </span>
+                        <div className="h-[300px]">
+                            <Line data={revenueChartData} options={revenueChartOptions} />
                         </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <div>
-                            <div className="flex items-center justify-between text-sm mb-1">
-                                <span className="text-gray-700 font-medium">Pemasukan</span>
-                                <span className="font-semibold text-emerald-700">{formatCurrency(incomeValue)}</span>
-                            </div>
-                            <div className="h-3 rounded-full bg-emerald-100 overflow-hidden">
-                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${incomeBarWidth}%` }} />
-                            </div>
-                            <p className={`text-xs mt-1 inline-flex items-center gap-1 ${Number(financeComparison.income_change_percentage || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                                {Number(financeComparison.income_change_percentage || 0) >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                                {formatPercent(financeComparison.income_change_percentage)} vs {previousMonth.label || 'bulan lalu'}
-                            </p>
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div className="mb-6">
+                            <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
+                            <p className="text-sm text-gray-500">Distribusi aktif dan tidak aktif (lewat jatuh tempo atau isolir)</p>
                         </div>
-
-                        <div>
-                            <div className="flex items-center justify-between text-sm mb-1">
-                                <span className="text-gray-700 font-medium">Pengeluaran</span>
-                                <span className="font-semibold text-rose-700">{formatCurrency(expenseValue)}</span>
+                        <div className="h-[200px] relative">
+                            <Doughnut data={customerStatusData} options={doughnutOptions} />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="text-center">
+                                    <p className="text-3xl font-bold text-gray-900">{totalCustomerCount}</p>
+                                    <p className="text-xs text-gray-500">Total</p>
+                                </div>
                             </div>
-                            <div className="h-3 rounded-full bg-rose-100 overflow-hidden">
-                                <div className="h-full bg-rose-500 rounded-full" style={{ width: `${expenseBarWidth}%` }} />
+                        </div>
+                        <div className="flex justify-center gap-6 mt-6">
+                            <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 bg-green-500 rounded-full"></span>
+                                <span className="text-sm text-gray-600">Aktif ({activeCustomerCount})</span>
                             </div>
-                            <p className={`text-xs mt-1 inline-flex items-center gap-1 ${Number(financeComparison.expense_change_percentage || 0) <= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                {Number(financeComparison.expense_change_percentage || 0) <= 0 ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />}
-                                {formatPercent(financeComparison.expense_change_percentage)} vs {previousMonth.label || 'bulan lalu'}
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                            <p className="text-xs text-gray-500">Pemasukan Bulan Lalu</p>
-                            <p className="text-base font-semibold text-gray-900 mt-1">{formatCurrency(previousMonth.income || 0)}</p>
-                        </div>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                            <p className="text-xs text-gray-500">Pengeluaran Bulan Lalu</p>
-                            <p className="text-base font-semibold text-gray-900 mt-1">{formatCurrency(previousMonth.expense || 0)}</p>
-                        </div>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                            <p className="text-xs text-gray-500">Net Bulan Lalu</p>
-                            <p className="text-base font-semibold text-gray-900 mt-1">{formatCurrency(previousMonth.net || 0)}</p>
+                            <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                                <span className="text-sm text-gray-600">Tidak Aktif ({inactiveCustomerCount})</span>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
-            <div className="bg-white rounded-2xl border border-gray-100 p-6">
-                <h2 className="text-lg font-bold text-gray-900 mb-4">Shortcut Cepat</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {shortcuts.map((item) => {
-                        const Icon = item.icon;
-                        return (
-                            <a
-                                key={item.href}
-                                href={item.href}
-                                className="rounded-xl border border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 p-4 transition"
-                            >
-                                <div className="flex items-start gap-3">
-                                    <div className="p-2 rounded-lg bg-blue-100 text-blue-700">
-                                        <Icon size={18} />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-semibold text-gray-900">{item.label}</p>
-                                        <p className="text-xs text-gray-500 mt-1">{item.desc}</p>
-                                    </div>
-                                </div>
-                            </a>
-                        );
-                    })}
+            {!isFinance ? (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <h2 className="text-lg font-bold text-gray-900">Pemasangan Baru</h2>
+                                <p className="text-sm text-gray-500">Statistik aktivasi per bulan</p>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="w-3 h-3 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"></span>
+                                <span className="text-gray-600">Pelanggan Baru</span>
+                            </div>
+                        </div>
+                        <div className="h-[280px]">
+                            <Bar data={installationChartData} options={barChartOptions} />
+                        </div>
+                    </div>
+
+                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white">
+                        <div className="mb-6">
+                            <h2 className="text-lg font-bold flex items-center gap-2">
+                                <Zap size={20} className="text-yellow-400" />
+                                Aksi Cepat
+                            </h2>
+                            <p className="text-sm text-gray-400 mt-1">Pintasan menu utama</p>
+                        </div>
+                        <div className="space-y-3">
+                            {quickActions.map((item) => {
+                                const Icon = item.icon;
+                                return (
+                                    <a
+                                        key={item.href}
+                                        href={item.href}
+                                        className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition group"
+                                    >
+                                        <div className={`${item.color} p-2 rounded-lg group-hover:scale-110 transition`}>
+                                            <Icon size={18} />
+                                        </div>
+                                        <div>
+                                            <p className="font-medium">{item.label}</p>
+                                            <p className="text-xs text-gray-400">{item.desc}</p>
+                                        </div>
+                                    </a>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
-            </div>
+            ) : (
+                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white">
+                    <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
+                        <Zap size={20} className="text-yellow-400" />
+                        Aksi Cepat Keuangan
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <a href="/penagihan" className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition">
+                            <DollarSign size={18} className="text-violet-300" />
+                            <span>Kelola Tagihan</span>
+                        </a>
+                        <a href="/pengeluaran" className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition">
+                            <FileText size={18} className="text-emerald-300" />
+                            <span>Catat Pengeluaran</span>
+                        </a>
+                    </div>
+                </div>
+            )}
+
+            {!isTeknisi && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="mb-6">
+                        <h2 className="text-lg font-bold text-gray-900">Transaksi Keuangan Terintegrasi</h2>
+                        <p className="text-sm text-gray-500">Pemasukan, pengeluaran, payroll, dan adjustment dalam satu ledger</p>
+                    </div>
+
+                    {transactionsLoading ? (
+                        <p className="text-sm text-gray-500">Memuat transaksi...</p>
+                    ) : transactions.length === 0 ? (
+                        <p className="text-sm text-gray-500">Belum ada transaksi.</p>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm min-w-[800px]">
+                                <thead className="bg-gray-50 text-gray-600">
+                                    <tr>
+                                        <th className="text-left px-3 py-2">Tanggal</th>
+                                        <th className="text-left px-3 py-2">Jenis</th>
+                                        <th className="text-left px-3 py-2">Sumber</th>
+                                        <th className="text-left px-3 py-2">Deskripsi</th>
+                                        <th className="text-right px-3 py-2">Nominal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {transactions.slice(0, 5).map((item) => {
+                                        const amount = Number(item.amount || 0);
+                                        const isIncome = item.type === 'income';
+                                        return (
+                                            <tr key={item.id} className="border-t border-gray-100">
+                                                <td className="px-3 py-2 text-gray-600">{item.transaction_date || '-'}</td>
+                                                <td className="px-3 py-2 text-gray-700">{item.type || '-'}</td>
+                                                <td className="px-3 py-2 text-gray-700">{item.source || '-'}</td>
+                                                <td className="px-3 py-2 text-gray-800">{item.description || '-'}</td>
+                                                <td className={`px-3 py-2 text-right font-semibold ${isIncome ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                    {isIncome ? '+' : '-'}{formatCurrency(amount)}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
