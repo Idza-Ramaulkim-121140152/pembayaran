@@ -227,6 +227,40 @@ class BillingController extends Controller
             return redirect()->back()->with('error', 'Nominal tagihan harus diisi.');
         }
 
+        $existingOpenInvoice = $customer->invoices()
+            ->whereNotIn('status', ['paid', 'cancelled'])
+            ->orderByDesc('id')
+            ->first();
+
+        if ($existingOpenInvoice) {
+            if (request()->wantsJson()) {
+                $existingLink = url('/invoice/' . $existingOpenInvoice->invoice_link);
+                $template = "Yth. Bapak/Ibu " . strtoupper($customer->name) . "\n" .
+                            "Username PPPoE: " . $customer->pppoe_username . "\n\n" .
+                            "Nominal tagihan: Rp " . number_format($existingOpenInvoice->amount, 0, ',', '.') . "\n" .
+                            "> ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:" . "\n" .
+                            $existingLink . "\n\n" .
+                            "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis." . "\n\n" .
+                            "Layanan Call Center 085158025553" . "\n\n" .
+                            "Salam Hangat," . "\n" .
+                            "Tim Layanan Pelanggan Rumah Kita Net";
+
+                return response()->json([
+                    'message' => 'Tagihan aktif sudah tersedia. Gunakan invoice yang sudah ada.',
+                    'data' => [
+                        'invoice_id' => $existingOpenInvoice->id,
+                        'invoice_link' => $existingLink,
+                        'template' => $template,
+                        'amount' => $existingOpenInvoice->amount,
+                        'cancelled_previous_invoices' => 0,
+                        'existing_invoice' => true,
+                    ],
+                ]);
+            }
+
+            return redirect()->route('billing.index')->with('success', 'Tagihan aktif sudah tersedia. Gunakan invoice yang sudah ada.');
+        }
+
         $cancelledPreviousInvoices = 0;
         $invoice = null;
 
@@ -322,6 +356,26 @@ class BillingController extends Controller
         }
         
         $customers = $query->with('latestInvoice')->get();
+        $customerIds = $customers->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->values()
+            ->all();
+
+        $activeInvoiceMap = [];
+        if (!empty($customerIds)) {
+            $activeInvoices = Invoice::query()
+                ->whereIn('customer_id', $customerIds)
+                ->whereNotIn('status', ['paid', 'cancelled'])
+                ->orderByDesc('id')
+                ->get()
+                ->unique('customer_id');
+
+            foreach ($activeInvoices as $activeInvoice) {
+                $activeInvoiceMap[(int) $activeInvoice->customer_id] = $activeInvoice;
+            }
+        }
+
         $paidThisMonthMap = Invoice::query()
             ->where('status', 'paid')
             ->whereNotNull('paid_at')
@@ -339,24 +393,31 @@ class BillingController extends Controller
         $paid = [];
 
         foreach ($customers as $customer) {
-            $invoice = $customer->latestInvoice;
+            $latestInvoice = $customer->latestInvoice;
+            $activeInvoice = $activeInvoiceMap[(int) $customer->id] ?? null;
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
             $isAlmostLate = $dueDate && $dueDate->gte($today) && $dueDate->lte($almostLateEndDate);
-            $invoiceStatus = strtolower(trim((string) ($invoice?->status ?? '')));
+            $latestInvoiceStatus = strtolower(trim((string) ($latestInvoice?->status ?? '')));
             $hasPaidThisMonth = isset($paidThisMonthMap[(int) $customer->id]);
-            $canCreateInvoice = !$invoice
-                || ($isAlmostLate && ($hasPaidThisMonth || in_array($invoiceStatus, ['paid', 'cancelled'], true)));
+            $hasActiveInvoice = $activeInvoice !== null;
+            $canCreateInvoice = !$hasActiveInvoice && (
+                !$latestInvoice
+                || $isLate
+                || ($isAlmostLate && ($hasPaidThisMonth || in_array($latestInvoiceStatus, ['paid', 'cancelled'], true)))
+            );
 
             $item = [
                 'customer' => $customer,
-                'invoice' => $invoice,
+                'invoice' => $latestInvoice,
+                'active_invoice' => $activeInvoice,
+                'has_active_invoice' => $hasActiveInvoice,
                 'can_create_invoice' => $canCreateInvoice,
                 'has_paid_this_month' => $hasPaidThisMonth,
             ];
             
             // Pelanggan yang sudah bayar tetap ditampilkan saat memasuki periode hampir jatuh tempo.
-            if ($invoiceStatus === 'paid' && !$isAlmostLate) {
+            if ($latestInvoiceStatus === 'paid' && !$isLate && !$isAlmostLate) {
                 $paid[] = $item;
                 continue;
             }

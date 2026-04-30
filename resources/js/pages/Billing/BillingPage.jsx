@@ -370,6 +370,7 @@ function BillingPage() {
             setSubmitting(true);
             const response = await billingService.createInvoice(createModal.customer.id, numericAmount);
             const createdInvoiceData = response.data.data;
+            const responseMessage = response.data?.message;
             closeCreateModal();
             setResultModal({
                 open: true,
@@ -378,9 +379,12 @@ function BillingPage() {
                     customer: createModal.customer,
                 },
             });
+            if (responseMessage) {
+                setSuccess(responseMessage);
+            }
             fetchBillingData(search);
         } catch (err) {
-            setError(err.response?.data?.error || 'Gagal membuat tagihan');
+            setError(err.response?.data?.error || err.response?.data?.message || 'Gagal membuat tagihan');
         } finally {
             setSubmitting(false);
         }
@@ -627,23 +631,38 @@ Tim Layanan Pelanggan Rumah Kita Net`;
     };
 
     const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer, isAlmostLateCustomer }) => {
-        const { customer, invoice } = item;
-        const normalizedInvoiceStatus = (invoice?.status || '').toString().trim().toLowerCase();
-        const canCreateInvoice = typeof item?.can_create_invoice === 'boolean'
-            ? item.can_create_invoice
-            : (!invoice || (isAlmostLateCustomer && normalizedInvoiceStatus === 'paid'));
+        const customer = item?.customer;
+        const latestInvoice = item?.invoice || null;
+        const activeInvoice = item?.active_invoice || null;
+        const invoiceToUse = activeInvoice || null;
+        const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
+        const normalizedInvoiceStatus = (invoiceToUse?.status || '').toString().trim().toLowerCase();
+        const canCreateInvoice = !!item?.can_create_invoice;
         
         const getStatusBadge = () => {
-            if (!invoice) {
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan</span>;
+            if (invoiceToUse) {
+                if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
+                }
+                if (normalizedInvoiceStatus === 'paid') {
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
+                }
+                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
             }
-            if (normalizedInvoiceStatus === 'paid') {
+
+            if (isLateCustomer) {
+                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan Aktif</span>;
+            }
+
+            if (latestInvoiceStatus === 'paid' || item?.has_paid_this_month) {
                 return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
             }
-            if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
+
+            if (isAlmostLateCustomer) {
+                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan</span>;
             }
-            return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
+
+            return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">Belum Ada Tagihan</span>;
         };
 
         const getIsolirButton = () => {
@@ -706,14 +725,14 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <span className="sm:hidden">Buat</span>
                             </Button>
                         )}
-                        {invoice && (
+                        {invoiceToUse && (
                             <>
                                 {normalizedInvoiceStatus !== 'paid' && (
                                     <>
                                         <Button
                                             size="sm"
                                             variant="success"
-                                            onClick={() => setLinkModal({ open: true, invoice, customer })}
+                                            onClick={() => setLinkModal({ open: true, invoice: invoiceToUse, customer })}
                                         >
                                             <Send size={14} className="mr-1" />
                                             <span className="hidden sm:inline">Kirim</span>
@@ -721,7 +740,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                         <Button
                                             size="sm"
                                             variant="warning"
-                                            onClick={() => openConfirmModal(invoice, customer)}
+                                            onClick={() => openConfirmModal(invoiceToUse, customer)}
                                         >
                                             <Check size={14} className="mr-1" />
                                             <span className="hidden sm:inline">Konfirmasi</span>
@@ -732,7 +751,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     size="sm"
                                     variant="secondary"
                                     onClick={() => {
-                                        const invoiceUrl = resolveInvoiceUrl(invoice);
+                                        const invoiceUrl = resolveInvoiceUrl(invoiceToUse);
                                         if (invoiceUrl) {
                                             window.open(invoiceUrl, '_blank');
                                         }
@@ -746,8 +765,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                         size="sm"
                                         variant="secondary"
                                         onClick={() => {
-                                            setEditAmountModal({ open: true, invoice, customer });
-                                            const amount = parseFloat(invoice.amount);
+                                            setEditAmountModal({ open: true, invoice: invoiceToUse, customer });
+                                            const amount = parseFloat(invoiceToUse.amount);
                                             setNewInvoiceAmount(isNaN(amount) ? '' : Math.round(amount).toString());
                                         }}
                                     >
@@ -755,11 +774,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                         <span className="hidden sm:inline">Nominal</span>
                                     </Button>
                                 )}
-                                {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoice.bukti_pembayaran && (
+                                {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoiceToUse.bukti_pembayaran && (
                                     <Button
                                         size="sm"
                                         variant="danger"
-                                        onClick={() => setRejectModal({ open: true, invoice })}
+                                        onClick={() => setRejectModal({ open: true, invoice: invoiceToUse })}
                                     >
                                         <X size={14} />
                                     </Button>
