@@ -135,6 +135,15 @@ class DashboardController extends Controller
         ];
     }
 
+    private function calculateChangePercentage(float $current, float $previous): float
+    {
+        if (abs($previous) < 0.00001) {
+            return $current === 0.0 ? 0.0 : 100.0;
+        }
+
+        return (($current - $previous) / abs($previous)) * 100;
+    }
+
     public function index()
     {
         // Ringkasan pendapatan bulan ini
@@ -225,8 +234,11 @@ class DashboardController extends Controller
         $isolatedCustomers = (int) $activitySummary['isolated_customers'];
 
         $monthlyRevenue = null;
+        $monthlyExpense = null;
+        $monthlyNet = null;
         $pendingInvoices = null;
         $revenueByMonth = [];
+        $monthlyFinance = null;
         $financeSummary = null;
 
         if ($canViewFinancialMetrics) {
@@ -236,6 +248,80 @@ class DashboardController extends Controller
             $monthlyRevenue = \App\Models\Invoice::whereBetween('paid_at', [$startOfMonth, $endOfMonth])
                 ->where('status', 'paid')
                 ->sum('amount');
+
+            $monthlyIncomeForComparison = (float) $monthlyRevenue;
+            $monthlyExpenseForComparison = 0.0;
+            $monthlyAdjustmentForComparison = 0.0;
+
+            $lastMonthStart = $startOfMonth->copy()->subMonthNoOverflow()->startOfMonth();
+            $lastMonthEnd = $startOfMonth->copy()->subMonthNoOverflow()->endOfMonth();
+
+            $lastMonthIncomeForComparison = (float) Invoice::whereBetween('paid_at', [$lastMonthStart, $lastMonthEnd])
+                ->where('status', 'paid')
+                ->sum('amount');
+            $lastMonthExpenseForComparison = 0.0;
+            $lastMonthAdjustmentForComparison = 0.0;
+
+            if ($this->isLedgerReady()) {
+                $monthlyIncomeForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'income')
+                    ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                    ->sum('amount');
+
+                $monthlyExpenseForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'expense')
+                    ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                    ->sum('amount');
+
+                $monthlyAdjustmentForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'adjustment')
+                    ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                    ->sum('amount');
+
+                $lastMonthIncomeForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'income')
+                    ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
+                    ->sum('amount');
+
+                $lastMonthExpenseForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'expense')
+                    ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
+                    ->sum('amount');
+
+                $lastMonthAdjustmentForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'adjustment')
+                    ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
+                    ->sum('amount');
+            }
+
+            $monthlyExpense = $monthlyExpenseForComparison;
+            $monthlyNet = $monthlyIncomeForComparison - $monthlyExpenseForComparison + $monthlyAdjustmentForComparison;
+            $previousMonthNet = $lastMonthIncomeForComparison - $lastMonthExpenseForComparison + $lastMonthAdjustmentForComparison;
+
+            $monthlyFinance = [
+                'current_month' => [
+                    'label' => $startOfMonth->copy()->locale('id')->translatedFormat('F Y'),
+                    'income' => (int) round($monthlyIncomeForComparison),
+                    'expense' => (int) round($monthlyExpenseForComparison),
+                    'adjustment' => (int) round($monthlyAdjustmentForComparison),
+                    'net' => (int) round($monthlyNet),
+                ],
+                'previous_month' => [
+                    'label' => $lastMonthStart->copy()->locale('id')->translatedFormat('F Y'),
+                    'income' => (int) round($lastMonthIncomeForComparison),
+                    'expense' => (int) round($lastMonthExpenseForComparison),
+                    'adjustment' => (int) round($lastMonthAdjustmentForComparison),
+                    'net' => (int) round($previousMonthNet),
+                ],
+                'ratio_income_to_expense' => $monthlyExpenseForComparison > 0
+                    ? round($monthlyIncomeForComparison / $monthlyExpenseForComparison, 2)
+                    : null,
+                'comparison' => [
+                    'income_change_percentage' => round($this->calculateChangePercentage($monthlyIncomeForComparison, $lastMonthIncomeForComparison), 2),
+                    'expense_change_percentage' => round($this->calculateChangePercentage($monthlyExpenseForComparison, $lastMonthExpenseForComparison), 2),
+                    'net_change_percentage' => round($this->calculateChangePercentage($monthlyNet, $previousMonthNet), 2),
+                ],
+            ];
 
             $today = $now->toDateString();
             $pendingInvoices = \App\Models\Invoice::whereIn('status', ['unpaid', 'menunggu konfirmasi'])
@@ -309,8 +395,11 @@ class DashboardController extends Controller
 
         if ($canViewFinancialMetrics) {
             $payload['monthly_revenue'] = $monthlyRevenue;
+            $payload['monthly_expense'] = $monthlyExpense;
+            $payload['monthly_net'] = $monthlyNet;
             $payload['pending_invoices'] = $pendingInvoices;
             $payload['revenue_by_month'] = $revenueByMonth;
+            $payload['monthly_finance'] = $monthlyFinance;
             $payload['finance_summary'] = $financeSummary;
         }
 
@@ -2793,6 +2882,11 @@ class DashboardController extends Controller
             ];
         }
 
+        $historyAmountMap = [];
+        foreach ($dailyHistory as $entry) {
+            $historyAmountMap[(string) $entry['date']] = (float) ($entry['amount'] ?? 0);
+        }
+
         $overallDailyAverage = $this->safeAverage($overallRevenue, $historyDayCount);
         $recentDailyAverage = $this->safeAverage($recentRevenueTotal, $recentDayCount);
 
@@ -2828,6 +2922,138 @@ class DashboardController extends Controller
             ? $this->clamp($recentDailyAverage / $overallDailyAverage, 0.80, 1.20)
             : 1.0;
 
+        $rollingAverage = function (Carbon $endDate, int $days, array $amountMap): float {
+            if ($days < 1) {
+                return 0.0;
+            }
+
+            $sum = 0.0;
+            $count = 0;
+            for ($i = 0; $i < $days; $i++) {
+                $dateKey = $endDate->copy()->subDays($i)->toDateString();
+                if (!array_key_exists($dateKey, $amountMap)) {
+                    continue;
+                }
+
+                $sum += (float) $amountMap[$dateKey];
+                $count++;
+            }
+
+            return $this->safeAverage($sum, $count);
+        };
+
+        $ensembleWeights = [
+            'seasonal' => 0.5,
+            'momentum' => 0.3,
+            'smoothing' => 0.2,
+        ];
+        $ensembleValidation = [
+            'window_days' => 0,
+            'wmape' => [
+                'seasonal' => null,
+                'momentum' => null,
+                'smoothing' => null,
+                'ensemble_equal' => null,
+            ],
+            'accuracy' => [
+                'seasonal' => null,
+                'momentum' => null,
+                'smoothing' => null,
+                'ensemble_equal' => null,
+            ],
+        ];
+
+        $validationDays = min(45, max(0, $historyDayCount - 14));
+        if ($validationDays >= 14 && $overallDailyAverage > 0) {
+            $validationStart = $historyEnd->copy()->subDays($validationDays - 1)->startOfDay();
+
+            $validationAbsError = [
+                'seasonal' => 0.0,
+                'momentum' => 0.0,
+                'smoothing' => 0.0,
+                'ensemble_equal' => 0.0,
+            ];
+            $validationActualTotal = 0.0;
+            $validationCount = 0;
+
+            for ($vDate = $validationStart->copy(); $vDate->lte($historyEnd); $vDate->addDay()) {
+                $dateKey = $vDate->toDateString();
+                $actual = (float) ($historyAmountMap[$dateKey] ?? 0);
+                $previousDate = $vDate->copy()->subDay();
+
+                $weekday = $vDate->dayOfWeek;
+                $dayOfMonth = $vDate->day;
+                $monthNumber = $vDate->month;
+
+                $weekdayAverage = $this->safeAverage((float) ($weekdayStats[$weekday]['sum'] ?? 0), (int) ($weekdayStats[$weekday]['count'] ?? 0));
+                $domAverage = $this->safeAverage((float) ($domStats[$dayOfMonth]['sum'] ?? 0), (int) ($domStats[$dayOfMonth]['count'] ?? 0));
+                $monthAverage = $this->safeAverage((float) ($monthStats[$monthNumber]['sum'] ?? 0), (int) ($monthStats[$monthNumber]['count'] ?? 0));
+
+                if ($weekdayAverage <= 0) $weekdayAverage = $overallDailyAverage;
+                if ($domAverage <= 0) $domAverage = $overallDailyAverage;
+                if ($monthAverage <= 0) $monthAverage = $overallDailyAverage;
+
+                $seasonalityFactor = $overallDailyAverage > 0
+                    ? $this->clamp($monthAverage / $overallDailyAverage, 0.75, 1.25)
+                    : 1.0;
+
+                $baseline = ($weekdayAverage * 0.50) + ($domAverage * 0.30) + ($recentDailyAverage * 0.20);
+                $seasonalPrediction = max(0, $baseline * $trendFactor * $seasonalityFactor * $recencyFactor);
+
+                $rolling7 = $rollingAverage($previousDate, 7, $historyAmountMap);
+                $rolling30 = $rollingAverage($previousDate, 30, $historyAmountMap);
+                if ($rolling7 <= 0) $rolling7 = $recentDailyAverage > 0 ? $recentDailyAverage : $overallDailyAverage;
+                if ($rolling30 <= 0) $rolling30 = $overallDailyAverage;
+
+                $momentumPrediction = max(0, (($rolling7 * 0.65) + ($rolling30 * 0.35)) * $seasonalityFactor * $trendFactor);
+                $smoothingPrediction = max(0, (($rolling7 * 0.45) + ($overallDailyAverage * 0.30) + ($recentDailyAverage * 0.25)) * $recencyFactor);
+                $ensembleEqualPrediction = ($seasonalPrediction + $momentumPrediction + $smoothingPrediction) / 3;
+
+                $validationAbsError['seasonal'] += abs($actual - $seasonalPrediction);
+                $validationAbsError['momentum'] += abs($actual - $momentumPrediction);
+                $validationAbsError['smoothing'] += abs($actual - $smoothingPrediction);
+                $validationAbsError['ensemble_equal'] += abs($actual - $ensembleEqualPrediction);
+                $validationActualTotal += max($actual, 0);
+                $validationCount++;
+            }
+
+            if ($validationCount > 0 && $validationActualTotal > 0) {
+                $seasonalWmape = ($validationAbsError['seasonal'] / $validationActualTotal) * 100;
+                $momentumWmape = ($validationAbsError['momentum'] / $validationActualTotal) * 100;
+                $smoothingWmape = ($validationAbsError['smoothing'] / $validationActualTotal) * 100;
+                $ensembleEqualWmape = ($validationAbsError['ensemble_equal'] / $validationActualTotal) * 100;
+
+                $seasonalScore = 1 / max($seasonalWmape, 1.0);
+                $momentumScore = 1 / max($momentumWmape, 1.0);
+                $smoothingScore = 1 / max($smoothingWmape, 1.0);
+                $scoreTotal = $seasonalScore + $momentumScore + $smoothingScore;
+
+                if ($scoreTotal > 0) {
+                    $ensembleWeights = [
+                        'seasonal' => $seasonalScore / $scoreTotal,
+                        'momentum' => $momentumScore / $scoreTotal,
+                        'smoothing' => $smoothingScore / $scoreTotal,
+                    ];
+                }
+
+                $ensembleValidation = [
+                    'window_days' => $validationCount,
+                    'wmape' => [
+                        'seasonal' => round($seasonalWmape, 2),
+                        'momentum' => round($momentumWmape, 2),
+                        'smoothing' => round($smoothingWmape, 2),
+                        'ensemble_equal' => round($ensembleEqualWmape, 2),
+                    ],
+                    'accuracy' => [
+                        'seasonal' => round($this->clamp(100 - $seasonalWmape, 0, 100), 2),
+                        'momentum' => round($this->clamp(100 - $momentumWmape, 0, 100), 2),
+                        'smoothing' => round($this->clamp(100 - $smoothingWmape, 0, 100), 2),
+                        'ensemble_equal' => round($this->clamp(100 - $ensembleEqualWmape, 0, 100), 2),
+                    ],
+                ];
+            }
+        }
+
         $bestWeekday = 0;
         $worstWeekday = 0;
         $bestWeekdayAvg = -1;
@@ -2849,6 +3075,7 @@ class DashboardController extends Controller
         $dailyForecast = [];
         $predictedTotal = 0.0;
         $confidenceTotal = 0.0;
+        $forecastSeriesMap = $historyAmountMap;
 
         for ($cursor = $forecastStart->copy(), $offset = 0; $cursor->lte($forecastEnd); $cursor->addDay(), $offset++) {
             $weekday = $cursor->dayOfWeek;
@@ -2876,7 +3103,26 @@ class DashboardController extends Controller
                 : 1.0;
 
             $baseline = ($weekdayAverage * 0.50) + ($domAverage * 0.30) + ($recentDailyAverage * 0.20);
-            $predictedRevenue = (int) round(max(0, $baseline * $trendFactor * $seasonalityFactor * $recencyFactor));
+            $seasonalPrediction = max(0, $baseline * $trendFactor * $seasonalityFactor * $recencyFactor);
+
+            $previousDate = $cursor->copy()->subDay();
+            $rolling7 = $rollingAverage($previousDate, 7, $forecastSeriesMap);
+            $rolling30 = $rollingAverage($previousDate, 30, $forecastSeriesMap);
+            if ($rolling7 <= 0) $rolling7 = $recentDailyAverage > 0 ? $recentDailyAverage : $overallDailyAverage;
+            if ($rolling30 <= 0) $rolling30 = $overallDailyAverage;
+
+            $momentumPrediction = max(0, (($rolling7 * 0.65) + ($rolling30 * 0.35)) * $seasonalityFactor * $trendFactor);
+            $smoothingPrediction = max(0, (($rolling7 * 0.45) + ($overallDailyAverage * 0.30) + ($recentDailyAverage * 0.25)) * $recencyFactor);
+
+            $predictedRevenueRaw = (
+                ($seasonalPrediction * (float) ($ensembleWeights['seasonal'] ?? 0.5))
+                + ($momentumPrediction * (float) ($ensembleWeights['momentum'] ?? 0.3))
+                + ($smoothingPrediction * (float) ($ensembleWeights['smoothing'] ?? 0.2))
+            );
+            $predictedRevenue = (int) round(max(0, $predictedRevenueRaw));
+
+            $modelSpread = max($seasonalPrediction, $momentumPrediction, $smoothingPrediction) - min($seasonalPrediction, $momentumPrediction, $smoothingPrediction);
+            $modelSpreadRatio = $predictedRevenueRaw > 0 ? ($modelSpread / $predictedRevenueRaw) : 0.0;
 
             $weekdaySamples = (int) ($weekdayStats[$weekday]['count'] ?? 0);
             $domSamples = (int) ($domStats[$dayOfMonth]['count'] ?? 0);
@@ -2885,7 +3131,8 @@ class DashboardController extends Controller
                 + min(15, $domSamples * 0.5)
                 + min(8, $daysWithPayments / 15)
                 - min(18, $volatilityRatio * 20)
-                - min(10, $offset * 0.8);
+                - min(10, $offset * 0.8)
+                - min(12, $modelSpreadRatio * 60);
 
             if ($overallDailyAverage <= 0) {
                 $confidence = 35;
@@ -2905,8 +3152,19 @@ class DashboardController extends Controller
                     'trend_factor' => round($trendFactor, 3),
                     'seasonality_factor' => round($seasonalityFactor, 3),
                     'recency_factor' => round($recencyFactor, 3),
+                    'model_seasonal' => (int) round($seasonalPrediction),
+                    'model_momentum' => (int) round($momentumPrediction),
+                    'model_smoothing' => (int) round($smoothingPrediction),
+                    'model_spread_ratio' => round($modelSpreadRatio * 100, 2),
+                    'ensemble_weights' => [
+                        'seasonal' => round((float) ($ensembleWeights['seasonal'] ?? 0), 4),
+                        'momentum' => round((float) ($ensembleWeights['momentum'] ?? 0), 4),
+                        'smoothing' => round((float) ($ensembleWeights['smoothing'] ?? 0), 4),
+                    ],
                 ],
             ];
+
+            $forecastSeriesMap[$cursor->toDateString()] = (float) $predictedRevenue;
 
             $predictedTotal += $predictedRevenue;
             $confidenceTotal += $confidence;
@@ -2919,7 +3177,10 @@ class DashboardController extends Controller
         if ($historicalInvoiceCount === 0) {
             $analysisNotes[] = 'Data invoice paid historis belum tersedia, sehingga prediksi masih konservatif.';
         } else {
-            $analysisNotes[] = 'Model memadukan pola hari (mingguan), tanggal, tren 6 bulan, dan faktor seasonality bulanan.';
+            $analysisNotes[] = 'Model prediksi memakai ensemble adaptif: seasonal, momentum (moving average), dan smoothing.';
+            if (($ensembleValidation['window_days'] ?? 0) > 0) {
+                $analysisNotes[] = 'Kalibrasi bobot otomatis berdasarkan backtest ' . (int) ($ensembleValidation['window_days'] ?? 0) . ' hari terakhir (WMAPE seasonal ' . number_format((float) ($ensembleValidation['wmape']['seasonal'] ?? 0), 1) . '%, momentum ' . number_format((float) ($ensembleValidation['wmape']['momentum'] ?? 0), 1) . '%, smoothing ' . number_format((float) ($ensembleValidation['wmape']['smoothing'] ?? 0), 1) . '%).';
+            }
             $analysisNotes[] = 'Tren 6 bulan terakhir ' . ($trendPercentage >= 0 ? 'naik' : 'turun') . ' sekitar ' . number_format(abs($trendPercentage), 1) . '%.';
             $analysisNotes[] = 'Hari terkuat historis: ' . $this->getWeekdayName($bestWeekday) . ' (rata-rata Rp ' . number_format((int) round(max($bestWeekdayAvg, 0)), 0, ',', '.') . ').';
         }
@@ -2951,6 +3212,12 @@ class DashboardController extends Controller
                 'best_weekday_average' => (int) round(max($bestWeekdayAvg, 0)),
                 'worst_weekday' => $this->getWeekdayName($worstWeekday),
                 'worst_weekday_average' => (int) round(max($worstWeekdayAvg, 0)),
+                'ensemble_weights' => [
+                    'seasonal' => round((float) ($ensembleWeights['seasonal'] ?? 0), 4),
+                    'momentum' => round((float) ($ensembleWeights['momentum'] ?? 0), 4),
+                    'smoothing' => round((float) ($ensembleWeights['smoothing'] ?? 0), 4),
+                ],
+                'validation' => $ensembleValidation,
                 'analysis_notes' => $analysisNotes,
             ],
             'historical_context' => [

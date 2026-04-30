@@ -307,6 +307,8 @@ class BillingController extends Controller
     {
         $today = Carbon::today();
         $almostLateEndDate = $today->copy()->addDays(self::ALMOST_LATE_DAYS);
+        $startOfMonth = $today->copy()->startOfMonth();
+        $endOfMonth = $today->copy()->endOfMonth();
         $includeIsolationStatus = request()->boolean('include_isolation_status', true);
         $query = Customer::query();
         
@@ -320,6 +322,15 @@ class BillingController extends Controller
         }
         
         $customers = $query->with('latestInvoice')->get();
+        $paidThisMonthMap = Invoice::query()
+            ->where('status', 'paid')
+            ->whereNotNull('paid_at')
+            ->whereBetween('paid_at', [$startOfMonth, $endOfMonth])
+            ->pluck('customer_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->flip()
+            ->all();
 
         // Categorize customers
         $late = [];
@@ -329,13 +340,23 @@ class BillingController extends Controller
 
         foreach ($customers as $customer) {
             $invoice = $customer->latestInvoice;
-            $item = ['customer' => $customer, 'invoice' => $invoice];
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
             $isAlmostLate = $dueDate && $dueDate->gte($today) && $dueDate->lte($almostLateEndDate);
+            $invoiceStatus = strtolower(trim((string) ($invoice?->status ?? '')));
+            $hasPaidThisMonth = isset($paidThisMonthMap[(int) $customer->id]);
+            $canCreateInvoice = !$invoice
+                || ($isAlmostLate && ($hasPaidThisMonth || in_array($invoiceStatus, ['paid', 'cancelled'], true)));
+
+            $item = [
+                'customer' => $customer,
+                'invoice' => $invoice,
+                'can_create_invoice' => $canCreateInvoice,
+                'has_paid_this_month' => $hasPaidThisMonth,
+            ];
             
             // Pelanggan yang sudah bayar tetap ditampilkan saat memasuki periode hampir jatuh tempo.
-            if ($invoice && $invoice->status === 'paid' && !$isAlmostLate) {
+            if ($invoiceStatus === 'paid' && !$isAlmostLate) {
                 $paid[] = $item;
                 continue;
             }

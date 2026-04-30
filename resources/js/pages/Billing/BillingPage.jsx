@@ -628,16 +628,19 @@ Tim Layanan Pelanggan Rumah Kita Net`;
 
     const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer, isAlmostLateCustomer }) => {
         const { customer, invoice } = item;
-        const canCreateInvoice = !invoice || (isAlmostLateCustomer && invoice.status === 'paid');
+        const normalizedInvoiceStatus = (invoice?.status || '').toString().trim().toLowerCase();
+        const canCreateInvoice = typeof item?.can_create_invoice === 'boolean'
+            ? item.can_create_invoice
+            : (!invoice || (isAlmostLateCustomer && normalizedInvoiceStatus === 'paid'));
         
         const getStatusBadge = () => {
             if (!invoice) {
                 return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan</span>;
             }
-            if (invoice.status === 'paid') {
+            if (normalizedInvoiceStatus === 'paid') {
                 return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
             }
-            if (invoice.status === 'menunggu konfirmasi') {
+            if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
                 return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
             }
             return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
@@ -705,7 +708,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         )}
                         {invoice && (
                             <>
-                                {invoice.status !== 'paid' && (
+                                {normalizedInvoiceStatus !== 'paid' && (
                                     <>
                                         <Button
                                             size="sm"
@@ -752,7 +755,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                         <span className="hidden sm:inline">Nominal</span>
                                     </Button>
                                 )}
-                                {invoice.status === 'menunggu konfirmasi' && invoice.bukti_pembayaran && (
+                                {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoice.bukti_pembayaran && (
                                     <Button
                                         size="sm"
                                         variant="danger"

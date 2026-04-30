@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch, FileText } from 'lucide-react';
+import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch, FileText, Brain } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 // Role-based access: which roles can see each menu
 const ACCESS = {
     dashboard: ['superadmin', 'admin', 'teknisi', 'finance'],
+    dashboardPrediction: ['superadmin', 'admin', 'finance'],
     penagihan: ['superadmin', 'admin', 'finance'],
     pelanggan: ['superadmin', 'admin', 'teknisi'],
     verifikasi: ['superadmin', 'admin', 'teknisi'],
@@ -76,6 +77,7 @@ export function Navbar() {
 
     const isActive = (path) => {
         if (path === '/dashboard') return location.pathname === '/dashboard';
+        if (path === '/dashboard/prediksi') return location.pathname === '/dashboard/prediksi';
         if (path === '/customers') return location.pathname === '/customers';
         if (path === '/customers/create') return location.pathname === '/customers/create';
         if (path === '/odp') return location.pathname.startsWith('/odp');
@@ -128,6 +130,12 @@ export function Navbar() {
                             <Link to="/dashboard" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/dashboard') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-4 7 4M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
                                 <span>Dashboard</span>
+                            </Link>
+                        )}
+                        {can('dashboardPrediction') && (
+                            <Link to="/dashboard/prediksi" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/dashboard/prediksi') ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-gray-700 hover:text-indigo-600 hover:bg-gray-50'}`}>
+                                <Brain size={18} />
+                                <span>Prediksi</span>
                             </Link>
                         )}
                         {can('penagihan') && (
@@ -325,6 +333,12 @@ export function Navbar() {
                             <Link to="/dashboard" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/dashboard') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-4 7 4M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
                                 <span>Dashboard</span>
+                            </Link>
+                        )}
+                        {can('dashboardPrediction') && (
+                            <Link to="/dashboard/prediksi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/dashboard/prediksi') ? 'text-indigo-600 bg-indigo-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                <Brain size={20} />
+                                <span>Prediksi</span>
                             </Link>
                         )}
                         {can('penagihan') && (

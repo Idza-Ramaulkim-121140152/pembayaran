@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/layouts/Navbar';
 import Dashboard from './pages/Dashboard';
+import DashboardPredictionPage from './pages/DashboardPredictionPage';
 import CustomersPage from './pages/Customers/CustomersPage';
 import CustomerForm from './pages/Customers/CustomerForm';
 import OdpPage from './pages/Odp/OdpPage';
@@ -72,6 +73,7 @@ function App() {
                     
                     {/* Dashboard */}
                     <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/dashboard/prediksi" element={<DashboardPredictionPage />} />
                     
                     {/* Billing/Penagihan */}
                     <Route path="/penagihan" element={<BillingPage />} />

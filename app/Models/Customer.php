@@ -73,10 +73,7 @@ class Customer extends Model
 
     public function latestInvoice()
     {
-        return $this->hasOne(\App\Models\Invoice::class)->ofMany([
-            'invoice_date' => 'max',
-            'id' => 'max',
-        ]);
+        return $this->hasOne(\App\Models\Invoice::class)->latestOfMany('id');
     }
 
     public function complaints()
