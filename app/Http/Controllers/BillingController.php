@@ -187,7 +187,7 @@ class BillingController extends Controller
         } elseif ($sort === 'due_desc') {
             $query->orderBy('due_date', 'desc');
         }
-        $customers = $query->get();
+        $customers = $query->with('latestInvoice')->get();
 
         $late = $customers->filter(function($c) use ($today) {
             return $c->due_date && Carbon::parse($c->due_date)->lt($today);
@@ -201,21 +201,18 @@ class BillingController extends Controller
             return !$late->contains($c) && !$almostLate->contains($c);
         });
 
-        // Ambil invoice bulan ini untuk setiap customer (map by id)
-        $currentMonth = $today->format('Y-m');
-        $invoicesThisMonth = [];
+        // Simpan invoice terbaru lintas bulan agar tidak hilang saat pergantian bulan.
+        $latestInvoices = [];
         foreach ($customers as $customer) {
-            $invoice = $customer->invoices()
-                ->whereRaw("DATE_FORMAT(invoice_date, '%Y-%m') = ?", [$currentMonth])
-                ->latest('invoice_date')->first();
-            $invoicesThisMonth[$customer->id] = $invoice;
+            $latestInvoices[$customer->id] = $customer->latestInvoice;
         }
 
         return view('billing.index', [
             'late' => $late,
             'almostLate' => $almostLate,
             'others' => $others,
-            'invoicesThisMonth' => $invoicesThisMonth,
+            'invoicesThisMonth' => $latestInvoices,
+            'latestInvoices' => $latestInvoices,
         ]);
     }
 
@@ -310,7 +307,6 @@ class BillingController extends Controller
     {
         $today = Carbon::today();
         $almostLateEndDate = $today->copy()->addDays(self::ALMOST_LATE_DAYS);
-        $currentMonth = $today->format('Y-m');
         $includeIsolationStatus = request()->boolean('include_isolation_status', true);
         $query = Customer::query();
         
@@ -323,16 +319,7 @@ class BillingController extends Controller
             });
         }
         
-        $customers = $query->with(['invoices' => function($q) use ($currentMonth) {
-            $q->whereRaw("DATE_FORMAT(invoice_date, '%Y-%m') = ?", [$currentMonth])
-              ->latest('invoice_date');
-        }])->get();
-
-        // Get invoices for current month (from eager-loaded data)
-        $invoicesThisMonth = [];
-        foreach ($customers as $customer) {
-            $invoicesThisMonth[$customer->id] = $customer->invoices->first();
-        }
+        $customers = $query->with('latestInvoice')->get();
 
         // Categorize customers
         $late = [];
@@ -341,7 +328,7 @@ class BillingController extends Controller
         $paid = [];
 
         foreach ($customers as $customer) {
-            $invoice = $invoicesThisMonth[$customer->id] ?? null;
+            $invoice = $customer->latestInvoice;
             $item = ['customer' => $customer, 'invoice' => $invoice];
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);

@@ -614,6 +614,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                             isolationStatus={isolationStatus[item.customer.id]}
                                             loadingIsolationStatus={loadingIsolationStatus}
                                             isLateCustomer={title === "Pelanggan Telat"}
+                                            isAlmostLateCustomer={title === "Pelanggan Hampir Telat (H-5)"}
                                         />
                                     ))
                                 )}
@@ -625,8 +626,9 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         );
     };
 
-    const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer }) => {
+    const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer, isAlmostLateCustomer }) => {
         const { customer, invoice } = item;
+        const canCreateInvoice = !invoice || (isAlmostLateCustomer && invoice.status === 'paid');
         
         const getStatusBadge = () => {
             if (!invoice) {
@@ -690,7 +692,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <td className="px-4 py-3">{getStatusBadge()}</td>
                 <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
-                        {!invoice ? (
+                        {canCreateInvoice && (
                             <Button
                                 size="sm"
                                 variant="primary"
@@ -700,7 +702,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <span className="hidden sm:inline">Buat Tagihan</span>
                                 <span className="sm:hidden">Buat</span>
                             </Button>
-                        ) : (
+                        )}
+                        {invoice && (
                             <>
                                 {invoice.status !== 'paid' && (
                                     <>
