@@ -237,7 +237,8 @@ class DashboardController extends Controller
         $monthlyExpense = null;
         $monthlyNet = null;
         $pendingInvoices = null;
-        $revenueByMonth = [];
+        $incomeByMonth = array_fill(0, 6, 0);
+        $expenseByMonth = array_fill(0, 6, 0);
         $monthlyFinance = null;
         $financeSummary = null;
 
@@ -245,24 +246,24 @@ class DashboardController extends Controller
             $ledgerService = app(FinancialLedgerService::class);
             $financeSummary = $ledgerService->getSummary();
 
-            $monthlyRevenue = \App\Models\Invoice::whereBetween('paid_at', [$startOfMonth, $endOfMonth])
-                ->where('status', 'paid')
-                ->sum('amount');
-
-            $monthlyIncomeForComparison = (float) $monthlyRevenue;
+            $monthlyRevenue = 0.0;
+            $monthlyIncomeForComparison = 0.0;
             $monthlyExpenseForComparison = 0.0;
             $monthlyAdjustmentForComparison = 0.0;
 
             $lastMonthStart = $startOfMonth->copy()->subMonthNoOverflow()->startOfMonth();
             $lastMonthEnd = $startOfMonth->copy()->subMonthNoOverflow()->endOfMonth();
 
-            $lastMonthIncomeForComparison = (float) Invoice::whereBetween('paid_at', [$lastMonthStart, $lastMonthEnd])
-                ->where('status', 'paid')
-                ->sum('amount');
+            $lastMonthIncomeForComparison = 0.0;
             $lastMonthExpenseForComparison = 0.0;
             $lastMonthAdjustmentForComparison = 0.0;
 
             if ($this->isLedgerReady()) {
+                $monthlyRevenue = (float) FinancialTransaction::query()
+                    ->where('type', 'income')
+                    ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                    ->sum('amount');
+
                 $monthlyIncomeForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'income')
                     ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
@@ -292,6 +293,48 @@ class DashboardController extends Controller
                     ->where('type', 'adjustment')
                     ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
                     ->sum('amount');
+
+                $lastMonthIncomeForComparison = (float) FinancialTransaction::query()
+                    ->where('type', 'income')
+                    ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
+                    ->sum('amount');
+
+                for ($i = 5; $i >= 0; $i--) {
+                    $month = $now->copy()->startOfMonth()->subMonths($i);
+                    $start = $month->copy()->startOfMonth();
+                    $end = $month->copy()->endOfMonth();
+
+                    $incomeByMonth[5 - $i] = (int) round((float) FinancialTransaction::query()
+                        ->where('type', 'income')
+                        ->whereBetween('transaction_date', [$start->toDateString(), $end->toDateString()])
+                        ->sum('amount'));
+
+                    $expenseByMonth[5 - $i] = (int) round((float) FinancialTransaction::query()
+                        ->where('type', 'expense')
+                        ->whereBetween('transaction_date', [$start->toDateString(), $end->toDateString()])
+                        ->sum('amount'));
+                }
+            } else {
+                $monthlyRevenue = (float) Invoice::whereBetween('paid_at', [$startOfMonth, $endOfMonth])
+                    ->where('status', 'paid')
+                    ->sum('amount');
+
+                $monthlyIncomeForComparison = (float) $monthlyRevenue;
+                $lastMonthIncomeForComparison = (float) Invoice::whereBetween('paid_at', [$lastMonthStart, $lastMonthEnd])
+                    ->where('status', 'paid')
+                    ->sum('amount');
+
+                for ($i = 5; $i >= 0; $i--) {
+                    $month = $now->copy()->startOfMonth()->subMonths($i);
+                    $start = $month->copy()->startOfMonth();
+                    $end = $month->copy()->endOfMonth();
+
+                    $incomeByMonth[5 - $i] = (int) round((float) Invoice::whereBetween('paid_at', [$start, $end])
+                        ->where('status', 'paid')
+                        ->sum('amount'));
+
+                    $expenseByMonth[5 - $i] = 0;
+                }
             }
 
             $monthlyExpense = $monthlyExpenseForComparison;
@@ -328,16 +371,6 @@ class DashboardController extends Controller
                 ->where('due_date', '<', $today)
                 ->count();
 
-            // Revenue untuk 6 bulan terakhir
-            for ($i = 5; $i >= 0; $i--) {
-                $month = $now->copy()->startOfMonth()->subMonths($i);
-                $start = $month->copy()->startOfMonth();
-                $end = $month->copy()->endOfMonth();
-                $revenue = \App\Models\Invoice::whereBetween('paid_at', [$start, $end])
-                    ->where('status', 'paid')
-                    ->sum('amount');
-                $revenueByMonth[] = (int) $revenue;
-            }
         }
 
         $recentCustomers = \App\Models\Customer::latest()->take(5)->get(['id', 'name', 'email', 'is_active']);
@@ -398,7 +431,9 @@ class DashboardController extends Controller
             $payload['monthly_expense'] = $monthlyExpense;
             $payload['monthly_net'] = $monthlyNet;
             $payload['pending_invoices'] = $pendingInvoices;
-            $payload['revenue_by_month'] = $revenueByMonth;
+            $payload['revenue_by_month'] = $incomeByMonth;
+            $payload['income_by_month'] = $incomeByMonth;
+            $payload['expense_by_month'] = $expenseByMonth;
             $payload['monthly_finance'] = $monthlyFinance;
             $payload['finance_summary'] = $financeSummary;
         }
@@ -537,6 +572,45 @@ class DashboardController extends Controller
 
         return response()->json([
             'data' => $projectionData,
+        ]);
+    }
+
+    public function ispIntelligence(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin melihat data prediksi ISP.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+        ]);
+
+        $startDate = isset($validated['start_date'])
+            ? Carbon::parse($validated['start_date'])->startOfDay()
+            : Carbon::today()->subDays(29)->startOfDay();
+
+        $endDate = isset($validated['end_date'])
+            ? Carbon::parse($validated['end_date'])->endOfDay()
+            : Carbon::today()->endOfDay();
+
+        if ($startDate->gt($endDate)) {
+            return response()->json([
+                'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir.',
+            ], 422);
+        }
+
+        $totalDays = $startDate->copy()->startOfDay()->diffInDays($endDate->copy()->startOfDay()) + 1;
+        if ($totalDays > 180) {
+            return response()->json([
+                'message' => 'Rentang intelijen ISP maksimal 180 hari.',
+            ], 422);
+        }
+
+        return response()->json([
+            'data' => $this->buildIspIntelligence($startDate, $endDate),
         ]);
     }
 
@@ -950,6 +1024,439 @@ class DashboardController extends Controller
         }
 
         return $payload;
+    }
+
+    private function buildIspIntelligence(Carbon $startDate, Carbon $endDate): array
+    {
+        $windowStart = $startDate->copy()->startOfDay();
+        $windowEnd = $endDate->copy()->endOfDay();
+        $periodDays = $windowStart->diffInDays($windowEnd->copy()->startOfDay()) + 1;
+
+        $previousStart = $windowStart->copy()->subDays($periodDays);
+        $previousEnd = $windowStart->copy()->subDay()->endOfDay();
+        $asOfDate = Carbon::today()->startOfDay();
+
+        $isolatedUsernameMap = $this->fetchIsolatedUsernameMap();
+        $activity = $this->buildCustomerActivitySummary($asOfDate->copy(), $isolatedUsernameMap);
+
+        $activeUsernames = array_fill_keys($activity['active_usernames'] ?? [], true);
+        $activeCustomerCount = (int) ($activity['active_customers'] ?? 0);
+        $totalCustomerCount = (int) ($activity['total_customers'] ?? 0);
+        $isolatedCustomerCount = (int) ($activity['isolated_customers'] ?? 0);
+        $overdueCustomerCount = (int) ($activity['overdue_customers'] ?? 0);
+
+        $mikrotikIdentity = null;
+        $mikrotikSystemResources = null;
+        $mikrotikInterfaces = [];
+        $mikrotikConnections = [];
+        $mikrotikAvailable = false;
+        $mikrotikError = null;
+
+        try {
+            $mikrotik = new \App\Services\MikroTikService();
+            $mikrotikIdentity = $mikrotik->getIdentity();
+            $mikrotikSystemResources = $mikrotik->getSystemResources();
+            $mikrotikInterfaces = $mikrotik->getInterfaces(true);
+            $mikrotikConnections = $mikrotik->getActivePPPoEConnections();
+            $mikrotikAvailable = true;
+        } catch (\Throwable $e) {
+            $mikrotikError = $e->getMessage();
+            \Log::warning('Failed to build ISP intelligence from MikroTik', [
+                'error' => $mikrotikError,
+            ]);
+        }
+
+        $matchedActiveSessions = 0;
+        $unmatchedActiveSessions = 0;
+        foreach ($mikrotikConnections as $connection) {
+            $username = strtolower(trim((string) ($connection['name'] ?? '')));
+            if ($username !== '' && isset($activeUsernames[$username])) {
+                $matchedActiveSessions++;
+            } else {
+                $unmatchedActiveSessions++;
+            }
+        }
+
+        $offlineActiveCustomers = max(0, $activeCustomerCount - $matchedActiveSessions);
+        $onlineRatio = $activeCustomerCount > 0
+            ? round(($matchedActiveSessions / $activeCustomerCount) * 100, 2)
+            : 0.0;
+        $networkInstabilityRatio = $activeCustomerCount > 0
+            ? ($offlineActiveCustomers / $activeCustomerCount)
+            : 0.0;
+
+        $cpuLoad = is_numeric($mikrotikSystemResources['cpu_load'] ?? null)
+            ? (float) $mikrotikSystemResources['cpu_load']
+            : 0.0;
+        $totalMemory = is_numeric($mikrotikSystemResources['total_memory'] ?? null)
+            ? (float) $mikrotikSystemResources['total_memory']
+            : 0.0;
+        $freeMemory = is_numeric($mikrotikSystemResources['free_memory'] ?? null)
+            ? (float) $mikrotikSystemResources['free_memory']
+            : 0.0;
+        $memoryUsageRatio = $totalMemory > 0
+            ? round((1 - ($freeMemory / $totalMemory)) * 100, 2)
+            : null;
+
+        $interfacesTotal = count($mikrotikInterfaces);
+        $interfacesRunning = count(array_filter($mikrotikInterfaces, function ($item) {
+            return ($item['running'] ?? false) === true && ($item['disabled'] ?? false) !== true;
+        }));
+
+        $complaintsTotal = 0;
+        $complaintsOpen = 0;
+        $complaintsHigh = 0;
+        $complaintsGangguan = 0;
+        $previousComplaintsTotal = 0;
+        if ($this->isComplaintsReady()) {
+            $complaintsTotal = (int) Complaint::query()
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->count();
+
+            $complaintsOpen = (int) Complaint::query()
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->whereIn('status', ['pending', 'in_progress'])
+                ->count();
+
+            $complaintsHigh = (int) Complaint::query()
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->where('priority', 'high')
+                ->count();
+
+            $complaintsGangguan = (int) Complaint::query()
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->where('category', 'gangguan')
+                ->count();
+
+            $previousComplaintsTotal = (int) Complaint::query()
+                ->whereBetween('created_at', [$previousStart->copy(), $previousEnd->copy()])
+                ->count();
+        }
+
+        $complaintGrowthRate = round($this->calculateChangePercentage((float) $complaintsTotal, (float) $previousComplaintsTotal), 2);
+        $dailyComplaintBaseline = round($this->safeAverage((float) $complaintsTotal, $periodDays), 2);
+        $dailyHighComplaintBaseline = round($this->safeAverage((float) $complaintsHigh, $periodDays), 2);
+
+        $ongoingGangguanNotices = 0;
+        $ongoingMassGangguanNotices = 0;
+        $periodGangguanNotices = 0;
+        $periodCriticalNotices = 0;
+        if ($this->isNetworkNoticesReady()) {
+            $ongoingGangguanNotices = (int) NetworkNotice::query()
+                ->active()
+                ->ongoing()
+                ->gangguan()
+                ->count();
+
+            $ongoingMassGangguanNotices = (int) NetworkNotice::query()
+                ->active()
+                ->ongoing()
+                ->gangguan()
+                ->mass()
+                ->count();
+
+            $periodGangguanNotices = (int) NetworkNotice::query()
+                ->where('type', 'gangguan')
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->count();
+
+            $periodCriticalNotices = (int) NetworkNotice::query()
+                ->where('type', 'gangguan')
+                ->whereIn('severity', ['high', 'critical'])
+                ->whereBetween('created_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->count();
+        }
+
+        $incomeCurrentPeriod = 0.0;
+        $expenseCurrentPeriod = 0.0;
+        $adjustmentCurrentPeriod = 0.0;
+        $incomePreviousPeriod = 0.0;
+        $expensePreviousPeriod = 0.0;
+        $adjustmentPreviousPeriod = 0.0;
+        $financeSource = 'invoice_paid_fallback';
+
+        if ($this->isLedgerReady()) {
+            $financeSource = 'financial_transactions';
+
+            $incomeCurrentPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'income')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$windowStart->toDateString(), $windowEnd->toDateString()])
+                ->sum('amount');
+
+            $expenseCurrentPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'expense')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$windowStart->toDateString(), $windowEnd->toDateString()])
+                ->sum('amount');
+
+            $adjustmentCurrentPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'adjustment')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$windowStart->toDateString(), $windowEnd->toDateString()])
+                ->sum('amount');
+
+            $incomePreviousPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'income')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$previousStart->toDateString(), $previousEnd->toDateString()])
+                ->sum('amount');
+
+            $expensePreviousPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'expense')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$previousStart->toDateString(), $previousEnd->toDateString()])
+                ->sum('amount');
+
+            $adjustmentPreviousPeriod = (float) FinancialTransaction::query()
+                ->where('type', 'adjustment')
+                ->where('source', '!=', 'mandatory_target_execution')
+                ->whereBetween('transaction_date', [$previousStart->toDateString(), $previousEnd->toDateString()])
+                ->sum('amount');
+        } else {
+            $incomeCurrentPeriod = (float) Invoice::query()
+                ->where('status', 'paid')
+                ->whereNotNull('paid_at')
+                ->whereBetween('paid_at', [$windowStart->copy(), $windowEnd->copy()])
+                ->sum('amount');
+
+            $incomePreviousPeriod = (float) Invoice::query()
+                ->where('status', 'paid')
+                ->whereNotNull('paid_at')
+                ->whereBetween('paid_at', [$previousStart->copy(), $previousEnd->copy()])
+                ->sum('amount');
+        }
+
+        $netCurrentPeriod = $incomeCurrentPeriod - $expenseCurrentPeriod + $adjustmentCurrentPeriod;
+        $netPreviousPeriod = $incomePreviousPeriod - $expensePreviousPeriod + $adjustmentPreviousPeriod;
+        $incomeGrowthRate = round($this->calculateChangePercentage($incomeCurrentPeriod, $incomePreviousPeriod), 2);
+        $netGrowthRate = round($this->calculateChangePercentage($netCurrentPeriod, $netPreviousPeriod), 2);
+
+        $collectionMetrics = $this->computeCollectionMetrics($windowStart->copy(), $windowEnd->copy());
+        $collectionRate = (float) ($collectionMetrics['collection_rate'] ?? 0);
+
+        $openInvoiceQuery = Invoice::query()
+            ->whereNotIn('status', ['paid', 'cancelled']);
+
+        $openInvoiceAmount = (float) (clone $openInvoiceQuery)->sum('amount');
+        $openInvoiceCount = (int) (clone $openInvoiceQuery)->count();
+        $overdueInvoiceAmount = (float) (clone $openInvoiceQuery)
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<', $asOfDate->toDateString())
+            ->sum('amount');
+        $overdueInvoiceCount = (int) (clone $openInvoiceQuery)
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<', $asOfDate->toDateString())
+            ->count();
+
+        $dueNext7EndDate = $asOfDate->copy()->addDays(6)->toDateString();
+        $dueNext7Amount = (float) (clone $openInvoiceQuery)
+            ->whereNotNull('due_date')
+            ->whereBetween('due_date', [$asOfDate->toDateString(), $dueNext7EndDate])
+            ->sum('amount');
+
+        $forecastNext7 = $this->buildRevenueForecast(
+            $asOfDate->copy()->startOfDay(),
+            $asOfDate->copy()->addDays(6)->endOfDay()
+        );
+        $predictedRevenueNext7 = (float) ($forecastNext7['summary']['predicted_total_revenue'] ?? 0);
+        $forecastConfidence = (float) ($forecastNext7['summary']['average_confidence'] ?? 0);
+
+        $customerHealth = $this->buildCustomerHealthScoreMetrics(
+            $windowStart->copy()->startOfDay(),
+            $windowEnd->copy()->endOfDay(),
+            $isolatedUsernameMap
+        );
+        $customerHealthSummary = is_array($customerHealth['summary'] ?? null) ? $customerHealth['summary'] : [];
+        $averageHealthScore = (float) ($customerHealthSummary['average_health_score'] ?? 0);
+
+        $disturbancePressure = ($ongoingGangguanNotices * 1.2)
+            + ($ongoingMassGangguanNotices * 2.5)
+            + ($periodCriticalNotices * 0.15);
+        $complaintPressure = ($dailyComplaintBaseline * 0.65) + ($dailyHighComplaintBaseline * 0.85);
+
+        $ticketMultiplier = 1
+            + min(1.4, ($disturbancePressure / 10))
+            + min(0.8, ($networkInstabilityRatio * 2.2));
+
+        $predictedTicketsNext7 = (int) round(max(0, ($dailyComplaintBaseline * 7) * $ticketMultiplier));
+        $predictedHighPriorityTicketsNext7 = (int) round(max(
+            0,
+            ($dailyHighComplaintBaseline * 7) * (1 + min(1.1, ($disturbancePressure / 12)))
+        ));
+        $recommendedDailyTicketCapacity = (int) max(1, ceil($predictedTicketsNext7 / 7));
+
+        $networkScoreRaw = 100.0
+            - max(0, 95 - $onlineRatio) * 1.8
+            - min(24, $ongoingGangguanNotices * 4.0)
+            - min(20, $ongoingMassGangguanNotices * 8.0)
+            - min(14, $disturbancePressure * 1.5)
+            - min(18, max(0, $cpuLoad - 70) * 0.7)
+            - min(10, $networkInstabilityRatio * 100 * 0.2);
+        $networkScore = (int) round($this->clamp($networkScoreRaw, 0, 100));
+
+        $overdueExposureRatio = $openInvoiceAmount > 0
+            ? ($overdueInvoiceAmount / $openInvoiceAmount) * 100
+            : 0.0;
+        $cashStressRatio = $incomeCurrentPeriod > 0 && $netCurrentPeriod < 0
+            ? (abs($netCurrentPeriod) / $incomeCurrentPeriod) * 100
+            : 0.0;
+
+        $financeScoreRaw = 100.0
+            - max(0, 85 - $collectionRate) * 0.9
+            - min(20, $overdueExposureRatio * 0.35)
+            - min(18, $cashStressRatio * 0.55)
+            + ($incomeGrowthRate >= 0 ? min(8, $incomeGrowthRate * 0.2) : -min(10, abs($incomeGrowthRate) * 0.25));
+        $financeScore = (int) round($this->clamp($financeScoreRaw, 0, 100));
+
+        $isolationRatio = $totalCustomerCount > 0
+            ? ($isolatedCustomerCount / $totalCustomerCount) * 100
+            : 0.0;
+        $serviceScoreRaw = ($averageHealthScore * 0.60)
+            + ((100 - min(100, $dailyComplaintBaseline * 8)) * 0.22)
+            + ((100 - min(100, $isolationRatio * 2.2)) * 0.18);
+        $serviceScore = (int) round($this->clamp($serviceScoreRaw, 0, 100));
+
+        $ispOperationalScore = (int) round($this->clamp(
+            ($networkScore * 0.38) + ($financeScore * 0.34) + ($serviceScore * 0.28),
+            0,
+            100
+        ));
+
+        $networkRiskStatus = $networkScore >= 80 ? 'aman' : ($networkScore >= 60 ? 'waspada' : 'kritis');
+        $financeRiskStatus = $financeScore >= 80 ? 'aman' : ($financeScore >= 60 ? 'waspada' : 'kritis');
+        $serviceRiskStatus = $serviceScore >= 80 ? 'aman' : ($serviceScore >= 60 ? 'waspada' : 'kritis');
+
+        $recommendations = [];
+        if ($onlineRatio < 92) {
+            $recommendations[] = 'Rasio online pelanggan aktif masih di bawah 92%. Prioritaskan inspeksi jaringan untuk pelanggan aktif yang offline.';
+        }
+        if ($cpuLoad >= 80) {
+            $recommendations[] = 'CPU router tinggi. Jadwalkan balancing trafik dan audit rule/filter untuk mencegah bottleneck jam sibuk.';
+        }
+        if ($ongoingMassGangguanNotices > 0) {
+            $recommendations[] = 'Terdapat gangguan massal aktif. Aktifkan pola komunikasi proaktif ke pelanggan area terdampak untuk menekan aduan berulang.';
+        }
+        if ($collectionRate < 85) {
+            $recommendations[] = 'Collection rate periode ini rendah. Jalankan reminder berjenjang H-5, H-3, H-1, dan pasca jatuh tempo dengan prioritas pelanggan overdue.';
+        }
+        if ($overdueExposureRatio >= 35) {
+            $recommendations[] = 'Eksposur piutang overdue tinggi terhadap total tagihan terbuka. Batasi pengeluaran diskresioner hingga overdue turun.';
+        }
+        if ($predictedHighPriorityTicketsNext7 >= 8) {
+            $recommendations[] = 'Prediksi tiket prioritas tinggi 7 hari ke depan cukup besar. Siapkan kapasitas eskalasi tim teknis dan stok material gangguan.';
+        }
+        if ($recommendedDailyTicketCapacity >= 12) {
+            $recommendations[] = 'Kapasitas aduan harian disarankan minimal ' . $recommendedDailyTicketCapacity . ' tiket/hari. Evaluasi distribusi shift support lapangan.';
+        }
+        if (count($recommendations) === 0) {
+            $recommendations[] = 'Kondisi operasional ISP relatif stabil. Pertahankan disiplin monitoring jaringan dan kontrol kas mingguan.';
+        }
+
+        $riskMatrix = [
+            [
+                'key' => 'network',
+                'label' => 'Jaringan & Infrastruktur',
+                'score' => $networkScore,
+                'status' => $networkRiskStatus,
+                'reason' => 'Online ratio ' . number_format($onlineRatio, 1) . '%, CPU ' . number_format($cpuLoad, 1) . '%, gangguan aktif ' . $ongoingGangguanNotices . '.',
+            ],
+            [
+                'key' => 'finance',
+                'label' => 'Arus Kas & Piutang',
+                'score' => $financeScore,
+                'status' => $financeRiskStatus,
+                'reason' => 'Collection ' . number_format($collectionRate, 1) . '%, overdue exposure ' . number_format($overdueExposureRatio, 1) . '%.',
+            ],
+            [
+                'key' => 'service',
+                'label' => 'Kualitas Layanan',
+                'score' => $serviceScore,
+                'status' => $serviceRiskStatus,
+                'reason' => 'Health score pelanggan ' . number_format($averageHealthScore, 1) . ', baseline aduan ' . number_format($dailyComplaintBaseline, 2) . '/hari.',
+            ],
+        ];
+
+        return [
+            'range' => [
+                'start_date' => $windowStart->toDateString(),
+                'end_date' => $windowEnd->toDateString(),
+                'days' => $periodDays,
+            ],
+            'summary' => [
+                'isp_operational_score' => $ispOperationalScore,
+                'network_readiness_score' => $networkScore,
+                'finance_readiness_score' => $financeScore,
+                'service_readiness_score' => $serviceScore,
+                'active_customers' => $activeCustomerCount,
+                'online_active_customers' => $matchedActiveSessions,
+                'offline_active_customers' => $offlineActiveCustomers,
+                'online_ratio' => $onlineRatio,
+                'isolated_customers' => $isolatedCustomerCount,
+                'overdue_customers' => $overdueCustomerCount,
+                'predicted_income_next_7d' => (int) round($predictedRevenueNext7),
+                'predicted_tickets_next_7d' => $predictedTicketsNext7,
+                'predicted_high_priority_tickets_next_7d' => $predictedHighPriorityTicketsNext7,
+                'recommended_daily_ticket_capacity' => $recommendedDailyTicketCapacity,
+                'open_invoice_amount' => (int) round($openInvoiceAmount),
+                'overdue_invoice_amount' => (int) round($overdueInvoiceAmount),
+                'due_next_7d_amount' => (int) round($dueNext7Amount),
+                'collection_rate' => round($collectionRate, 2),
+                'income_period' => (int) round($incomeCurrentPeriod),
+                'expense_period' => (int) round($expenseCurrentPeriod),
+                'adjustment_period' => (int) round($adjustmentCurrentPeriod),
+                'net_cashflow_period' => (int) round($netCurrentPeriod),
+                'income_growth_rate' => $incomeGrowthRate,
+                'net_growth_rate' => $netGrowthRate,
+                'complaint_growth_rate' => $complaintGrowthRate,
+                'daily_complaint_baseline' => $dailyComplaintBaseline,
+                'forecast_confidence' => round($forecastConfidence, 2),
+            ],
+            'mikrotik' => [
+                'available' => $mikrotikAvailable,
+                'error' => $mikrotikError,
+                'identity' => $mikrotikIdentity,
+                'cpu_load' => round($cpuLoad, 2),
+                'memory_usage_ratio' => $memoryUsageRatio,
+                'interfaces_total' => $interfacesTotal,
+                'interfaces_running' => $interfacesRunning,
+                'active_pppoe_sessions_total' => count($mikrotikConnections),
+                'active_pppoe_sessions_matched' => $matchedActiveSessions,
+                'active_pppoe_sessions_unmatched' => $unmatchedActiveSessions,
+            ],
+            'service_forecast' => [
+                'daily_ticket_baseline' => $dailyComplaintBaseline,
+                'daily_high_priority_baseline' => $dailyHighComplaintBaseline,
+                'disturbance_pressure' => round($disturbancePressure, 2),
+                'network_instability_ratio' => round($networkInstabilityRatio * 100, 2),
+                'complaints_open_period' => $complaintsOpen,
+                'complaints_total_period' => $complaintsTotal,
+                'complaints_high_period' => $complaintsHigh,
+                'complaints_gangguan_period' => $complaintsGangguan,
+                'ongoing_gangguan_notices' => $ongoingGangguanNotices,
+                'ongoing_mass_gangguan_notices' => $ongoingMassGangguanNotices,
+            ],
+            'financial_forecast' => [
+                'finance_source' => $financeSource,
+                'open_invoice_count' => $openInvoiceCount,
+                'overdue_invoice_count' => $overdueInvoiceCount,
+                'overdue_exposure_ratio' => round($overdueExposureRatio, 2),
+                'income_period' => (int) round($incomeCurrentPeriod),
+                'expense_period' => (int) round($expenseCurrentPeriod),
+                'adjustment_period' => (int) round($adjustmentCurrentPeriod),
+                'net_period' => (int) round($netCurrentPeriod),
+                'predicted_income_next_7d' => (int) round($predictedRevenueNext7),
+                'due_next_7d_amount' => (int) round($dueNext7Amount),
+                'collection_rate_period' => round($collectionRate, 2),
+            ],
+            'risk_matrix' => $riskMatrix,
+            'recommendations' => $recommendations,
+            'assumptions' => [
+                'Prediksi tiket memakai baseline aduan historis, tekanan gangguan, dan rasio pelanggan aktif yang offline.',
+                'Arus kas periode mengambil ledger finance jika tersedia; jika tidak, pemasukan fallback dari invoice paid.',
+                'Kesehatan layanan menggabungkan health score pelanggan, tekanan aduan, dan proporsi pelanggan isolir.',
+            ],
+        ];
     }
 
     private function getLedgerBalanceBefore(Carbon $startDate): float

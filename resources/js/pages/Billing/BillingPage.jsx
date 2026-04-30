@@ -485,6 +485,12 @@ function BillingPage() {
         return new Date(date).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
     };
 
+    const formatPaidMonth = (date) => {
+        if (!date) return '';
+        const monthLabel = new Date(date).toLocaleDateString('id-ID', { month: 'long' }).trim();
+        return monthLabel ? monthLabel.toLowerCase() : '';
+    };
+
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
     };
@@ -638,6 +644,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
         const normalizedInvoiceStatus = (invoiceToUse?.status || '').toString().trim().toLowerCase();
         const canCreateInvoice = !!item?.can_create_invoice;
+        const paidMonthLabel = formatPaidMonth(latestInvoice?.paid_at || latestInvoice?.updated_at || latestInvoice?.created_at);
         
         const getStatusBadge = () => {
             if (invoiceToUse) {
@@ -655,6 +662,9 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             }
 
             if (latestInvoiceStatus === 'paid' || item?.has_paid_this_month) {
+                if (isAlmostLateCustomer && paidMonthLabel) {
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar bulan {paidMonthLabel}</span>;
+                }
                 return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
             }
 

@@ -167,6 +167,9 @@ function DashboardPredictionPage() {
     const [financialProjectionData, setFinancialProjectionData] = useState(null);
     const [financialProjectionLoading, setFinancialProjectionLoading] = useState(false);
     const [financialProjectionError, setFinancialProjectionError] = useState(null);
+    const [ispIntelligenceData, setIspIntelligenceData] = useState(null);
+    const [ispIntelligenceLoading, setIspIntelligenceLoading] = useState(false);
+    const [ispIntelligenceError, setIspIntelligenceError] = useState(null);
 
     const fetchManagementKpis = async (range = kpiRange) => {
         try {
@@ -228,6 +231,26 @@ function DashboardPredictionPage() {
         }
     };
 
+    const fetchIspIntelligence = async (range = kpiRange) => {
+        try {
+            setIspIntelligenceLoading(true);
+            setIspIntelligenceError(null);
+
+            const response = await apiClient.get('/dashboard/isp-intelligence', {
+                params: {
+                    start_date: range.start_date,
+                    end_date: range.end_date,
+                },
+            });
+
+            setIspIntelligenceData(response.data?.data || null);
+        } catch (err) {
+            setIspIntelligenceError(err.response?.data?.message || 'Gagal memuat intelijen operasional ISP.');
+        } finally {
+            setIspIntelligenceLoading(false);
+        }
+    };
+
     const loadAllPredictionData = async (showSpinner = false) => {
         try {
             if (showSpinner) {
@@ -239,6 +262,7 @@ function DashboardPredictionPage() {
                 fetchManagementKpis(kpiRange),
                 fetchRevenueForecast(forecastRange),
                 fetchFinancialProjection(financialProjectionRange),
+                fetchIspIntelligence(kpiRange),
             ]);
         } catch (err) {
             setError('Terjadi kendala saat memuat semua data prediksi.');
@@ -275,6 +299,12 @@ function DashboardPredictionPage() {
     const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
     const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
     const projectionForecastContext = financialProjectionData?.forecast_context || null;
+    const ispSummary = ispIntelligenceData?.summary || null;
+    const ispMikrotik = ispIntelligenceData?.mikrotik || null;
+    const ispRiskMatrix = ispIntelligenceData?.risk_matrix || [];
+    const ispServiceForecast = ispIntelligenceData?.service_forecast || null;
+    const ispFinancialForecast = ispIntelligenceData?.financial_forecast || null;
+    const ispRecommendations = ispIntelligenceData?.recommendations || [];
 
     const scoreSummary = useMemo(() => {
         const modelAccuracyScore = clampScore(
@@ -302,14 +332,21 @@ function DashboardPredictionPage() {
         const shortfallPenalty = shortfall > 0 ? Math.min(30, Math.log10(shortfall + 1) * 8) : 0;
         const cashDirectionBonus = Number(projectionSummary?.projected_ending_balance || 0) >= 0 ? 10 : -10;
         const liquidityScore = clampScore(mandatoryCoverageScore - shortfallPenalty + cashDirectionBonus);
+        const ispOperationalScore = clampScore(ispSummary?.isp_operational_score || 0);
 
-        const overallScore = Math.round(clampScore(
+        const baseScore = clampScore(
             (modelAccuracyScore * 0.28)
             + (revenueStabilityScore * 0.16)
             + (collectionScore * 0.18)
             + (customerHealthScore * 0.18)
             + (liquidityScore * 0.20)
-        ));
+        );
+
+        const overallScore = Math.round(
+            ispOperationalScore > 0
+                ? clampScore((baseScore * 0.75) + (ispOperationalScore * 0.25))
+                : baseScore
+        );
 
         return {
             overallScore,
@@ -318,6 +355,7 @@ function DashboardPredictionPage() {
             collectionScore,
             customerHealthScore,
             liquidityScore,
+            ispOperationalScore,
         };
     }, [
         forecastValidation,
@@ -327,6 +365,7 @@ function DashboardPredictionPage() {
         kpiSummary,
         kpiHealthSummary,
         projectionSummary,
+        ispSummary,
     ]);
 
     const smartRecommendations = useMemo(() => {
@@ -361,8 +400,17 @@ function DashboardPredictionPage() {
             });
         });
 
+        ispRecommendations.slice(0, 3).forEach((item) => {
+            recommendations.push({
+                source: 'Intelijen Operasional ISP',
+                priority: 'menengah',
+                title: 'Rekomendasi ISP',
+                detail: item,
+            });
+        });
+
         return recommendations.slice(0, 7);
-    }, [projectionAssistant, kpiCustomerHealth, forecastSummary]);
+    }, [projectionAssistant, kpiCustomerHealth, forecastSummary, ispRecommendations]);
 
     const forecastChartData = useMemo(() => ({
         labels: forecastDailyRows.map((item) => item.date),
@@ -722,7 +770,7 @@ function DashboardPredictionPage() {
                     </span>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
                     <div className="bg-white/10 rounded-xl p-3">
                         <p className="text-xs text-slate-200">Akurasi Model</p>
                         <p className="text-2xl font-bold mt-1">{scoreSummary.modelAccuracyScore.toFixed(1)}</p>
@@ -746,6 +794,10 @@ function DashboardPredictionPage() {
                     <div className="bg-white/10 rounded-xl p-3">
                         <p className="text-xs text-slate-200">Volatilitas</p>
                         <p className="text-2xl font-bold mt-1">{formatPercent(forecastContext?.volatility_index || projectionForecastContext?.volatility_index || 0, 1)}</p>
+                    </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Skor Operasional ISP</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.ispOperationalScore.toFixed(1)}</p>
                     </div>
                 </div>
             </div>
@@ -781,6 +833,126 @@ function DashboardPredictionPage() {
                             </div>
                         ))}
                     </div>
+                )}
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <Activity size={18} className="text-cyan-700" />
+                            Intelijen Operasional ISP
+                        </h2>
+                        <p className="text-sm text-gray-500 mt-1">Analisis gabungan data pelanggan, invoice, aduan, gangguan, transaksi, dan API MikroTik untuk kebutuhan operasional ISP.</p>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                        Periode analisis: {kpiRange.start_date} s.d. {kpiRange.end_date}
+                    </span>
+                </div>
+
+                {ispIntelligenceError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{ispIntelligenceError}</div>
+                )}
+
+                {ispIntelligenceLoading && !ispSummary && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                        Memproses intelijen operasional ISP...
+                    </div>
+                )}
+
+                {!ispIntelligenceLoading && !ispIntelligenceError && !ispSummary && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                        Data intelijen operasional ISP belum tersedia.
+                    </div>
+                )}
+
+                {ispSummary && (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
+                                <p className="text-xs font-medium text-cyan-700">Skor Operasional ISP</p>
+                                <p className="text-2xl font-bold text-cyan-900 mt-1">{ispSummary.isp_operational_score || 0}</p>
+                                <p className="text-xs text-cyan-700 mt-1">Network {ispSummary.network_readiness_score || 0} | Finance {ispSummary.finance_readiness_score || 0} | Service {ispSummary.service_readiness_score || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
+                                <p className="text-xs font-medium text-blue-700">Konektivitas Aktif</p>
+                                <p className="text-2xl font-bold text-blue-900 mt-1">{formatPercent(ispSummary.online_ratio || 0, 1)}</p>
+                                <p className="text-xs text-blue-700 mt-1">Online {ispSummary.online_active_customers || 0}/{ispSummary.active_customers || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-violet-50 border border-violet-100 p-4">
+                                <p className="text-xs font-medium text-violet-700">Prediksi Tiket 7 Hari</p>
+                                <p className="text-2xl font-bold text-violet-900 mt-1">{ispSummary.predicted_tickets_next_7d || 0}</p>
+                                <p className="text-xs text-violet-700 mt-1">Prioritas tinggi: {ispSummary.predicted_high_priority_tickets_next_7d || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                <p className="text-xs font-medium text-emerald-700">Prediksi Pemasukan 7 Hari</p>
+                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(ispSummary.predicted_income_next_7d || 0)}</p>
+                                <p className="text-xs text-emerald-700 mt-1">Collection: {formatPercent(ispSummary.collection_rate || 0, 1)}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                                <p className="text-sm font-semibold text-gray-900 mb-2">MikroTik Live Signals</p>
+                                <div className="space-y-1 text-sm text-gray-700">
+                                    <p>Router: <span className="font-semibold">{ispMikrotik?.identity || '-'}</span></p>
+                                    <p>Status data live: <span className="font-semibold">{ispMikrotik?.available ? 'Tersedia' : 'Tidak tersedia'}</span></p>
+                                    <p>CPU Load: <span className="font-semibold">{formatPercent(ispMikrotik?.cpu_load || 0, 1)}</span></p>
+                                    <p>Memory Usage: <span className="font-semibold">{ispMikrotik?.memory_usage_ratio === null ? '-' : formatPercent(ispMikrotik?.memory_usage_ratio || 0, 1)}</span></p>
+                                    <p>Interface Running: <span className="font-semibold">{ispMikrotik?.interfaces_running || 0}/{ispMikrotik?.interfaces_total || 0}</span></p>
+                                    <p>Sesi PPPoE matched: <span className="font-semibold">{ispMikrotik?.active_pppoe_sessions_matched || 0}</span></p>
+                                    {ispMikrotik?.error && (
+                                        <p className="text-xs text-amber-700">Catatan: {ispMikrotik.error}</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                                <p className="text-sm font-semibold text-gray-900 mb-2">Pressure Forecast (7 Hari)</p>
+                                <div className="space-y-1 text-sm text-gray-700">
+                                    <p>Baseline aduan harian: <span className="font-semibold">{ispServiceForecast?.daily_ticket_baseline ?? 0}</span></p>
+                                    <p>Pressure gangguan: <span className="font-semibold">{ispServiceForecast?.disturbance_pressure ?? 0}</span></p>
+                                    <p>Rasio instabilitas jaringan: <span className="font-semibold">{formatPercent(ispServiceForecast?.network_instability_ratio || 0, 2)}</span></p>
+                                    <p>Kapasitas tiket/hari disarankan: <span className="font-semibold">{ispSummary.recommended_daily_ticket_capacity || 0}</span></p>
+                                    <p>Piutang overdue: <span className="font-semibold">{formatCurrency(ispSummary.overdue_invoice_amount || 0)}</span></p>
+                                    <p>Tagihan jatuh tempo 7 hari: <span className="font-semibold">{formatCurrency(ispFinancialForecast?.due_next_7d_amount || 0)}</span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                            <table className="w-full text-sm min-w-[700px]">
+                                <thead className="bg-gray-50 text-gray-600 text-left">
+                                    <tr>
+                                        <th className="px-3 py-2">Aspek</th>
+                                        <th className="px-3 py-2">Skor</th>
+                                        <th className="px-3 py-2">Status</th>
+                                        <th className="px-3 py-2">Alasan</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {ispRiskMatrix.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={4}>
+                                                Data matriks risiko belum tersedia.
+                                            </td>
+                                        </tr>
+                                    ) : ispRiskMatrix.map((row) => (
+                                        <tr key={`isp-risk-${row.key}`} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 font-medium text-gray-900">{row.label}</td>
+                                            <td className="px-3 py-2 text-gray-700">{row.score}</td>
+                                            <td className="px-3 py-2">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>
+                                                    {row.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-gray-700">{row.reason}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
             </div>
 

@@ -72,8 +72,12 @@ const DEFAULT_STATS = {
     in_progress_complaints: 0,
     total_active_complaints: 0,
     monthly_revenue: 0,
+    monthly_income: 0,
+    monthly_expense: 0,
     pending_invoices: 0,
     revenue_by_month: [0, 0, 0, 0, 0, 0],
+    income_by_month: [0, 0, 0, 0, 0, 0],
+    expense_by_month: [0, 0, 0, 0, 0, 0],
     finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
 };
 
@@ -230,28 +234,29 @@ function Dashboard() {
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
     const financeSummary = stats?.finance_summary || DEFAULT_STATS.finance_summary;
+    const defaultMonthlySeries = [0, 0, 0, 0, 0, 0];
+    const normalizeSeries = (series) => (Array.isArray(series) && series.length === monthLabels.length ? series : defaultMonthlySeries);
 
-    const revenueChartData = {
+    const financeChartData = {
         labels: monthLabels,
         datasets: [
             {
                 label: 'Pemasukan',
-                data: stats?.revenue_by_month || [0, 0, 0, 0, 0, 0],
-                borderColor: '#8b5cf6',
-                backgroundColor: (context) => {
-                    const ctx = context.chart.ctx;
-                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-                    gradient.addColorStop(0, 'rgba(139, 92, 246, 0.4)');
-                    gradient.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
-                    return gradient;
-                },
-                borderWidth: 3,
-                fill: true,
-                tension: 0.4,
-                pointBackgroundColor: '#8b5cf6',
-                pointBorderColor: '#fff',
-                pointBorderWidth: 3,
-                pointRadius: 5,
+                data: normalizeSeries(stats?.income_by_month || stats?.revenue_by_month),
+                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                borderColor: '#10b981',
+                borderWidth: 1,
+                borderRadius: 12,
+                borderSkipped: false,
+            },
+            {
+                label: 'Pengeluaran',
+                data: normalizeSeries(stats?.expense_by_month),
+                backgroundColor: 'rgba(239, 68, 68, 0.85)',
+                borderColor: '#ef4444',
+                borderWidth: 1,
+                borderRadius: 12,
+                borderSkipped: false,
             },
         ],
     };
@@ -288,7 +293,7 @@ function Dashboard() {
         ],
     };
 
-    const revenueChartOptions = {
+    const financeChartOptions = {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
@@ -523,16 +528,16 @@ function Dashboard() {
                     <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
                         <div className="flex items-center justify-between mb-6">
                             <div>
-                                <h2 className="text-lg font-bold text-gray-900">Tren Pemasukan</h2>
-                                <p className="text-sm text-gray-500">6 bulan terakhir</p>
+                                <h2 className="text-lg font-bold text-gray-900">Pemasukan vs Pengeluaran</h2>
+                                <p className="text-sm text-gray-500">Semua pemasukan termasuk pemasangan dan pembayaran, dibandingkan dengan pengeluaran</p>
                             </div>
-                            <div className="flex items-center gap-2 text-sm">
-                                <span className="w-3 h-3 bg-violet-500 rounded-full"></span>
-                                <span className="text-gray-600">Pemasukan</span>
+                            <div className="flex items-center gap-3 text-sm">
+                                <span className="flex items-center gap-2 text-gray-600"><span className="w-3 h-3 bg-emerald-500 rounded-full"></span>Pemasukan</span>
+                                <span className="flex items-center gap-2 text-gray-600"><span className="w-3 h-3 bg-red-500 rounded-full"></span>Pengeluaran</span>
                             </div>
                         </div>
                         <div className="h-[300px]">
-                            <Line data={revenueChartData} options={revenueChartOptions} />
+                            <Bar data={financeChartData} options={financeChartOptions} />
                         </div>
                     </div>
 

@@ -216,6 +216,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
         Route::get('/api/dashboard/management-kpis', [DashboardController::class, 'managementKpis'])->name('api.dashboard.management-kpis');
         Route::get('/api/dashboard/financial-projection', [DashboardController::class, 'financialProjection'])->name('api.dashboard.financial-projection');
+        Route::get('/api/dashboard/isp-intelligence', [DashboardController::class, 'ispIntelligence'])->name('api.dashboard.isp-intelligence');
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
         Route::get('/api/dashboard/financial-targets', [DashboardController::class, 'financialTargets'])->name('api.dashboard.financial-targets.index');
