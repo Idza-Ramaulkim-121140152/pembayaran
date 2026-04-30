@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Search, FileText, Send, Check, X, Eye, Clock, AlertTriangle, Users, ChevronDown, ChevronUp, Copy, ExternalLink, ShieldAlert } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -16,10 +16,14 @@ function BillingPage() {
     const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
     const [loadingPaymentReceiptOptions, setLoadingPaymentReceiptOptions] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+    const [loadingIsolationStatus, setLoadingIsolationStatus] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [search, setSearch] = useState('');
     const [isolationStatus, setIsolationStatus] = useState({});
+    const latestBillingRequestRef = useRef(0);
+    const skipFirstSearchFetchRef = useRef(true);
     
     // Modal states
     const [createModal, setCreateModal] = useState({ open: false, customer: null, suggestedPackage: null });
@@ -44,8 +48,22 @@ function BillingPage() {
     const [collapsed, setCollapsed] = useState({ late: false, almostLate: false, others: true, paid: true });
 
     useEffect(() => {
-        fetchBillingData();
-    }, [search]);
+        fetchBillingData('', { isInitialLoad: true });
+    }, []);
+
+    useEffect(() => {
+        if (!hasLoadedOnce) return;
+        if (skipFirstSearchFetchRef.current) {
+            skipFirstSearchFetchRef.current = false;
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            fetchBillingData(search);
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, [search, hasLoadedOnce]);
 
     useEffect(() => {
         fetchPaymentReceiptOptions();
@@ -117,21 +135,75 @@ function BillingPage() {
         setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
     };
 
-    const fetchBillingData = async () => {
+    const fetchIsolationStatusBulk = async (lateItems, requestId) => {
+        const customerIds = (lateItems || [])
+            .map((item) => item?.customer?.id)
+            .filter(Boolean);
+
+        if (customerIds.length === 0) {
+            if (requestId === latestBillingRequestRef.current) {
+                setIsolationStatus({});
+                setLoadingIsolationStatus(false);
+            }
+            return;
+        }
+
+        try {
+            if (requestId === latestBillingRequestRef.current) {
+                setLoadingIsolationStatus(true);
+            }
+
+            const response = await billingService.getBulkIsolationStatus(customerIds);
+            if (requestId !== latestBillingRequestRef.current) return;
+
+            setIsolationStatus(response?.data?.data || {});
+        } catch (err) {
+            if (requestId !== latestBillingRequestRef.current) return;
+            setIsolationStatus({});
+            console.error('Gagal memuat status isolir pelanggan', err);
+        } finally {
+            if (requestId === latestBillingRequestRef.current) {
+                setLoadingIsolationStatus(false);
+            }
+        }
+    };
+
+    const fetchBillingData = async (searchValue = '', options = {}) => {
+        const { isInitialLoad = false } = options;
+        const requestId = latestBillingRequestRef.current + 1;
+        latestBillingRequestRef.current = requestId;
+
         try {
             setLoading(true);
-            const response = await billingService.getAll({ search });
-            setCustomers(response.data.data);
-            
-            // Isolation status is now included in the response
-            if (response.data.data.isolationStatus) {
-                setIsolationStatus(response.data.data.isolationStatus);
+            if (!isInitialLoad) {
+                setLoadingIsolationStatus(false);
             }
+
+            const response = await billingService.getAll({
+                search: searchValue,
+                include_isolation_status: false,
+            });
+            if (requestId !== latestBillingRequestRef.current) return;
+
+            const payload = response?.data?.data || {};
+            setCustomers({
+                late: payload.late || [],
+                almostLate: payload.almostLate || [],
+                others: payload.others || [],
+                paid: payload.paid || [],
+            });
+
+            setIsolationStatus({});
+            fetchIsolationStatusBulk(payload.late || [], requestId);
         } catch (err) {
+            if (requestId !== latestBillingRequestRef.current) return;
             setError('Gagal memuat data penagihan');
             console.error(err);
         } finally {
-            setLoading(false);
+            if (requestId === latestBillingRequestRef.current) {
+                setLoading(false);
+                setHasLoadedOnce(true);
+            }
         }
     };
 
@@ -275,7 +347,7 @@ function BillingPage() {
             );
             
             // Refresh data to get updated isolation status
-            await fetchBillingData();
+            await fetchBillingData(search);
         } catch (err) {
             const msg = err.response?.data?.message || err.response?.data?.error || 'Gagal melakukan isolir';
             setError(msg);
@@ -306,7 +378,7 @@ function BillingPage() {
                     customer: createModal.customer,
                 },
             });
-            fetchBillingData();
+            fetchBillingData(search);
         } catch (err) {
             setError(err.response?.data?.error || 'Gagal membuat tagihan');
         } finally {
@@ -340,7 +412,7 @@ function BillingPage() {
             closeConfirmModal();
             const data = response.data;
             setSuccess(data.message || 'Pembayaran berhasil dikonfirmasi');
-            fetchBillingData();
+            fetchBillingData(search);
         } catch (err) {
             const status = err.response?.status;
             const message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
@@ -367,7 +439,7 @@ function BillingPage() {
             setRejectModal({ open: false, invoice: null });
             setRejectReason('');
             setSuccess('Pembayaran berhasil ditolak');
-            fetchBillingData();
+            fetchBillingData(search);
         } catch (err) {
             setError(err.response?.data?.error || 'Gagal menolak pembayaran');
         } finally {
@@ -390,7 +462,7 @@ function BillingPage() {
             setSuccess(response.data?.message || 'Nominal invoice berhasil diperbarui');
             setEditAmountModal({ open: false, invoice: null, customer: null });
             setNewInvoiceAmount('');
-            fetchBillingData();
+            fetchBillingData(search);
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memperbarui nominal invoice');
         } finally {
@@ -481,7 +553,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         return `https://wa.me/${phone}?text=${encodeURIComponent(template)}`;
     };
 
-    if (loading) {
+    if (loading && !hasLoadedOnce) {
         return (
             <div className="flex justify-center items-center min-h-[60vh]">
                 <LoadingSpinner text="Memuat data penagihan..." />
@@ -540,6 +612,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                             index={index}
                                             onIsolate={handleIsolateCustomer}
                                             isolationStatus={isolationStatus[item.customer.id]}
+                                            loadingIsolationStatus={loadingIsolationStatus}
                                             isLateCustomer={title === "Pelanggan Telat"}
                                         />
                                     ))
@@ -552,7 +625,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         );
     };
 
-    const CustomerRow = ({ item, index, onIsolate, isolationStatus, isLateCustomer }) => {
+    const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer }) => {
         const { customer, invoice } = item;
         
         const getStatusBadge = () => {
@@ -571,6 +644,14 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         const getIsolirButton = () => {
             // Only show for late customers
             if (!isLateCustomer) return null;
+
+            if (loadingIsolationStatus && !isolationStatus) {
+                return (
+                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+                        Cek status...
+                    </span>
+                );
+            }
             
             const isIsolated = isolationStatus?.isolated;
             
@@ -711,6 +792,12 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                     />
                 </div>
+                {loading && hasLoadedOnce && (
+                    <p className="text-xs text-gray-500 mt-2">Memuat hasil pencarian...</p>
+                )}
+                {loadingIsolationStatus && (
+                    <p className="text-xs text-gray-500 mt-1">Memuat status isolir pelanggan...</p>
+                )}
             </div>
 
             {/* Tables */}
@@ -722,7 +809,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     iconColor="bg-red-500"
                 />
                 <CustomerTable
-                    title="Pelanggan Hampir Telat (H-7)"
+                    title="Pelanggan Hampir Telat (H-5)"
                     data={customers.almostLate}
                     icon={Clock}
                     iconColor="bg-orange-500"

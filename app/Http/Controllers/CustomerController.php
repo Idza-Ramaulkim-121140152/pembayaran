@@ -28,45 +28,49 @@ class CustomerController extends Controller
             $customers = $query->get();
             $isolatedUsernameMap = [];
             $today = Carbon::today()->startOfDay();
-            
-            // Sync is_active status from MikroTik router
-            try {
-                $mikrotik = new \App\Services\MikroTikService();
-                $mikrotik->connect();
-                $secrets = $mikrotik->getAllPPPoESecrets();
-                $mikrotik->disconnect();
-                
-                if ($secrets !== null) {
-                    foreach ($secrets as $secretUsername => $secretData) {
-                        $normalizedUsername = strtolower(trim((string) $secretUsername));
-                        $profile = strtolower(trim((string) ($secretData['profile'] ?? '')));
-                        if ($normalizedUsername !== '' && $profile === 'isolir') {
-                            $isolatedUsernameMap[$normalizedUsername] = true;
-                        }
-                    }
 
-                    foreach ($customers as $customer) {
-                        if (!empty($customer->pppoe_username)) {
-                            $secret = $secrets[$customer->pppoe_username] ?? null;
-                            // Active = secret exists AND disabled=no
-                            $isActive = $secret && ($secret['disabled'] ?? 'false') !== 'true';
-                            
-                            if ($customer->is_active != $isActive) {
-                                $customer->is_active = $isActive;
-                                $customer->saveQuietly();
+            $includeLiveStatus = request()->boolean('include_live_status', true);
+
+            // Sinkronisasi status realtime hanya saat diminta agar list pelanggan bisa tampil lebih cepat.
+            if ($includeLiveStatus) {
+                try {
+                    $mikrotik = new \App\Services\MikroTikService();
+                    $mikrotik->connect();
+                    $secrets = $mikrotik->getAllPPPoESecrets();
+                    $mikrotik->disconnect();
+
+                    if ($secrets !== null) {
+                        foreach ($secrets as $secretUsername => $secretData) {
+                            $normalizedUsername = strtolower(trim((string) $secretUsername));
+                            $profile = strtolower(trim((string) ($secretData['profile'] ?? '')));
+                            if ($normalizedUsername !== '' && $profile === 'isolir') {
+                                $isolatedUsernameMap[$normalizedUsername] = true;
                             }
-                        } else {
-                            // No PPPoE username = inactive
-                            if ($customer->is_active) {
-                                $customer->is_active = false;
-                                $customer->saveQuietly();
+                        }
+
+                        foreach ($customers as $customer) {
+                            if (!empty($customer->pppoe_username)) {
+                                $secret = $secrets[$customer->pppoe_username] ?? null;
+                                // Active = secret exists AND disabled=no
+                                $isActive = $secret && ($secret['disabled'] ?? 'false') !== 'true';
+
+                                if ($customer->is_active != $isActive) {
+                                    $customer->is_active = $isActive;
+                                    $customer->saveQuietly();
+                                }
+                            } else {
+                                // No PPPoE username = inactive
+                                if ($customer->is_active) {
+                                    $customer->is_active = false;
+                                    $customer->saveQuietly();
+                                }
                             }
                         }
                     }
+                } catch (\Exception $e) {
+                    \Log::warning('Could not sync is_active from MikroTik', ['error' => $e->getMessage()]);
+                    // Fall back to DB values silently
                 }
-            } catch (\Exception $e) {
-                \Log::warning('Could not sync is_active from MikroTik', ['error' => $e->getMessage()]);
-                // Fall back to DB values silently
             }
 
             foreach ($customers as $customer) {
@@ -106,6 +110,102 @@ class CustomerController extends Controller
         }
         $customers = $query->get();
         return view('customers.index', compact('customers'));
+    }
+
+    public function activeStatusBulk(Request $request)
+    {
+        $validated = $request->validate([
+            'customer_ids' => ['nullable', 'array'],
+            'customer_ids.*' => ['integer'],
+        ]);
+
+        $customerIds = collect($validated['customer_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $query = Customer::query();
+        if (!empty($customerIds)) {
+            $query->whereIn('id', $customerIds);
+        }
+
+        $customers = $query->get(['id', 'pppoe_username', 'due_date', 'is_active']);
+        $today = Carbon::today()->startOfDay();
+        $statusMap = [];
+
+        try {
+            $mikrotik = new \App\Services\MikroTikService();
+            $mikrotik->connect();
+            $secrets = $mikrotik->getAllPPPoESecrets();
+            $mikrotik->disconnect();
+
+            $secrets = is_array($secrets) ? $secrets : [];
+            $normalizedSecrets = [];
+            foreach ($secrets as $username => $secret) {
+                $normalizedUsername = strtolower(trim((string) $username));
+                if ($normalizedUsername !== '') {
+                    $normalizedSecrets[$normalizedUsername] = $secret;
+                }
+            }
+
+            foreach ($customers as $customer) {
+                $normalizedUsername = strtolower(trim((string) ($customer->pppoe_username ?? '')));
+                $secret = $normalizedUsername !== '' ? ($normalizedSecrets[$normalizedUsername] ?? null) : null;
+
+                $isActive = $secret && (($secret['disabled'] ?? 'false') !== 'true');
+                $profile = strtolower(trim((string) ($secret['profile'] ?? '')));
+                $isIsolated = $normalizedUsername !== '' && $profile === 'isolir';
+                $isOverdue = $customer->due_date
+                    ? Carbon::parse($customer->due_date)->startOfDay()->lt($today)
+                    : false;
+                $isServiceInactive = $isOverdue || $isIsolated;
+
+                if ($customer->is_active != $isActive) {
+                    $customer->is_active = $isActive;
+                    $customer->saveQuietly();
+                }
+
+                $statusMap[$customer->id] = [
+                    'is_active' => $isActive,
+                    'is_service_overdue' => $isOverdue,
+                    'is_service_isolated' => $isIsolated,
+                    'is_service_inactive' => $isServiceInactive,
+                    'is_service_active' => !$isServiceInactive,
+                ];
+            }
+
+            return response()->json([
+                'data' => $statusMap,
+                'meta' => ['live' => true],
+            ]);
+        } catch (\Exception $e) {
+            \Log::warning('Could not load active status bulk from MikroTik', ['error' => $e->getMessage()]);
+
+            foreach ($customers as $customer) {
+                $isOverdue = $customer->due_date
+                    ? Carbon::parse($customer->due_date)->startOfDay()->lt($today)
+                    : false;
+                $isServiceInactive = $isOverdue;
+
+                $statusMap[$customer->id] = [
+                    'is_active' => (bool) $customer->is_active,
+                    'is_service_overdue' => $isOverdue,
+                    'is_service_isolated' => false,
+                    'is_service_inactive' => $isServiceInactive,
+                    'is_service_active' => !$isServiceInactive,
+                ];
+            }
+
+            return response()->json([
+                'data' => $statusMap,
+                'meta' => [
+                    'live' => false,
+                    'error' => 'Gagal mengambil status realtime dari MikroTik.',
+                ],
+            ]);
+        }
     }
 
     public function show(Customer $customer)

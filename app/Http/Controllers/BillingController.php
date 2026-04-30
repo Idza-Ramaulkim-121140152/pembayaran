@@ -16,6 +16,8 @@ use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
+    private const ALMOST_LATE_DAYS = 5;
+
     private const INVOICE_MANAGEMENT_STATUSES = [
         'unpaid',
         'paid',
@@ -165,6 +167,7 @@ class BillingController extends Controller
     public function index()
     {
         $today = Carbon::today();
+        $almostLateEndDate = $today->copy()->addDays(self::ALMOST_LATE_DAYS);
         $query = Customer::query();
         $search = request('search');
         if ($search) {
@@ -190,8 +193,8 @@ class BillingController extends Controller
             return $c->due_date && Carbon::parse($c->due_date)->lt($today);
         });
 
-        $almostLate = $customers->filter(function($c) use ($today) {
-            return $c->due_date && Carbon::parse($c->due_date)->gte($today) && Carbon::parse($c->due_date)->lte($today->copy()->addDays(7));
+        $almostLate = $customers->filter(function($c) use ($today, $almostLateEndDate) {
+            return $c->due_date && Carbon::parse($c->due_date)->gte($today) && Carbon::parse($c->due_date)->lte($almostLateEndDate);
         });
 
         $others = $customers->filter(function($c) use ($late, $almostLate) {
@@ -306,7 +309,9 @@ class BillingController extends Controller
     public function apiIndex()
     {
         $today = Carbon::today();
+        $almostLateEndDate = $today->copy()->addDays(self::ALMOST_LATE_DAYS);
         $currentMonth = $today->format('Y-m');
+        $includeIsolationStatus = request()->boolean('include_isolation_status', true);
         $query = Customer::query();
         
         $search = request('search');
@@ -338,23 +343,30 @@ class BillingController extends Controller
         foreach ($customers as $customer) {
             $invoice = $invoicesThisMonth[$customer->id] ?? null;
             $item = ['customer' => $customer, 'invoice' => $invoice];
+            $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
+            $isLate = $dueDate && $dueDate->lt($today);
+            $isAlmostLate = $dueDate && $dueDate->gte($today) && $dueDate->lte($almostLateEndDate);
             
-            if ($invoice && $invoice->status === 'paid') {
+            // Pelanggan yang sudah bayar tetap ditampilkan saat memasuki periode hampir jatuh tempo.
+            if ($invoice && $invoice->status === 'paid' && !$isAlmostLate) {
                 $paid[] = $item;
                 continue;
             }
 
-            if ($customer->due_date && Carbon::parse($customer->due_date)->lt($today)) {
+            if ($isLate) {
                 $late[] = $item;
-            } elseif ($customer->due_date && Carbon::parse($customer->due_date)->gte($today) && Carbon::parse($customer->due_date)->lte($today->copy()->addDays(7))) {
+            } elseif ($isAlmostLate) {
                 $almostLate[] = $item;
             } else {
                 $others[] = $item;
             }
         }
 
-        // Get bulk isolation status for late customers only
-        $isolationStatus = $this->getBulkIsolationStatus($late);
+        // Opsional: status isolir dimuat terpisah agar daftar penagihan bisa tampil lebih cepat.
+        $isolationStatus = [];
+        if ($includeIsolationStatus) {
+            $isolationStatus = $this->getBulkIsolationStatus($late);
+        }
 
         return response()->json([
             'data' => [
@@ -365,6 +377,38 @@ class BillingController extends Controller
                 'isolationStatus' => $isolationStatus,
             ]
         ]);
+    }
+
+    public function isolationStatusBulk(Request $request)
+    {
+        $validated = $request->validate([
+            'customer_ids' => ['nullable', 'array'],
+            'customer_ids.*' => ['integer'],
+        ]);
+
+        $customerIds = collect($validated['customer_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($customerIds)) {
+            return response()->json(['data' => []]);
+        }
+
+        $customers = Customer::query()
+            ->whereIn('id', $customerIds)
+            ->get(['id', 'pppoe_username']);
+
+        $lateCustomers = [];
+        foreach ($customers as $customer) {
+            $lateCustomers[] = ['customer' => $customer];
+        }
+
+        $statusMap = $this->getBulkIsolationStatus($lateCustomers);
+
+        return response()->json(['data' => $statusMap]);
     }
 
     public function updateCustomerServicePackage(Request $request, Customer $customer)

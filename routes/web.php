@@ -127,6 +127,7 @@ Route::middleware('auth')->group(function () {
         // Customers API
         Route::get('/api/customers', [CustomerController::class, 'list'])->name('api.customers.list');
         Route::post('/api/customers', [CustomerController::class, 'store'])->name('api.customers.store');
+        Route::post('/api/customers/active-status', [CustomerController::class, 'activeStatusBulk'])->name('api.customers.active-status');
         Route::get('/api/customers/{customer}', [CustomerController::class, 'show'])->name('api.customers.show');
         Route::post('/api/customers/{customer}', [CustomerController::class, 'update'])->name('api.customers.update');
         Route::delete('/api/customers/{customer}', [CustomerController::class, 'destroy'])->name('api.customers.destroy');
@@ -227,6 +228,7 @@ Route::middleware('auth')->group(function () {
         Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->name('api.billing.update-amount');
         Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
+        Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');
         Route::patch('/api/billing/customer/{customer}/service-package', [BillingController::class, 'updateCustomerServicePackage'])->name('api.billing.customer.service-package');
 
         // Unified finance transactions

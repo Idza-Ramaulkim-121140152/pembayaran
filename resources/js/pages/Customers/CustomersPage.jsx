@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { 
     Plus, Edit2, Trash2, Search, Phone, Eye, X, 
     User, Calendar, MapPin, Wifi, CreditCard, FileText,
@@ -17,6 +17,7 @@ function CustomersPage() {
     const isTeknisi = userRole === 'teknisi';
     const [customers, setCustomers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadingActiveStatus, setLoadingActiveStatus] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [search, setSearch] = useState('');
@@ -36,6 +37,7 @@ function CustomersPage() {
     const [compensationCustomer, setCompensationCustomer] = useState(null);
     const [newDueDate, setNewDueDate] = useState('');
     const [submittingCompensation, setSubmittingCompensation] = useState(false);
+    const activeStatusRequestRef = useRef(0);
 
     useEffect(() => {
         fetchCustomers();
@@ -87,10 +89,47 @@ function CustomersPage() {
         setFilteredCustomers(filtered);
     }, [search, customers, filterStatus, sortBy, sortOrder]);
 
+    const fetchActiveStatusBulk = async (customerList = []) => {
+        const customerIds = (customerList || [])
+            .map((customer) => customer?.id)
+            .filter(Boolean);
+
+        if (customerIds.length === 0) {
+            setLoadingActiveStatus(false);
+            return;
+        }
+
+        const requestId = activeStatusRequestRef.current + 1;
+        activeStatusRequestRef.current = requestId;
+
+        try {
+            setLoadingActiveStatus(true);
+            const response = await customerService.getActiveStatusBulk(customerIds);
+            if (requestId !== activeStatusRequestRef.current) return;
+
+            const statusMap = response?.data?.data || {};
+            setCustomers((prev) =>
+                prev.map((customer) => {
+                    const liveStatus = statusMap[customer.id] ?? statusMap[String(customer.id)];
+                    return liveStatus ? { ...customer, ...liveStatus } : customer;
+                })
+            );
+        } catch (err) {
+            if (requestId !== activeStatusRequestRef.current) return;
+            console.error('Gagal memuat status aktif pelanggan', err);
+        } finally {
+            if (requestId === activeStatusRequestRef.current) {
+                setLoadingActiveStatus(false);
+            }
+        }
+    };
+
     const fetchCustomers = async () => {
         try {
-            const response = await customerService.getAll();
-            setCustomers(response.data.data || []);
+            const response = await customerService.getAll({ include_live_status: false });
+            const customerList = response?.data?.data || [];
+            setCustomers(customerList);
+            fetchActiveStatusBulk(customerList);
         } catch (err) {
             setError('Gagal memuat daftar pelanggan');
             console.error(err);
@@ -354,6 +393,10 @@ function CustomersPage() {
                             Jatuh Tempo
                         </button>
                     </div>
+
+                    {loadingActiveStatus && (
+                        <p className="text-xs text-gray-500">Memuat status aktif pelanggan...</p>
+                    )}
                 </div>
             </div>
 

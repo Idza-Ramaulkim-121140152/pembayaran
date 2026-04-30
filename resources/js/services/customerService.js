@@ -3,7 +3,7 @@ import axios from 'axios';
 
 export const customerService = {
     // Get semua customers
-    getAll: () => apiClient.get('/customers'),
+    getAll: (params = {}) => apiClient.get('/customers', { params }),
 
     // Get detail customer
     getById: (id) => apiClient.get(`/customers/${id}`),
@@ -56,6 +56,10 @@ export const customerService = {
 
     // Give compensation (update due date)
     giveCompensation: (id, dueDate) => apiClient.post(`/customers/${id}/compensation`, { due_date: dueDate }),
+
+    // Get active/inactive status in bulk without blocking initial list render
+    getActiveStatusBulk: (customerIds = []) =>
+        apiClient.post('/customers/active-status', { customer_ids: customerIds }),
 };
 
 export default customerService;

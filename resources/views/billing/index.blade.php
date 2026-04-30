@@ -18,7 +18,7 @@
                         <x-billing-table :customers="$late" :invoicesThisMonth="$invoicesThisMonth" />
                     </div>
                     <div>
-                        <h3 class="text-lg font-bold mb-2 sm:mb-4">Pelanggan Hampir Telat (H-7)</h3>
+                        <h3 class="text-lg font-bold mb-2 sm:mb-4">Pelanggan Hampir Telat (H-5)</h3>
                         <x-billing-table :customers="$almostLate" :invoicesThisMonth="$invoicesThisMonth" />
                     </div>
                     <div>

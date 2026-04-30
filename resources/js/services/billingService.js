@@ -68,6 +68,10 @@ export const billingService = {
     // Check isolation status
     checkIsolationStatus: (customerId) => 
         apiClient.get(`/billing/customer/${customerId}/isolation-status`),
+
+    // Check isolation status in bulk (for faster table render)
+    getBulkIsolationStatus: (customerIds = []) =>
+        apiClient.post('/billing/isolation-status-bulk', { customer_ids: customerIds }),
 };
 
 export default billingService;
