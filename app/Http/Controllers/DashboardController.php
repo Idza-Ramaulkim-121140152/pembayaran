@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 use App\Models\Invoice;
 use App\Models\Complaint;
 use App\Models\Customer;
+use App\Models\Package;
 use App\Models\FinancialPlanningTarget;
 use App\Models\FinancialTransaction;
 use App\Models\NetworkNotice;
@@ -58,6 +59,76 @@ class DashboardController extends Controller
                         ->whereBetween('created_at', [$start, $end]);
                 });
         })->count();
+    }
+
+    private function resolveCustomerPackageLabel(Customer $customer): string
+    {
+        $packageType = trim((string) ($customer->package_type ?? ''));
+        $customPackage = trim((string) ($customer->custom_package ?? ''));
+
+        if ($customPackage !== '' && ($packageType === '' || stripos($packageType, 'custom') !== false)) {
+            return $customPackage;
+        }
+
+        return $packageType;
+    }
+
+    private function buildPackageDistribution(): array
+    {
+        $customers = Customer::query()->get(['package_type', 'custom_package']);
+        $counts = [];
+
+        foreach ($customers as $customer) {
+            $label = $this->resolveCustomerPackageLabel($customer);
+            if ($label === '') {
+                continue;
+            }
+
+            $normalized = mb_strtolower($label);
+            if (!isset($counts[$normalized])) {
+                $counts[$normalized] = [
+                    'label' => $label,
+                    'count' => 0,
+                ];
+            }
+
+            $counts[$normalized]['count']++;
+        }
+
+        $activePackageOrder = [];
+        if (Schema::hasTable('packages')) {
+            foreach (Package::active()->get(['name']) as $package) {
+                $activePackageOrder[] = mb_strtolower(trim((string) $package->name));
+            }
+        }
+
+        $ordered = [];
+        foreach ($activePackageOrder as $normalizedName) {
+            if (isset($counts[$normalizedName])) {
+                $ordered[$normalizedName] = $counts[$normalizedName];
+                unset($counts[$normalizedName]);
+            }
+        }
+
+        uasort($counts, function (array $left, array $right) {
+            if ($left['count'] === $right['count']) {
+                return strcmp($left['label'], $right['label']);
+            }
+
+            return $right['count'] <=> $left['count'];
+        });
+
+        $ordered = array_values($ordered + $counts);
+        $total = array_sum(array_column($ordered, 'count'));
+
+        return array_map(function (array $item) use ($total) {
+            $count = (int) $item['count'];
+            return [
+                'label' => $item['label'],
+                'count' => $count,
+                'percentage' => $total > 0 ? round(($count / $total) * 100, 1) : 0,
+            ];
+        }, $ordered);
     }
 
     private function fetchIsolatedUsernameMap(): array
@@ -374,6 +445,7 @@ class DashboardController extends Controller
         }
 
         $recentCustomers = \App\Models\Customer::latest()->take(5)->get(['id', 'name', 'email', 'is_active']);
+        $packageDistribution = $this->buildPackageDistribution();
 
         // Pemasangan baru untuk 6 bulan terakhir
         $newInstallations = [];
@@ -421,6 +493,7 @@ class DashboardController extends Controller
             'recent_customers' => $recentCustomers,
             'new_installations' => $newInstallations,
             'monthly_installations' => (int) $monthlyInstallations,
+            'package_distribution' => $packageDistribution,
             'pending_complaints' => $pendingComplaints,
             'in_progress_complaints' => $inProgressComplaints,
             'total_active_complaints' => $totalActiveComplaints,
