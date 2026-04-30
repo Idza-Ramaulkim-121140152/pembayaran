@@ -23,6 +23,8 @@ import {
     Filler,
 } from 'chart.js';
 import Alert from '../components/common/Alert';
+import Button from '../components/common/Button';
+import Modal from '../components/common/Modal';
 import apiClient from '../services/api';
 
 ChartJS.register(
@@ -48,6 +50,14 @@ function getLastSixMonthLabels() {
     return labels;
 }
 
+function getTodayDateValue() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 const DEFAULT_STATS = {
     total_customers: 0,
     active_customers: 0,
@@ -69,6 +79,7 @@ const DEFAULT_STATS = {
 
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
+    const canEditMutations = !!window.appCanEditMutations;
     const isTeknisi = userRole === 'teknisi';
     const isFinance = userRole === 'finance';
     const canViewBalance = !isTeknisi;
@@ -81,6 +92,21 @@ function Dashboard() {
     const [isolatedCountLoading, setIsolatedCountLoading] = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [transactionsLoading, setTransactionsLoading] = useState(false);
+    const [showAdjustModal, setShowAdjustModal] = useState(false);
+    const [adjustSubmitting, setAdjustSubmitting] = useState(false);
+    const [adjustForm, setAdjustForm] = useState({
+        description: '',
+        amount: '',
+        transaction_date: getTodayDateValue(),
+    });
+    const [showManualIncomeModal, setShowManualIncomeModal] = useState(false);
+    const [manualIncomeSubmitting, setManualIncomeSubmitting] = useState(false);
+    const [manualIncomeForm, setManualIncomeForm] = useState({
+        source: 'manual',
+        description: '',
+        amount: '',
+        transaction_date: getTodayDateValue(),
+    });
 
     const fetchDashboardStats = async () => {
         try {
@@ -128,6 +154,64 @@ function Dashboard() {
         fetchIsolatedCount();
         fetchTransactions();
     }, []);
+
+    const handleAdjustBalance = async (e) => {
+        e.preventDefault();
+        try {
+            setAdjustSubmitting(true);
+            await apiClient.post('/finance/balance-adjustments', {
+                description: adjustForm.description,
+                amount: Number(adjustForm.amount),
+                transaction_date: adjustForm.transaction_date,
+            });
+
+            setShowAdjustModal(false);
+            setAdjustForm({
+                description: '',
+                amount: '',
+                transaction_date: getTodayDateValue(),
+            });
+
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+            ]);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menyimpan penyesuaian saldo');
+        } finally {
+            setAdjustSubmitting(false);
+        }
+    };
+
+    const handleManualIncome = async (e) => {
+        e.preventDefault();
+        try {
+            setManualIncomeSubmitting(true);
+            await apiClient.post('/finance/manual-income', {
+                source: manualIncomeForm.source,
+                description: manualIncomeForm.description,
+                amount: Number(manualIncomeForm.amount),
+                transaction_date: manualIncomeForm.transaction_date,
+            });
+
+            setShowManualIncomeModal(false);
+            setManualIncomeForm({
+                source: 'manual',
+                description: '',
+                amount: '',
+                transaction_date: getTodayDateValue(),
+            });
+
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchTransactions(),
+            ]);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menambah pemasukan manual');
+        } finally {
+            setManualIncomeSubmitting(false);
+        }
+    };
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('id-ID', {
@@ -300,6 +384,37 @@ function Dashboard() {
                         <Calendar size={16} />
                         {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                     </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                    {!isFinance && (
+                        <a
+                            href="/customer-verification"
+                            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-blue-500/25"
+                        >
+                            <Plus size={18} />
+                            Aktivasi Baru
+                        </a>
+                    )}
+                    {canEditMutations && (
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => setShowManualIncomeModal(true)}
+                                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-emerald-500/25"
+                            >
+                                <Plus size={18} />
+                                Pemasukan Manual
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowAdjustModal(true)}
+                                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-amber-500/25"
+                            >
+                                <Wallet size={18} />
+                                Penyesuaian Saldo
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -561,6 +676,115 @@ function Dashboard() {
                     )}
                 </div>
             )}
+
+            <Modal
+                isOpen={showAdjustModal}
+                onClose={() => setShowAdjustModal(false)}
+                title="Penyesuaian Saldo"
+            >
+                <form onSubmit={handleAdjustBalance} className="space-y-4">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                        Gunakan nilai positif untuk menambah saldo dan nilai negatif untuk mengurangi saldo.
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
+                        <input
+                            type="text"
+                            value={adjustForm.description}
+                            onChange={(e) => setAdjustForm((prev) => ({ ...prev, description: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nominal (+/-)</label>
+                        <input
+                            type="number"
+                            value={adjustForm.amount}
+                            onChange={(e) => setAdjustForm((prev) => ({ ...prev, amount: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal Transaksi</label>
+                        <input
+                            type="date"
+                            value={adjustForm.transaction_date}
+                            onChange={(e) => setAdjustForm((prev) => ({ ...prev, transaction_date: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button type="button" variant="secondary" onClick={() => setShowAdjustModal(false)}>
+                            Batal
+                        </Button>
+                        <Button type="submit" variant="primary" disabled={adjustSubmitting}>
+                            {adjustSubmitting ? 'Menyimpan...' : 'Simpan'}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+
+            <Modal
+                isOpen={showManualIncomeModal}
+                onClose={() => setShowManualIncomeModal(false)}
+                title="Tambah Pemasukan Manual"
+            >
+                <form onSubmit={handleManualIncome} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Sumber</label>
+                        <select
+                            value={manualIncomeForm.source}
+                            onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, source: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                        >
+                            <option value="manual">Manual</option>
+                            <option value="pemasangan">Pemasangan</option>
+                            <option value="pembayaran">Pembayaran</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
+                        <input
+                            type="text"
+                            value={manualIncomeForm.description}
+                            onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, description: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Nominal</label>
+                        <input
+                            type="number"
+                            value={manualIncomeForm.amount}
+                            onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, amount: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
+                        <input
+                            type="date"
+                            value={manualIncomeForm.transaction_date}
+                            onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, transaction_date: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            required
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                        <Button type="button" variant="secondary" onClick={() => setShowManualIncomeModal(false)}>
+                            Batal
+                        </Button>
+                        <Button type="submit" variant="primary" disabled={manualIncomeSubmitting}>
+                            {manualIncomeSubmitting ? 'Menyimpan...' : 'Simpan'}
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
         </div>
     );
 }
