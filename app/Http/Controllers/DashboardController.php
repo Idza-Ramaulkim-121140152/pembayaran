@@ -73,12 +73,27 @@ class DashboardController extends Controller
         return $packageType;
     }
 
-    private function buildPackageDistribution(): array
+    private function buildPackageDistribution(?Carbon $asOfDate = null, ?array $isolatedUsernameMap = null, bool $activeOnly = false): array
     {
-        $customers = Customer::query()->get(['package_type', 'custom_package']);
+        $customers = Customer::query()->get(['package_type', 'custom_package', 'due_date', 'pppoe_username']);
+        $asOfDay = $asOfDate?->copy()->startOfDay();
+        $isolatedUsernameMap = $isolatedUsernameMap ?? $this->fetchIsolatedUsernameMap();
         $counts = [];
 
         foreach ($customers as $customer) {
+            if ($activeOnly) {
+                $isOverdue = $customer->due_date
+                    ? Carbon::parse($customer->due_date)->startOfDay()->lt($asOfDay)
+                    : false;
+
+                $username = strtolower(trim((string) ($customer->pppoe_username ?? '')));
+                $isIsolated = $username !== '' && isset($isolatedUsernameMap[$username]);
+
+                if ($isOverdue || $isIsolated) {
+                    continue;
+                }
+            }
+
             $label = $this->resolveCustomerPackageLabel($customer);
             if ($label === '') {
                 continue;
@@ -296,7 +311,8 @@ class DashboardController extends Controller
         $startOfMonth = $now->copy()->startOfMonth();
         $endOfMonth = $now->copy()->endOfMonth();
 
-        $activitySummary = $this->buildCustomerActivitySummary($now->copy()->startOfDay());
+        $isolatedUsernameMap = $this->fetchIsolatedUsernameMap();
+        $activitySummary = $this->buildCustomerActivitySummary($now->copy()->startOfDay(), $isolatedUsernameMap);
 
         $totalCustomers = (int) $activitySummary['total_customers'];
         $activeCustomers = (int) $activitySummary['active_customers'];
@@ -445,7 +461,8 @@ class DashboardController extends Controller
         }
 
         $recentCustomers = \App\Models\Customer::latest()->take(5)->get(['id', 'name', 'email', 'is_active']);
-        $packageDistribution = $this->buildPackageDistribution();
+        $packageDistribution = $this->buildPackageDistribution($now->copy()->startOfDay(), $isolatedUsernameMap, false);
+        $activePackageDistribution = $this->buildPackageDistribution($now->copy()->startOfDay(), $isolatedUsernameMap, true);
 
         // Pemasangan baru untuk 6 bulan terakhir
         $newInstallations = [];
@@ -494,6 +511,7 @@ class DashboardController extends Controller
             'new_installations' => $newInstallations,
             'monthly_installations' => (int) $monthlyInstallations,
             'package_distribution' => $packageDistribution,
+            'active_package_distribution' => $activePackageDistribution,
             'pending_complaints' => $pendingComplaints,
             'in_progress_complaints' => $inProgressComplaints,
             'total_active_complaints' => $totalActiveComplaints,

@@ -78,6 +78,8 @@ const DEFAULT_STATS = {
     revenue_by_month: [0, 0, 0, 0, 0, 0],
     income_by_month: [0, 0, 0, 0, 0, 0],
     expense_by_month: [0, 0, 0, 0, 0, 0],
+    package_distribution: [],
+    active_package_distribution: [],
     finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
 };
 
@@ -237,7 +239,9 @@ function Dashboard() {
     );
     const financeSummary = stats?.finance_summary || DEFAULT_STATS.finance_summary;
     const packageDistribution = Array.isArray(stats?.package_distribution) ? stats.package_distribution : [];
+    const activePackageDistribution = Array.isArray(stats?.active_package_distribution) ? stats.active_package_distribution : [];
     const packageDistributionTotal = packageDistribution.reduce((sum, item) => sum + Number(item?.count || 0), 0);
+    const activePackageDistributionTotal = activePackageDistribution.reduce((sum, item) => sum + Number(item?.count || 0), 0);
     const defaultMonthlySeries = [0, 0, 0, 0, 0, 0];
     const normalizeSeries = (series) => (Array.isArray(series) && series.length === monthLabels.length ? series : defaultMonthlySeries);
     const packagePalette = [
@@ -313,6 +317,19 @@ function Dashboard() {
             {
                 data: packageDistribution.map((item) => Number(item.count || 0)),
                 backgroundColor: packageDistribution.map((_, index) => packagePalette[index % packagePalette.length]),
+                borderColor: '#fff',
+                borderWidth: 3,
+                hoverOffset: 10,
+            },
+        ],
+    };
+
+    const activePackageDistributionData = {
+        labels: activePackageDistribution.map((item) => item.label),
+        datasets: [
+            {
+                data: activePackageDistribution.map((item) => Number(item.count || 0)),
+                backgroundColor: activePackageDistribution.map((_, index) => packagePalette[index % packagePalette.length]),
                 borderColor: '#fff',
                 borderWidth: 3,
                 hoverOffset: 10,
@@ -399,6 +416,24 @@ function Dashboard() {
                 callbacks: {
                     label: (context) => {
                         const item = packageDistribution[context.dataIndex];
+                        return `${context.label}: ${Number(context.raw || 0)} pelanggan (${item?.percentage ?? 0}%)`;
+                    },
+                },
+            },
+        },
+    };
+
+    const activePackageDoughnutOptions = {
+        ...packageDoughnutOptions,
+        plugins: {
+            ...packageDoughnutOptions.plugins,
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                callbacks: {
+                    label: (context) => {
+                        const item = activePackageDistribution[context.dataIndex];
                         return `${context.label}: ${Number(context.raw || 0)} pelanggan (${item?.percentage ?? 0}%)`;
                     },
                 },
@@ -619,56 +654,92 @@ function Dashboard() {
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900">Persentase Paket Layanan</h2>
-                            <p className="text-sm text-gray-500">Distribusi paket yang dipilih pelanggan dari seluruh data pelanggan</p>
-                        </div>
-                        <div className="text-sm text-gray-600">
-                            Total pelanggan dengan paket: <span className="font-semibold text-gray-900">{packageDistributionTotal}</span>
+                            <p className="text-sm text-gray-500">Perbandingan paket pada seluruh pelanggan dan pelanggan aktif saja</p>
                         </div>
                     </div>
 
-                    {packageDistribution.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-center text-gray-500">
-                            Belum ada data paket layanan.
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div className="h-[320px] relative">
-                                <Doughnut data={packageDistributionData} options={packageDoughnutOptions} />
-                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <div className="text-center">
-                                        <p className="text-3xl font-bold text-gray-900">{packageDistribution.length}</p>
-                                        <p className="text-xs text-gray-500">Jenis Paket</p>
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        {[
+                            {
+                                key: 'total',
+                                title: 'Total Pelanggan',
+                                subtitle: 'Distribusi paket dari seluruh pelanggan',
+                                totalLabel: 'Total pelanggan dengan paket',
+                                totalValue: packageDistributionTotal,
+                                items: packageDistribution,
+                                data: packageDistributionData,
+                                options: packageDoughnutOptions,
+                                emptyText: 'Belum ada data paket layanan.',
+                            },
+                            {
+                                key: 'active',
+                                title: 'Pelanggan Aktif',
+                                subtitle: 'Distribusi paket dari pelanggan aktif saja',
+                                totalLabel: 'Total pelanggan aktif dengan paket',
+                                totalValue: activePackageDistributionTotal,
+                                items: activePackageDistribution,
+                                data: activePackageDistributionData,
+                                options: activePackageDoughnutOptions,
+                                emptyText: 'Belum ada pelanggan aktif dengan paket.',
+                            },
+                        ].map((card) => (
+                            <div key={card.key} className="rounded-2xl border border-gray-100 bg-gray-50/70 p-5">
+                                <div className="flex items-center justify-between gap-3 mb-5">
+                                    <div>
+                                        <h3 className="text-base font-bold text-gray-900">{card.title}</h3>
+                                        <p className="text-sm text-gray-500">{card.subtitle}</p>
+                                    </div>
+                                    <div className="text-sm text-gray-600 text-right">
+                                        {card.totalLabel}: <span className="font-semibold text-gray-900">{card.totalValue}</span>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div className="space-y-3">
-                                {packageDistribution.map((item, index) => {
-                                    const color = packagePalette[index % packagePalette.length];
-                                    return (
-                                        <div key={`${item.label}-${index}`} className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div className="flex items-center gap-3 min-w-0">
-                                                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color }}></span>
-                                                    <div className="min-w-0">
-                                                        <p className="font-semibold text-gray-900 truncate">{item.label}</p>
-                                                        <p className="text-xs text-gray-500">{item.count} pelanggan</p>
-                                                    </div>
+                                {card.items.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-10 text-center text-gray-500">
+                                        {card.emptyText}
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 gap-5">
+                                        <div className="h-[280px] relative bg-white rounded-xl border border-gray-100">
+                                            <Doughnut data={card.data} options={card.options} />
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                                <div className="text-center">
+                                                    <p className="text-3xl font-bold text-gray-900">{card.items.length}</p>
+                                                    <p className="text-xs text-gray-500">Jenis Paket</p>
                                                 </div>
-                                                <span className="text-sm font-semibold text-gray-900">{formatPercent(item.percentage)}</span>
-                                            </div>
-                                            <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                                                <div
-                                                    className="h-full rounded-full"
-                                                    style={{ width: `${Math.min(100, Number(item.percentage || 0))}%`, backgroundColor: color }}
-                                                ></div>
                                             </div>
                                         </div>
-                                    );
-                                })}
+
+                                        <div className="space-y-3">
+                                            {card.items.map((item, index) => {
+                                                const color = packagePalette[index % packagePalette.length];
+                                                return (
+                                                    <div key={`${card.key}-${item.label}-${index}`} className="rounded-xl border border-gray-100 bg-white p-4">
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <div className="flex items-center gap-3 min-w-0">
+                                                                <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color }}></span>
+                                                                <div className="min-w-0">
+                                                                    <p className="font-semibold text-gray-900 truncate">{item.label}</p>
+                                                                    <p className="text-xs text-gray-500">{item.count} pelanggan</p>
+                                                                </div>
+                                                            </div>
+                                                            <span className="text-sm font-semibold text-gray-900">{formatPercent(item.percentage)}</span>
+                                                        </div>
+                                                        <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full"
+                                                                style={{ width: `${Math.min(100, Number(item.percentage || 0))}%`, backgroundColor: color }}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        </div>
-                    )}
+                        ))}
+                    </div>
                 </div>
             )}
 
