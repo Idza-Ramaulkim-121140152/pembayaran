@@ -145,6 +145,26 @@ function getMandatoryIndicatorClass(indicator) {
     return 'bg-emerald-100 text-emerald-700';
 }
 
+function getChartBalanceSourceMeta(source) {
+    if (source === 'snapshot') {
+        return { label: 'Snapshot', className: 'bg-emerald-100 text-emerald-700' };
+    }
+
+    if (source === 'snapshot_fallback_ledger') {
+        return { label: 'Ledger Fallback', className: 'bg-cyan-100 text-cyan-700' };
+    }
+
+    if (source === 'actual_today') {
+        return { label: 'Aktual Hari Ini', className: 'bg-indigo-100 text-indigo-700' };
+    }
+
+    if (source === 'forecast') {
+        return { label: 'Forecast', className: 'bg-amber-100 text-amber-700' };
+    }
+
+    return { label: 'Tidak diketahui', className: 'bg-gray-200 text-gray-700' };
+}
+
 function DashboardPredictionPage() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
@@ -1236,6 +1256,65 @@ function DashboardPredictionPage() {
 
                         <div className="h-[320px]">
                             <Line data={projectionChartData} options={projectionChartOptions} />
+                        </div>
+
+                        <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                            <p className="text-sm font-semibold text-gray-900">Riwayat Total Saldo (Harian - {formatMonthLabel(financialProjectionMonth)})</p>
+                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                <table className="w-full text-sm min-w-[980px]">
+                                    <thead className="bg-gray-50 text-gray-600 text-left">
+                                        <tr>
+                                            <th className="px-3 py-2">Tanggal</th>
+                                            <th className="px-3 py-2 text-right">Total Saldo</th>
+                                            <th className="px-3 py-2 text-center">Sumber</th>
+                                            <th className="px-3 py-2 text-right">Prediksi Pemasukan</th>
+                                            <th className="px-3 py-2 text-right">Pengeluaran Wajib</th>
+                                            <th className="px-3 py-2 text-right">Saldo Diskresioner</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {financialProjectionLoading && projectionDailyRows.length === 0 ? (
+                                            <tr>
+                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                    Memuat riwayat saldo...
+                                                </td>
+                                            </tr>
+                                        ) : financialProjectionError ? (
+                                            <tr>
+                                                <td className="px-3 py-4 text-center text-red-700" colSpan={6}>
+                                                    {financialProjectionError}
+                                                </td>
+                                            </tr>
+                                        ) : projectionDailyRows.length === 0 ? (
+                                            <tr>
+                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                    Belum ada data riwayat saldo di bulan ini.
+                                                </td>
+                                            </tr>
+                                        ) : projectionDailyRows.map((row) => {
+                                            const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
+                                            const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
+
+                                            return (
+                                                <tr key={`balance-history-${row.date}`} className="border-t border-gray-100">
+                                                    <td className="px-3 py-2 text-gray-700">{row.date}</td>
+                                                    <td className={`px-3 py-2 text-right font-semibold ${totalSaldo >= 0 ? 'text-gray-900' : 'text-red-700'}`}>
+                                                        {formatCurrency(totalSaldo)}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-center">
+                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sourceMeta.className}`}>
+                                                            {sourceMeta.label}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.predicted_income || 0)}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.mandatory_expense || 0)}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.discretionary_balance || 0)}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
 
                     </>
