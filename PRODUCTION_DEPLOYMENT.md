@@ -228,6 +228,13 @@ Tambahkan:
 * * * * * cd /var/www/pembayaran && php artisan schedule:run >> /dev/null 2>&1
 ```
 
+Catatan fitur proyeksi keuangan:
+- Scheduler akan menjalankan `php artisan finance:snapshot-balance` otomatis setiap hari jam `23:59` (timezone `Asia/Jakarta`).
+- Setelah deploy pertama, jalankan backfill snapshot 90 hari:
+```bash
+php artisan finance:snapshot-backfill --days=90
+```
+
 ### 9. Monitoring & Logging
 
 #### Log Rotation

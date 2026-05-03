@@ -8,6 +8,7 @@ use App\Models\Complaint;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\FinancialPlanningTarget;
+use App\Models\FinancialBalanceSnapshot;
 use App\Models\FinancialTransaction;
 use App\Models\NetworkNotice;
 use App\Models\User;
@@ -39,6 +40,11 @@ class DashboardController extends Controller
     private function isLedgerReady(): bool
     {
         return Schema::hasTable('financial_transactions');
+    }
+
+    private function isFinancialBalanceSnapshotsReady(): bool
+    {
+        return Schema::hasTable('financial_balance_snapshots');
     }
 
     private function isComplaintsReady(): bool
@@ -341,7 +347,7 @@ class DashboardController extends Controller
 
         if ($canViewFinancialMetrics) {
             $ledgerService = app(FinancialLedgerService::class);
-            $financeSummary = $ledgerService->getSummary();
+            $financeSummary = $ledgerService->getSummaryAsOfToday();
 
             $monthlyRevenue = 0.0;
             $monthlyIncomeForComparison = 0.0;
@@ -1637,6 +1643,84 @@ class DashboardController extends Controller
         return $maps;
     }
 
+    private function buildBalanceSnapshotMap(Carbon $startDate, Carbon $endDate): array
+    {
+        if (!$this->isFinancialBalanceSnapshotsReady()) {
+            return [];
+        }
+
+        $start = $startDate->copy()->startOfDay();
+        $end = $endDate->copy()->startOfDay();
+        if ($start->gt($end)) {
+            return [];
+        }
+
+        $rows = FinancialBalanceSnapshot::query()
+            ->select(['snapshot_date', 'closing_balance'])
+            ->whereBetween('snapshot_date', [$start->toDateString(), $end->toDateString()])
+            ->get();
+
+        $map = [];
+        foreach ($rows as $row) {
+            $dateKey = Carbon::parse($row->snapshot_date)->toDateString();
+            $map[$dateKey] = (float) ($row->closing_balance ?? 0);
+        }
+
+        return $map;
+    }
+
+    private function buildLedgerClosingBalanceMap(Carbon $startDate, Carbon $endDate): array
+    {
+        if (!$this->isLedgerReady()) {
+            return [];
+        }
+
+        $start = $startDate->copy()->startOfDay();
+        $end = $endDate->copy()->startOfDay();
+        if ($start->gt($end)) {
+            return [];
+        }
+
+        $ledgerService = app(FinancialLedgerService::class);
+        $openingBalance = (float) ($ledgerService->getSummaryAsOfDate($start->copy()->subDay())['balance'] ?? 0);
+        $rows = FinancialTransaction::query()
+            ->selectRaw('transaction_date, type, SUM(amount) as total_amount')
+            ->whereBetween('transaction_date', [$start->toDateString(), $end->toDateString()])
+            ->groupBy('transaction_date', 'type')
+            ->orderBy('transaction_date')
+            ->get();
+
+        $dailyNetMap = [];
+        foreach ($rows as $row) {
+            $dateKey = (string) $row->transaction_date;
+            $type = (string) $row->type;
+            $amount = (float) ($row->total_amount ?? 0);
+
+            if (!isset($dailyNetMap[$dateKey])) {
+                $dailyNetMap[$dateKey] = 0.0;
+            }
+
+            if ($type === 'income') {
+                $dailyNetMap[$dateKey] += $amount;
+            } elseif ($type === 'expense') {
+                $dailyNetMap[$dateKey] -= $amount;
+            } else {
+                $dailyNetMap[$dateKey] += $amount;
+            }
+        }
+
+        $closingMap = [];
+        $runningBalance = $openingBalance;
+
+        for ($cursor = $start->copy(); $cursor->lte($end); $cursor->addDay()) {
+            $dateKey = $cursor->toDateString();
+            $runningBalance += (float) ($dailyNetMap[$dateKey] ?? 0);
+            $closingMap[$dateKey] = $runningBalance;
+        }
+
+        return $closingMap;
+    }
+
     private function buildMandatoryExecutionConfirmationMap($mandatoryTargets, Carbon $startDate, Carbon $endDate): array
     {
         $confirmationMap = [];
@@ -1725,6 +1809,8 @@ class DashboardController extends Controller
         $rangeStart = $startDate->copy()->startOfDay();
         $rangeEnd = $endDate->copy()->endOfDay();
         $today = Carbon::today()->startOfDay();
+        $todayDateKey = $today->toDateString();
+        $ledgerService = app(FinancialLedgerService::class);
 
         $forecast = $this->buildRevenueForecast($rangeStart->copy(), $rangeEnd->copy());
         $dailyForecast = $forecast['daily_forecast'] ?? [];
@@ -1733,6 +1819,11 @@ class DashboardController extends Controller
         $openingBalance = $ledgerReady
             ? $this->getLedgerBalanceBefore($rangeStart->copy())
             : 0.0;
+        $snapshotBalanceMap = $this->buildBalanceSnapshotMap($rangeStart->copy(), $rangeEnd->copy()->startOfDay());
+        $ledgerClosingBalanceMap = $this->buildLedgerClosingBalanceMap(
+            $rangeStart->copy(),
+            $rangeEnd->copy()->startOfDay()->min($today->copy()->subDay())
+        );
 
         $ledgerMaps = $this->buildDailyLedgerCashflowMaps($rangeStart->copy(), $rangeEnd->copy());
         $dailyLedgerNetMap = $ledgerMaps['net'] ?? [];
@@ -1966,9 +2057,62 @@ class DashboardController extends Controller
 
         $reachablePurchaseTargets = collect($purchaseGoals)->where('can_execute_in_range', true)->count();
         $readyNowPurchaseTargets = collect($purchaseGoals)->where('can_execute_now', true)->count();
-        $actualBalanceToday = $ledgerReady ? $this->getLedgerBalanceAsOfToday() : $openingBalance;
-        $actualBalanceTodayDate = Carbon::today()->toDateString();
+        $actualBalanceToday = $ledgerReady
+            ? (float) ($ledgerService->getSummaryAsOfToday()['balance'] ?? 0)
+            : $openingBalance;
+        $actualBalanceTodayDate = $todayDateKey;
         $actualBalanceTodaySource = $ledgerReady ? 'ledger_as_of_today' : 'opening_balance_fallback';
+
+        $todayProjectedBalance = null;
+        foreach ($dailyProjection as $row) {
+            if ((string) ($row['date'] ?? '') === $todayDateKey) {
+                $todayProjectedBalance = (float) ($row['projected_balance'] ?? 0);
+                break;
+            }
+        }
+
+        $futureForecastAnchorDelta = $todayProjectedBalance !== null
+            ? ($actualBalanceToday - $todayProjectedBalance)
+            : 0.0;
+
+        foreach ($dailyProjection as $index => $row) {
+            $dateKey = (string) ($row['date'] ?? '');
+            if ($dateKey === '') {
+                $dailyProjection[$index]['chart_balance'] = (int) round((float) ($row['projected_balance'] ?? 0));
+                $dailyProjection[$index]['chart_balance_source'] = 'forecast';
+                continue;
+            }
+
+            $rowDate = Carbon::parse($dateKey)->startOfDay();
+            $projectedBalance = (float) ($row['projected_balance'] ?? 0);
+
+            if ($rowDate->lt($today)) {
+                if (array_key_exists($dateKey, $snapshotBalanceMap)) {
+                    $dailyProjection[$index]['chart_balance'] = (int) round((float) $snapshotBalanceMap[$dateKey]);
+                    $dailyProjection[$index]['chart_balance_source'] = 'snapshot';
+                    continue;
+                }
+
+                if (array_key_exists($dateKey, $ledgerClosingBalanceMap)) {
+                    $dailyProjection[$index]['chart_balance'] = (int) round((float) $ledgerClosingBalanceMap[$dateKey]);
+                    $dailyProjection[$index]['chart_balance_source'] = 'snapshot_fallback_ledger';
+                    continue;
+                }
+
+                $dailyProjection[$index]['chart_balance'] = (int) round($projectedBalance);
+                $dailyProjection[$index]['chart_balance_source'] = 'forecast';
+                continue;
+            }
+
+            if ($rowDate->equalTo($today)) {
+                $dailyProjection[$index]['chart_balance'] = (int) round($actualBalanceToday);
+                $dailyProjection[$index]['chart_balance_source'] = 'actual_today';
+                continue;
+            }
+
+            $dailyProjection[$index]['chart_balance'] = (int) round($projectedBalance + $futureForecastAnchorDelta);
+            $dailyProjection[$index]['chart_balance_source'] = 'forecast';
+        }
 
         return [
             'range' => [
@@ -3755,27 +3899,8 @@ class DashboardController extends Controller
             return 0.0;
         }
 
-        $today = Carbon::today()->toDateString();
-
-        $income = (float) FinancialTransaction::query()
-            ->where('type', 'income')
-            ->where('source', '!=', 'mandatory_target_execution')
-            ->whereDate('transaction_date', '<=', $today)
-            ->sum('amount');
-
-        $expense = (float) FinancialTransaction::query()
-            ->where('type', 'expense')
-            ->where('source', '!=', 'mandatory_target_execution')
-            ->whereDate('transaction_date', '<=', $today)
-            ->sum('amount');
-
-        $adjustment = (float) FinancialTransaction::query()
-            ->where('type', 'adjustment')
-            ->where('source', '!=', 'mandatory_target_execution')
-            ->whereDate('transaction_date', '<=', $today)
-            ->sum('amount');
-
-        return $income - $expense + $adjustment;
+        $ledgerService = app(FinancialLedgerService::class);
+        return (float) ($ledgerService->getSummaryAsOfToday()['balance'] ?? 0);
     }
 
     private function buildRevenueForecast(Carbon $startDate, Carbon $endDate): array

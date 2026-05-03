@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\FinancialBalanceSnapshot;
 use App\Models\FinancialTransaction;
 use App\Models\Invoice;
 use App\Models\Package;
@@ -166,6 +167,163 @@ class DashboardPredictionOptimizationTest extends TestCase
                 return str_contains((string) $text, 'Saldo aktual per');
             })
         );
+
+        $todayRow = collect($response->json('data.daily_projection'))
+            ->firstWhere('date', Carbon::today()->toDateString());
+        $this->assertNotNull($todayRow);
+        $this->assertSame(800, (int) ($todayRow['chart_balance'] ?? -1));
+        $this->assertSame('actual_today', (string) ($todayRow['chart_balance_source'] ?? ''));
+    }
+
+    public function test_snapshot_balance_command_captures_as_of_date_balance(): void
+    {
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income kemarin',
+            'amount' => 1000,
+            'transaction_date' => Carbon::today()->subDay()->toDateString(),
+        ]);
+        FinancialTransaction::query()->create([
+            'type' => 'expense',
+            'source' => 'manual_expense',
+            'category' => 'manual',
+            'description' => 'Expense hari ini',
+            'amount' => 200,
+            'transaction_date' => Carbon::today()->toDateString(),
+        ]);
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income besok',
+            'amount' => 500,
+            'transaction_date' => Carbon::today()->addDay()->toDateString(),
+        ]);
+
+        $this->artisan('finance:snapshot-balance', [
+            '--date' => Carbon::today()->toDateString(),
+        ])->assertSuccessful();
+
+        $snapshot = FinancialBalanceSnapshot::query()
+            ->whereDate('snapshot_date', Carbon::today()->toDateString())
+            ->first();
+
+        $this->assertNotNull($snapshot);
+        $this->assertSame(800, (int) round((float) ($snapshot->closing_balance ?? 0)));
+    }
+
+    public function test_snapshot_backfill_command_generates_rows_for_requested_days(): void
+    {
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income hari ini',
+            'amount' => 1000,
+            'transaction_date' => Carbon::today()->toDateString(),
+        ]);
+
+        $this->artisan('finance:snapshot-backfill', [
+            '--days' => 3,
+        ])->assertSuccessful();
+
+        $this->assertSame(3, FinancialBalanceSnapshot::query()->count());
+        $this->assertDatabaseHas('financial_balance_snapshots', [
+            'snapshot_date' => Carbon::today()->toDateString(),
+        ]);
+        $this->assertDatabaseHas('financial_balance_snapshots', [
+            'snapshot_date' => Carbon::today()->subDays(2)->toDateString(),
+        ]);
+    }
+
+    public function test_dashboard_finance_summary_balance_uses_as_of_today(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income kemarin',
+            'amount' => 1000,
+            'transaction_date' => Carbon::today()->subDay()->toDateString(),
+        ]);
+        FinancialTransaction::query()->create([
+            'type' => 'expense',
+            'source' => 'manual_expense',
+            'category' => 'manual',
+            'description' => 'Expense hari ini',
+            'amount' => 300,
+            'transaction_date' => Carbon::today()->toDateString(),
+        ]);
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income masa depan',
+            'amount' => 700,
+            'transaction_date' => Carbon::today()->addDay()->toDateString(),
+        ]);
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard');
+        $response->assertOk();
+        $response->assertJsonPath('data.finance_summary.balance', 700);
+    }
+
+    public function test_financial_projection_uses_snapshot_for_past_and_forecast_for_future_chart_balance(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+        $yesterday = Carbon::today()->subDay()->toDateString();
+        $today = Carbon::today()->toDateString();
+        $tomorrow = Carbon::today()->addDay()->toDateString();
+
+        FinancialTransaction::query()->create([
+            'type' => 'income',
+            'source' => 'manual_income',
+            'category' => 'manual',
+            'description' => 'Income kemarin',
+            'amount' => 1000,
+            'transaction_date' => $yesterday,
+        ]);
+        FinancialTransaction::query()->create([
+            'type' => 'expense',
+            'source' => 'manual_expense',
+            'category' => 'manual',
+            'description' => 'Expense hari ini',
+            'amount' => 200,
+            'transaction_date' => $today,
+        ]);
+
+        FinancialBalanceSnapshot::query()->create([
+            'snapshot_date' => $yesterday,
+            'closing_balance' => 999,
+            'total_income' => 1000,
+            'total_expense' => 1,
+            'total_adjustment' => 0,
+            'captured_at' => now(),
+        ]);
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard/financial-projection', [
+            'start_date' => $yesterday,
+            'end_date' => $tomorrow,
+        ]);
+        $response->assertOk();
+
+        $rows = collect($response->json('data.daily_projection'));
+        $yesterdayRow = $rows->firstWhere('date', $yesterday);
+        $todayRow = $rows->firstWhere('date', $today);
+        $tomorrowRow = $rows->firstWhere('date', $tomorrow);
+
+        $this->assertNotNull($yesterdayRow);
+        $this->assertNotNull($todayRow);
+        $this->assertNotNull($tomorrowRow);
+
+        $this->assertSame(999, (int) ($yesterdayRow['chart_balance'] ?? 0));
+        $this->assertSame('snapshot', (string) ($yesterdayRow['chart_balance_source'] ?? ''));
+        $this->assertSame('actual_today', (string) ($todayRow['chart_balance_source'] ?? ''));
+        $this->assertSame('forecast', (string) ($tomorrowRow['chart_balance_source'] ?? ''));
     }
 
     public function test_revenue_forecast_marks_collection_adjustment_disabled_via_env_toggle(): void

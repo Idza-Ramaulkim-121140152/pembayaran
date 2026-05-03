@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\PayrollMemberPayment;
 use App\Models\Pengeluaran;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 
@@ -230,5 +231,50 @@ class FinancialLedgerService
             'adjustment_net' => $adjustmentNet,
             'balance' => $balance,
         ];
+    }
+
+    public function getSummaryAsOfDate(CarbonInterface $date): array
+    {
+        if (!$this->isReady()) {
+            return [
+                'total_income' => 0,
+                'total_expense' => 0,
+                'adjustment_net' => 0,
+                'balance' => 0,
+                'as_of_date' => $date->toDateString(),
+            ];
+        }
+
+        $cutoffDate = $date->copy()->toDateString();
+
+        $totalIncome = (float) FinancialTransaction::query()
+            ->where('type', 'income')
+            ->whereDate('transaction_date', '<=', $cutoffDate)
+            ->sum('amount');
+
+        $totalExpense = (float) FinancialTransaction::query()
+            ->where('type', 'expense')
+            ->whereDate('transaction_date', '<=', $cutoffDate)
+            ->sum('amount');
+
+        $adjustmentNet = (float) FinancialTransaction::query()
+            ->where('type', 'adjustment')
+            ->whereDate('transaction_date', '<=', $cutoffDate)
+            ->sum('amount');
+
+        $balance = $totalIncome - $totalExpense + $adjustmentNet;
+
+        return [
+            'total_income' => $totalIncome,
+            'total_expense' => $totalExpense,
+            'adjustment_net' => $adjustmentNet,
+            'balance' => $balance,
+            'as_of_date' => $cutoffDate,
+        ];
+    }
+
+    public function getSummaryAsOfToday(): array
+    {
+        return $this->getSummaryAsOfDate(Carbon::today());
     }
 }

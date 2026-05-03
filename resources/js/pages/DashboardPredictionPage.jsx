@@ -482,7 +482,9 @@ function DashboardPredictionPage() {
         datasets: [
             {
                 label: 'Saldo Proyeksi',
-                data: projectionDailyRows.map((row) => Number(row.projected_balance || 0)),
+                data: projectionDailyRows.map((row) => Number(
+                    row.chart_balance ?? row.projected_balance ?? 0
+                )),
                 borderColor: '#7c3aed',
                 backgroundColor: 'rgba(124, 58, 237, 0.15)',
                 fill: true,
