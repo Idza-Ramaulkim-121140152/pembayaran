@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch, FileText, Brain } from 'lucide-react';
+import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch, FileText, Brain, Target } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 
 // Role-based access: which roles can see each menu
@@ -28,6 +28,7 @@ const ACCESS = {
     promo: ['superadmin', 'admin'],
     userManagement: ['superadmin'],
     invoiceManagement: ['superadmin'],
+    financialTargets: ['superadmin'],
     profile: ['superadmin', 'admin', 'teknisi', 'finance'],
 };
 
@@ -97,6 +98,7 @@ export function Navbar() {
         if (path === '/settings/packages') return location.pathname === '/settings/packages';
         if (path === '/settings/promo') return location.pathname === '/settings/promo';
         if (path === '/settings/invoice-management') return location.pathname === '/settings/invoice-management';
+        if (path === '/settings/financial-targets') return location.pathname === '/settings/financial-targets';
         if (path === '/settings/network-notices') return location.pathname === '/settings/network-notices';
         if (path === '/settings/send-notification') return location.pathname === '/settings/send-notification';
         if (path === '/settings/users') return location.pathname === '/settings/users';
@@ -220,6 +222,12 @@ export function Navbar() {
                                             <Link to="/settings/invoice-management" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/invoice-management') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                                 <FileText size={18} />
                                                 <span>Manajemen Invoice</span>
+                                            </Link>
+                                        )}
+                                        {can('financialTargets') && (
+                                            <Link to="/settings/financial-targets" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/financial-targets') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                                <Target size={18} />
+                                                <span>Master Target Keuangan</span>
                                             </Link>
                                         )}
                                         {can('paymentMethods') && (
@@ -401,6 +409,12 @@ export function Navbar() {
                                 <Link to="/settings/invoice-management" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/invoice-management') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                     <FileText size={20} />
                                     <span>Manajemen Invoice</span>
+                                </Link>
+                            )}
+                            {can('financialTargets') && (
+                                <Link to="/settings/financial-targets" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/financial-targets') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                    <Target size={20} />
+                                    <span>Master Target Keuangan</span>
                                 </Link>
                             )}
                             {can('paymentMethods') && (

@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -875,9 +876,9 @@ class DashboardController extends Controller
 
     public function financialTargets(Request $request)
     {
-        if (!$this->canViewFinancialMetrics($request->user())) {
+        if (!$this->canManageFinancialTargets($request->user())) {
             return response()->json([
-                'message' => 'Anda tidak memiliki izin melihat data keuangan.',
+                'message' => 'Hanya superadmin yang dapat mengatur target keuangan.',
             ], 403);
         }
 
@@ -887,8 +888,7 @@ class DashboardController extends Controller
             ]);
         }
 
-        $includeInactive = $request->boolean('include_inactive', false)
-            && $this->canManageFinancialTargets($request->user());
+        $includeInactive = $request->boolean('include_inactive', false);
 
         $query = FinancialPlanningTarget::query()
             ->orderBy('type')
@@ -1957,6 +1957,9 @@ class DashboardController extends Controller
 
         $reachablePurchaseTargets = collect($purchaseGoals)->where('can_execute_in_range', true)->count();
         $readyNowPurchaseTargets = collect($purchaseGoals)->where('can_execute_now', true)->count();
+        $actualBalanceToday = $ledgerReady ? $this->getLedgerBalanceAsOfToday() : $openingBalance;
+        $actualBalanceTodayDate = Carbon::today()->toDateString();
+        $actualBalanceTodaySource = $ledgerReady ? 'ledger_as_of_today' : 'opening_balance_fallback';
 
         return [
             'range' => [
@@ -1973,6 +1976,9 @@ class DashboardController extends Controller
                 'mandatory_shortfall_total' => (int) round($mandatoryShortfallTotal),
                 'net_after_mandatory' => (int) round($predictedIncomeTotal - $mandatoryExpenseTotal),
                 'projected_ending_balance' => (int) round($cash),
+                'actual_balance_today' => (int) round($actualBalanceToday),
+                'actual_balance_today_date' => $actualBalanceTodayDate,
+                'actual_balance_today_source' => $actualBalanceTodaySource,
                 'mandatory_total_events' => $mandatoryTotalEvents,
                 'mandatory_covered_events' => $coveredMandatory,
                 'mandatory_confirmed_events' => $confirmedMandatory,
@@ -3375,6 +3381,289 @@ class DashboardController extends Controller
         return $dailyRevenueMap;
     }
 
+    private function parseCurrencyStringAmount(string $rawAmount): float
+    {
+        $normalized = trim($rawAmount);
+        if ($normalized === '') {
+            return 0.0;
+        }
+
+        if (preg_match('/(\d[\d\.\,]*)/', $normalized, $matches) !== 1) {
+            return 0.0;
+        }
+
+        $digits = preg_replace('/\D+/', '', (string) ($matches[1] ?? ''));
+        if ($digits === '') {
+            return 0.0;
+        }
+
+        return (float) $digits;
+    }
+
+    private function resolveCustomerExpectedBillingAmount(
+        Customer $customer,
+        array $latestInvoiceAmountByCustomerId,
+        array $activePackagePriceByName,
+        array $historicalCustomerAverageAmountByCustomerId
+    ): float {
+        $customerId = (int) ($customer->id ?? 0);
+        $latestInvoiceAmount = (float) ($latestInvoiceAmountByCustomerId[$customerId] ?? 0);
+        if ($latestInvoiceAmount > 0) {
+            return $latestInvoiceAmount;
+        }
+
+        $packageName = mb_strtolower(trim((string) ($customer->package_type ?? '')));
+        $packagePrice = (float) ($activePackagePriceByName[$packageName] ?? 0);
+        if ($packagePrice > 0) {
+            return $packagePrice;
+        }
+
+        $customPackageAmount = $this->parseCurrencyStringAmount((string) ($customer->custom_package ?? ''));
+        if ($customPackageAmount > 0) {
+            return $customPackageAmount;
+        }
+
+        return (float) ($historicalCustomerAverageAmountByCustomerId[$customerId] ?? 0);
+    }
+
+    private function buildForecastCustomerHealthScoreMap(): array
+    {
+        $cacheKey = 'dashboard:forecast:customer-health-map:' . Carbon::today()->toDateString();
+
+        return Cache::remember($cacheKey, now()->addMinutes(5), function () {
+            $asOfDate = Carbon::today()->startOfDay();
+            $windowStart = $asOfDate->copy()->subDays(29)->startOfDay();
+            $windowEnd = $asOfDate->copy()->endOfDay();
+
+            $metrics = $this->buildCustomerHealthMetrics($windowStart, $windowEnd);
+            $rows = is_array($metrics['high_risk_customer_rows'] ?? null)
+                ? $metrics['high_risk_customer_rows']
+                : [];
+            $topRows = is_array($metrics['top_risk_customers'] ?? null)
+                ? $metrics['top_risk_customers']
+                : [];
+            $allRows = array_merge($rows, $topRows);
+            $map = [];
+
+            foreach ($allRows as $row) {
+                $customerId = (int) ($row['customer_id'] ?? 0);
+                if ($customerId < 1) {
+                    continue;
+                }
+
+                $healthScore = (int) round((float) ($row['health_score'] ?? 70));
+                $map[$customerId] = (int) $this->clamp($healthScore, 0, 100);
+            }
+
+            $averageHealthScore = (int) round((float) ($metrics['summary']['average_health_score'] ?? 70));
+
+            return [
+                'as_of_date' => $asOfDate->toDateString(),
+                'map' => $map,
+                'average_score' => (int) $this->clamp($averageHealthScore, 0, 100),
+            ];
+        });
+    }
+
+    private function buildDueHealthCollectionAdjustmentMap(Carbon $forecastStart, Carbon $forecastEnd, Carbon $historyStart): array
+    {
+        $customers = Customer::query()
+            ->where('is_active', true)
+            ->whereNotNull('due_date')
+            ->get(['id', 'due_date', 'package_type', 'custom_package']);
+
+        if ($customers->isEmpty()) {
+            return [
+                'expected_collection_by_day' => [],
+                'meta' => [
+                    'customers_considered' => 0,
+                    'due_occurrences_considered' => 0,
+                    'average_health_score' => 70,
+                    'total_expected_collection' => 0,
+                ],
+            ];
+        }
+
+        $customerIds = $customers->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->filter(fn($id) => $id > 0)
+            ->values()
+            ->all();
+
+        $latestInvoiceAmountByCustomerId = [];
+        if (count($customerIds) > 0) {
+            $latestInvoices = Invoice::query()
+                ->whereIn('customer_id', $customerIds)
+                ->where('status', '!=', 'cancelled')
+                ->orderByDesc('id')
+                ->get(['customer_id', 'amount']);
+
+            foreach ($latestInvoices as $invoice) {
+                $customerId = (int) ($invoice->customer_id ?? 0);
+                if ($customerId < 1 || isset($latestInvoiceAmountByCustomerId[$customerId])) {
+                    continue;
+                }
+
+                $amount = (float) ($invoice->amount ?? 0);
+                if ($amount > 0) {
+                    $latestInvoiceAmountByCustomerId[$customerId] = $amount;
+                }
+            }
+        }
+
+        $activePackagePriceByName = [];
+        if (Schema::hasTable('packages')) {
+            $packages = Package::active()->get(['name', 'price']);
+            foreach ($packages as $package) {
+                $name = mb_strtolower(trim((string) ($package->name ?? '')));
+                if ($name === '') {
+                    continue;
+                }
+
+                $price = (float) ($package->price ?? 0);
+                if ($price > 0) {
+                    $activePackagePriceByName[$name] = $price;
+                }
+            }
+        }
+
+        $historicalCustomerAverageAmountByCustomerId = [];
+        if (count($customerIds) > 0) {
+            $historicalAvgRows = Invoice::query()
+                ->selectRaw('customer_id, AVG(amount) as avg_amount')
+                ->whereIn('customer_id', $customerIds)
+                ->where('status', 'paid')
+                ->whereNotNull('paid_at')
+                ->whereBetween('paid_at', [$historyStart->copy()->startOfDay(), Carbon::today()->endOfDay()])
+                ->groupBy('customer_id')
+                ->get();
+
+            foreach ($historicalAvgRows as $row) {
+                $customerId = (int) ($row->customer_id ?? 0);
+                if ($customerId < 1) {
+                    continue;
+                }
+
+                $amount = (float) ($row->avg_amount ?? 0);
+                if ($amount > 0) {
+                    $historicalCustomerAverageAmountByCustomerId[$customerId] = $amount;
+                }
+            }
+        }
+
+        $healthData = $this->buildForecastCustomerHealthScoreMap();
+        $customerHealthMap = is_array($healthData['map'] ?? null) ? $healthData['map'] : [];
+        $averageHealthScore = (int) ($healthData['average_score'] ?? 70);
+
+        $windowStart = $forecastStart->copy()->subDays(14)->startOfDay();
+        $windowEnd = $forecastEnd->copy()->addDays(14)->endOfDay();
+        $expectedCollectionByDay = [];
+        $totalExpectedCollection = 0.0;
+        $dueOccurrencesConsidered = 0;
+
+        foreach ($customers as $customer) {
+            $expectedAmount = $this->resolveCustomerExpectedBillingAmount(
+                $customer,
+                $latestInvoiceAmountByCustomerId,
+                $activePackagePriceByName,
+                $historicalCustomerAverageAmountByCustomerId
+            );
+
+            if ($expectedAmount <= 0) {
+                continue;
+            }
+
+            $customerId = (int) ($customer->id ?? 0);
+            $healthScore = (int) ($customerHealthMap[$customerId] ?? $averageHealthScore);
+
+            if ($healthScore >= 80) {
+                $delayDistribution = [0 => 0.78, 1 => 0.14, 2 => 0.04, 3 => 0.02, 7 => 0.01, 14 => 0.01];
+                $collectionConfidence = 0.99;
+            } elseif ($healthScore >= 60) {
+                $delayDistribution = [0 => 0.45, 1 => 0.20, 2 => 0.12, 3 => 0.08, 7 => 0.08, 14 => 0.07];
+                $collectionConfidence = 0.95;
+            } elseif ($healthScore >= 40) {
+                $delayDistribution = [0 => 0.30, 1 => 0.16, 2 => 0.12, 3 => 0.10, 7 => 0.15, 14 => 0.17];
+                $collectionConfidence = 0.88;
+            } else {
+                $delayDistribution = [0 => 0.18, 1 => 0.12, 2 => 0.10, 3 => 0.10, 7 => 0.22, 14 => 0.28];
+                $collectionConfidence = 0.78;
+            }
+
+            try {
+                $dueDate = $customer->due_date instanceof Carbon
+                    ? $customer->due_date->copy()->startOfDay()
+                    : Carbon::parse((string) $customer->due_date)->startOfDay();
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            while ($dueDate->lt($windowStart)) {
+                $dueDate->addDays(30);
+            }
+
+            while ($dueDate->lte($windowEnd)) {
+                $dueOccurrencesConsidered++;
+
+                foreach ($delayDistribution as $delayDays => $ratio) {
+                    $collectionDate = $dueDate->copy()->addDays((int) $delayDays);
+                    if ($collectionDate->lt($forecastStart) || $collectionDate->gt($forecastEnd)) {
+                        continue;
+                    }
+
+                    $dateKey = $collectionDate->toDateString();
+                    $expectedAmountForDate = $expectedAmount * (float) $ratio * $collectionConfidence;
+                    if (!isset($expectedCollectionByDay[$dateKey])) {
+                        $expectedCollectionByDay[$dateKey] = 0.0;
+                    }
+                    $expectedCollectionByDay[$dateKey] += $expectedAmountForDate;
+                    $totalExpectedCollection += $expectedAmountForDate;
+                }
+
+                $dueDate->addDays(30);
+            }
+        }
+
+        return [
+            'expected_collection_by_day' => $expectedCollectionByDay,
+            'meta' => [
+                'customers_considered' => $customers->count(),
+                'due_occurrences_considered' => $dueOccurrencesConsidered,
+                'average_health_score' => $averageHealthScore,
+                'total_expected_collection' => (int) round($totalExpectedCollection),
+            ],
+        ];
+    }
+
+    private function getLedgerBalanceAsOfToday(): float
+    {
+        if (!$this->isLedgerReady()) {
+            return 0.0;
+        }
+
+        $today = Carbon::today()->toDateString();
+
+        $income = (float) FinancialTransaction::query()
+            ->where('type', 'income')
+            ->where('source', '!=', 'mandatory_target_execution')
+            ->whereDate('transaction_date', '<=', $today)
+            ->sum('amount');
+
+        $expense = (float) FinancialTransaction::query()
+            ->where('type', 'expense')
+            ->where('source', '!=', 'mandatory_target_execution')
+            ->whereDate('transaction_date', '<=', $today)
+            ->sum('amount');
+
+        $adjustment = (float) FinancialTransaction::query()
+            ->where('type', 'adjustment')
+            ->where('source', '!=', 'mandatory_target_execution')
+            ->whereDate('transaction_date', '<=', $today)
+            ->sum('amount');
+
+        return $income - $expense + $adjustment;
+    }
+
     private function buildRevenueForecast(Carbon $startDate, Carbon $endDate): array
     {
         $forecastStart = $startDate->copy()->startOfDay();
@@ -3674,6 +3963,22 @@ class DashboardController extends Controller
         $predictedTotal = 0.0;
         $confidenceTotal = 0.0;
         $forecastSeriesMap = $historyAmountMap;
+        $dueHealthAdjustment = $this->buildDueHealthCollectionAdjustmentMap(
+            $forecastStart->copy(),
+            $forecastEnd->copy(),
+            $historyStart->copy()
+        );
+        $expectedCollectionByDay = is_array($dueHealthAdjustment['expected_collection_by_day'] ?? null)
+            ? $dueHealthAdjustment['expected_collection_by_day']
+            : [];
+        $dueHealthMeta = is_array($dueHealthAdjustment['meta'] ?? null)
+            ? $dueHealthAdjustment['meta']
+            : [];
+        $dueHealthBlendRatio = 0.35;
+        $dueHealthMaxAdjustmentRatio = 0.25;
+        $adjustmentAppliedDays = 0;
+        $adjustmentTotalNominal = 0.0;
+        $baselineTotalRevenue = 0.0;
 
         for ($cursor = $forecastStart->copy(), $offset = 0; $cursor->lte($forecastEnd); $cursor->addDay(), $offset++) {
             $weekday = $cursor->dayOfWeek;
@@ -3717,10 +4022,36 @@ class DashboardController extends Controller
                 + ($momentumPrediction * (float) ($ensembleWeights['momentum'] ?? 0.3))
                 + ($smoothingPrediction * (float) ($ensembleWeights['smoothing'] ?? 0.2))
             );
-            $predictedRevenue = (int) round(max(0, $predictedRevenueRaw));
+            $baselinePredictedRevenueRaw = max(0, $predictedRevenueRaw);
+            $expectedDueHealthCollection = (float) ($expectedCollectionByDay[$cursor->toDateString()] ?? 0);
+            $adjustedRevenueRaw = $baselinePredictedRevenueRaw;
+            $adjustmentRatioPercent = 0.0;
+
+            if ($expectedDueHealthCollection > 0) {
+                $blendedRevenueRaw = ($baselinePredictedRevenueRaw * (1 - $dueHealthBlendRatio))
+                    + ($expectedDueHealthCollection * $dueHealthBlendRatio);
+
+                if ($baselinePredictedRevenueRaw > 0) {
+                    $minAllowed = $baselinePredictedRevenueRaw * (1 - $dueHealthMaxAdjustmentRatio);
+                    $maxAllowed = $baselinePredictedRevenueRaw * (1 + $dueHealthMaxAdjustmentRatio);
+                    $adjustedRevenueRaw = max($minAllowed, min($maxAllowed, $blendedRevenueRaw));
+                    $adjustmentRatioPercent = (($adjustedRevenueRaw - $baselinePredictedRevenueRaw) / $baselinePredictedRevenueRaw) * 100;
+                } else {
+                    $adjustedRevenueRaw = $expectedDueHealthCollection * $dueHealthBlendRatio;
+                }
+            }
+
+            $adjustmentAmount = $adjustedRevenueRaw - $baselinePredictedRevenueRaw;
+            if (abs($adjustmentAmount) >= 1) {
+                $adjustmentAppliedDays++;
+                $adjustmentTotalNominal += $adjustmentAmount;
+            }
+
+            $baselineTotalRevenue += $baselinePredictedRevenueRaw;
+            $predictedRevenue = (int) round(max(0, $adjustedRevenueRaw));
 
             $modelSpread = max($seasonalPrediction, $momentumPrediction, $smoothingPrediction) - min($seasonalPrediction, $momentumPrediction, $smoothingPrediction);
-            $modelSpreadRatio = $predictedRevenueRaw > 0 ? ($modelSpread / $predictedRevenueRaw) : 0.0;
+            $modelSpreadRatio = $baselinePredictedRevenueRaw > 0 ? ($modelSpread / $baselinePredictedRevenueRaw) : 0.0;
 
             $weekdaySamples = (int) ($weekdayStats[$weekday]['count'] ?? 0);
             $domSamples = (int) ($domStats[$dayOfMonth]['count'] ?? 0);
@@ -3750,6 +4081,12 @@ class DashboardController extends Controller
                     'trend_factor' => round($trendFactor, 3),
                     'seasonality_factor' => round($seasonalityFactor, 3),
                     'recency_factor' => round($recencyFactor, 3),
+                    'baseline_predicted_revenue' => (int) round($baselinePredictedRevenueRaw),
+                    'due_health_expected_collection' => (int) round($expectedDueHealthCollection),
+                    'due_health_blend_ratio' => round($dueHealthBlendRatio, 2),
+                    'due_health_max_adjustment_ratio' => round($dueHealthMaxAdjustmentRatio, 2),
+                    'due_health_adjustment_amount' => (int) round($adjustmentAmount),
+                    'due_health_adjustment_ratio_percent' => round($adjustmentRatioPercent, 2),
                     'model_seasonal' => (int) round($seasonalPrediction),
                     'model_momentum' => (int) round($momentumPrediction),
                     'model_smoothing' => (int) round($smoothingPrediction),
@@ -3799,6 +4136,7 @@ class DashboardController extends Controller
             ],
             'summary' => [
                 'predicted_total_revenue' => (int) round($predictedTotal),
+                'baseline_total_revenue' => (int) round($baselineTotalRevenue),
                 'predicted_daily_average' => $predictedDailyAverage,
                 'historical_daily_average' => (int) round($overallDailyAverage),
                 'recent_30d_daily_average' => (int) round($recentDailyAverage),
@@ -3817,6 +4155,18 @@ class DashboardController extends Controller
                 ],
                 'validation' => $ensembleValidation,
                 'analysis_notes' => $analysisNotes,
+            ],
+            'collection_adjustment' => [
+                'enabled' => true,
+                'method' => 'due_date_plus_health_blend_v1',
+                'blend_ratio_due_health' => $dueHealthBlendRatio,
+                'max_adjustment_ratio' => $dueHealthMaxAdjustmentRatio,
+                'adjustment_applied_days' => $adjustmentAppliedDays,
+                'adjustment_total_nominal' => (int) round($adjustmentTotalNominal),
+                'customers_considered' => (int) ($dueHealthMeta['customers_considered'] ?? 0),
+                'due_occurrences_considered' => (int) ($dueHealthMeta['due_occurrences_considered'] ?? 0),
+                'average_health_score' => (int) ($dueHealthMeta['average_health_score'] ?? 70),
+                'expected_collection_total' => (int) ($dueHealthMeta['total_expected_collection'] ?? 0),
             ],
             'historical_context' => [
                 'window_start' => $historyStart->toDateString(),
@@ -3845,6 +4195,9 @@ class DashboardController extends Controller
         $coverageAmountRate = (float) ($summary['mandatory_coverage_amount_rate'] ?? 100);
         $shortfallTotal = (float) ($summary['mandatory_shortfall_total'] ?? 0);
         $endingBalance = (float) ($summary['projected_ending_balance'] ?? 0);
+        $actualBalanceToday = (float) ($summary['actual_balance_today'] ?? 0);
+        $actualBalanceTodayDate = (string) ($summary['actual_balance_today_date'] ?? Carbon::today()->toDateString());
+        $actualBalanceTodaySource = (string) ($summary['actual_balance_today_source'] ?? 'projection');
         $netAfterMandatory = (float) ($summary['net_after_mandatory'] ?? 0);
         $averageConfidence = (float) ($forecastContext['average_confidence'] ?? 0);
         $volatilityIndex = (float) ($forecastContext['volatility_index'] ?? 0);
@@ -3864,6 +4217,9 @@ class DashboardController extends Controller
         }
         if ($endingBalance < 0) {
             $score -= 20;
+        }
+        if ($actualBalanceToday < 0) {
+            $score -= 12;
         }
         if ($netAfterMandatory < 0) {
             $score -= 15;
@@ -3897,7 +4253,8 @@ class DashboardController extends Controller
 
         $keyFindings = [];
         $keyFindings[] = 'Coverage kewajiban: ' . number_format($coverageRate, 1) . '% event dan ' . number_format($coverageAmountRate, 1) . '% nominal.';
-        $keyFindings[] = 'Sisa setelah kewajiban: Rp ' . number_format((int) round($netAfterMandatory), 0, ',', '.') . ', estimasi saldo akhir: Rp ' . number_format((int) round($endingBalance), 0, ',', '.');
+        $keyFindings[] = 'Saldo aktual per ' . $actualBalanceTodayDate . ' (sumber: ' . $actualBalanceTodaySource . '): Rp ' . number_format((int) round($actualBalanceToday), 0, ',', '.');
+        $keyFindings[] = 'Sisa setelah kewajiban: Rp ' . number_format((int) round($netAfterMandatory), 0, ',', '.') . ', estimasi saldo akhir periode: Rp ' . number_format((int) round($endingBalance), 0, ',', '.');
         $keyFindings[] = 'Budget operasional aman mulai ' . ($operationalBudgetAsOfDate !== '' ? $operationalBudgetAsOfDate : 'hari ini') . ': Rp ' . number_format((int) round($operationalBudget), 0, ',', '.') . ' (saran pakai: Rp ' . number_format((int) round($recommendedOperationalBudget), 0, ',', '.') . ').';
         $keyFindings[] = 'Akurasi model pendapatan saat ini pada confidence rata-rata ' . number_format($averageConfidence, 0) . '% dengan volatilitas ' . number_format($volatilityIndex, 1) . '%.';
         $keyFindings[] = 'Target pembelian siap dieksekusi sekarang: ' . $purchaseReadyNow . '/' . $purchaseTotal . ' (tercapai di rentang: ' . $purchaseReachable . '/' . $purchaseTotal . ').';
@@ -3957,6 +4314,14 @@ class DashboardController extends Controller
             ];
         }
 
+        if ($actualBalanceToday < 0) {
+            $recommendedActions[] = [
+                'priority' => 'tinggi',
+                'title' => 'Pulihkan saldo aktual harian',
+                'detail' => 'Saldo aktual per ' . $actualBalanceTodayDate . ' masih negatif. Fokuskan pemasukan jangka pendek agar posisi kas harian kembali positif sebelum eksekusi target tambahan.',
+            ];
+        }
+
         if (count($recommendedActions) === 0) {
             $recommendedActions[] = [
                 'priority' => 'rendah',
@@ -3969,6 +4334,7 @@ class DashboardController extends Controller
             'Hari sebelum hari ini memakai realisasi ledger, dan hari ini memakai realisasi bila transaksi sudah ada; sisanya memakai forecast pendapatan.',
             'Target pembelian dihitung dari saldo diskresioner setelah menyisihkan kewajiban wajib yang masih tersisa.',
             'Target wajib bulanan selamanya mengikuti bulan mulai target agar tidak mundur ke periode sebelum target dibuat.',
+            'Saldo aktual hari ini dipisahkan dari saldo akhir proyeksi agar keputusan operasional tidak bias terhadap transaksi masa depan.',
         ];
 
         return [

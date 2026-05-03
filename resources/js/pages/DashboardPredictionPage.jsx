@@ -1236,97 +1236,110 @@ function DashboardPredictionPage() {
                             <Line data={projectionChartData} options={projectionChartOptions} />
                         </div>
 
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                                <p className="text-sm font-semibold text-gray-900">Prediksi Pengeluaran Wajib</p>
-                                <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                    <table className="w-full text-sm min-w-[860px]">
-                                        <thead className="bg-gray-50 text-gray-600 text-left">
-                                            <tr>
-                                                <th className="px-3 py-2">Target</th>
-                                                <th className="px-3 py-2">Jatuh Tempo</th>
-                                                <th className="px-3 py-2 text-right">Nominal</th>
-                                                <th className="px-3 py-2 text-right">Coverage</th>
-                                                <th className="px-3 py-2 text-right">Shortfall</th>
-                                                <th className="px-3 py-2 text-center">Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {mandatoryProjectionRows.length === 0 ? (
-                                                <tr>
-                                                    <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                        Tidak ada kejadian pengeluaran wajib pada periode ini.
-                                                    </td>
-                                                </tr>
-                                            ) : mandatoryProjectionRows.map((row) => (
-                                                <tr key={row.event_id} className="border-t border-gray-100">
-                                                    <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
-                                                    <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
-                                                    <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.coverage_ratio || 0, 1)}</td>
-                                                    <td className={`px-3 py-2 text-right font-semibold ${Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-                                                        {formatCurrency(row.shortfall || 0)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-center">
-                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>
-                                                            {row.indicator || '-'}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                                <p className="text-sm font-semibold text-gray-900">Prediksi Kesiapan Target Pembelian</p>
-                                <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                    <table className="w-full text-sm min-w-[700px]">
-                                        <thead className="bg-gray-50 text-gray-600 text-left">
-                                            <tr>
-                                                <th className="px-3 py-2">Target</th>
-                                                <th className="px-3 py-2 text-right">Nominal</th>
-                                                <th className="px-3 py-2">Target Tanggal</th>
-                                                <th className="px-3 py-2">Prediksi Bisa Dibeli</th>
-                                                <th className="px-3 py-2 text-center">Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {purchaseGoalRows.length === 0 ? (
-                                                <tr>
-                                                    <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
-                                                        Belum ada target pembelian aktif.
-                                                    </td>
-                                                </tr>
-                                            ) : purchaseGoalRows.map((row) => (
-                                                <tr key={row.id} className="border-t border-gray-100">
-                                                    <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
-                                                    <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
-                                                    <td className="px-3 py-2 text-gray-700">{row.desired_date || '-'}</td>
-                                                    <td className="px-3 py-2 text-gray-700">{row.predicted_buy_date || 'Belum tercapai di rentang'}</td>
-                                                    <td className="px-3 py-2 text-center">
-                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                            row.indicator === 'siap'
-                                                                ? 'bg-emerald-100 text-emerald-700'
-                                                                : row.indicator === 'menunggu'
-                                                                    ? 'bg-amber-100 text-amber-700'
-                                                                    : row.indicator === 'tertahan_wajib'
-                                                                        ? 'bg-rose-100 text-rose-700'
-                                                                        : 'bg-gray-200 text-gray-700'
-                                                        }`}>
-                                                            {row.indicator || '-'}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
                     </>
                 )}
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                        <p className="text-sm font-semibold text-gray-900">Prediksi Pengeluaran Wajib</p>
+                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                            <table className="w-full text-sm min-w-[860px]">
+                                <thead className="bg-gray-50 text-gray-600 text-left">
+                                    <tr>
+                                        <th className="px-3 py-2">Target</th>
+                                        <th className="px-3 py-2">Jatuh Tempo</th>
+                                        <th className="px-3 py-2 text-right">Nominal</th>
+                                        <th className="px-3 py-2 text-right">Coverage</th>
+                                        <th className="px-3 py-2 text-right">Shortfall</th>
+                                        <th className="px-3 py-2 text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                Memuat proyeksi pengeluaran wajib...
+                                            </td>
+                                        </tr>
+                                    ) : mandatoryProjectionRows.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                                Tidak ada kejadian pengeluaran wajib pada periode ini.
+                                            </td>
+                                        </tr>
+                                    ) : mandatoryProjectionRows.map((row) => (
+                                        <tr key={row.event_id} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
+                                            <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
+                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.coverage_ratio || 0, 1)}</td>
+                                            <td className={`px-3 py-2 text-right font-semibold ${Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                                                {formatCurrency(row.shortfall || 0)}
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>
+                                                    {row.indicator || '-'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                        <p className="text-sm font-semibold text-gray-900">Prediksi Kesiapan Target Pembelian</p>
+                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                            <table className="w-full text-sm min-w-[700px]">
+                                <thead className="bg-gray-50 text-gray-600 text-left">
+                                    <tr>
+                                        <th className="px-3 py-2">Target</th>
+                                        <th className="px-3 py-2 text-right">Nominal</th>
+                                        <th className="px-3 py-2">Target Tanggal</th>
+                                        <th className="px-3 py-2">Prediksi Bisa Dibeli</th>
+                                        <th className="px-3 py-2 text-center">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
+                                                Memuat proyeksi target pembelian...
+                                            </td>
+                                        </tr>
+                                    ) : purchaseGoalRows.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
+                                                Belum ada target pembelian aktif.
+                                            </td>
+                                        </tr>
+                                    ) : purchaseGoalRows.map((row) => (
+                                        <tr key={row.id} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
+                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
+                                            <td className="px-3 py-2 text-gray-700">{row.desired_date || '-'}</td>
+                                            <td className="px-3 py-2 text-gray-700">{row.predicted_buy_date || 'Belum tercapai di rentang'}</td>
+                                            <td className="px-3 py-2 text-center">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                    row.indicator === 'siap'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : row.indicator === 'menunggu'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : row.indicator === 'tertahan_wajib'
+                                                                ? 'bg-rose-100 text-rose-700'
+                                                                : 'bg-gray-200 text-gray-700'
+                                                }`}>
+                                                    {row.indicator || '-'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

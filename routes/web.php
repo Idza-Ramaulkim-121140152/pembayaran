@@ -219,7 +219,6 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/dashboard/isp-intelligence', [DashboardController::class, 'ispIntelligence'])->name('api.dashboard.isp-intelligence');
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
-        Route::get('/api/dashboard/financial-targets', [DashboardController::class, 'financialTargets'])->name('api.dashboard.financial-targets.index');
 
         // Billing/Penagihan API
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
@@ -302,11 +301,13 @@ Route::middleware('auth')->group(function () {
     // Superadmin-only routes (User Management)
     Route::middleware('role:superadmin')->group(function () {
         Route::get('/settings/invoice-management', fn() => view('app'))->name('invoice.management');
+        Route::get('/settings/financial-targets', fn() => view('app'))->name('financial-targets.settings');
 
         Route::get('/api/billing/invoice-management', [BillingController::class, 'invoiceManagementIndex'])->name('api.billing.invoice-management.index');
         Route::put('/api/billing/invoice-management/{invoice}', [BillingController::class, 'updateInvoiceManagementApi'])->name('api.billing.invoice-management.update');
         Route::delete('/api/billing/invoice-management/{invoice}', [BillingController::class, 'deleteInvoiceManagementApi'])->name('api.billing.invoice-management.destroy');
 
+        Route::get('/api/dashboard/financial-targets', [DashboardController::class, 'financialTargets'])->name('api.dashboard.financial-targets.index');
         Route::post('/api/dashboard/financial-targets', [DashboardController::class, 'storeFinancialTarget'])->name('api.dashboard.financial-targets.store');
         Route::put('/api/dashboard/financial-targets/{financialTarget}', [DashboardController::class, 'updateFinancialTarget'])->name('api.dashboard.financial-targets.update');
         Route::delete('/api/dashboard/financial-targets/{financialTarget}', [DashboardController::class, 'destroyFinancialTarget'])->name('api.dashboard.financial-targets.destroy');
