@@ -3430,7 +3430,7 @@ class DashboardController extends Controller
     {
         $cacheKey = 'dashboard:forecast:customer-health-map:' . Carbon::today()->toDateString();
 
-        return Cache::remember($cacheKey, now()->addMinutes(5), function () {
+        $resolver = function () {
             $asOfDate = Carbon::today()->startOfDay();
             $windowStart = $asOfDate->copy()->subDays(29)->startOfDay();
             $windowEnd = $asOfDate->copy()->endOfDay();
@@ -3462,7 +3462,17 @@ class DashboardController extends Controller
                 'map' => $map,
                 'average_score' => (int) $this->clamp($averageHealthScore, 0, 100),
             ];
-        });
+        };
+
+        try {
+            return Cache::remember($cacheKey, now()->addMinutes(5), $resolver);
+        } catch (\Throwable $e) {
+            \Log::warning('Forecast health cache unavailable, fallback without cache', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return $resolver();
+        }
     }
 
     private function buildDueHealthCollectionAdjustmentMap(Carbon $forecastStart, Carbon $forecastEnd, Carbon $historyStart): array
