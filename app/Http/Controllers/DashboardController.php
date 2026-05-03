@@ -1447,7 +1447,7 @@ class DashboardController extends Controller
             $recommendations[] = 'Collection rate periode ini rendah. Jalankan reminder berjenjang H-5, H-3, H-1, dan pasca jatuh tempo dengan prioritas pelanggan overdue.';
         }
         if ($overdueExposureRatio >= 35) {
-            $recommendations[] = 'Eksposur piutang overdue tinggi terhadap total tagihan terbuka. Batasi pengeluaran diskresioner hingga overdue turun.';
+            $recommendations[] = 'Eksposur piutang overdue tinggi terhadap total tagihan terbuka. Batasi pengeluaran non-prioritas hingga overdue turun.';
         }
         if ($predictedHighPriorityTicketsNext7 >= 8) {
             $recommendations[] = 'Prediksi tiket prioritas tinggi 7 hari ke depan cukup besar. Siapkan kapasitas eskalasi tim teknis dan stok material gangguan.';
@@ -1599,6 +1599,7 @@ class DashboardController extends Controller
         $maps = [
             'net' => [],
             'income' => [],
+            'expense' => [],
         ];
 
         if (!$this->isLedgerReady()) {
@@ -1614,7 +1615,7 @@ class DashboardController extends Controller
             ->get();
 
         foreach ($rows as $row) {
-            $dateKey = (string) $row->transaction_date;
+            $dateKey = Carbon::parse($row->transaction_date)->toDateString();
             $type = (string) $row->type;
             $amount = (float) ($row->total_amount ?? 0);
 
@@ -1626,6 +1627,10 @@ class DashboardController extends Controller
                 $maps['income'][$dateKey] = 0.0;
             }
 
+            if (!isset($maps['expense'][$dateKey])) {
+                $maps['expense'][$dateKey] = 0.0;
+            }
+
             if ($type === 'income') {
                 $maps['net'][$dateKey] += $amount;
                 $maps['income'][$dateKey] += $amount;
@@ -1634,6 +1639,7 @@ class DashboardController extends Controller
 
             if ($type === 'expense') {
                 $maps['net'][$dateKey] -= $amount;
+                $maps['expense'][$dateKey] += $amount;
                 continue;
             }
 
@@ -1692,7 +1698,7 @@ class DashboardController extends Controller
 
         $dailyNetMap = [];
         foreach ($rows as $row) {
-            $dateKey = (string) $row->transaction_date;
+            $dateKey = Carbon::parse($row->transaction_date)->toDateString();
             $type = (string) $row->type;
             $amount = (float) ($row->total_amount ?? 0);
 
@@ -1828,6 +1834,7 @@ class DashboardController extends Controller
         $ledgerMaps = $this->buildDailyLedgerCashflowMaps($rangeStart->copy(), $rangeEnd->copy());
         $dailyLedgerNetMap = $ledgerMaps['net'] ?? [];
         $dailyLedgerIncomeMap = $ledgerMaps['income'] ?? [];
+        $dailyLedgerExpenseMap = $ledgerMaps['expense'] ?? [];
 
         $activeTargets = collect();
         if ($this->isFinancialTargetsReady()) {
@@ -1879,6 +1886,12 @@ class DashboardController extends Controller
             $actualNetCashflow = (float) ($dailyLedgerNetMap[$dateKey] ?? 0);
             $actualIncome = (float) ($dailyLedgerIncomeMap[$dateKey] ?? 0);
             $hasActualLedgerData = array_key_exists($dateKey, $dailyLedgerNetMap) || array_key_exists($dateKey, $dailyLedgerIncomeMap);
+            $dailyTotalExpense = ($ledgerReady && $cursor->lte($today))
+                ? (float) ($dailyLedgerExpenseMap[$dateKey] ?? 0)
+                : 0.0;
+            $dailyTotalExpenseSource = ($ledgerReady && $cursor->lte($today))
+                ? 'ledger_actual'
+                : 'ledger_future_zero';
 
             $useActuals = $ledgerReady && ($cursor->lt($today) || ($cursor->equalTo($today) && $hasActualLedgerData));
             $cashflowBeforeMandatory = $useActuals ? $actualNetCashflow : $forecastIncome;
@@ -1945,6 +1958,8 @@ class DashboardController extends Controller
                 'income_source' => $incomeSource,
                 'cashflow_before_mandatory' => (int) round($cashflowBeforeMandatory),
                 'mandatory_expense' => (int) round($mandatorySpentToday),
+                'daily_total_expense' => (int) round($dailyTotalExpense),
+                'daily_total_expense_source' => $dailyTotalExpenseSource,
                 'projected_balance' => (int) round($cash),
                 '__projected_balance_raw' => $cash,
                 '__mandatory_expense_raw' => $mandatorySpentToday,
@@ -4564,7 +4579,7 @@ class DashboardController extends Controller
             $recommendedActions[] = [
                 'priority' => 'tinggi',
                 'title' => 'Tunda target pembelian non-prioritas',
-                'detail' => 'Sebanyak ' . $blockedPurchaseCount . ' target masih tertahan oleh kewajiban. Gunakan dana diskresioner hanya setelah coverage wajib aman.',
+                'detail' => 'Sebanyak ' . $blockedPurchaseCount . ' target masih tertahan oleh kewajiban. Gunakan saldo bebas hanya setelah coverage wajib aman.',
             ];
         }
 
@@ -4596,7 +4611,7 @@ class DashboardController extends Controller
             $recommendedActions[] = [
                 'priority' => 'tinggi',
                 'title' => 'Aktifkan mode pengendalian kas',
-                'detail' => 'Saldo akhir diproyeksikan negatif. Prioritaskan pengeluaran operasional inti dan tahan pengeluaran discretionary.',
+                'detail' => 'Saldo akhir diproyeksikan negatif. Prioritaskan pengeluaran operasional inti dan tahan pengeluaran non-prioritas.',
             ];
         }
 
@@ -4618,7 +4633,7 @@ class DashboardController extends Controller
 
         $assumptions = [
             'Hari sebelum hari ini memakai realisasi ledger, dan hari ini memakai realisasi bila transaksi sudah ada; sisanya memakai forecast pendapatan.',
-            'Target pembelian dihitung dari saldo diskresioner setelah menyisihkan kewajiban wajib yang masih tersisa.',
+            'Target pembelian dihitung dari saldo bebas setelah menyisihkan kewajiban wajib yang masih tersisa.',
             'Target wajib bulanan selamanya mengikuti bulan mulai target agar tidak mundur ke periode sebelum target dibuat.',
             'Saldo aktual hari ini dipisahkan dari saldo akhir proyeksi agar keputusan operasional tidak bias terhadap transaksi masa depan.',
         ];

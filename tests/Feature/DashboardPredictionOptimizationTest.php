@@ -173,6 +173,8 @@ class DashboardPredictionOptimizationTest extends TestCase
         $this->assertNotNull($todayRow);
         $this->assertSame(800, (int) ($todayRow['chart_balance'] ?? -1));
         $this->assertSame('actual_today', (string) ($todayRow['chart_balance_source'] ?? ''));
+        $this->assertSame(200, (int) ($todayRow['daily_total_expense'] ?? -1));
+        $this->assertSame('ledger_actual', (string) ($todayRow['daily_total_expense_source'] ?? ''));
     }
 
     public function test_snapshot_balance_command_captures_as_of_date_balance(): void
@@ -324,6 +326,12 @@ class DashboardPredictionOptimizationTest extends TestCase
         $this->assertSame('snapshot', (string) ($yesterdayRow['chart_balance_source'] ?? ''));
         $this->assertSame('actual_today', (string) ($todayRow['chart_balance_source'] ?? ''));
         $this->assertSame('forecast', (string) ($tomorrowRow['chart_balance_source'] ?? ''));
+        $this->assertSame(0, (int) ($yesterdayRow['daily_total_expense'] ?? -1));
+        $this->assertSame('ledger_actual', (string) ($yesterdayRow['daily_total_expense_source'] ?? ''));
+        $this->assertSame(200, (int) ($todayRow['daily_total_expense'] ?? -1));
+        $this->assertSame('ledger_actual', (string) ($todayRow['daily_total_expense_source'] ?? ''));
+        $this->assertSame(0, (int) ($tomorrowRow['daily_total_expense'] ?? -1));
+        $this->assertSame('ledger_future_zero', (string) ($tomorrowRow['daily_total_expense_source'] ?? ''));
     }
 
     public function test_revenue_forecast_marks_collection_adjustment_disabled_via_env_toggle(): void

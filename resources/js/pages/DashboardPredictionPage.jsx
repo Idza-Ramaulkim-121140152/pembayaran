@@ -501,6 +501,17 @@ function DashboardPredictionPage() {
         labels: projectionDailyRows.map((row) => row.date),
         datasets: [
             {
+                type: 'bar',
+                label: 'Pengeluaran per Tanggal',
+                data: projectionDailyRows.map((row) => Number(row.daily_total_expense || 0)),
+                backgroundColor: 'rgba(239, 68, 68, 0.25)',
+                borderColor: '#dc2626',
+                borderWidth: 1,
+                borderRadius: 4,
+                barThickness: 10,
+                order: 3,
+            },
+            {
                 label: 'Saldo Proyeksi',
                 data: projectionDailyRows.map((row) => Number(
                     row.chart_balance ?? row.projected_balance ?? 0
@@ -512,8 +523,8 @@ function DashboardPredictionPage() {
                 tension: 0.3,
             },
             {
-                label: 'Saldo Diskresioner',
-                data: projectionDailyRows.map((row) => Number(row.discretionary_balance || 0)),
+                label: 'Saldo Bebas',
+                data: projectionDailyRows.map((row) => Math.max(0, Number(row.discretionary_balance || 0))),
                 borderColor: '#0ea5e9',
                 backgroundColor: 'rgba(14, 165, 233, 0.1)',
                 fill: false,
@@ -1269,7 +1280,7 @@ function DashboardPredictionPage() {
                                             <th className="px-3 py-2 text-center">Sumber</th>
                                             <th className="px-3 py-2 text-right">Prediksi Pemasukan</th>
                                             <th className="px-3 py-2 text-right">Pengeluaran Wajib</th>
-                                            <th className="px-3 py-2 text-right">Saldo Diskresioner</th>
+                                            <th className="px-3 py-2 text-right">Saldo Bebas</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1308,7 +1319,7 @@ function DashboardPredictionPage() {
                                                     </td>
                                                     <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.predicted_income || 0)}</td>
                                                     <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.mandatory_expense || 0)}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.discretionary_balance || 0)}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(Math.max(0, Number(row.discretionary_balance || 0)))}</td>
                                                 </tr>
                                             );
                                         })}
