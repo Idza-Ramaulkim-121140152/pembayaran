@@ -74,6 +74,15 @@ class DashboardController extends Controller
         return $packageType;
     }
 
+    private function toLowercaseSafe(string $value): string
+    {
+        if (function_exists('mb_strtolower')) {
+            return mb_strtolower($value);
+        }
+
+        return strtolower($value);
+    }
+
     private function buildPackageDistribution(?Carbon $asOfDate = null, ?array $isolatedUsernameMap = null, bool $activeOnly = false): array
     {
         $customers = Customer::query()->get(['package_type', 'custom_package', 'due_date', 'pppoe_username']);
@@ -100,7 +109,7 @@ class DashboardController extends Controller
                 continue;
             }
 
-            $normalized = mb_strtolower($label);
+            $normalized = $this->toLowercaseSafe($label);
             if (!isset($counts[$normalized])) {
                 $counts[$normalized] = [
                     'label' => $label,
@@ -114,7 +123,7 @@ class DashboardController extends Controller
         $activePackageOrder = [];
         if (Schema::hasTable('packages')) {
             foreach (Package::active()->get(['name']) as $package) {
-                $activePackageOrder[] = mb_strtolower(trim((string) $package->name));
+                $activePackageOrder[] = $this->toLowercaseSafe(trim((string) $package->name));
             }
         }
 
@@ -3412,7 +3421,7 @@ class DashboardController extends Controller
             return $latestInvoiceAmount;
         }
 
-        $packageName = mb_strtolower(trim((string) ($customer->package_type ?? '')));
+        $packageName = $this->toLowercaseSafe(trim((string) ($customer->package_type ?? '')));
         $packagePrice = (float) ($activePackagePriceByName[$packageName] ?? 0);
         if ($packagePrice > 0) {
             return $packagePrice;
@@ -3434,34 +3443,42 @@ class DashboardController extends Controller
             $asOfDate = Carbon::today()->startOfDay();
             $windowStart = $asOfDate->copy()->subDays(29)->startOfDay();
             $windowEnd = $asOfDate->copy()->endOfDay();
+            try {
+                $metrics = $this->buildCustomerHealthMetrics($windowStart, $windowEnd);
+                $rows = is_array($metrics['high_risk_customer_rows'] ?? null)
+                    ? $metrics['high_risk_customer_rows']
+                    : [];
+                $topRows = is_array($metrics['top_risk_customers'] ?? null)
+                    ? $metrics['top_risk_customers']
+                    : [];
+                $allRows = array_merge($rows, $topRows);
+                $map = [];
 
-            $metrics = $this->buildCustomerHealthMetrics($windowStart, $windowEnd);
-            $rows = is_array($metrics['high_risk_customer_rows'] ?? null)
-                ? $metrics['high_risk_customer_rows']
-                : [];
-            $topRows = is_array($metrics['top_risk_customers'] ?? null)
-                ? $metrics['top_risk_customers']
-                : [];
-            $allRows = array_merge($rows, $topRows);
-            $map = [];
+                foreach ($allRows as $row) {
+                    $customerId = (int) ($row['customer_id'] ?? 0);
+                    if ($customerId < 1) {
+                        continue;
+                    }
 
-            foreach ($allRows as $row) {
-                $customerId = (int) ($row['customer_id'] ?? 0);
-                if ($customerId < 1) {
-                    continue;
+                    $healthScore = (int) round((float) ($row['health_score'] ?? 70));
+                    $map[$customerId] = (int) $this->clamp($healthScore, 0, 100);
                 }
 
-                $healthScore = (int) round((float) ($row['health_score'] ?? 70));
-                $map[$customerId] = (int) $this->clamp($healthScore, 0, 100);
+                $averageHealthScore = (int) round((float) ($metrics['summary']['average_health_score'] ?? 70));
+
+                return [
+                    'as_of_date' => $asOfDate->toDateString(),
+                    'map' => $map,
+                    'average_score' => (int) $this->clamp($averageHealthScore, 0, 100),
+                    'source' => 'full_customer_health_metrics',
+                ];
+            } catch (\Throwable $e) {
+                \Log::warning('Full health metrics unavailable for forecast, using safe fallback map', [
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->buildSafeCustomerHealthScoreMap($asOfDate);
             }
-
-            $averageHealthScore = (int) round((float) ($metrics['summary']['average_health_score'] ?? 70));
-
-            return [
-                'as_of_date' => $asOfDate->toDateString(),
-                'map' => $map,
-                'average_score' => (int) $this->clamp($averageHealthScore, 0, 100),
-            ];
         };
 
         try {
@@ -3475,12 +3492,89 @@ class DashboardController extends Controller
         }
     }
 
+    private function buildSafeCustomerHealthScoreMap(Carbon $asOfDate): array
+    {
+        $today = $asOfDate->toDateString();
+        $map = [];
+
+        $customerQuery = Customer::query()->select(['id']);
+        if (Schema::hasColumn('customers', 'is_active')) {
+            $customerQuery->where('is_active', true);
+        }
+        $customers = $customerQuery->get();
+
+        if ($customers->isEmpty()) {
+            return [
+                'as_of_date' => $today,
+                'map' => [],
+                'average_score' => 70,
+                'source' => 'safe_fallback_empty',
+            ];
+        }
+
+        $customerIds = $customers->pluck('id')
+            ->map(fn($id) => (int) $id)
+            ->filter(fn($id) => $id > 0)
+            ->values()
+            ->all();
+
+        $overdueInvoiceMap = [];
+        if (count($customerIds) > 0) {
+            $overdueRows = Invoice::query()
+                ->selectRaw('customer_id, COUNT(*) as overdue_invoice_count')
+                ->whereIn('customer_id', $customerIds)
+                ->whereNotIn('status', ['paid', 'cancelled'])
+                ->whereNotNull('due_date')
+                ->whereDate('due_date', '<', $today)
+                ->groupBy('customer_id')
+                ->get();
+
+            foreach ($overdueRows as $row) {
+                $customerId = (int) ($row->customer_id ?? 0);
+                if ($customerId < 1) {
+                    continue;
+                }
+                $overdueInvoiceMap[$customerId] = (int) ($row->overdue_invoice_count ?? 0);
+            }
+        }
+
+        $scoreTotal = 0.0;
+        foreach ($customers as $customer) {
+            $customerId = (int) ($customer->id ?? 0);
+            if ($customerId < 1) {
+                continue;
+            }
+
+            $overdueCount = (int) ($overdueInvoiceMap[$customerId] ?? 0);
+            $score = (int) round($this->clamp(100 - ($overdueCount * 8), 35, 95));
+            $map[$customerId] = $score;
+            $scoreTotal += $score;
+        }
+
+        return [
+            'as_of_date' => $today,
+            'map' => $map,
+            'average_score' => (int) round($this->safeAverage($scoreTotal, count($map))),
+            'source' => 'safe_overdue_only',
+        ];
+    }
+
     private function buildDueHealthCollectionAdjustmentMap(Carbon $forecastStart, Carbon $forecastEnd, Carbon $historyStart): array
     {
-        $customers = Customer::query()
-            ->where('is_active', true)
-            ->whereNotNull('due_date')
-            ->get(['id', 'due_date', 'package_type', 'custom_package']);
+        $customerQuery = Customer::query()->whereNotNull('due_date');
+        if (Schema::hasColumn('customers', 'is_active')) {
+            $customerQuery->where('is_active', true);
+        }
+
+        $customerSelect = ['id', 'due_date'];
+        if (Schema::hasColumn('customers', 'package_type')) {
+            $customerSelect[] = 'package_type';
+        }
+        if (Schema::hasColumn('customers', 'custom_package')) {
+            $customerSelect[] = 'custom_package';
+        }
+
+        $customers = $customerQuery->get($customerSelect);
 
         if ($customers->isEmpty()) {
             return [
@@ -3490,6 +3584,7 @@ class DashboardController extends Controller
                     'due_occurrences_considered' => 0,
                     'average_health_score' => 70,
                     'total_expected_collection' => 0,
+                    'health_map_source' => 'no_customers',
                 ],
             ];
         }
@@ -3522,10 +3617,18 @@ class DashboardController extends Controller
         }
 
         $activePackagePriceByName = [];
-        if (Schema::hasTable('packages')) {
-            $packages = Package::active()->get(['name', 'price']);
+        if (
+            Schema::hasTable('packages')
+            && Schema::hasColumn('packages', 'name')
+            && Schema::hasColumn('packages', 'price')
+        ) {
+            $packageQuery = Package::query();
+            if (Schema::hasColumn('packages', 'is_active')) {
+                $packageQuery->where('is_active', true);
+            }
+            $packages = $packageQuery->get(['name', 'price']);
             foreach ($packages as $package) {
-                $name = mb_strtolower(trim((string) ($package->name ?? '')));
+                $name = $this->toLowercaseSafe(trim((string) ($package->name ?? '')));
                 if ($name === '') {
                     continue;
                 }
@@ -3641,6 +3744,7 @@ class DashboardController extends Controller
                 'due_occurrences_considered' => $dueOccurrencesConsidered,
                 'average_health_score' => $averageHealthScore,
                 'total_expected_collection' => (int) round($totalExpectedCollection),
+                'health_map_source' => (string) ($healthData['source'] ?? 'unknown'),
             ],
         ];
     }
@@ -3973,17 +4077,47 @@ class DashboardController extends Controller
         $predictedTotal = 0.0;
         $confidenceTotal = 0.0;
         $forecastSeriesMap = $historyAmountMap;
-        $dueHealthAdjustment = $this->buildDueHealthCollectionAdjustmentMap(
-            $forecastStart->copy(),
-            $forecastEnd->copy(),
-            $historyStart->copy()
+        $dueHealthAdjustmentEnabled = filter_var(
+            env('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', true),
+            FILTER_VALIDATE_BOOL
         );
-        $expectedCollectionByDay = is_array($dueHealthAdjustment['expected_collection_by_day'] ?? null)
-            ? $dueHealthAdjustment['expected_collection_by_day']
-            : [];
-        $dueHealthMeta = is_array($dueHealthAdjustment['meta'] ?? null)
-            ? $dueHealthAdjustment['meta']
-            : [];
+        $dueHealthAdjustmentStatus = $dueHealthAdjustmentEnabled ? 'applied' : 'disabled';
+        $dueHealthAdjustmentReason = $dueHealthAdjustmentEnabled ? null : 'disabled_by_env';
+        $expectedCollectionByDay = [];
+        $dueHealthMeta = [];
+        $healthMapSource = 'not_loaded';
+
+        if ($dueHealthAdjustmentEnabled) {
+            try {
+                if (filter_var(env('PREDICTION_DUE_HEALTH_FORCE_FAILURE', false), FILTER_VALIDATE_BOOL)) {
+                    throw new \RuntimeException('Forced due-health adjustment failure');
+                }
+
+                $dueHealthAdjustment = $this->buildDueHealthCollectionAdjustmentMap(
+                    $forecastStart->copy(),
+                    $forecastEnd->copy(),
+                    $historyStart->copy()
+                );
+                $expectedCollectionByDay = is_array($dueHealthAdjustment['expected_collection_by_day'] ?? null)
+                    ? $dueHealthAdjustment['expected_collection_by_day']
+                    : [];
+                $dueHealthMeta = is_array($dueHealthAdjustment['meta'] ?? null)
+                    ? $dueHealthAdjustment['meta']
+                    : [];
+                $healthMapSource = (string) ($dueHealthMeta['health_map_source'] ?? 'unknown');
+            } catch (\Throwable $e) {
+                $dueHealthAdjustmentStatus = 'fallback';
+                $dueHealthAdjustmentReason = 'adjustment_error';
+                $expectedCollectionByDay = [];
+                $dueHealthMeta = [];
+                $healthMapSource = 'fallback_none';
+
+                \Log::warning('Due-health forecast adjustment failed, fallback to baseline forecast', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         $dueHealthBlendRatio = 0.35;
         $dueHealthMaxAdjustmentRatio = 0.25;
         $adjustmentAppliedDays = 0;
@@ -4118,6 +4252,20 @@ class DashboardController extends Controller
         $averageConfidence = (int) round($this->safeAverage($confidenceTotal, $forecastDays));
         $predictedDailyAverage = (int) round($this->safeAverage($predictedTotal, $forecastDays));
 
+        if ($dueHealthAdjustmentStatus === 'applied') {
+            $customersConsidered = (int) ($dueHealthMeta['customers_considered'] ?? 0);
+            $expectedCollectionTotal = (int) ($dueHealthMeta['total_expected_collection'] ?? 0);
+            if ($customersConsidered <= 0 || $expectedCollectionTotal <= 0) {
+                $dueHealthAdjustmentStatus = 'skipped';
+                $dueHealthAdjustmentReason = $customersConsidered <= 0
+                    ? 'no_customers_with_due_date'
+                    : 'no_due_health_signal';
+            } elseif ($adjustmentAppliedDays === 0) {
+                $dueHealthAdjustmentStatus = 'skipped';
+                $dueHealthAdjustmentReason = 'no_adjustment_within_guardrail';
+            }
+        }
+
         $analysisNotes = [];
         if ($historicalInvoiceCount === 0) {
             $analysisNotes[] = 'Data invoice paid historis belum tersedia, sehingga prediksi masih konservatif.';
@@ -4167,8 +4315,10 @@ class DashboardController extends Controller
                 'analysis_notes' => $analysisNotes,
             ],
             'collection_adjustment' => [
-                'enabled' => true,
+                'enabled' => $dueHealthAdjustmentEnabled,
                 'method' => 'due_date_plus_health_blend_v1',
+                'status' => $dueHealthAdjustmentStatus,
+                'reason' => $dueHealthAdjustmentReason,
                 'blend_ratio_due_health' => $dueHealthBlendRatio,
                 'max_adjustment_ratio' => $dueHealthMaxAdjustmentRatio,
                 'adjustment_applied_days' => $adjustmentAppliedDays,
@@ -4177,6 +4327,7 @@ class DashboardController extends Controller
                 'due_occurrences_considered' => (int) ($dueHealthMeta['due_occurrences_considered'] ?? 0),
                 'average_health_score' => (int) ($dueHealthMeta['average_health_score'] ?? 70),
                 'expected_collection_total' => (int) ($dueHealthMeta['total_expected_collection'] ?? 0),
+                'health_map_source' => $healthMapSource,
             ],
             'historical_context' => [
                 'window_start' => $historyStart->toDateString(),

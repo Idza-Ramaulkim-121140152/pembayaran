@@ -17,6 +17,19 @@ class DashboardPredictionOptimizationTest extends TestCase
 {
     use RefreshDatabase;
 
+    private function setPredictionEnv(string $key, ?string $value): void
+    {
+        if ($value === null) {
+            putenv($key);
+            unset($_ENV[$key], $_SERVER[$key]);
+            return;
+        }
+
+        putenv($key . '=' . $value);
+        $_ENV[$key] = $value;
+        $_SERVER[$key] = $value;
+    }
+
     private function createStaffUser(string $role = 'superadmin'): User
     {
         return User::query()->create([
@@ -153,5 +166,59 @@ class DashboardPredictionOptimizationTest extends TestCase
                 return str_contains((string) $text, 'Saldo aktual per');
             })
         );
+    }
+
+    public function test_revenue_forecast_marks_collection_adjustment_disabled_via_env_toggle(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+        $this->setPredictionEnv('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', 'false');
+        $this->setPredictionEnv('PREDICTION_DUE_HEALTH_FORCE_FAILURE', null);
+
+        try {
+            $response = $this->actingAs($user)->getJson('/api/dashboard/revenue-forecast', [
+                'start_date' => Carbon::today()->toDateString(),
+                'end_date' => Carbon::today()->addDays(6)->toDateString(),
+            ]);
+
+            $response->assertOk();
+            $response->assertJsonPath('data.collection_adjustment.enabled', false);
+            $response->assertJsonPath('data.collection_adjustment.status', 'disabled');
+            $response->assertJsonPath('data.collection_adjustment.reason', 'disabled_by_env');
+        } finally {
+            $this->setPredictionEnv('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', null);
+            $this->setPredictionEnv('PREDICTION_DUE_HEALTH_FORCE_FAILURE', null);
+        }
+    }
+
+    public function test_due_health_failure_falls_back_and_prediction_endpoints_stay_available(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+        $this->setPredictionEnv('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', 'true');
+        $this->setPredictionEnv('PREDICTION_DUE_HEALTH_FORCE_FAILURE', 'true');
+
+        try {
+            $revenue = $this->actingAs($user)->getJson('/api/dashboard/revenue-forecast', [
+                'start_date' => Carbon::today()->toDateString(),
+                'end_date' => Carbon::today()->addDays(6)->toDateString(),
+            ]);
+            $revenue->assertOk();
+            $revenue->assertJsonPath('data.collection_adjustment.status', 'fallback');
+            $revenue->assertJsonPath('data.collection_adjustment.reason', 'adjustment_error');
+
+            $projection = $this->actingAs($user)->getJson('/api/dashboard/financial-projection', [
+                'start_date' => Carbon::today()->startOfMonth()->toDateString(),
+                'end_date' => Carbon::today()->endOfMonth()->toDateString(),
+            ]);
+            $projection->assertOk();
+
+            $isp = $this->actingAs($user)->getJson('/api/dashboard/isp-intelligence', [
+                'start_date' => Carbon::today()->subDays(29)->toDateString(),
+                'end_date' => Carbon::today()->toDateString(),
+            ]);
+            $isp->assertOk();
+        } finally {
+            $this->setPredictionEnv('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', null);
+            $this->setPredictionEnv('PREDICTION_DUE_HEALTH_FORCE_FAILURE', null);
+        }
     }
 }
