@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\MasterMikrotik;
 use Exception;
+use Illuminate\Support\Facades\Schema;
 
 class MikroTikService
 {
@@ -23,16 +25,55 @@ class MikroTikService
 
     public function __construct($host = null, $user = null, $pass = null, $port = null, $timeout = null)
     {
-        $this->host = $host ?? config('mikrotik.host', '192.168.88.1');
-        $this->user = $user ?? config('mikrotik.user', 'admin');
-        $this->pass = $pass ?? config('mikrotik.password', '');
-        $this->port = $port ?? config('mikrotik.port', 8728);
+        $resolvedFromMaster = null;
+        if ($host === null && $user === null && $pass === null && $port === null) {
+            $resolvedFromMaster = $this->resolveFromActiveMasterMikrotik();
+        }
+
+        $this->host = $host ?? ($resolvedFromMaster['host'] ?? config('mikrotik.host', '192.168.88.1'));
+        $this->user = $user ?? ($resolvedFromMaster['username'] ?? config('mikrotik.user', 'admin'));
+        $this->pass = $pass ?? ($resolvedFromMaster['password_encrypted'] ?? config('mikrotik.password', ''));
+        $this->port = $port ?? ($resolvedFromMaster['port'] ?? config('mikrotik.port', 8728));
         $this->timeout = $timeout ?? config('mikrotik.timeout', 5);
         $this->connectionLifetime = max(0, (int) config('mikrotik.connection_lifetime', 3600));
         $this->forceFreshReads = (bool) config('mikrotik.force_fresh_reads', true);
 
         // Load existing connection from pool if available and valid
         $this->loadFromPool();
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function resolveFromActiveMasterMikrotik(): ?array
+    {
+        try {
+            if (!Schema::hasTable('master_mikrotiks')) {
+                return null;
+            }
+
+            /** @var MasterMikrotik|null $active */
+            $active = MasterMikrotik::query()
+                ->where('is_active', true)
+                ->first();
+
+            if (!$active) {
+                return null;
+            }
+
+            return [
+                'host' => $active->host,
+                'port' => $active->port,
+                'username' => $active->username,
+                'password_encrypted' => $active->password_encrypted,
+            ];
+        } catch (\Throwable $e) {
+            \Log::warning('Failed loading active Master MikroTik; fallback to env config.', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**
@@ -1304,6 +1345,25 @@ class MikroTikService
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Remove PPPoE secret by username.
+     */
+    public function removePPPoESecret(string $username): bool
+    {
+        $secret = $this->getPPPoESecret($username);
+        if (!$secret || empty($secret['id'])) {
+            return false;
+        }
+
+        $this->command('/ppp/secret/remove', [
+            '.id' => $secret['id'],
+        ]);
+
+        \Log::info('PPPoE secret removed', ['username' => $username]);
+
+        return true;
     }
 
     /**

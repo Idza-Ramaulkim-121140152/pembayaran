@@ -8,6 +8,7 @@ class Customer extends Model
 {
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
+        'kecamatan_id', 'desa_id', 'dusun_id', 'enable_home_router', 'enable_installation_team',
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
         'pppoe_username', 'mikrotik_profile', 'home_router_type', 'home_router_host',
         'home_router_port', 'home_router_username', 'home_router_password',
@@ -24,6 +25,8 @@ class Customer extends Model
         'longitude' => 'decimal:8',
         'home_router_port' => 'integer',
         'home_router_monitoring_enabled' => 'boolean',
+        'enable_home_router' => 'boolean',
+        'enable_installation_team' => 'boolean',
         'home_router_password' => 'encrypted',
     ];
 
@@ -84,5 +87,20 @@ class Customer extends Model
     public function odp()
     {
         return $this->belongsTo(\App\Models\Odp::class, 'odp', 'nama');
+    }
+
+    public function kecamatan()
+    {
+        return $this->belongsTo(MasterWilayahKecamatan::class, 'kecamatan_id');
+    }
+
+    public function desa()
+    {
+        return $this->belongsTo(MasterWilayahDesa::class, 'desa_id');
+    }
+
+    public function dusun()
+    {
+        return $this->belongsTo(MasterWilayahDusun::class, 'dusun_id');
     }
 }

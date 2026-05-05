@@ -25,6 +25,8 @@ use App\Http\Controllers\UserManagementController;
 use App\Http\Controllers\FinancialTransactionController;
 use App\Http\Controllers\DistributionRouteController;
 use App\Http\Controllers\InventoryController;
+use App\Http\Controllers\MasterWilayahController;
+use App\Http\Controllers\MasterMikrotikController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -95,6 +97,7 @@ Route::middleware('auth')->group(function () {
     // View routes - Return React app view (any authenticated user)
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
+    Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
 
     // Shared routes: all authenticated staff can access
     Route::middleware('role:teknisi,finance')->group(function () {
@@ -106,6 +109,9 @@ Route::middleware('auth')->group(function () {
 
         // Payroll lite members list (needed in customer verification for pelaksana checklist)
         Route::get('/api/payroll/members-lite', [PayrollController::class, 'members'])->name('api.payroll.members.lite');
+        Route::get('/api/master-wilayah/kecamatan', [MasterWilayahController::class, 'kecamatanOptions'])->name('api.master-wilayah.kecamatan');
+        Route::get('/api/master-wilayah/desa', [MasterWilayahController::class, 'desaOptions'])->name('api.master-wilayah.desa');
+        Route::get('/api/master-wilayah/dusun', [MasterWilayahController::class, 'dusunOptions'])->name('api.master-wilayah.dusun');
 
         // Inventory Pages
         Route::get('/inventori', fn() => view('app'))->name('inventory.index');
@@ -115,6 +121,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/inventory/items/options', [InventoryController::class, 'itemOptions'])->name('api.inventory.items.options');
         Route::get('/api/inventory/items/install-options', [InventoryController::class, 'installationItemOptions'])->name('api.inventory.items.install-options');
         Route::get('/api/inventory/movements', [InventoryController::class, 'movements'])->name('api.inventory.movements');
+        Route::put('/api/inventory/movements/{movement}', [InventoryController::class, 'updateMovement'])->name('api.inventory.movements.update');
+        Route::delete('/api/inventory/movements/{movement}', [InventoryController::class, 'destroyMovement'])->name('api.inventory.movements.destroy');
         Route::post('/api/inventory/incoming', [InventoryController::class, 'storeIncoming'])->name('api.inventory.incoming.store');
         Route::post('/api/inventory/outgoing', [InventoryController::class, 'storeOutgoing'])->name('api.inventory.outgoing.store');
         Route::get('/api/inventory/debts', [InventoryController::class, 'debts'])->name('api.inventory.debts.index');
@@ -222,6 +230,8 @@ Route::middleware('auth')->group(function () {
 
         // Billing/Penagihan API
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
+        Route::post('/api/billing/auto-invoice', [BillingController::class, 'autoInvoice'])->name('api.billing.auto-invoice');
+        Route::get('/api/billing/auto-invoice/{jobId}', [BillingController::class, 'autoInvoiceStatus'])->name('api.billing.auto-invoice.status');
         Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');
         Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->name('api.billing.confirm');
         Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->name('api.billing.reject');
@@ -277,6 +287,27 @@ Route::middleware('auth')->group(function () {
 
     // Admin-only settings routes (superadmin + admin only)
     Route::middleware('admin')->group(function () {
+        Route::get('/settings/master-wilayah', fn() => view('app'))->name('master-wilayah.settings');
+        Route::get('/settings/master-mikrotik', fn() => view('app'))->name('master-mikrotik.settings');
+
+        Route::get('/api/master-wilayah', [MasterWilayahController::class, 'index'])->name('api.master-wilayah.index');
+        Route::post('/api/master-wilayah/kecamatan', [MasterWilayahController::class, 'storeKecamatan'])->name('api.master-wilayah.kecamatan.store');
+        Route::put('/api/master-wilayah/kecamatan/{kecamatan}', [MasterWilayahController::class, 'updateKecamatan'])->name('api.master-wilayah.kecamatan.update');
+        Route::delete('/api/master-wilayah/kecamatan/{kecamatan}', [MasterWilayahController::class, 'destroyKecamatan'])->name('api.master-wilayah.kecamatan.destroy');
+        Route::post('/api/master-wilayah/desa', [MasterWilayahController::class, 'storeDesa'])->name('api.master-wilayah.desa.store');
+        Route::put('/api/master-wilayah/desa/{desa}', [MasterWilayahController::class, 'updateDesa'])->name('api.master-wilayah.desa.update');
+        Route::delete('/api/master-wilayah/desa/{desa}', [MasterWilayahController::class, 'destroyDesa'])->name('api.master-wilayah.desa.destroy');
+        Route::post('/api/master-wilayah/dusun', [MasterWilayahController::class, 'storeDusun'])->name('api.master-wilayah.dusun.store');
+        Route::put('/api/master-wilayah/dusun/{dusun}', [MasterWilayahController::class, 'updateDusun'])->name('api.master-wilayah.dusun.update');
+        Route::delete('/api/master-wilayah/dusun/{dusun}', [MasterWilayahController::class, 'destroyDusun'])->name('api.master-wilayah.dusun.destroy');
+
+        Route::get('/api/master-mikrotik', [MasterMikrotikController::class, 'index'])->name('api.master-mikrotik.index');
+        Route::post('/api/master-mikrotik', [MasterMikrotikController::class, 'store'])->name('api.master-mikrotik.store');
+        Route::put('/api/master-mikrotik/{masterMikrotik}', [MasterMikrotikController::class, 'update'])->name('api.master-mikrotik.update');
+        Route::delete('/api/master-mikrotik/{masterMikrotik}', [MasterMikrotikController::class, 'destroy'])->name('api.master-mikrotik.destroy');
+        Route::patch('/api/master-mikrotik/{masterMikrotik}/activate', [MasterMikrotikController::class, 'activate'])->name('api.master-mikrotik.activate');
+        Route::post('/api/master-mikrotik/{masterMikrotik}/test-connection', [MasterMikrotikController::class, 'testConnection'])->name('api.master-mikrotik.test-connection');
+
         // Packages API
         Route::get('/api/packages', [PackageController::class, 'index'])->name('api.packages.index');
         Route::post('/api/packages', [PackageController::class, 'store'])->name('api.packages.store');

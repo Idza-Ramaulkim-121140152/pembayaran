@@ -13,11 +13,13 @@ class NotificationLog extends Model
         'notice_id',
         'status',
         'error',
+        'meta',
         'sent_at',
     ];
 
     protected $casts = [
         'sent_at' => 'datetime',
+        'meta' => 'array',
     ];
 
     public function customer()

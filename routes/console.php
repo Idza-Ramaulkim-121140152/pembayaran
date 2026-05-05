@@ -12,3 +12,8 @@ Schedule::command('finance:snapshot-balance')
     ->dailyAt('23:59')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('mikrotik:health-check')
+    ->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();

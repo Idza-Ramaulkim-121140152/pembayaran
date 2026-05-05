@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
+use App\Models\Pengeluaran;
 
 class InventoryMovement extends Model
 {
@@ -17,6 +18,8 @@ class InventoryMovement extends Model
         'total_amount',
         'transaction_date',
         'notes',
+        'pengeluaran_id',
+        'transaction_group_key',
         'created_by',
         'reference_type',
         'reference_id',
@@ -28,6 +31,7 @@ class InventoryMovement extends Model
         'unit_price' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'transaction_date' => 'date:Y-m-d',
+        'pengeluaran_id' => 'integer',
         'meta' => 'array',
     ];
 
@@ -44,5 +48,10 @@ class InventoryMovement extends Model
     public function reference(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    public function pengeluaran(): BelongsTo
+    {
+        return $this->belongsTo(Pengeluaran::class);
     }
 }

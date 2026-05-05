@@ -34,6 +34,17 @@ function BillingPage() {
     const [linkModal, setLinkModal] = useState({ open: false, invoice: null, customer: null });
     const [resultModal, setResultModal] = useState({ open: false, data: null });
     const [editAmountModal, setEditAmountModal] = useState({ open: false, invoice: null, customer: null });
+    const [invalidServiceModal, setInvalidServiceModal] = useState({ open: false, segment: null, rows: [] });
+    const [autoResultModal, setAutoResultModal] = useState({ open: false, segment: null, summary: null, results: [] });
+    const [autoProcessModal, setAutoProcessModal] = useState({
+        open: false,
+        segment: null,
+        jobId: null,
+        state: 'queued',
+        phase: 'queued',
+        summary: null,
+        errorMessage: null,
+    });
     
     // Form states
     const [amount, setAmount] = useState('');
@@ -43,6 +54,8 @@ function BillingPage() {
     const [rejectReason, setRejectReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [updatingCustomerService, setUpdatingCustomerService] = useState(false);
+    const [autoSubmitting, setAutoSubmitting] = useState(false);
+    const autoPollingTimerRef = useRef(null);
 
     // Collapsed sections
     const [collapsed, setCollapsed] = useState({ late: false, almostLate: false, others: true, paid: true });
@@ -71,6 +84,15 @@ function BillingPage() {
 
     useEffect(() => {
         fetchActivePackages();
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (autoPollingTimerRef.current) {
+                clearTimeout(autoPollingTimerRef.current);
+                autoPollingTimerRef.current = null;
+            }
+        };
     }, []);
 
     useEffect(() => {
@@ -356,6 +378,173 @@ function BillingPage() {
         }
     };
 
+    const phaseLabel = (phase) => {
+        switch (phase) {
+            case 'verify_wa':
+                return 'Verifikasi nomor WA';
+            case 'verify_service':
+                return 'Verifikasi layanan & nominal';
+            case 'create_invoice':
+                return 'Membuat invoice';
+            case 'send_wa':
+                return 'Mengirim WhatsApp';
+            case 'done':
+                return 'Selesai';
+            default:
+                return 'Menunggu antrean';
+        }
+    };
+
+    const stopAutoPolling = () => {
+        if (autoPollingTimerRef.current) {
+            clearTimeout(autoPollingTimerRef.current);
+            autoPollingTimerRef.current = null;
+        }
+    };
+
+    const pollAutoInvoiceStatus = async (jobId, segment) => {
+        try {
+            const response = await billingService.getAutoInvoiceStatus(jobId);
+            const payload = response?.data || {};
+            const summary = payload.summary || {};
+            const results = Array.isArray(payload.results) ? payload.results : [];
+            const invalidServices = Array.isArray(payload.invalid_services) ? payload.invalid_services : [];
+
+            setAutoProcessModal((prev) => ({
+                ...prev,
+                open: true,
+                segment,
+                jobId,
+                state: payload.state || 'queued',
+                phase: payload.phase || 'queued',
+                summary,
+                errorMessage: payload.error_message || null,
+            }));
+
+            if (payload.state === 'completed' || payload.state === 'failed') {
+                stopAutoPolling();
+                setAutoSubmitting(false);
+
+                setAutoProcessModal((prev) => ({
+                    ...prev,
+                    state: payload.state || prev.state,
+                    phase: payload.phase || prev.phase,
+                    summary,
+                    errorMessage: payload.error_message || null,
+                }));
+
+                if (invalidServices.length > 0) {
+                    setInvalidServiceModal({
+                        open: true,
+                        segment,
+                        rows: invalidServices,
+                    });
+                }
+
+                setAutoResultModal({
+                    open: true,
+                    segment,
+                    summary,
+                    results,
+                });
+
+                if (payload.state === 'failed') {
+                    setError(payload.error_message || 'Proses auto invoice gagal.');
+                } else if (invalidServices.length > 0) {
+                    setError(payload.error_message || 'Ada layanan pelanggan yang belum valid.');
+                } else {
+                    setSuccess('Proses auto invoice selesai.');
+                }
+
+                fetchBillingData(search);
+                return;
+            }
+
+            autoPollingTimerRef.current = setTimeout(() => {
+                pollAutoInvoiceStatus(jobId, segment);
+            }, 1500);
+        } catch (err) {
+            stopAutoPolling();
+            setAutoSubmitting(false);
+            setAutoProcessModal((prev) => ({
+                ...prev,
+                state: 'failed',
+                phase: 'done',
+                errorMessage: err.response?.data?.message || 'Gagal membaca status proses auto invoice.',
+            }));
+            setError(err.response?.data?.message || 'Gagal membaca status proses auto invoice.');
+        }
+    };
+
+    const runAutoInvoice = async (segment) => {
+        const source = segment === 'late' ? (customers.late || []) : (customers.almostLate || []);
+        const customerIds = source
+            .map((item) => item?.customer?.id)
+            .filter(Boolean);
+
+        if (customerIds.length === 0) {
+            setError('Tidak ada pelanggan pada section ini.');
+            return;
+        }
+
+        try {
+            setAutoSubmitting(true);
+            setError(null);
+            setSuccess(null);
+            stopAutoPolling();
+
+            const response = await billingService.startAutoInvoice({
+                segment,
+                customer_ids: customerIds,
+                search_context: search || null,
+            });
+
+            const payload = response?.data || {};
+            const jobId = payload.job_id;
+            if (!jobId) {
+                throw new Error('Job ID tidak diterima dari server.');
+            }
+
+            setAutoProcessModal({
+                open: true,
+                segment,
+                jobId,
+                state: payload.state || 'queued',
+                phase: payload.phase || 'queued',
+                summary: payload.summary || null,
+                errorMessage: null,
+            });
+
+            pollAutoInvoiceStatus(jobId, segment);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menjalankan auto invoice.');
+            setAutoSubmitting(false);
+        } finally {
+        }
+    };
+
+    const openServicePackageModalFromInvalid = (invalidRow) => {
+        const customer = [...customers.late, ...customers.almostLate, ...customers.others, ...customers.paid]
+            .map((item) => item?.customer)
+            .find((row) => row?.id === invalidRow.customer_id);
+
+        if (!customer) {
+            setError('Data pelanggan tidak ditemukan di daftar saat ini. Refresh halaman lalu coba lagi.');
+            return;
+        }
+
+        if (activePackages.length === 0) {
+            setError('Belum ada paket aktif di pengaturan paket. Tambahkan paket terlebih dahulu.');
+            return;
+        }
+
+        setServicePackageModal({
+            open: true,
+            customer,
+            selectedPackageId: String(activePackages[0].id),
+        });
+    };
+
     const handleCreateInvoice = async (e) => {
         e.preventDefault();
         // Parse amount untuk mendapatkan angka murni (hapus semua titik/koma)
@@ -571,16 +760,14 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         );
     }
 
-    const CustomerTable = ({ title, data, icon: Icon, iconColor, defaultCollapsed = false }) => {
+    const CustomerTable = ({ title, data, icon: Icon, iconColor, segment, defaultCollapsed = false }) => {
         const sectionKey = title.toLowerCase().replace(/[^a-z]/g, '');
         const isCollapsed = collapsed[sectionKey] ?? defaultCollapsed;
+        const canRunAutoInvoice = segment === 'late' || segment === 'almostLate';
         
         return (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <button
-                    onClick={() => setCollapsed(prev => ({ ...prev, [sectionKey]: !isCollapsed }))}
-                    className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-                >
+                <div className="w-full flex items-center justify-between p-4">
                     <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-lg ${iconColor}`}>
                             <Icon size={20} className="text-white" />
@@ -589,9 +776,27 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             <h3 className="font-semibold text-gray-900">{title}</h3>
                             <p className="text-sm text-gray-500">{data.length} pelanggan</p>
                         </div>
+                        {canRunAutoInvoice && (
+                            <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={() => runAutoInvoice(segment)}
+                                disabled={autoSubmitting || data.length === 0}
+                            >
+                                <Send size={14} className="mr-1" />
+                                <span className="hidden sm:inline">{autoSubmitting ? 'Memproses...' : 'Kirim Invoice Auto'}</span>
+                                <span className="sm:hidden">Auto</span>
+                            </Button>
+                        )}
                     </div>
-                    {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
-                </button>
+                    <button
+                        type="button"
+                        onClick={() => setCollapsed(prev => ({ ...prev, [sectionKey]: !isCollapsed }))}
+                        className="p-1 rounded hover:bg-gray-100"
+                    >
+                        {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                    </button>
+                </div>
                 
                 {!isCollapsed && (
                     <div className="overflow-x-auto">
@@ -840,18 +1045,21 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <CustomerTable
                     title="Pelanggan Telat"
                     data={customers.late}
+                    segment="late"
                     icon={AlertTriangle}
                     iconColor="bg-red-500"
                 />
                 <CustomerTable
                     title="Pelanggan Hampir Telat (H-5)"
                     data={customers.almostLate}
+                    segment="almostLate"
                     icon={Clock}
                     iconColor="bg-orange-500"
                 />
                 <CustomerTable
                     title="Pelanggan Lainnya"
                     data={customers.others}
+                    segment="others"
                     icon={Users}
                     iconColor="bg-blue-500"
                     defaultCollapsed={true}
@@ -859,11 +1067,196 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <CustomerTable
                     title="Pelanggan Sudah Bayar"
                     data={customers.paid}
+                    segment="paid"
                     icon={Check}
                     iconColor="bg-green-500"
                     defaultCollapsed={true}
                 />
             </div>
+
+            {/* Auto Invoice Process Modal */}
+            <Modal
+                isOpen={autoProcessModal.open}
+                onClose={() => {
+                    if (autoProcessModal.state === 'processing' || autoProcessModal.state === 'queued') {
+                        return;
+                    }
+                    setAutoProcessModal({
+                        open: false,
+                        segment: null,
+                        jobId: null,
+                        state: 'queued',
+                        phase: 'queued',
+                        summary: null,
+                        errorMessage: null,
+                    });
+                }}
+                title="Proses Auto Invoice"
+                size="md"
+            >
+                <div className="space-y-4">
+                    <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
+                        <p className="font-semibold">
+                            Section: {autoProcessModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Hampir Telat (H-5)'}
+                        </p>
+                        <p className="mt-1">Status: {autoProcessModal.state}</p>
+                        <p>Fase: {phaseLabel(autoProcessModal.phase)}</p>
+                        {autoProcessModal.jobId && <p>Job ID: {autoProcessModal.jobId}</p>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="rounded border border-gray-200 p-2">Total: <strong>{autoProcessModal.summary?.total ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Diproses: <strong>{autoProcessModal.summary?.processed ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoProcessModal.summary?.verified_wa ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Dibuat: <strong>{autoProcessModal.summary?.created ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoProcessModal.summary?.wa_sent ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoProcessModal.summary?.wa_failed ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoProcessModal.summary?.skipped_no_phone ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoProcessModal.summary?.skipped_invalid_service ?? 0}</strong></div>
+                    </div>
+                    {autoProcessModal.errorMessage && (
+                        <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700">
+                            {autoProcessModal.errorMessage}
+                        </div>
+                    )}
+                    {(autoProcessModal.state === 'processing' || autoProcessModal.state === 'queued') && (
+                        <p className="text-xs text-gray-500">Proses sedang berjalan di background, popup ini update otomatis.</p>
+                    )}
+                    {(autoProcessModal.state === 'completed' || autoProcessModal.state === 'failed') && (
+                        <div className="flex justify-end">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => setAutoProcessModal({
+                                    open: false,
+                                    segment: null,
+                                    jobId: null,
+                                    state: 'queued',
+                                    phase: 'queued',
+                                    summary: null,
+                                    errorMessage: null,
+                                })}
+                            >
+                                Tutup
+                            </Button>
+                        </div>
+                    )}
+                </div>
+            </Modal>
+
+            {/* Invalid Service Modal */}
+            <Modal
+                isOpen={invalidServiceModal.open}
+                onClose={() => setInvalidServiceModal({ open: false, segment: null, rows: [] })}
+                title="Layanan Belum Valid"
+                size="lg"
+            >
+                <div className="space-y-4">
+                    <div className="bg-amber-50 rounded-lg p-4">
+                        <p className="text-sm text-amber-800">
+                            Proses auto invoice dihentikan karena ada layanan pelanggan yang belum terdaftar di paket aktif.
+                            Set layanan terlebih dahulu lalu jalankan ulang.
+                        </p>
+                    </div>
+                    <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg">
+                        <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Pelanggan</th>
+                                    <th className="px-3 py-2 text-left">Layanan Saat Ini</th>
+                                    <th className="px-3 py-2 text-left">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {invalidServiceModal.rows.map((row) => (
+                                    <tr key={row.customer_id}>
+                                        <td className="px-3 py-2">
+                                            <p className="font-medium text-gray-900">{row.customer_name}</p>
+                                            <p className="text-xs text-gray-500">{row.pppoe_username || '-'}</p>
+                                        </td>
+                                        <td className="px-3 py-2">{row.service_label || '-'}</td>
+                                        <td className="px-3 py-2">
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="primary"
+                                                onClick={() => openServicePackageModalFromInvalid(row)}
+                                            >
+                                                Set Layanan
+                                            </Button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {invalidServiceModal.rows.length === 0 && (
+                                    <tr>
+                                        <td colSpan="3" className="px-3 py-6 text-center text-gray-500">Tidak ada data.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="flex justify-end">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setInvalidServiceModal({ open: false, segment: null, rows: [] })}
+                        >
+                            Tutup
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Auto Invoice Result Modal */}
+            <Modal
+                isOpen={autoResultModal.open}
+                onClose={() => setAutoResultModal({ open: false, segment: null, summary: null, results: [] })}
+                title="Hasil Proses Auto Invoice"
+                size="lg"
+            >
+                <div className="space-y-4">
+                    <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
+                        Section: {autoResultModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Hampir Telat (H-5)'}
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                        <div className="rounded border border-gray-200 p-2">Total: <strong>{autoResultModal.summary?.total ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoResultModal.summary?.verified_wa ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Dibuat: <strong>{autoResultModal.summary?.created ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoResultModal.summary?.wa_sent ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoResultModal.summary?.wa_failed ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoResultModal.summary?.skipped_no_phone ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip Invoice Aktif: <strong>{autoResultModal.summary?.skipped_existing_open_invoice ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg">
+                        <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-3 py-2 text-left">Customer ID</th>
+                                    <th className="px-3 py-2 text-left">Status</th>
+                                    <th className="px-3 py-2 text-left">Reason</th>
+                                    <th className="px-3 py-2 text-left">WA</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {(autoResultModal.results || []).map((row, idx) => (
+                                    <tr key={`${row.customer_id}-${idx}`}>
+                                        <td className="px-3 py-2">{row.customer_id}</td>
+                                        <td className="px-3 py-2">{row.status}</td>
+                                        <td className="px-3 py-2">{row.reason || '-'}</td>
+                                        <td className="px-3 py-2">{row.wa_status || '-'}</td>
+                                    </tr>
+                                ))}
+                                {(autoResultModal.results || []).length === 0 && (
+                                    <tr>
+                                        <td colSpan="4" className="px-3 py-6 text-center text-gray-500">Tidak ada detail hasil.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </Modal>
 
             {/* Create Invoice Modal */}
             <Modal

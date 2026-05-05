@@ -11,6 +11,9 @@ const DEFAULT_FORM_DATA = {
     google_sheets_timestamp: '',
     name: '',
     area_code: '',
+    kecamatan_id: '',
+    desa_id: '',
+    dusun_id: '',
     email: '',
     phone: '',
     address: '',
@@ -27,6 +30,8 @@ const DEFAULT_FORM_DATA = {
     home_router_password: '',
     home_router_wan_interface: '',
     home_router_monitoring_enabled: false,
+    enable_home_router: false,
+    enable_installation_team: false,
     odp: '',
     installation_fee: '',
     is_active: true,
@@ -54,7 +59,12 @@ function CustomerVerificationForm() {
     const [sheetsReference, setSheetsReference] = useState(null);
     const [secretInfo, setSecretInfo] = useState(null);
     const [showSecretModal, setShowSecretModal] = useState(false);
+    const [showErrorModal, setShowErrorModal] = useState(false);
+    const [errorModalMessage, setErrorModalMessage] = useState('');
     const [payrollMembers, setPayrollMembers] = useState([]);
+    const [kecamatanOptions, setKecamatanOptions] = useState([]);
+    const [desaOptions, setDesaOptions] = useState([]);
+    const [dusunOptions, setDusunOptions] = useState([]);
     const [installInventoryOptions, setInstallInventoryOptions] = useState({
         all_items: [],
         router_items: [],
@@ -80,8 +90,30 @@ function CustomerVerificationForm() {
         fetchPackageList();
         fetchPayrollMembers();
         fetchInstallInventoryOptions();
+        fetchKecamatanOptions();
         fetchCustomerData();
     }, [timestamp]);
+
+    useEffect(() => {
+        if (!formData.kecamatan_id) {
+            setDesaOptions([]);
+            setDusunOptions([]);
+            setFormData((prev) => ({ ...prev, desa_id: '', dusun_id: '' }));
+            return;
+        }
+
+        fetchDesaOptions(formData.kecamatan_id);
+    }, [formData.kecamatan_id]);
+
+    useEffect(() => {
+        if (!formData.desa_id) {
+            setDusunOptions([]);
+            setFormData((prev) => ({ ...prev, dusun_id: '' }));
+            return;
+        }
+
+        fetchDusunOptions(formData.desa_id);
+    }, [formData.desa_id]);
 
     const fetchPackageList = async () => {
         try {
@@ -90,6 +122,66 @@ function CustomerVerificationForm() {
             setPackageList(data.data || []);
         } catch (err) {
             console.error('Failed to load package list', err);
+        }
+    };
+
+    const fetchKecamatanOptions = async () => {
+        try {
+            const response = await fetch('/api/master-wilayah/kecamatan', {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat master kecamatan');
+            }
+
+            const data = await response.json();
+            setKecamatanOptions(data.data || []);
+        } catch (err) {
+            console.error('Failed to load kecamatan options', err);
+        }
+    };
+
+    const fetchDesaOptions = async (kecamatanId) => {
+        try {
+            const response = await fetch(`/api/master-wilayah/desa?kecamatan_id=${encodeURIComponent(kecamatanId)}`, {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat master desa');
+            }
+
+            const data = await response.json();
+            setDesaOptions(data.data || []);
+        } catch (err) {
+            console.error('Failed to load desa options', err);
+        }
+    };
+
+    const fetchDusunOptions = async (desaId) => {
+        try {
+            const response = await fetch(`/api/master-wilayah/dusun?desa_id=${encodeURIComponent(desaId)}`, {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat master dusun');
+            }
+
+            const data = await response.json();
+            setDusunOptions(data.data || []);
+        } catch (err) {
+            console.error('Failed to load dusun options', err);
         }
     };
 
@@ -173,9 +265,6 @@ function CustomerVerificationForm() {
 
     const fetchCustomerData = async () => {
         try {
-            // Decode base64 timestamp
-            const decodedTimestamp = atob(timestamp);
-            
             const response = await fetch(`/api/customer-verification/get/${timestamp}`, {
                 headers: {
                     'Accept': 'application/json',
@@ -220,6 +309,18 @@ function CustomerVerificationForm() {
         }
     };
 
+    const composeAddressFromSelection = (dusunId, desaId, kecamatanId) => {
+        const selectedDusun = dusunOptions.find((item) => String(item.id) === String(dusunId));
+        const selectedDesa = desaOptions.find((item) => String(item.id) === String(desaId));
+        const selectedKecamatan = kecamatanOptions.find((item) => String(item.id) === String(kecamatanId));
+        const parts = [
+            selectedDusun?.name,
+            selectedDesa?.name,
+            selectedKecamatan?.name,
+        ].filter(Boolean);
+        return parts.join(', ');
+    };
+
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
         
@@ -254,6 +355,84 @@ function CustomerVerificationForm() {
                 };
             });
 
+            return;
+        }
+
+        if (name === 'enable_home_router') {
+            setFormData((prev) => {
+                if (checked) {
+                    return {
+                        ...prev,
+                        enable_home_router: true,
+                    };
+                }
+
+                return {
+                    ...prev,
+                    enable_home_router: false,
+                    home_router_monitoring_enabled: false,
+                    home_router_type: 'mikrotik',
+                    home_router_host: '',
+                    home_router_port: '8728',
+                    home_router_username: '',
+                    home_router_password: '',
+                    home_router_wan_interface: '',
+                };
+            });
+
+            return;
+        }
+
+        if (name === 'enable_installation_team') {
+            setFormData((prev) => {
+                if (checked) {
+                    return {
+                        ...prev,
+                        enable_installation_team: true,
+                    };
+                }
+
+                return {
+                    ...prev,
+                    enable_installation_team: false,
+                    installer_member_ids: [],
+                    installation_router_item_id: '',
+                    installation_cable_item_id: '',
+                    installation_cable_used: '',
+                    installation_labor_fee: '',
+                    installation_cable_rate: '',
+                    installation_notes: '',
+                };
+            });
+
+            return;
+        }
+
+        if (name === 'kecamatan_id') {
+            setFormData((prev) => ({
+                ...prev,
+                kecamatan_id: value,
+                desa_id: '',
+                dusun_id: '',
+            }));
+            return;
+        }
+
+        if (name === 'desa_id') {
+            setFormData((prev) => ({
+                ...prev,
+                desa_id: value,
+                dusun_id: '',
+            }));
+            return;
+        }
+
+        if (name === 'dusun_id') {
+            setFormData((prev) => ({
+                ...prev,
+                dusun_id: value,
+                address: composeAddressFromSelection(value, prev.desa_id, prev.kecamatan_id),
+            }));
             return;
         }
         
@@ -309,10 +488,17 @@ function CustomerVerificationForm() {
         e.preventDefault();
         setSubmitting(true);
         setError(null);
+        setShowErrorModal(false);
+        setErrorModalMessage('');
 
         try {
             const payload = {
                 ...formData,
+                kecamatan_id: formData.kecamatan_id ? Number(formData.kecamatan_id) : null,
+                desa_id: formData.desa_id ? Number(formData.desa_id) : null,
+                dusun_id: formData.dusun_id ? Number(formData.dusun_id) : null,
+                enable_home_router: Boolean(formData.enable_home_router),
+                enable_installation_team: Boolean(formData.enable_installation_team),
                 installer_member_ids: Array.isArray(formData.installer_member_ids)
                     ? formData.installer_member_ids
                     : [],
@@ -323,6 +509,26 @@ function CustomerVerificationForm() {
                 installation_cable_rate: formData.installation_cable_rate === '' ? null : formData.installation_cable_rate,
                 installation_notes: formData.installation_notes || null,
             };
+
+            if (!payload.enable_home_router) {
+                payload.home_router_type = null;
+                payload.home_router_host = null;
+                payload.home_router_port = null;
+                payload.home_router_username = null;
+                payload.home_router_password = null;
+                payload.home_router_wan_interface = null;
+                payload.home_router_monitoring_enabled = false;
+            }
+
+            if (!payload.enable_installation_team) {
+                payload.installer_member_ids = [];
+                payload.installation_router_item_id = null;
+                payload.installation_cable_item_id = null;
+                payload.installation_cable_used = null;
+                payload.installation_labor_fee = null;
+                payload.installation_cable_rate = null;
+                payload.installation_notes = null;
+            }
 
             const response = await fetch('/api/customer-verification/verify', {
                 method: 'POST',
@@ -336,30 +542,24 @@ function CustomerVerificationForm() {
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.message || 'Failed to verify customer');
+                const message = errorData.message || 'Failed to verify customer';
+                throw new Error(message);
             }
 
             const result = await response.json();
-            
-            // Check if secret was created
-            if (result.secret && !result.secret.error) {
-                setSecretInfo(result.secret);
-                setShowSecretModal(true);
-                setSuccess(true);
-            } else if (result.secret && result.secret.error) {
-                setSuccess(true);
-                const errorMsg = result.secret.error;
-                const userFriendlyMsg = errorMsg.includes('Profile') 
-                    ? 'Pelanggan berhasil diverifikasi, tapi gagal membuat secret PPPoE. ' + errorMsg
-                    : 'Pelanggan berhasil diverifikasi, tapi gagal membuat secret PPPoE: ' + errorMsg;
-                setError(userFriendlyMsg);
-                setTimeout(() => navigate('/customer-verification'), 5000);
-            } else {
-                setSuccess(true);
-                setTimeout(() => navigate('/customer-verification'), 1500);
+
+            if (!result?.secret?.name || !result?.secret?.password) {
+                throw new Error('Secret PPPoE tidak tersedia pada respons verifikasi.');
             }
+
+            setSecretInfo(result.secret || null);
+            setShowSecretModal(true);
+            setSuccess(true);
         } catch (err) {
-            setError(err.message || 'Gagal memverifikasi pelanggan');
+            const message = err.message || 'Gagal memverifikasi pelanggan';
+            setError(message);
+            setErrorModalMessage(message);
+            setShowErrorModal(true);
             console.error(err);
         } finally {
             setSubmitting(false);
@@ -495,19 +695,62 @@ function CustomerVerificationForm() {
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Kode Wilayah <span className="text-red-500">*</span>
+                                    Kecamatan <span className="text-red-500">*</span>
                                 </label>
-                                <input
-                                    type="text"
-                                    name="area_code"
-                                    value={formData.area_code}
+                                <select
+                                    name="kecamatan_id"
+                                    value={formData.kecamatan_id}
                                     onChange={handleChange}
                                     required
-                                    maxLength={3}
                                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Contoh: CJA"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">Kode wilayah untuk username PPPoE (3 huruf)</p>
+                                >
+                                    <option value="">Pilih Kecamatan</option>
+                                    {kecamatanOptions.map((kecamatan) => (
+                                        <option key={kecamatan.id} value={kecamatan.id}>
+                                            {kecamatan.name} ({kecamatan.code})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Desa <span className="text-red-500">*</span>
+                                </label>
+                                <select
+                                    name="desa_id"
+                                    value={formData.desa_id}
+                                    onChange={handleChange}
+                                    required
+                                    disabled={!formData.kecamatan_id}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                                >
+                                    <option value="">Pilih Desa</option>
+                                    {desaOptions.map((desa) => (
+                                        <option key={desa.id} value={desa.id}>
+                                            {desa.name} ({desa.code})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Dusun <span className="text-red-500">*</span>
+                                </label>
+                                <select
+                                    name="dusun_id"
+                                    value={formData.dusun_id}
+                                    onChange={handleChange}
+                                    required
+                                    disabled={!formData.desa_id}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                                >
+                                    <option value="">Pilih Dusun</option>
+                                    {dusunOptions.map((dusun) => (
+                                        <option key={dusun.id} value={dusun.id}>
+                                            {dusun.name} ({dusun.code})
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -559,12 +802,15 @@ function CustomerVerificationForm() {
                                     type="text"
                                     name="address"
                                     value={formData.address}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Alamat lengkap"
+                                    readOnly
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700"
+                                    placeholder="Alamat otomatis dari master wilayah"
                                 />
                             </div>
                         </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                            Format username otomatis: KODEKEC+KODEDES+KODEDUS-namadepan003.
+                        </p>
                     </div>
 
                     {/* Service Information */}
@@ -653,119 +899,134 @@ function CustomerVerificationForm() {
                     </div>
 
                     <div>
-                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                            <div>
-                                <h2 className="text-xl font-bold text-gray-900">Router Rumah Pelanggan</h2>
-                                <p className="mt-1 text-sm text-gray-600">
-                                    Opsional, tapi disarankan jika portal pelanggan ingin menampilkan traffic WAN dan jumlah perangkat langsung dari rumah.
-                                </p>
-                            </div>
-                            <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
-                                <input
-                                    type="checkbox"
-                                    name="home_router_monitoring_enabled"
-                                    checked={formData.home_router_monitoring_enabled}
-                                    onChange={handleChange}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                                />
-                                <span className="text-sm font-medium text-gray-700">Monitoring router rumah aktif</span>
-                            </label>
-                        </div>
+                        <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
+                            <input
+                                type="checkbox"
+                                name="enable_home_router"
+                                checked={formData.enable_home_router}
+                                onChange={handleChange}
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                            />
+                            <span className="text-sm font-medium text-gray-700">Aktifkan Router Rumah Pelanggan</span>
+                        </label>
 
-                        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Tipe Router
-                                </label>
-                                <select
-                                    name="home_router_type"
-                                    value={formData.home_router_type}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                >
-                                    {HOME_ROUTER_OPTIONS.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <p className="mt-1 text-xs text-gray-500">{selectedRouterPreset.helper}</p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Host / IP Router
-                                </label>
-                                <input
-                                    type="text"
-                                    name="home_router_host"
-                                    value={formData.home_router_host}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="192.168.88.1"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Port API
-                                </label>
-                                <input
-                                    type="number"
-                                    name="home_router_port"
-                                    value={formData.home_router_port}
-                                    onChange={handleChange}
-                                    min="1"
-                                    max="65535"
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="8728"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Username API
-                                </label>
-                                <input
-                                    type="text"
-                                    name="home_router_username"
-                                    value={formData.home_router_username}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="admin"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Password API
-                                </label>
-                                <input
-                                    type="password"
-                                    name="home_router_password"
-                                    value={formData.home_router_password}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Password router"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Interface WAN
-                                </label>
-                                <input
-                                    type="text"
-                                    name="home_router_wan_interface"
-                                    value={formData.home_router_wan_interface}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="pppoe-out1"
-                                />
-                                <p className="mt-1 text-xs text-gray-500">Opsional. Kosongkan jika ingin dideteksi otomatis.</p>
-                            </div>
-                        </div>
+                        {formData.enable_home_router && (
+                            <div className="mt-4">
+                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                    <div>
+                                        <h2 className="text-xl font-bold text-gray-900">Router Rumah Pelanggan</h2>
+                                        <p className="mt-1 text-sm text-gray-600">
+                                            Opsional, tapi disarankan jika portal pelanggan ingin menampilkan traffic WAN dan jumlah perangkat langsung dari rumah.
+                                        </p>
+                                    </div>
+                                    <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
+                                        <input
+                                            type="checkbox"
+                                            name="home_router_monitoring_enabled"
+                                            checked={formData.home_router_monitoring_enabled}
+                                            onChange={handleChange}
+                                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700">Monitoring router rumah aktif</span>
+                                    </label>
+                                </div>
 
-                        <div className="mt-4 rounded-2xl border border-dashed border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                            {selectedRouterPreset.managementMode === 'api'
-                                ? 'Monitoring langsung dari router rumah paling akurat jika pelanggan memakai MikroTik dengan API port 8728 yang bisa dijangkau server.'
-                                : 'Untuk router web-managed seperti VSOL/GL-01, portal akan probe panel admin dan menyiapkan pembacaan status model-specific.'}
-                        </div>
+                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Tipe Router
+                                        </label>
+                                        <select
+                                            name="home_router_type"
+                                            value={formData.home_router_type}
+                                            onChange={handleChange}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        >
+                                            {HOME_ROUTER_OPTIONS.map((option) => (
+                                                <option key={option.value} value={option.value}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <p className="mt-1 text-xs text-gray-500">{selectedRouterPreset.helper}</p>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Host / IP Router
+                                        </label>
+                                        <input
+                                            type="text"
+                                            name="home_router_host"
+                                            value={formData.home_router_host}
+                                            onChange={handleChange}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="192.168.88.1"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Port API
+                                        </label>
+                                        <input
+                                            type="number"
+                                            name="home_router_port"
+                                            value={formData.home_router_port}
+                                            onChange={handleChange}
+                                            min="1"
+                                            max="65535"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="8728"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Username API
+                                        </label>
+                                        <input
+                                            type="text"
+                                            name="home_router_username"
+                                            value={formData.home_router_username}
+                                            onChange={handleChange}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="admin"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Password API
+                                        </label>
+                                        <input
+                                            type="password"
+                                            name="home_router_password"
+                                            value={formData.home_router_password}
+                                            onChange={handleChange}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="Password router"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Interface WAN
+                                        </label>
+                                        <input
+                                            type="text"
+                                            name="home_router_wan_interface"
+                                            value={formData.home_router_wan_interface}
+                                            onChange={handleChange}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            placeholder="pppoe-out1"
+                                        />
+                                        <p className="mt-1 text-xs text-gray-500">Opsional. Kosongkan jika ingin dideteksi otomatis.</p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 rounded-2xl border border-dashed border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                                    {selectedRouterPreset.managementMode === 'api'
+                                        ? 'Monitoring langsung dari router rumah paling akurat jika pelanggan memakai MikroTik dengan API port 8728 yang bisa dijangkau server.'
+                                        : 'Untuk router web-managed seperti VSOL/GL-01, portal akan probe panel admin dan menyiapkan pembacaan status model-specific.'}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Location */}
@@ -826,13 +1087,26 @@ function CustomerVerificationForm() {
 
                     {/* Installation Team & Material Details */}
                     <div>
-                        <h2 className="text-xl font-bold text-gray-900 mb-4">Pelaksana Pemasangan</h2>
+                        <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
+                            <input
+                                type="checkbox"
+                                name="enable_installation_team"
+                                checked={formData.enable_installation_team}
+                                onChange={handleChange}
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                            />
+                            <span className="text-sm font-medium text-gray-700">Aktifkan Pelaksana Pemasangan</span>
+                        </label>
 
-                        <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-                            Pilih teknisi pelaksana dan detail material instalasi. Saat verifikasi disimpan, data ini otomatis masuk ke payroll proyek pemasangan dan inventori (stok router/kabel berkurang sesuai pemakaian).
-                        </div>
+                        {formData.enable_installation_team && (
+                            <div className="mt-4">
+                                <h2 className="text-xl font-bold text-gray-900 mb-4">Pelaksana Pemasangan</h2>
 
-                        <div className="space-y-5">
+                                <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+                                    Pilih teknisi pelaksana dan detail material instalasi. Saat verifikasi disimpan, data ini otomatis masuk ke payroll proyek pemasangan dan inventori (stok router/kabel berkurang sesuai pemakaian).
+                                </div>
+
+                                <div className="space-y-5">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Checklist Pelaksana (Teknisi)
@@ -872,7 +1146,6 @@ function CustomerVerificationForm() {
                                         name="installation_router_item_id"
                                         value={formData.installation_router_item_id}
                                         onChange={handleChange}
-                                        required
                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                     >
                                         <option value="">Tidak dipilih</option>
@@ -967,7 +1240,9 @@ function CustomerVerificationForm() {
                                     placeholder="Catatan tambahan instalasi"
                                 />
                             </div>
-                        </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Status */}
@@ -1056,6 +1331,24 @@ function CustomerVerificationForm() {
                                     Tutup & Lanjutkan
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {showErrorModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                            <h3 className="text-xl font-bold text-red-700 mb-2">Verifikasi Gagal</h3>
+                            <p className="text-sm text-gray-700 mb-4">
+                                {errorModalMessage || 'Terjadi kesalahan saat verifikasi pelanggan.'}
+                            </p>
+                            <button
+                                onClick={() => setShowErrorModal(false)}
+                                className="w-full bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium"
+                                type="button"
+                            >
+                                Tutup
+                            </button>
                         </div>
                     </div>
                 )}

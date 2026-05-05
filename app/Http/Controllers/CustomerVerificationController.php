@@ -4,6 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\InventoryItem;
+use App\Models\MasterWilayahDesa;
+use App\Models\MasterWilayahDusun;
+use App\Models\MasterWilayahKecamatan;
 use App\Models\Package;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
@@ -15,6 +18,7 @@ use App\Services\MikroTikService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class CustomerVerificationController extends Controller
@@ -151,25 +155,36 @@ class CustomerVerificationController extends Controller
     {
         $validated = $request->validate($this->verificationValidationRules());
         $validated = $this->normalizeHomeRouterInput($validated);
+        $validated = $this->normalizeVerificationToggleInput($validated);
+        $secretInfo = null;
+        $createdSecretUsername = null;
 
-        if ($this->hasInstallationPayrollInput($validated) && empty($validated['installer_member_ids'])) {
+        if (($validated['enable_installation_team'] ?? false)
+            && $this->hasInstallationPayrollInput($validated)
+            && empty($validated['installer_member_ids'])) {
             throw ValidationException::withMessages([
                 'installer_member_ids' => 'Pilih minimal 1 pelaksana agar detail pemasangan bisa masuk ke payroll.',
             ]);
         }
-
-        DB::beginTransaction();
 
         try {
             // Check if already verified
             $existingCustomer = Customer::where('google_sheets_timestamp', $validated['google_sheets_timestamp'])->first();
             
             if ($existingCustomer) {
-                DB::rollBack();
                 return response()->json([
                     'error' => 'Customer already verified',
                     'customer' => $existingCustomer
                 ], 409);
+            }
+
+            [$kecamatan, $desa, $dusun, $areaPrefix] = $this->resolveMasterWilayah($validated);
+            $validated['kecamatan_id'] = $kecamatan->id;
+            $validated['desa_id'] = $desa->id;
+            $validated['dusun_id'] = $dusun->id;
+            $validated['area_code'] = $areaPrefix;
+            if (empty($validated['address'])) {
+                $validated['address'] = $dusun->name . ', ' . $desa->name . ', ' . $kecamatan->name;
             }
 
             // Auto-calculate due_date if not provided
@@ -180,125 +195,16 @@ class CustomerVerificationController extends Controller
             }
 
             $validated['is_active'] = $validated['is_active'] ?? true;
+            $mikrotik = new MikroTikService();
+            $serviceLabel = $this->resolveServiceLabelForSecret($validated);
+            $profileName = $this->resolveStrictProfileName($mikrotik, $serviceLabel);
+            $secretInfo = $this->createSecretWithUsernameRetry($mikrotik, $validated, $areaPrefix, $profileName);
+            $createdSecretUsername = $secretInfo['name'] ?? null;
+            $validated['pppoe_username'] = $secretInfo['name'] ?? null;
+            $validated['pppoe_password'] = $secretInfo['password'] ?? ($validated['pppoe_password'] ?? 'admin');
+            $validated['mikrotik_profile'] = $profileName;
 
-            // Create PPPoE secret in MikroTik if not custom package
-            $secretInfo = null;
-            $packageType = $validated['package_type'] ?? null;
-
-            if ($packageType && !in_array(strtolower($packageType), ['custom', 'paket custom'])) {
-                try {
-                    $mikrotik = new MikroTikService();
-                    
-                    // If username not provided, generate one
-                    if (empty($validated['pppoe_username'])) {
-                        $firstName = explode(' ', $validated['name'])[0];
-                        $firstName = strtolower($firstName);
-                        $areaCode = strtoupper($validated['area_code']);
-                        $randomDigits = str_pad(rand(0, 99), 2, '0', STR_PAD_LEFT);
-                        $validated['pppoe_username'] = $areaCode . '-' . $firstName . $randomDigits;
-                    }
-
-                    // Get next available IP with retry
-                    $maxRetries = 3;
-                    $remoteAddress = null;
-                    
-                    for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
-                        try {
-                            $remoteAddress = $mikrotik->getNextIpAddress();
-                            \Log::info('Got available IP address', [
-                                'ip' => $remoteAddress,
-                                'attempt' => $attempt
-                            ]);
-                            break;
-                        } catch (Exception $e) {
-                            \Log::warning('Failed to get IP address', [
-                                'attempt' => $attempt,
-                                'error' => $e->getMessage()
-                            ]);
-                            
-                            if ($attempt === $maxRetries) {
-                                throw new Exception('Gagal mendapatkan IP address yang tersedia setelah ' . $maxRetries . ' percobaan: ' . $e->getMessage());
-                            }
-                            
-                            // Wait a bit before retry
-                            sleep(1);
-                        }
-                    }
-                    
-                    if (!$remoteAddress) {
-                        throw new Exception('Tidak dapat menemukan IP address yang tersedia');
-                    }
-                    
-                    // Use password from request or default to 'admin'
-                    $password = $validated['pppoe_password'] ?? 'admin';
-                    
-                    // Resolve MikroTik profile: first check Package table, then fallback to resolveProfileName
-                    $dbPackage = Package::where('name', $packageType)->first();
-                    if ($dbPackage && $dbPackage->mikrotik_profile) {
-                        $profileName = $dbPackage->mikrotik_profile;
-                        \Log::info('Profile resolved from packages table', ['package' => $packageType, 'profile' => $profileName]);
-                    } else {
-                        $profileName = $mikrotik->resolveProfileName($packageType);
-                        \Log::info('Profile resolved via MikroTik lookup', ['package' => $packageType, 'profile' => $profileName]);
-                    }
-                    
-                    // Create secret with retry if IP conflict occurs
-                    $createRetries = 3;
-                    $secretCreated = false;
-                    
-                    for ($createAttempt = 1; $createAttempt <= $createRetries; $createAttempt++) {
-                        try {
-                            $secretInfo = $mikrotik->createPPPoESecret(
-                                $validated['pppoe_username'],
-                                $password,
-                                'pppoe',
-                                $profileName,
-                                $remoteAddress
-                            );
-                            
-                            $secretCreated = true;
-                            \Log::info('PPPoE secret created for verified customer', [
-                                'username' => $validated['pppoe_username'],
-                                'ip' => $remoteAddress,
-                                'attempt' => $createAttempt,
-                                'secret' => $secretInfo
-                            ]);
-                            break;
-                            
-                        } catch (Exception $e) {
-                            // If IP is already in use, get a new one and retry
-                            if (strpos($e->getMessage(), 'sudah digunakan') !== false && $createAttempt < $createRetries) {
-                                \Log::warning('IP conflict detected, getting new IP', [
-                                    'old_ip' => $remoteAddress,
-                                    'attempt' => $createAttempt,
-                                    'error' => $e->getMessage()
-                                ]);
-                                
-                                // Get new IP
-                                $remoteAddress = $mikrotik->getNextIpAddress();
-                                \Log::info('Retrying with new IP', ['new_ip' => $remoteAddress]);
-                                sleep(1);
-                                continue;
-                            }
-                            
-                            // If it's another error or last attempt, throw
-                            throw $e;
-                        }
-                    }
-                    
-                    if (!$secretCreated) {
-                        throw new Exception('Gagal membuat PPPoE secret setelah ' . $createRetries . ' percobaan');
-                    }
-
-                } catch (Exception $e) {
-                    \Log::error('Failed to create MikroTik secret during verification: ' . $e->getMessage());
-                    // Continue anyway, admin can create secret manually
-                    $secretInfo = ['error' => $e->getMessage()];
-                }
-            }
-
-            // Create customer (save resolved profile for future isolation restore)
-            $validated['mikrotik_profile'] = $profileName ?? $packageType;
+            DB::beginTransaction();
             $customer = Customer::create($validated);
 
             // Auto-post installation fee as income to unified ledger.
@@ -311,20 +217,23 @@ class CustomerVerificationController extends Controller
                 ]);
             }
 
-            $payrollProject = $this->createInstallationPayrollProject($customer, $validated);
+            $payrollProject = null;
+            if ($validated['enable_installation_team'] ?? false) {
+                $payrollProject = $this->createInstallationPayrollProject($customer, $validated);
 
-            if ($this->shouldRecordInstallationOutflow($validated)) {
-                app(InventoryService::class)->recordInstallationOutgoing(
-                    $customer,
-                    [
-                        'router_item_id' => $validated['installation_router_item_id'] ?? null,
-                        'cable_item_id' => $validated['installation_cable_item_id'] ?? null,
-                        'cable_used' => $validated['installation_cable_used'] ?? 0,
-                        'notes' => $validated['installation_notes'] ?? null,
-                        'payroll_project_id' => $payrollProject?->id,
-                    ],
-                    (int) auth()->id()
-                );
+                if ($this->shouldRecordInstallationOutflow($validated)) {
+                    app(InventoryService::class)->recordInstallationOutgoing(
+                        $customer,
+                        [
+                            'router_item_id' => $validated['installation_router_item_id'] ?? null,
+                            'cable_item_id' => $validated['installation_cable_item_id'] ?? null,
+                            'cable_used' => $validated['installation_cable_used'] ?? 0,
+                            'notes' => $validated['installation_notes'] ?? null,
+                            'payroll_project_id' => $payrollProject?->id,
+                        ],
+                        (int) auth()->id()
+                    );
+                }
             }
 
             DB::commit();
@@ -338,7 +247,10 @@ class CustomerVerificationController extends Controller
             ]);
 
         } catch (ValidationException $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            $this->cleanupCreatedSecret($createdSecretUsername);
 
             return response()->json([
                 'error' => 'Validation failed',
@@ -346,7 +258,10 @@ class CustomerVerificationController extends Controller
                 'errors' => $e->errors(),
             ], 422);
         } catch (Exception $e) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            $this->cleanupCreatedSecret($createdSecretUsername);
             \Log::error('Failed to verify customer: ' . $e->getMessage());
 
             return response()->json([
@@ -379,7 +294,7 @@ class CustomerVerificationController extends Controller
         return [
             'google_sheets_timestamp' => 'required|string',
             'name' => 'required|string|max:255',
-            'area_code' => 'required|string|max:10',
+            'area_code' => 'nullable|string|max:10',
             'phone' => 'required|string|max:20',
             'email' => 'nullable|email',
             'address' => 'nullable|string',
@@ -395,6 +310,11 @@ class CustomerVerificationController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable|boolean',
+            'kecamatan_id' => 'required|integer|exists:master_wilayah_kecamatans,id',
+            'desa_id' => 'required|integer|exists:master_wilayah_desas,id',
+            'dusun_id' => 'required|integer|exists:master_wilayah_dusuns,id',
+            'enable_home_router' => 'nullable|boolean',
+            'enable_installation_team' => 'nullable|boolean',
             'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01',
             'home_router_host' => 'nullable|string|max:255',
             'home_router_port' => 'nullable|integer|min:1|max:65535',
@@ -404,7 +324,7 @@ class CustomerVerificationController extends Controller
             'home_router_monitoring_enabled' => 'nullable|boolean',
             'installer_member_ids' => 'nullable|array',
             'installer_member_ids.*' => 'integer|exists:payroll_members,id',
-            'installation_router_item_id' => 'required|integer|exists:inventory_items,id',
+            'installation_router_item_id' => 'nullable|integer|exists:inventory_items,id',
             'installation_cable_item_id' => 'nullable|integer|exists:inventory_items,id',
             'installation_cable_used' => 'nullable|numeric|min:0',
             'installation_labor_fee' => 'nullable|numeric|min:0',
@@ -575,5 +495,182 @@ class CustomerVerificationController extends Controller
         }
 
         return $validated;
+    }
+
+    private function normalizeVerificationToggleInput(array $validated): array
+    {
+        $validated['enable_home_router'] = (bool) ($validated['enable_home_router'] ?? false);
+        $validated['enable_installation_team'] = (bool) ($validated['enable_installation_team'] ?? false);
+
+        if (!$validated['enable_home_router']) {
+            $validated['home_router_monitoring_enabled'] = false;
+            $validated['home_router_type'] = null;
+            $validated['home_router_host'] = null;
+            $validated['home_router_port'] = null;
+            $validated['home_router_username'] = null;
+            unset($validated['home_router_password']);
+            $validated['home_router_wan_interface'] = null;
+        }
+
+        if (!$validated['enable_installation_team']) {
+            $validated['installer_member_ids'] = [];
+            $validated['installation_router_item_id'] = null;
+            $validated['installation_cable_item_id'] = null;
+            $validated['installation_cable_used'] = null;
+            $validated['installation_labor_fee'] = null;
+            $validated['installation_cable_rate'] = null;
+            $validated['installation_notes'] = null;
+        }
+
+        return $validated;
+    }
+
+    private function resolveMasterWilayah(array $validated): array
+    {
+        $kecamatan = MasterWilayahKecamatan::query()->findOrFail((int) $validated['kecamatan_id']);
+        $desa = MasterWilayahDesa::query()->findOrFail((int) $validated['desa_id']);
+        $dusun = MasterWilayahDusun::query()->findOrFail((int) $validated['dusun_id']);
+
+        if ((int) $desa->kecamatan_id !== (int) $kecamatan->id) {
+            throw ValidationException::withMessages([
+                'desa_id' => 'Desa tidak sesuai dengan kecamatan yang dipilih.',
+            ]);
+        }
+
+        if ((int) $dusun->desa_id !== (int) $desa->id) {
+            throw ValidationException::withMessages([
+                'dusun_id' => 'Dusun tidak sesuai dengan desa yang dipilih.',
+            ]);
+        }
+
+        $prefix = strtoupper($kecamatan->code . $desa->code . $dusun->code);
+
+        return [$kecamatan, $desa, $dusun, $prefix];
+    }
+
+    private function resolveServiceLabelForSecret(array $validated): string
+    {
+        $packageType = trim((string) ($validated['package_type'] ?? ''));
+        $customPackage = trim((string) ($validated['custom_package'] ?? ''));
+
+        if (in_array(strtolower($packageType), ['custom', 'paket custom'], true)) {
+            if ($customPackage === '') {
+                throw ValidationException::withMessages([
+                    'custom_package' => 'Nama paket custom wajib diisi agar profile MikroTik bisa dipetakan.',
+                ]);
+            }
+
+            return $customPackage;
+        }
+
+        if ($packageType === '') {
+            throw ValidationException::withMessages([
+                'package_type' => 'Paket pelanggan wajib dipilih.',
+            ]);
+        }
+
+        return $packageType;
+    }
+
+    private function resolveStrictProfileName(MikroTikService $mikrotik, string $serviceLabel): string
+    {
+        $dbPackage = Package::where('name', $serviceLabel)->first();
+        if ($dbPackage && !empty($dbPackage->mikrotik_profile)) {
+            return (string) $dbPackage->mikrotik_profile;
+        }
+
+        $profiles = $mikrotik->command('/ppp/profile/print');
+        $availableProfiles = array_values(array_filter(array_map(
+            fn ($profile) => (string) ($profile['name'] ?? ''),
+            $profiles
+        )));
+
+        if (empty($availableProfiles)) {
+            throw new Exception('Tidak ada profile MikroTik yang tersedia.');
+        }
+
+        foreach ($availableProfiles as $profileName) {
+            if ($profileName === $serviceLabel) {
+                return $profileName;
+            }
+        }
+
+        foreach ($availableProfiles as $profileName) {
+            if (strtolower($profileName) === strtolower($serviceLabel)) {
+                return $profileName;
+            }
+        }
+
+        $speedHint = preg_replace('/[^0-9]/', '', $serviceLabel);
+        if ($speedHint !== '') {
+            foreach ($availableProfiles as $profileName) {
+                if (strpos(strtolower($profileName), strtolower($speedHint)) !== false
+                    && strtolower($profileName) !== 'isolir') {
+                    return $profileName;
+                }
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'package_type' => 'Profile MikroTik untuk paket "' . $serviceLabel . '" tidak ditemukan.',
+        ]);
+    }
+
+    private function createSecretWithUsernameRetry(MikroTikService $mikrotik, array $validated, string $areaPrefix, string $profileName): array
+    {
+        $baseName = explode(' ', trim((string) ($validated['name'] ?? '')))[0] ?? 'user';
+        $sanitizedName = strtolower((string) Str::of($baseName)->replaceMatches('/[^a-zA-Z0-9]/', '')->value());
+        $sanitizedName = $sanitizedName !== '' ? $sanitizedName : 'user';
+
+        $password = (string) ($validated['pppoe_password'] ?? 'admin');
+        $maxAttempts = 12;
+        $lastError = null;
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $suffix = str_pad((string) random_int(0, 999), 3, '0', STR_PAD_LEFT);
+            $username = $areaPrefix . '-' . $sanitizedName . $suffix;
+
+            try {
+                $remoteAddress = $mikrotik->getNextIpAddress();
+                $secret = $mikrotik->createPPPoESecret(
+                    $username,
+                    $password,
+                    'pppoe',
+                    $profileName,
+                    $remoteAddress
+                );
+
+                return $secret;
+            } catch (Exception $e) {
+                $lastError = $e;
+                $message = strtolower($e->getMessage());
+                $isRetryable = str_contains($message, 'sudah digunakan')
+                    || str_contains($message, 'already in use')
+                    || str_contains($message, 'ip address');
+
+                if (!$isRetryable || $attempt === $maxAttempts) {
+                    break;
+                }
+            }
+        }
+
+        throw new Exception('Gagal membuat secret PPPoE: ' . ($lastError?->getMessage() ?? 'unknown error'));
+    }
+
+    private function cleanupCreatedSecret(?string $username): void
+    {
+        if (!$username) {
+            return;
+        }
+
+        try {
+            $mikrotik = new MikroTikService();
+            $mikrotik->removePPPoESecret($username);
+        } catch (Exception $exception) {
+            \Log::warning('Failed to cleanup MikroTik secret after verification failure', [
+                'username' => $username,
+                'error' => $exception->getMessage(),
+            ]);
+        }
     }
 }

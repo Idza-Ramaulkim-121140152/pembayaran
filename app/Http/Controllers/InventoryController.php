@@ -7,6 +7,7 @@ use App\Models\InventoryItem;
 use App\Models\InventoryItemType;
 use App\Models\InventoryMovement;
 use App\Models\SiteSetting;
+use App\Services\InventoryMovementSyncService;
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -19,7 +20,10 @@ class InventoryController extends Controller
     private const SETTING_DEFAULT_INSTALLATION_LABOR_FEE = 'default_installation_labor_fee_payroll';
     private const SETTING_DEFAULT_INSTALLATION_CABLE_RATE = 'default_installation_cable_rate_payroll';
 
-    public function __construct(private InventoryService $inventoryService)
+    public function __construct(
+        private InventoryService $inventoryService,
+        private InventoryMovementSyncService $movementSyncService,
+    )
     {
     }
 
@@ -203,6 +207,80 @@ class InventoryController extends Controller
         return response()->json([
             'data' => $data,
         ]);
+    }
+
+    public function updateMovement(Request $request, InventoryMovement $movement)
+    {
+        if (!$this->inventoryService->isReady()) {
+            return response()->json([
+                'message' => 'Fitur inventori belum siap. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        $validated = $request->validate([
+            'inventory_item_id' => 'required|integer|exists:inventory_items,id',
+            'movement_type' => 'required|in:in,out',
+            'quantity' => 'required|numeric|min:0.01',
+            'unit_price' => 'nullable|numeric|min:0',
+            'transaction_date' => 'required|date',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        DB::beginTransaction();
+
+        try {
+            $updated = $this->movementSyncService->updateMovement(
+                $movement,
+                $validated,
+                (int) auth()->id()
+            );
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Histori inventori berhasil diperbarui.',
+                'data' => $updated,
+            ]);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            throw $e;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Gagal memperbarui histori inventori: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function destroyMovement(InventoryMovement $movement)
+    {
+        if (!$this->inventoryService->isReady()) {
+            return response()->json([
+                'message' => 'Fitur inventori belum siap. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        DB::beginTransaction();
+
+        try {
+            $this->movementSyncService->deleteMovement($movement, (int) auth()->id());
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Histori inventori berhasil dihapus.',
+            ]);
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            throw $e;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Gagal menghapus histori inventori: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function storeIncoming(Request $request)

@@ -24,6 +24,8 @@ const ACCESS = {
     waNotification: ['superadmin', 'admin', 'teknisi'],
     paymentMethods: ['superadmin', 'admin', 'finance'],
     paymentReceipts: ['superadmin', 'admin', 'finance'],
+    masterData: ['superadmin', 'admin', 'finance'],
+    masterWilayah: ['superadmin', 'admin'],
     packages: ['superadmin', 'admin'],
     promo: ['superadmin', 'admin'],
     userManagement: ['superadmin'],
@@ -95,6 +97,8 @@ export function Navbar() {
         if (path === '/profile') return location.pathname === '/profile';
         if (path === '/settings/payment-methods') return location.pathname === '/settings/payment-methods';
         if (path === '/settings/payment-receipts') return location.pathname === '/settings/payment-receipts';
+        if (path === '/settings/master-data') return location.pathname === '/settings/master-data';
+        if (path === '/settings/master-wilayah') return location.pathname === '/settings/master-wilayah';
         if (path === '/settings/packages') return location.pathname === '/settings/packages';
         if (path === '/settings/promo') return location.pathname === '/settings/promo';
         if (path === '/settings/invoice-management') return location.pathname === '/settings/invoice-management';
@@ -224,34 +228,10 @@ export function Navbar() {
                                                 <span>Manajemen Invoice</span>
                                             </Link>
                                         )}
-                                        {can('financialTargets') && (
-                                            <Link to="/settings/financial-targets" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/financial-targets') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Target size={18} />
-                                                <span>Master Target Keuangan</span>
-                                            </Link>
-                                        )}
-                                        {can('paymentMethods') && (
-                                            <Link to="/settings/payment-methods" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/payment-methods') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <CreditCard size={18} />
-                                                <span>Metode Pembayaran</span>
-                                            </Link>
-                                        )}
-                                        {can('paymentReceipts') && (
-                                            <Link to="/settings/payment-receipts" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/payment-receipts') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Wallet size={18} />
-                                                <span>Penerimaan Pembayaran</span>
-                                            </Link>
-                                        )}
-                                        {can('packages') && (
-                                            <Link to="/settings/packages" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/packages') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Package size={18} />
-                                                <span>Paket Layanan</span>
-                                            </Link>
-                                        )}
-                                        {can('inventoryMaster') && (
-                                            <Link to="/inventori/master" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/inventori/master') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Shield size={18} />
-                                                <span>Master Inventori</span>
+                                        {can('masterData') && (
+                                            <Link to="/settings/master-data" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/master-data') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                                <Settings size={18} />
+                                                <span>Master Data</span>
                                             </Link>
                                         )}
                                         {can('odp') && (
@@ -264,12 +244,6 @@ export function Navbar() {
                                             <Link to="/jalur-distribusi" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                                 <GitBranch size={18} />
                                                 <span>Jalur Distribusi</span>
-                                            </Link>
-                                        )}
-                                        {can('promo') && (
-                                            <Link to="/settings/promo" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/promo') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Megaphone size={18} />
-                                                <span>Kelola Promo</span>
                                             </Link>
                                         )}
                                         {can('complaints') && (
@@ -411,34 +385,10 @@ export function Navbar() {
                                     <span>Manajemen Invoice</span>
                                 </Link>
                             )}
-                            {can('financialTargets') && (
-                                <Link to="/settings/financial-targets" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/financial-targets') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Target size={20} />
-                                    <span>Master Target Keuangan</span>
-                                </Link>
-                            )}
-                            {can('paymentMethods') && (
-                                <Link to="/settings/payment-methods" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/payment-methods') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <CreditCard size={20} />
-                                    <span>Metode Pembayaran</span>
-                                </Link>
-                            )}
-                            {can('paymentReceipts') && (
-                                <Link to="/settings/payment-receipts" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/payment-receipts') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Wallet size={20} />
-                                    <span>Penerimaan Pembayaran</span>
-                                </Link>
-                            )}
-                            {can('packages') && (
-                                <Link to="/settings/packages" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/packages') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Package size={20} />
-                                    <span>Paket Layanan</span>
-                                </Link>
-                            )}
-                            {can('inventoryMaster') && (
-                                <Link to="/inventori/master" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/inventori/master') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Shield size={20} />
-                                    <span>Master Inventori</span>
+                            {can('masterData') && (
+                                <Link to="/settings/master-data" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/master-data') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
+                                    <Settings size={20} />
+                                    <span>Master Data</span>
                                 </Link>
                             )}
                             {can('odp') && (
@@ -451,12 +401,6 @@ export function Navbar() {
                                 <Link to="/jalur-distribusi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
                                     <GitBranch size={20} />
                                     <span>Jalur Distribusi</span>
-                                </Link>
-                            )}
-                            {can('promo') && (
-                                <Link to="/settings/promo" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/promo') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Megaphone size={20} />
-                                    <span>Kelola Promo</span>
                                 </Link>
                             )}
                             {can('complaints') && (

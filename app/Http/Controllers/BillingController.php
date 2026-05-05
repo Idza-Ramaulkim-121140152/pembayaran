@@ -2,14 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessBillingAutoInvoiceJob;
+use App\Models\BillingAutoInvoiceJob;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\NotificationLog;
 use App\Models\Package;
+use App\Services\BillingAutoInvoiceService;
 use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -67,75 +73,54 @@ class BillingController extends Controller
             $invoice->paid_at = now();
             $invoice->tolak_info = null; // reset info tolak jika sudah dikonfirmasi
 
-            // Update due_date customer
+            // Update due_date customer (basis: due_date customer saat ini + 30 hari)
             $customer = $invoice->customer;
-            if ($customer && $customer->pppoe_username) {
-                // Check if user is isolated in MikroTik
-                try {
-                    $mikrotik = new \App\Services\MikroTikService();
-                    $mikrotik->connect();
-                    $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
-                    
-                    if ($secret && strtolower($secret['profile']) === 'isolir') {
-                        // Determine target profile: saved mikrotik_profile > package_type > 'default'
-                        $targetProfile = $customer->mikrotik_profile ?: ($customer->package_type ?: 'default');
-                        
-                        // Validate profile exists
-                        try {
-                            $profiles = $mikrotik->command('/ppp/profile/print');
-                            $availableProfiles = array_map(fn($p) => $p['name'] ?? '', $profiles);
-                            
-                            if (!in_array($targetProfile, $availableProfiles)) {
-                                // Try case-insensitive or partial match
-                                $matched = null;
-                                foreach ($availableProfiles as $ap) {
-                                    if (strtolower($ap) === strtolower($targetProfile)) { $matched = $ap; break; }
+            if ($customer) {
+                $customer->due_date = $this->computeNextDueDateFromCustomer($customer);
+
+                if ($customer->pppoe_username) {
+                    try {
+                        $mikrotik = new \App\Services\MikroTikService();
+                        $mikrotik->connect();
+                        $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+
+                        if ($secret && strtolower((string) ($secret['profile'] ?? '')) === 'isolir') {
+                            $targetProfile = $this->resolveCustomerTargetProfile($customer);
+
+                            try {
+                                $profiles = $mikrotik->command('/ppp/profile/print');
+                                $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
+                                $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
+                                if ($resolvedProfile !== null) {
+                                    $targetProfile = $resolvedProfile;
                                 }
-                                if (!$matched) {
-                                    $speed = preg_replace('/[^0-9]/', '', $targetProfile);
-                                    foreach ($availableProfiles as $ap) {
-                                        if ($speed && strpos($ap, $speed) !== false && strtolower($ap) !== 'isolir') { $matched = $ap; break; }
-                                    }
-                                }
-                                if ($matched) $targetProfile = $matched;
+                            } catch (\Exception $profileErr) {
+                                Log::warning('Could not validate profile list while restoring isolated user', [
+                                    'username' => $customer->pppoe_username,
+                                    'target_profile' => $targetProfile,
+                                    'error' => $profileErr->getMessage(),
+                                ]);
                             }
-                        } catch (\Exception $profileErr) {
-                            \Log::warning('Could not validate profiles', ['error' => $profileErr->getMessage()]);
+
+                            $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                            $customer->mikrotik_profile = null;
+
+                            Log::info('User restored from isolation after payment confirmation', [
+                                'username' => $customer->pppoe_username,
+                                'restored_profile' => $targetProfile,
+                                'new_due_date' => $customer->due_date,
+                            ]);
                         }
-                        
-                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
-                        $customer->mikrotik_profile = null;
-                        
-                        \Log::info('User restored from isolation after payment confirmation', [
+
+                        $mikrotik->disconnect();
+                    } catch (\Exception $e) {
+                        Log::error('Failed to check/restore user from isolation', [
                             'username' => $customer->pppoe_username,
-                            'restored_profile' => $targetProfile,
-                            'new_due_date' => $customer->due_date,
+                            'error' => $e->getMessage(),
                         ]);
-                    } else {
-                        if ($invoice->due_date) {
-                            $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                            $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
-                        } else {
-                            $customer->due_date = now()->addDays(30)->format('Y-m-d');
-                        }
-                    }
-                    
-                    $mikrotik->disconnect();
-                } catch (\Exception $e) {
-                    \Log::error('Failed to check/restore user from isolation', [
-                        'username' => $customer->pppoe_username,
-                        'error' => $e->getMessage()
-                    ]);
-                    
-                    if ($invoice->due_date) {
-                        $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
-                    } else {
-                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
                     }
                 }
-                
+
                 $customer->save();
             }
         } else {
@@ -401,11 +386,7 @@ class BillingController extends Controller
             $latestInvoiceStatus = strtolower(trim((string) ($latestInvoice?->status ?? '')));
             $hasPaidThisMonth = isset($paidThisMonthMap[(int) $customer->id]);
             $hasActiveInvoice = $activeInvoice !== null;
-            $canCreateInvoice = !$hasActiveInvoice && (
-                !$latestInvoice
-                || $isLate
-                || ($isAlmostLate && ($hasPaidThisMonth || in_array($latestInvoiceStatus, ['paid', 'cancelled'], true)))
-            );
+            $canCreateInvoice = !$hasActiveInvoice;
 
             $item = [
                 'customer' => $customer,
@@ -445,6 +426,76 @@ class BillingController extends Controller
                 'paid' => $paid,
                 'isolationStatus' => $isolationStatus,
             ]
+        ]);
+    }
+
+    public function autoInvoice(Request $request)
+    {
+        $validated = $request->validate([
+            'segment' => ['required', Rule::in(['late', 'almostLate'])],
+            'customer_ids' => ['required', 'array', 'min:1'],
+            'customer_ids.*' => ['integer', 'exists:customers,id'],
+            'search_context' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $customerIds = collect($validated['customer_ids'])
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($customerIds)) {
+            return response()->json([
+                'message' => 'Tidak ada pelanggan valid untuk diproses.',
+            ], 422);
+        }
+
+        $summary = app(BillingAutoInvoiceService::class)->defaultSummary(0);
+        $job = BillingAutoInvoiceJob::create([
+            'requested_by_user_id' => Auth::id(),
+            'segment' => (string) $validated['segment'],
+            'state' => 'queued',
+            'phase' => 'queued',
+            'customer_ids' => $customerIds,
+            'search_context' => $validated['search_context'] ?? null,
+            'summary' => $summary,
+            'results' => [],
+            'invalid_services' => [],
+            'error_message' => null,
+            'started_at' => null,
+            'finished_at' => null,
+        ]);
+
+        ProcessBillingAutoInvoiceJob::dispatch($job->id);
+
+        return response()->json([
+            'message' => 'Proses auto invoice dimulai.',
+            'job_id' => $job->id,
+            'state' => $job->state,
+            'phase' => $job->phase,
+        ], 202);
+    }
+
+    public function autoInvoiceStatus(int $jobId)
+    {
+        $job = BillingAutoInvoiceJob::findOrFail($jobId);
+
+        if ($job->requested_by_user_id && Auth::id() && (int) $job->requested_by_user_id !== (int) Auth::id()) {
+            abort(403, 'Anda tidak memiliki akses ke proses auto invoice ini.');
+        }
+
+        return response()->json([
+            'job_id' => $job->id,
+            'state' => $job->state,
+            'phase' => $job->phase,
+            'summary' => $job->summary ?? [],
+            'results' => $job->results ?? [],
+            'invalid_services' => $job->invalid_services ?? [],
+            'error_message' => $job->error_message,
+            'started_at' => optional($job->started_at)->toISOString(),
+            'finished_at' => optional($job->finished_at)->toISOString(),
+            'updated_at' => optional($job->updated_at)->toISOString(),
         ]);
     }
 
@@ -511,6 +562,170 @@ class BillingController extends Controller
         ]);
     }
 
+    private function normalizeServiceLabel(?string $value): string
+    {
+        return strtolower(trim((string) $value));
+    }
+
+    private function resolveCustomerServiceLabel(Customer $customer): string
+    {
+        $label = trim((string) ($customer->package_type ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+
+        return trim((string) ($customer->custom_package ?? ''));
+    }
+
+    private function isValidPhone(?string $phone): bool
+    {
+        if (!$phone || $phone === '0') {
+            return false;
+        }
+
+        $cleaned = preg_replace('/\D/', '', $phone);
+        return strlen((string) $cleaned) >= 10 && strlen((string) $cleaned) <= 15;
+    }
+
+    private function buildInvoiceMessage(Customer $customer, string $invoiceUrl, float $amount): string
+    {
+        return "Yth. Bapak/Ibu " . strtoupper((string) $customer->name) . "\n" .
+            "Username PPPoE: " . ((string) $customer->pppoe_username ?: '-') . "\n\n" .
+            "Nominal tagihan: Rp " . number_format($amount, 0, ',', '.') . "\n" .
+            "> Informasi lengkap dan metode pembayaran tersedia pada link berikut:\n" .
+            $invoiceUrl . "\n\n" .
+            "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis.\n\n" .
+            "Layanan Call Center 085158025553\n\n" .
+            "Salam Hangat,\n" .
+            "Tim Layanan Pelanggan Rumah Kita Net";
+    }
+
+    /**
+     * @return array{0: bool, 1: ?string}
+     */
+    private function sendInvoiceViaWhatsAppGateway(Customer $customer, string $message): array
+    {
+        try {
+            $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+            $response = Http::timeout(60)->post($gatewayUrl . '/send-bulk', [
+                'recipients' => [[
+                    'phone' => (string) $customer->phone,
+                    'name' => (string) ($customer->name ?? 'Pelanggan'),
+                ]],
+                'message' => $message,
+                'delay' => 0,
+            ]);
+
+            $payload = $response->json();
+            $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];
+
+            if (count($results) > 0) {
+                $first = $results[0];
+                $success = (bool) ($first['success'] ?? false);
+                $error = $success ? null : (($first['error'] ?? null) ?: 'Gateway rejected message');
+                return [$success, $error];
+            }
+
+            if ($response->successful()) {
+                return [true, null];
+            }
+
+            return [false, (string) ($payload['error'] ?? 'Gateway response invalid')];
+        } catch (\Throwable $e) {
+            return [false, 'Gateway error: ' . $e->getMessage()];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     */
+    private function logBillingNotification(?int $customerId, ?string $phone, string $message, string $status, ?string $error = null, array $meta = []): void
+    {
+        try {
+            NotificationLog::create([
+                'customer_id' => $customerId,
+                'phone' => $phone,
+                'message' => mb_substr($message, 0, 2000),
+                'notice_id' => null,
+                'status' => in_array($status, ['sent', 'failed', 'skipped'], true) ? $status : 'failed',
+                'error' => $error,
+                'meta' => $meta,
+                'sent_at' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to write billing notification log', [
+                'customer_id' => $customerId,
+                'status' => $status,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function computeNextDueDateFromCustomer(Customer $customer): string
+    {
+        if (!empty($customer->due_date)) {
+            return Carbon::parse($customer->due_date)->startOfDay()->addDays(30)->toDateString();
+        }
+
+        return now()->startOfDay()->addDays(30)->toDateString();
+    }
+
+    private function resolveCustomerTargetProfile(Customer $customer): string
+    {
+        $savedProfile = trim((string) ($customer->mikrotik_profile ?? ''));
+        if ($savedProfile !== '') {
+            return $savedProfile;
+        }
+
+        $packageType = trim((string) ($customer->package_type ?? ''));
+        if ($packageType !== '') {
+            $package = Package::query()
+                ->whereRaw('LOWER(name) = ?', [strtolower($packageType)])
+                ->first();
+
+            $packageProfile = trim((string) ($package?->mikrotik_profile ?? ''));
+            if ($packageProfile !== '') {
+                return $packageProfile;
+            }
+
+            return $packageType;
+        }
+
+        return 'default';
+    }
+
+    /**
+     * @param array<int, string> $availableProfiles
+     */
+    private function resolveBestMatchingProfile(string $targetProfile, array $availableProfiles): ?string
+    {
+        if ($targetProfile === '') {
+            return null;
+        }
+
+        if (in_array($targetProfile, $availableProfiles, true)) {
+            return $targetProfile;
+        }
+
+        foreach ($availableProfiles as $profile) {
+            if (strtolower((string) $profile) === strtolower($targetProfile)) {
+                return (string) $profile;
+            }
+        }
+
+        $speed = preg_replace('/[^0-9]/', '', $targetProfile);
+        if ($speed !== '') {
+            foreach ($availableProfiles as $profile) {
+                $lower = strtolower((string) $profile);
+                if ($lower !== 'isolir' && str_contains((string) $profile, $speed)) {
+                    return (string) $profile;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private function getBulkIsolationStatus($lateCustomers)
     {
         try {
@@ -522,17 +737,20 @@ class BillingController extends Controller
             // Create map of isolated usernames
             $isolatedUsernames = [];
             foreach ($isolatedSecrets as $secret) {
-                $isolatedUsernames[$secret['name']] = $secret['profile'];
+                $username = strtolower(trim((string) ($secret['name'] ?? '')));
+                if ($username !== '') {
+                    $isolatedUsernames[$username] = $secret['profile'] ?? 'isolir';
+                }
             }
             
             // Build isolation status map by customer ID
             $statusMap = [];
             foreach ($lateCustomers as $item) {
                 $customer = $item['customer'];
-                $username = $customer->pppoe_username;
+                $username = strtolower(trim((string) ($customer->pppoe_username ?? '')));
                 $statusMap[$customer->id] = [
-                    'isolated' => isset($isolatedUsernames[$username]),
-                    'profile' => $isolatedUsernames[$username] ?? null,
+                    'isolated' => $username !== '' && isset($isolatedUsernames[$username]),
+                    'profile' => ($username !== '' && isset($isolatedUsernames[$username])) ? $isolatedUsernames[$username] : null,
                 ];
             }
             
@@ -598,101 +816,54 @@ class BillingController extends Controller
         $invoice->paid_at = now();
         $invoice->tolak_info = null;
 
-        // Update due_date customer
+        // Update due_date customer (basis: due_date customer saat ini + 30 hari)
         $customer = $invoice->customer;
-        if ($customer && $customer->pppoe_username) {
-            // Check if user is isolated in MikroTik
-            try {
-                $mikrotik = new \App\Services\MikroTikService();
-                $mikrotik->connect();
-                $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
-                
-                if ($secret && strtolower($secret['profile']) === 'isolir') {
-                    // Determine target profile: saved mikrotik_profile > package_type > 'default'
-                    $targetProfile = $customer->mikrotik_profile ?: ($customer->package_type ?: 'default');
-                    
-                    // Validate profile exists in MikroTik
-                    try {
-                        $profiles = $mikrotik->command('/ppp/profile/print');
-                        $availableProfiles = array_map(fn($p) => $p['name'] ?? '', $profiles);
-                        
-                        if (!in_array($targetProfile, $availableProfiles)) {
-                            \Log::warning('Target profile not found in MikroTik, attempting case-insensitive match', [
-                                'target' => $targetProfile,
-                                'available' => $availableProfiles
+        if ($customer) {
+            $customer->due_date = $this->computeNextDueDateFromCustomer($customer);
+
+            if ($customer->pppoe_username) {
+                try {
+                    $mikrotik = new \App\Services\MikroTikService();
+                    $mikrotik->connect();
+                    $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+
+                    if ($secret && strtolower((string) ($secret['profile'] ?? '')) === 'isolir') {
+                        $targetProfile = $this->resolveCustomerTargetProfile($customer);
+
+                        try {
+                            $profiles = $mikrotik->command('/ppp/profile/print');
+                            $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
+                            $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
+                            if ($resolvedProfile !== null) {
+                                $targetProfile = $resolvedProfile;
+                            }
+                        } catch (\Exception $profileErr) {
+                            Log::warning('Could not validate profile list while restoring isolated user', [
+                                'username' => $customer->pppoe_username,
+                                'target_profile' => $targetProfile,
+                                'error' => $profileErr->getMessage(),
                             ]);
-                            
-                            // Try case-insensitive match
-                            $matched = null;
-                            foreach ($availableProfiles as $ap) {
-                                if (strtolower($ap) === strtolower($targetProfile)) {
-                                    $matched = $ap;
-                                    break;
-                                }
-                            }
-                            
-                            if ($matched) {
-                                $targetProfile = $matched;
-                            } else {
-                                // Try partial match (e.g. "10 Mbps" matches "10M")
-                                $speed = preg_replace('/[^0-9]/', '', $targetProfile);
-                                foreach ($availableProfiles as $ap) {
-                                    if ($speed && strpos($ap, $speed) !== false && strtolower($ap) !== 'isolir') {
-                                        $matched = $ap;
-                                        break;
-                                    }
-                                }
-                                if ($matched) {
-                                    $targetProfile = $matched;
-                                    \Log::info('Used partial speed match for profile', ['original' => $customer->mikrotik_profile ?: $customer->package_type, 'matched' => $matched]);
-                                } else {
-                                    \Log::error('No matching profile found', ['target' => $targetProfile, 'available' => $availableProfiles]);
-                                }
-                            }
                         }
-                    } catch (\Exception $profileErr) {
-                        \Log::warning('Could not validate profiles, using target as-is', ['error' => $profileErr->getMessage()]);
+
+                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                        $customer->mikrotik_profile = null;
+
+                        Log::info('User restored from isolation after payment confirmation', [
+                            'username' => $customer->pppoe_username,
+                            'restored_profile' => $targetProfile,
+                            'new_due_date' => $customer->due_date,
+                        ]);
                     }
-                    
-                    $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                    
-                    // Due date = confirmation date (today) + 30 days
-                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
-                    // Clear saved profile since restored
-                    $customer->mikrotik_profile = null;
-                    
-                    \Log::info('User restored from isolation after payment', [
+
+                    $mikrotik->disconnect();
+                } catch (\Exception $e) {
+                    Log::error('Failed to check/restore user from isolation', [
                         'username' => $customer->pppoe_username,
-                        'restored_profile' => $targetProfile,
-                        'new_due_date' => $customer->due_date,
-                        'confirmed_at' => now()->format('Y-m-d H:i:s')
+                        'error' => $e->getMessage(),
                     ]);
-                } else {
-                    // User is NOT isolated, due date = old due date + 30 days
-                    if ($invoice->due_date) {
-                        $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                        $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
-                    } else {
-                        $customer->due_date = now()->addDays(30)->format('Y-m-d');
-                    }
-                }
-                
-                $mikrotik->disconnect();
-            } catch (\Exception $e) {
-                \Log::error('Failed to check/restore user from isolation', [
-                    'username' => $customer->pppoe_username,
-                    'error' => $e->getMessage()
-                ]);
-                
-                // Fallback: use old due date + 30 days
-                if ($invoice->due_date) {
-                    $oldDue = \Carbon\Carbon::parse($invoice->due_date);
-                    $customer->due_date = $oldDue->copy()->addDays(30)->format('Y-m-d');
-                } else {
-                    $customer->due_date = now()->addDays(30)->format('Y-m-d');
                 }
             }
-            
+
             $customer->save();
         }
 

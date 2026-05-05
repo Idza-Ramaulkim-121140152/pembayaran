@@ -10,6 +10,7 @@ use App\Models\PayrollProject;
 use App\Models\Pengeluaran;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class InventoryService
@@ -62,6 +63,10 @@ class InventoryService
         $movements = [];
         $debts = [];
         $cashTotal = 0.0;
+        $cashMovementIds = [];
+        $cashGroupKey = $paymentType === 'cash'
+            ? 'inv-cash-' . Str::uuid()->toString()
+            : null;
 
         foreach ($items as $item) {
             $quantity = (float) ($item['quantity'] ?? 0);
@@ -89,6 +94,7 @@ class InventoryService
                 'total_amount' => $totalAmount,
                 'transaction_date' => $transactionDate,
                 'notes' => $notes,
+                'transaction_group_key' => $cashGroupKey,
                 'created_by' => $actorId,
                 'meta' => [
                     'payment_type' => $paymentType,
@@ -99,6 +105,7 @@ class InventoryService
 
             if ($paymentType === 'cash') {
                 $cashTotal += (float) ($totalAmount ?? 0);
+                $cashMovementIds[] = $movement->id;
                 continue;
             }
 
@@ -129,6 +136,12 @@ class InventoryService
             ]);
 
             $this->ledgerService->syncPengeluaran($pengeluaran, $actorId);
+
+            if (count($cashMovementIds) > 0) {
+                InventoryMovement::query()
+                    ->whereIn('id', $cashMovementIds)
+                    ->update(['pengeluaran_id' => $pengeluaran->id]);
+            }
         }
 
         return [

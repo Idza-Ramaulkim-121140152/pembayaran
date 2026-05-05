@@ -12,6 +12,14 @@ export const billingService = {
     createInvoice: (customerId, amount) => 
         apiClient.post(`/billing/${customerId}/create-invoice`, { amount }),
 
+    // Start auto-invoice async job
+    startAutoInvoice: (payload) =>
+        apiClient.post('/billing/auto-invoice', payload),
+
+    // Poll auto-invoice async job status
+    getAutoInvoiceStatus: (jobId) =>
+        apiClient.get(`/billing/auto-invoice/${jobId}`),
+
     // Update customer service package from billing flow
     updateCustomerServicePackage: (customerId, packageId) =>
         apiClient.patch(`/billing/customer/${customerId}/service-package`, { package_id: packageId }),

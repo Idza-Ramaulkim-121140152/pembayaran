@@ -5,6 +5,8 @@ const inventoryService = {
     getItemOptions: () => apiClient.get('/inventory/items/options'),
     getInstallOptions: () => apiClient.get('/inventory/items/install-options'),
     getMovements: (params = {}) => apiClient.get('/inventory/movements', { params }),
+    updateMovement: (id, payload) => apiClient.put(`/inventory/movements/${id}`, payload),
+    deleteMovement: (id) => apiClient.delete(`/inventory/movements/${id}`),
     storeIncoming: (payload) => apiClient.post('/inventory/incoming', payload),
     storeOutgoing: (payload) => apiClient.post('/inventory/outgoing', payload),
     getDebts: (params = {}) => apiClient.get('/inventory/debts', { params }),

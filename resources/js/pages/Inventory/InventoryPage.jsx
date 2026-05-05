@@ -5,6 +5,7 @@ import {
     History,
     Plus,
     RefreshCw,
+    Pencil,
     Trash2,
     Wallet,
     Package,
@@ -106,6 +107,15 @@ function InventoryPage() {
         notes: '',
     });
     const [selectedDebtIds, setSelectedDebtIds] = useState([]);
+    const [editMovementModal, setEditMovementModal] = useState({ open: false, movement: null });
+    const [editMovementForm, setEditMovementForm] = useState({
+        inventory_item_id: '',
+        movement_type: 'in',
+        quantity: '',
+        unit_price: '',
+        transaction_date: today,
+        notes: '',
+    });
 
     const loadData = useCallback(
         async (showLoading = false) => {
@@ -307,6 +317,64 @@ function InventoryPage() {
             await loadData(false);
         } catch (err) {
             setError(normalizeErrorMessage(err, 'Gagal mencatat pengeluaran inventori'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const openEditMovementModal = (movement) => {
+        setEditMovementModal({ open: true, movement });
+        setEditMovementForm({
+            inventory_item_id: String(movement.inventory_item_id || ''),
+            movement_type: movement.movement_type || 'in',
+            quantity: String(movement.quantity ?? ''),
+            unit_price: movement.unit_price === null || movement.unit_price === undefined ? '' : String(movement.unit_price),
+            transaction_date: movement.transaction_date || today,
+            notes: movement.notes || '',
+        });
+    };
+
+    const submitEditMovement = async (event) => {
+        event.preventDefault();
+        if (!editMovementModal.movement) return;
+
+        try {
+            setSaving(true);
+            setError(null);
+            setSuccess(null);
+
+            await inventoryService.updateMovement(editMovementModal.movement.id, {
+                inventory_item_id: Number(editMovementForm.inventory_item_id),
+                movement_type: editMovementForm.movement_type,
+                quantity: Number(editMovementForm.quantity),
+                unit_price: editMovementForm.unit_price === '' ? null : Number(editMovementForm.unit_price),
+                transaction_date: editMovementForm.transaction_date,
+                notes: editMovementForm.notes || null,
+            });
+
+            setEditMovementModal({ open: false, movement: null });
+            setSuccess('Histori inventori berhasil diperbarui.');
+            await loadData(false);
+        } catch (err) {
+            setError(normalizeErrorMessage(err, 'Gagal memperbarui histori inventori'));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeleteMovement = async (movement) => {
+        if (!window.confirm('Yakin ingin menghapus histori inventori ini?')) return;
+
+        try {
+            setSaving(true);
+            setError(null);
+            setSuccess(null);
+
+            await inventoryService.deleteMovement(movement.id);
+            setSuccess('Histori inventori berhasil dihapus.');
+            await loadData(false);
+        } catch (err) {
+            setError(normalizeErrorMessage(err, 'Gagal menghapus histori inventori'));
         } finally {
             setSaving(false);
         }
@@ -863,12 +931,13 @@ function InventoryPage() {
                                             <th className="px-3 py-2 text-right">Nilai</th>
                                             <th className="px-3 py-2 text-left">Penanggung Jawab</th>
                                             <th className="px-3 py-2 text-left">Catatan</th>
+                                            <th className="px-3 py-2 text-left">Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {movementRows.length === 0 && (
                                             <tr>
-                                                <td colSpan="8" className="px-3 py-8 text-center text-gray-500">Belum ada histori inventori.</td>
+                                                <td colSpan="9" className="px-3 py-8 text-center text-gray-500">Belum ada histori inventori.</td>
                                             </tr>
                                         )}
                                         {movementRows.map((row) => (
@@ -893,6 +962,26 @@ function InventoryPage() {
                                                 <td className="px-3 py-2">{row.creator?.name || 'Sistem'}</td>
                                                 <td className="px-3 py-2 max-w-xs">
                                                     <p className="truncate" title={row.notes || ''}>{row.notes || '-'}</p>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="secondary"
+                                                            onClick={() => openEditMovementModal(row)}
+                                                        >
+                                                            <Pencil size={14} />
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="danger"
+                                                            onClick={() => handleDeleteMovement(row)}
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </Button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -949,6 +1038,105 @@ function InventoryPage() {
                     </table>
                 </div>
             </div>
+
+            <Modal
+                isOpen={editMovementModal.open}
+                onClose={() => setEditMovementModal({ open: false, movement: null })}
+                title="Edit Histori Inventori"
+                size="md"
+            >
+                {editMovementModal.movement && (
+                    <form onSubmit={submitEditMovement} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm text-gray-700 mb-1">Barang</label>
+                                <select
+                                    value={editMovementForm.inventory_item_id}
+                                    onChange={(event) => setEditMovementForm((prev) => ({ ...prev, inventory_item_id: event.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    required
+                                >
+                                    <option value="">Pilih barang</option>
+                                    {itemOptions.map((item) => (
+                                        <option key={item.id} value={item.id}>
+                                            {resolveItemLabel(item.id)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm text-gray-700 mb-1">Jenis</label>
+                                <select
+                                    value={editMovementForm.movement_type}
+                                    onChange={(event) => setEditMovementForm((prev) => ({ ...prev, movement_type: event.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                >
+                                    <option value="in">Masuk</option>
+                                    <option value="out">Keluar</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm text-gray-700 mb-1">Qty</label>
+                                <input
+                                    type="number"
+                                    min="0.01"
+                                    step="any"
+                                    value={editMovementForm.quantity}
+                                    onChange={(event) => setEditMovementForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-gray-700 mb-1">Harga Satuan</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={editMovementForm.unit_price}
+                                    onChange={(event) => setEditMovementForm((prev) => ({ ...prev, unit_price: event.target.value }))}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    placeholder="Opsional"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm text-gray-700 mb-1">Tanggal</label>
+                            <input
+                                type="date"
+                                value={editMovementForm.transaction_date}
+                                onChange={(event) => setEditMovementForm((prev) => ({ ...prev, transaction_date: event.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm text-gray-700 mb-1">Catatan</label>
+                            <input
+                                type="text"
+                                value={editMovementForm.notes}
+                                onChange={(event) => setEditMovementForm((prev) => ({ ...prev, notes: event.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                placeholder="Opsional"
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button type="button" variant="secondary" onClick={() => setEditMovementModal({ open: false, movement: null })}>
+                                Batal
+                            </Button>
+                            <Button type="submit" variant="primary" disabled={saving}>
+                                {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+                            </Button>
+                        </div>
+                    </form>
+                )}
+            </Modal>
 
             <Modal
                 isOpen={payDebtModal.open}

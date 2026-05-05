@@ -26,6 +26,9 @@ import CustomerVerificationForm from './pages/Customers/CustomerVerificationForm
 import ComplaintsPage from './pages/Complaints/ComplaintsPage';
 import NetworkNoticePage from './pages/Settings/NetworkNoticePage';
 import SendNotificationPage from './pages/Settings/SendNotificationPage';
+import MasterWilayahPage from './pages/Settings/MasterWilayahPage';
+import MasterMikrotikPage from './pages/Settings/MasterMikrotikPage';
+import MasterDataPage from './pages/Settings/MasterDataPage';
 import NetworkStatusPage from './pages/NetworkStatusPage';
 import Monitoring from './pages/Monitoring';
 import IsolirPage from './pages/Isolir/IsolirPage';
@@ -112,6 +115,9 @@ function App() {
                     <Route path="/settings/promo" element={<PromoManagementPage />} />
                     <Route path="/settings/network-notices" element={<NetworkNoticePage />} />
                     <Route path="/settings/send-notification" element={<SendNotificationPage />} />
+                    <Route path="/settings/master-wilayah" element={<MasterWilayahPage />} />
+                    <Route path="/settings/master-mikrotik" element={<MasterMikrotikPage />} />
+                    <Route path="/settings/master-data" element={<MasterDataPage />} />
                     
                     {/* Complaints (Admin) */}
                     <Route path="/complaints" element={<ComplaintsPage />} />
