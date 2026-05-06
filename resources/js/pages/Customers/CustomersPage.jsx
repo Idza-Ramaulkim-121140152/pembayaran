@@ -719,7 +719,7 @@ function CustomersPage() {
                     {filteredCustomers.map((customer) => (
                         <div 
                             key={customer.id} 
-                            className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition"
+                            className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-visible hover:shadow-md transition"
                         >
                             {/* Card Header */}
                             <div className="p-4 border-b border-gray-100">
@@ -782,7 +782,7 @@ function CustomersPage() {
                                         </button>
 
                                         {openActionMenuId === customer.id && (
-                                            <div className="absolute right-0 bottom-12 z-20 w-64 rounded-xl border border-gray-200 bg-white shadow-lg py-2">
+                                            <div className="absolute right-0 bottom-12 z-[70] w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg py-2">
                                                 <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                                                     Aksi Cepat
                                                 </p>
