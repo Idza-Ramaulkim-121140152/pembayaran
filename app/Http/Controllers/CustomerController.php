@@ -5,8 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Package;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class CustomerController extends Controller
 {
@@ -504,6 +505,171 @@ class CustomerController extends Controller
                 'message' => 'Gagal memberikan kompensasi: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function updateServicePackage(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'package_id' => ['required', 'integer', 'exists:packages,id'],
+        ]);
+
+        $package = Package::query()
+            ->where('id', $validated['package_id'])
+            ->where('is_active', true)
+            ->first();
+
+        if (!$package) {
+            return $this->servicePackageErrorResponse(
+                'Paket tidak ditemukan atau sedang nonaktif.',
+                'PACKAGE_NOT_ACTIVE',
+                false,
+                'contact_admin',
+                422
+            );
+        }
+
+        if (empty($customer->pppoe_username)) {
+            return $this->servicePackageErrorResponse(
+                'Pelanggan belum memiliki username PPPoE.',
+                'PPPOE_USERNAME_MISSING',
+                false,
+                'open_edit',
+                422
+            );
+        }
+
+        $targetProfile = trim((string) ($package->mikrotik_profile ?: $package->name));
+        if ($targetProfile === '') {
+            return $this->servicePackageErrorResponse(
+                'Profil MikroTik untuk paket ini tidak valid.',
+                'MIKROTIK_PROFILE_INVALID',
+                false,
+                'contact_admin',
+                422
+            );
+        }
+
+        $mikrotik = new \App\Services\MikroTikService();
+
+        try {
+            $mikrotik->connect();
+            $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+
+            if (!$secret || empty($secret['id'])) {
+                return $this->servicePackageErrorResponse(
+                    'Secret PPPoE pelanggan tidak ditemukan di MikroTik.',
+                    'MIKROTIK_SECRET_NOT_FOUND',
+                    false,
+                    'check_mikrotik',
+                    422
+                );
+            }
+
+            $profiles = $mikrotik->command('/ppp/profile/print');
+            $availableProfiles = [];
+            foreach ($profiles as $profile) {
+                $name = trim((string) ($profile['name'] ?? ''));
+                if ($name !== '') {
+                    $availableProfiles[] = $name;
+                }
+            }
+
+            $resolvedProfile = $this->resolveMikrotikProfileName($targetProfile, $availableProfiles);
+            if ($resolvedProfile === null) {
+                return $this->servicePackageErrorResponse(
+                    'Profile paket tidak ditemukan di MikroTik aktif.',
+                    'MIKROTIK_PROFILE_NOT_FOUND',
+                    false,
+                    'check_mikrotik',
+                    422
+                );
+            }
+
+            $mikrotik->command('/ppp/secret/set', [
+                '.id' => $secret['id'],
+                'profile' => $resolvedProfile,
+            ]);
+
+            DB::transaction(function () use ($customer, $package, $resolvedProfile): void {
+                $customer->package_type = $package->name;
+                $customer->custom_package = null;
+                $customer->mikrotik_profile = $resolvedProfile;
+                $customer->save();
+            });
+
+            return response()->json([
+                'message' => 'Paket layanan dan profile MikroTik berhasil diperbarui.',
+                'data' => [
+                    'customer' => $customer->fresh(),
+                    'package' => $package,
+                    'mikrotik' => [
+                        'success' => true,
+                        'profile' => $resolvedProfile,
+                    ],
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \Log::error('Failed to update customer service package', [
+                'customer_id' => $customer->id,
+                'customer_name' => $customer->name,
+                'package_id' => $package->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->servicePackageErrorResponse(
+                'Gagal sinkronisasi profile ke MikroTik. Data pelanggan tidak diubah.',
+                'MIKROTIK_SYNC_FAILED',
+                true,
+                'retry',
+                500
+            );
+        } finally {
+            try {
+                $mikrotik->disconnect();
+            } catch (\Throwable $disconnectError) {
+                \Log::warning('Failed to disconnect MikroTik after update service package', [
+                    'customer_id' => $customer->id,
+                    'error' => $disconnectError->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @param array<int, string> $availableProfiles
+     */
+    private function resolveMikrotikProfileName(string $targetProfile, array $availableProfiles): ?string
+    {
+        if ($targetProfile === '') {
+            return null;
+        }
+
+        if (in_array($targetProfile, $availableProfiles, true)) {
+            return $targetProfile;
+        }
+
+        foreach ($availableProfiles as $profile) {
+            if (strtolower($profile) === strtolower($targetProfile)) {
+                return $profile;
+            }
+        }
+
+        return null;
+    }
+
+    private function servicePackageErrorResponse(
+        string $message,
+        string $errorCode,
+        bool $retryable,
+        string $actionHint,
+        int $statusCode
+    ) {
+        return response()->json([
+            'message' => $message,
+            'error_code' => $errorCode,
+            'retryable' => $retryable,
+            'action_hint' => $actionHint,
+        ], $statusCode);
     }
 
     public function exportExcel()

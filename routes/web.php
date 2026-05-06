@@ -141,10 +141,12 @@ Route::middleware('auth')->group(function () {
         Route::delete('/api/customers/{customer}', [CustomerController::class, 'destroy'])->name('api.customers.destroy');
         Route::get('/api/customers/{customer}/riwayat', [CustomerController::class, 'riwayatApi'])->name('api.customers.riwayat');
         Route::post('/api/customers/{customer}/compensation', [CustomerController::class, 'giveCompensation'])->name('api.customers.compensation');
+        Route::patch('/api/customers/{customer}/service-package', [CustomerController::class, 'updateServicePackage'])->name('api.customers.service-package.update');
         Route::get('/api/customers/export/excel', [CustomerController::class, 'exportExcel'])->name('api.customers.export');
 
         // Customer Routes (for form-based activation)
-        Route::get('/pelanggan', [CustomerController::class, 'list'])->name('customers.list');
+        Route::get('/pelanggan', fn() => view('app'))->name('customers.list');
+        Route::get('/pelanggan-legacy', [CustomerController::class, 'list'])->name('customers.list.legacy');
         Route::get('/pelanggan/create', [CustomerController::class, 'create'])->name('customers.create');
         Route::post('/pelanggan', [CustomerController::class, 'store'])->name('customers.store');
         Route::get('/pelanggan/{customerId}/edit', [CustomerController::class, 'edit'])->name('customers.edit');

@@ -57,6 +57,13 @@ export const customerService = {
     // Give compensation (update due date)
     giveCompensation: (id, dueDate) => apiClient.post(`/customers/${id}/compensation`, { due_date: dueDate }),
 
+    // Get active packages for customer service package change
+    getActivePackages: () => apiClient.get('/packages/active'),
+
+    // Update customer service package with MikroTik sync
+    updateServicePackage: (id, packageId) =>
+        apiClient.patch(`/customers/${id}/service-package`, { package_id: packageId }),
+
     // Get active/inactive status in bulk without blocking initial list render
     getActiveStatusBulk: (customerIds = []) =>
         apiClient.post('/customers/active-status', { customer_ids: customerIds }),

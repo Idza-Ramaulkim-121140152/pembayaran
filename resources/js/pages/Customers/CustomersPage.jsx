@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { 
     Plus, Edit2, Trash2, Search, Phone, Eye, X, 
-    User, Calendar, MapPin, Wifi, CreditCard, FileText,
+    User, Calendar, MapPin, Wifi, CreditCard,
     MessageCircle, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, History,
-    CheckCircle, Clock, XCircle, Router, Gift, Download
+    CheckCircle, Clock, XCircle, Router, Gift, Download, MoreVertical,
+    RefreshCw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -37,11 +38,53 @@ function CustomersPage() {
     const [compensationCustomer, setCompensationCustomer] = useState(null);
     const [newDueDate, setNewDueDate] = useState('');
     const [submittingCompensation, setSubmittingCompensation] = useState(false);
+    const [activePackages, setActivePackages] = useState([]);
+    const [servicePackageModal, setServicePackageModal] = useState({
+        open: false,
+        customer: null,
+        selectedPackageId: '',
+    });
+    const [submittingServicePackage, setSubmittingServicePackage] = useState(false);
+    const [servicePackageResultModal, setServicePackageResultModal] = useState({
+        open: false,
+        type: null,
+        title: '',
+        message: '',
+        errorCode: '',
+        actionHint: '',
+        retryable: false,
+        customerName: '',
+        oldPackage: '',
+        newPackage: '',
+        profile: '',
+        operational: {
+            problem: '',
+            impact: '',
+            action: '',
+        },
+    });
+    const [lastServicePackagePayload, setLastServicePackagePayload] = useState(null);
+    const [openActionMenuId, setOpenActionMenuId] = useState(null);
     const activeStatusRequestRef = useRef(0);
+    const actionMenuRef = useRef(null);
 
     useEffect(() => {
         fetchCustomers();
+        fetchActivePackages();
     }, []);
+
+    useEffect(() => {
+        if (openActionMenuId === null) return undefined;
+
+        const handleClickOutside = (event) => {
+            if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
+                setOpenActionMenuId(null);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [openActionMenuId]);
 
     useEffect(() => {
         let filtered = customers;
@@ -135,6 +178,15 @@ function CustomersPage() {
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchActivePackages = async () => {
+        try {
+            const response = await customerService.getActivePackages();
+            setActivePackages(response?.data?.data || []);
+        } catch (err) {
+            console.error('Gagal memuat daftar paket aktif', err);
         }
     };
 
@@ -243,9 +295,270 @@ function CustomersPage() {
     };
 
     const handleOpenCompensation = (customer) => {
+        setOpenActionMenuId(null);
         setCompensationCustomer(customer);
         setNewDueDate(customer.due_date || '');
         setShowCompensationModal(true);
+    };
+
+    const handleToggleActionMenu = (customerId) => {
+        setOpenActionMenuId((prev) => (prev === customerId ? null : customerId));
+    };
+
+    const handleOpenServicePackageModal = (customer) => {
+        if (activePackages.length === 0) {
+            setError('Belum ada paket aktif yang bisa dipilih.');
+            setOpenActionMenuId(null);
+            return;
+        }
+
+        const defaultPackageId = activePackages.length > 0 ? String(activePackages[0].id) : '';
+        setServicePackageModal({
+            open: true,
+            customer,
+            selectedPackageId: defaultPackageId,
+        });
+        setOpenActionMenuId(null);
+    };
+
+    const closeServicePackageModal = () => {
+        setServicePackageModal({
+            open: false,
+            customer: null,
+            selectedPackageId: '',
+        });
+    };
+
+    const resolveCustomerPackageLabel = (customer) => {
+        if (!customer) return '-';
+        return customer.package_type || customer.custom_package || '-';
+    };
+
+    const updateCustomerInList = (updatedCustomer) => {
+        setCustomers((prev) =>
+            prev.map((customer) => (customer.id === updatedCustomer.id ? { ...customer, ...updatedCustomer } : customer))
+        );
+    };
+
+    const openServicePackageResultModal = ({
+        type,
+        title,
+        message,
+        errorCode = '',
+        actionHint = '',
+        retryable = false,
+        customerName = '',
+        oldPackage = '',
+        newPackage = '',
+        profile = '',
+        operational = {
+            problem: '',
+            impact: '',
+            action: '',
+        },
+    }) => {
+        setServicePackageResultModal({
+            open: true,
+            type,
+            title,
+            message,
+            errorCode,
+            actionHint,
+            retryable,
+            customerName,
+            oldPackage,
+            newPackage,
+            profile,
+            operational,
+        });
+    };
+
+    const getServicePackageOperationalGuidance = (errorCode, actionHint) => {
+        const fallback = {
+            problem: 'Terjadi kendala saat sinkronisasi paket layanan.',
+            impact: 'Paket pelanggan belum berubah.',
+            action: 'Coba ulangi proses, lalu hubungi tim teknis jika masih gagal.',
+        };
+
+        const mapByCode = {
+            PPPOE_USERNAME_MISSING: {
+                problem: 'Username PPPoE pelanggan belum terisi.',
+                impact: 'Paket tidak bisa disinkronkan ke MikroTik.',
+                action: 'Buka Edit Pelanggan, isi username PPPoE, lalu ulangi ubah paket.',
+            },
+            PACKAGE_NOT_ACTIVE: {
+                problem: 'Paket tujuan tidak aktif atau sudah tidak tersedia.',
+                impact: 'Perubahan paket dibatalkan.',
+                action: 'Minta admin cek Master Paket, lalu pilih paket aktif yang valid.',
+            },
+            MIKROTIK_SECRET_NOT_FOUND: {
+                problem: 'Secret pelanggan tidak ditemukan di MikroTik.',
+                impact: 'Paket di database tidak diubah agar tetap konsisten.',
+                action: 'Periksa data secret di router aktif, lalu sinkronkan ulang.',
+            },
+            MIKROTIK_PROFILE_NOT_FOUND: {
+                problem: 'Profile paket tidak ditemukan di MikroTik aktif.',
+                impact: 'Perubahan paket dibatalkan.',
+                action: 'Pastikan profile paket tersedia di router, lalu ulangi.',
+            },
+            MIKROTIK_PROFILE_INVALID: {
+                problem: 'Konfigurasi profile paket tidak valid.',
+                impact: 'Paket tidak dapat diterapkan ke MikroTik.',
+                action: 'Minta admin perbaiki mapping profile paket pada master data.',
+            },
+            MIKROTIK_SYNC_FAILED: {
+                problem: 'Koneksi/sinkronisasi ke MikroTik gagal.',
+                impact: 'Paket pelanggan belum berubah.',
+                action: 'Klik Ulangi. Jika gagal berulang, lanjutkan eskalasi ke tim teknis.',
+            },
+        };
+
+        const mapByActionHint = {
+            open_edit: {
+                problem: 'Data pelanggan belum lengkap.',
+                impact: 'Aksi ubah paket tidak bisa diproses.',
+                action: 'Buka Edit Pelanggan, lengkapi data yang dibutuhkan, lalu ulangi.',
+            },
+            check_mikrotik: {
+                problem: 'Data/konfigurasi di MikroTik belum sesuai.',
+                impact: 'Sinkronisasi paket dibatalkan.',
+                action: 'Periksa secret/profile pada router aktif kemudian ulangi.',
+            },
+            contact_admin: {
+                problem: 'Konfigurasi master paket membutuhkan penyesuaian admin.',
+                impact: 'Perubahan paket belum dapat diproses.',
+                action: 'Hubungi admin untuk perbaikan data master terlebih dahulu.',
+            },
+            retry: {
+                problem: 'Terjadi gangguan sementara saat sinkronisasi.',
+                impact: 'Perubahan paket belum tersimpan.',
+                action: 'Gunakan tombol Ulangi. Jika masih gagal, hubungi tim teknis.',
+            },
+        };
+
+        return mapByCode[errorCode] || mapByActionHint[actionHint] || fallback;
+    };
+
+    const handleSubmitServicePackage = async (e, payloadOverride = null) => {
+        if (e?.preventDefault) {
+            e.preventDefault();
+        }
+
+        const payload = payloadOverride || lastServicePackagePayload;
+        if (!payload?.customerId || !payload?.packageId) {
+            setError('Data penggantian paket tidak lengkap.');
+            return;
+        }
+
+        const customer = payload.customer;
+        const selectedPackage = activePackages.find((pkg) => String(pkg.id) === String(payload.packageId));
+        if (!selectedPackage) {
+            setError('Pilih paket layanan aktif terlebih dahulu.');
+            return;
+        }
+
+        try {
+            setSubmittingServicePackage(true);
+            setError(null);
+            setSuccess(null);
+
+            const response = await customerService.updateServicePackage(payload.customerId, payload.packageId);
+            const updatedCustomer = response?.data?.data?.customer;
+            const profile = response?.data?.data?.mikrotik?.profile || selectedPackage.mikrotik_profile || selectedPackage.name;
+
+            if (updatedCustomer) {
+                updateCustomerInList(updatedCustomer);
+            }
+
+            closeServicePackageModal();
+            openServicePackageResultModal({
+                type: 'success',
+                title: 'Ubah Paket Berhasil',
+                message: response?.data?.message || 'Paket layanan berhasil diperbarui dan sinkron ke MikroTik.',
+                retryable: false,
+                customerName: customer?.name || '',
+                oldPackage: payload.oldPackage || resolveCustomerPackageLabel(customer),
+                newPackage: selectedPackage.name,
+                profile,
+                operational: {
+                    problem: '',
+                    impact: '',
+                    action: '',
+                },
+            });
+            setSuccess(response?.data?.message || `Paket layanan ${customer?.name || 'pelanggan'} berhasil diperbarui.`);
+            setLastServicePackagePayload(null);
+        } catch (err) {
+            const responseData = err.response?.data || {};
+            const message = responseData.message || 'Gagal memperbarui paket layanan pelanggan.';
+            const retryable = Boolean(responseData.retryable);
+            const errorCode = responseData.error_code || '';
+            const actionHint = responseData.action_hint || '';
+            const operational = getServicePackageOperationalGuidance(errorCode, actionHint);
+
+            closeServicePackageModal();
+            openServicePackageResultModal({
+                type: 'error',
+                title: 'Ubah Paket Gagal',
+                message,
+                errorCode,
+                actionHint,
+                retryable,
+                customerName: customer?.name || '',
+                oldPackage: payload.oldPackage || resolveCustomerPackageLabel(customer),
+                newPackage: selectedPackage.name,
+                profile: '',
+                operational,
+            });
+
+            if (payloadOverride) {
+                setLastServicePackagePayload(payloadOverride);
+            }
+        } finally {
+            setSubmittingServicePackage(false);
+        }
+    };
+
+    const handleRetryServicePackage = async () => {
+        if (!lastServicePackagePayload) return;
+        await handleSubmitServicePackage(null, lastServicePackagePayload);
+    };
+
+    const handleOpenEditFromResult = () => {
+        const customerId = lastServicePackagePayload?.customerId;
+        if (!customerId) return;
+        window.location.href = `/customers/${customerId}/edit`;
+    };
+
+    const handleContactTechnicalTeam = () => {
+        const customerName = servicePackageResultModal.customerName || 'Pelanggan';
+        const errorCode = servicePackageResultModal.errorCode || '-';
+        const message = encodeURIComponent(
+            `Halo Tim Teknis,\nMohon bantuan cek sinkronisasi paket layanan pelanggan.\nNama: ${customerName}\nKode Error: ${errorCode}\nTerima kasih.`
+        );
+        window.open(`https://wa.me/6285158025553?text=${message}`, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleServicePackageFormSubmit = async (e) => {
+        e.preventDefault();
+
+        const customer = servicePackageModal.customer;
+        const packageId = servicePackageModal.selectedPackageId;
+
+        if (!customer?.id || !packageId) {
+            setError('Pilih pelanggan dan paket layanan terlebih dahulu.');
+            return;
+        }
+
+        const payload = {
+            customerId: customer.id,
+            packageId,
+            customer,
+            oldPackage: resolveCustomerPackageLabel(customer),
+        };
+
+        setLastServicePackagePayload(payload);
+        await handleSubmitServicePackage(null, payload);
     };
 
     const handleAddDays = (days) => {
@@ -265,11 +578,11 @@ function CustomersPage() {
         try {
             setSubmittingCompensation(true);
             await customerService.giveCompensation(compensationCustomer.id, newDueDate);
-            setSuccess(`Kompensasi berhasil diberikan kepada ${compensationCustomer.name}`);
+            setSuccess(`Tanggal jatuh tempo ${compensationCustomer.name} berhasil diperbarui.`);
             setShowCompensationModal(false);
             fetchCustomers();
         } catch (err) {
-            setError(err.response?.data?.message || 'Gagal memberikan kompensasi');
+            setError(err.response?.data?.message || 'Gagal memperbarui tanggal jatuh tempo');
         } finally {
             setSubmittingCompensation(false);
         }
@@ -452,61 +765,117 @@ function CustomersPage() {
 
                             {/* Card Footer */}
                             <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
-                                <div className="flex items-center justify-between gap-2">
-                                    <div className="flex gap-1">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-xs text-gray-500">Aksi pelanggan</p>
+                                    <div
+                                        className="relative"
+                                        ref={openActionMenuId === customer.id ? actionMenuRef : null}
+                                    >
                                         <button
-                                            onClick={() => handleOpenCompensation(customer)}
-                                            className="p-2 text-teal-600 hover:bg-teal-50 rounded-lg transition"
-                                            title="Berikan Kompensasi"
+                                            type="button"
+                                            onClick={() => handleToggleActionMenu(customer.id)}
+                                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 transition"
+                                            title="Menu Aksi"
                                         >
-                                            <Gift size={20} />
+                                            <MoreVertical size={16} />
+                                            <span className="text-sm font-medium">...</span>
                                         </button>
-                                        <a
-                                            href={getWhatsAppLink(customer.phone)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
-                                            title="Hubungi via WhatsApp"
-                                        >
-                                            <MessageCircle size={20} />
-                                        </a>
-                                        <button
-                                            onClick={() => handleViewDetail(customer)}
-                                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                                            title="Lihat Detail"
-                                        >
-                                            <Eye size={20} />
-                                        </button>
-                                        <button
-                                            onClick={() => handleViewHistory(customer)}
-                                            className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition"
-                                            title="Histori Pembayaran"
-                                        >
-                                            <History size={20} />
-                                        </button>
-                                        {customer.pppoe_username && (
-                                            <button
-                                                onClick={() => handleViewSecret(customer)}
-                                                className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition"
-                                                title="Lihat Secret PPPoE"
-                                            >
-                                                <Router size={20} />
-                                            </button>
+
+                                        {openActionMenuId === customer.id && (
+                                            <div className="absolute right-0 bottom-12 z-20 w-64 rounded-xl border border-gray-200 bg-white shadow-lg py-2">
+                                                <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                                    Aksi Cepat
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpenCompensation(customer)}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <Calendar size={16} className="text-teal-600" />
+                                                    <span>Ubah Jatuh Tempo</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpenServicePackageModal(customer)}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <Wifi size={16} className="text-blue-600" />
+                                                    <span>Ubah Paket Layanan</span>
+                                                </button>
+                                                <div className="my-2 border-t border-gray-100" />
+                                                <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                                    Info & Layanan
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        handleViewDetail(customer);
+                                                        setOpenActionMenuId(null);
+                                                    }}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <Eye size={16} className="text-indigo-600" />
+                                                    <span>Lihat Detail</span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        handleViewHistory(customer);
+                                                        setOpenActionMenuId(null);
+                                                    }}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <History size={16} className="text-purple-600" />
+                                                    <span>Histori Pembayaran</span>
+                                                </button>
+                                                {customer.pppoe_username && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            handleViewSecret(customer);
+                                                            setOpenActionMenuId(null);
+                                                        }}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                    >
+                                                        <Router size={16} className="text-orange-600" />
+                                                        <span>Lihat Secret PPPoE</span>
+                                                    </button>
+                                                )}
+                                                <a
+                                                    href={getWhatsAppLink(customer.phone)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    onClick={() => setOpenActionMenuId(null)}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <MessageCircle size={16} className="text-green-600" />
+                                                    <span>Hubungi via WhatsApp</span>
+                                                </a>
+                                                <div className="my-2 border-t border-gray-100" />
+                                                <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                                    Edit Lengkap
+                                                </p>
+                                                <Link
+                                                    to={`/customers/${customer.id}/edit`}
+                                                    onClick={() => setOpenActionMenuId(null)}
+                                                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                >
+                                                    <Edit2 size={16} className="text-gray-600" />
+                                                    <span>Edit Data Pelanggan</span>
+                                                </Link>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setOpenActionMenuId(null);
+                                                        handleDelete(customer.id);
+                                                    }}
+                                                    className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                >
+                                                    <Trash2 size={16} />
+                                                    <span>Hapus Pelanggan</span>
+                                                </button>
+                                            </div>
                                         )}
-                                    </div>
-                                    <div className="flex gap-1">
-                                        <Link to={`/customers/${customer.id}/edit`}>
-                                            <button className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Edit">
-                                                <Edit2 size={18} />
-                                            </button>
-                                        </Link>
-                                        <button
-                                            onClick={() => handleDelete(customer.id)}
-                                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                                            title="Hapus"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -904,7 +1273,7 @@ function CustomersPage() {
                                     <Gift size={24} className="text-white" />
                                 </div>
                                 <div>
-                                    <h2 className="text-xl font-bold text-gray-900">Berikan Kompensasi</h2>
+                                    <h2 className="text-xl font-bold text-gray-900">Ubah Tanggal Jatuh Tempo</h2>
                                     <p className="text-sm text-gray-500">{compensationCustomer.name}</p>
                                 </div>
                             </div>
@@ -991,10 +1360,192 @@ function CustomersPage() {
                                     className="flex-1 px-4 py-3 bg-gradient-to-r from-teal-500 to-emerald-600 text-white font-medium rounded-xl hover:from-teal-600 hover:to-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                                     disabled={submittingCompensation}
                                 >
-                                    {submittingCompensation ? 'Menyimpan...' : 'Berikan Kompensasi'}
+                                    {submittingCompensation ? 'Menyimpan...' : 'Simpan Tanggal'}
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Change Service Package Modal */}
+            {servicePackageModal.open && servicePackageModal.customer && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">Ubah Paket Layanan</h2>
+                                <p className="text-sm text-gray-500">{servicePackageModal.customer.name}</p>
+                            </div>
+                            <button
+                                onClick={closeServicePackageModal}
+                                className="text-gray-400 hover:text-gray-600 transition"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleServicePackageFormSubmit} className="p-6 space-y-4">
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                <p className="text-sm text-blue-900">
+                                    Paket saat ini: <span className="font-semibold">{resolveCustomerPackageLabel(servicePackageModal.customer)}</span>
+                                </p>
+                                <p className="text-xs text-blue-700 mt-1">
+                                    Perubahan paket akan langsung sinkron ke profile secret MikroTik.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Pilih Paket Layanan Aktif
+                                </label>
+                                <select
+                                    value={servicePackageModal.selectedPackageId}
+                                    onChange={(e) =>
+                                        setServicePackageModal((prev) => ({
+                                            ...prev,
+                                            selectedPackageId: e.target.value,
+                                        }))
+                                    }
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    required
+                                >
+                                    <option value="">Pilih paket layanan</option>
+                                    {activePackages.map((pkg) => (
+                                        <option key={pkg.id} value={pkg.id}>
+                                            {pkg.name} ({formatCurrency(pkg.price)})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={closeServicePackageModal}
+                                    className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-300 transition"
+                                    disabled={submittingServicePackage}
+                                >
+                                    Batal
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="flex-1 px-4 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={submittingServicePackage}
+                                >
+                                    {submittingServicePackage ? 'Menyimpan...' : 'Simpan Paket'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Change Service Package Result Modal */}
+            {servicePackageResultModal.open && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                        <div className="p-6 border-b border-gray-200">
+                            <h2 className={`text-xl font-bold ${servicePackageResultModal.type === 'success' ? 'text-green-700' : 'text-red-700'}`}>
+                                {servicePackageResultModal.title}
+                            </h2>
+                            <p className="text-sm text-gray-600 mt-1">{servicePackageResultModal.message}</p>
+                            {servicePackageResultModal.errorCode && (
+                                <p className="text-xs text-gray-500 mt-2">
+                                    Kode: <span className="font-mono">{servicePackageResultModal.errorCode}</span>
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="p-6 space-y-3">
+                            {servicePackageResultModal.customerName && (
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs text-gray-500">Pelanggan</p>
+                                    <p className="font-semibold text-gray-900">{servicePackageResultModal.customerName}</p>
+                                </div>
+                            )}
+                            {servicePackageResultModal.oldPackage && (
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs text-gray-500">Paket Sebelumnya</p>
+                                    <p className="font-medium text-gray-900">{servicePackageResultModal.oldPackage}</p>
+                                </div>
+                            )}
+                            {servicePackageResultModal.newPackage && (
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs text-gray-500">Paket Tujuan</p>
+                                    <p className="font-medium text-gray-900">{servicePackageResultModal.newPackage}</p>
+                                </div>
+                            )}
+                            {servicePackageResultModal.profile && (
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs text-gray-500">Profile MikroTik</p>
+                                    <p className="font-mono text-sm text-gray-900">{servicePackageResultModal.profile}</p>
+                                </div>
+                            )}
+                            {servicePackageResultModal.type === 'error' && (
+                                <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-3">
+                                    <div>
+                                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Masalah</p>
+                                        <p className="text-sm text-red-900">{servicePackageResultModal.operational.problem}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Dampak</p>
+                                        <p className="text-sm text-red-900">{servicePackageResultModal.operational.impact}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Tindakan CS</p>
+                                        <p className="text-sm text-red-900">{servicePackageResultModal.operational.action}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="p-6 pt-0 flex gap-3 flex-wrap">
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setServicePackageResultModal((prev) => ({
+                                        ...prev,
+                                        open: false,
+                                    }))
+                                }
+                                className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-300 transition"
+                                disabled={submittingServicePackage}
+                            >
+                                Tutup
+                            </button>
+                            {servicePackageResultModal.retryable && (
+                                <button
+                                    type="button"
+                                    onClick={handleRetryServicePackage}
+                                    className="flex-1 px-4 py-3 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                                    disabled={submittingServicePackage}
+                                >
+                                    <RefreshCw size={16} />
+                                    Ulangi
+                                </button>
+                            )}
+                            {servicePackageResultModal.type === 'error' && servicePackageResultModal.actionHint === 'open_edit' && (
+                                <button
+                                    type="button"
+                                    onClick={handleOpenEditFromResult}
+                                    className="flex-1 px-4 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={submittingServicePackage}
+                                >
+                                    Buka Edit Pelanggan
+                                </button>
+                            )}
+                            {servicePackageResultModal.type === 'error' && (servicePackageResultModal.actionHint === 'check_mikrotik' || servicePackageResultModal.actionHint === 'contact_admin') && (
+                                <button
+                                    type="button"
+                                    onClick={handleContactTechnicalTeam}
+                                    className="flex-1 px-4 py-3 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={submittingServicePackage}
+                                >
+                                    Hubungi Tim Teknis
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
