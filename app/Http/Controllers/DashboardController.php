@@ -11,11 +11,13 @@ use App\Models\FinancialPlanningTarget;
 use App\Models\FinancialBalanceSnapshot;
 use App\Models\FinancialTransaction;
 use App\Models\NetworkNotice;
+use App\Models\PayrollMember;
 use App\Models\User;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -321,6 +323,7 @@ class DashboardController extends Controller
     {
         $user = request()->user();
         $canViewFinancialMetrics = $this->canViewFinancialMetrics($user);
+        $employeePayroll = $this->buildEmployeePayrollWidget($user);
 
         // Ringkasan pendapatan bulan ini
         $now = Carbon::now();
@@ -531,6 +534,7 @@ class DashboardController extends Controller
             'pending_complaints' => $pendingComplaints,
             'in_progress_complaints' => $inProgressComplaints,
             'total_active_complaints' => $totalActiveComplaints,
+            'employee_payroll' => $employeePayroll,
         ];
 
         if ($canViewFinancialMetrics) {
@@ -548,6 +552,98 @@ class DashboardController extends Controller
         return response()->json([
             'data' => $payload,
         ]);
+    }
+
+    private function buildEmployeePayrollWidget(?User $user): array
+    {
+        $defaultPayload = [
+            'enabled' => false,
+            'warning' => null,
+            'member' => null,
+            'salary_total' => 0,
+            'salary_paid' => 0,
+            'salary_unpaid' => 0,
+            'project_history' => [],
+        ];
+
+        if (!$user) {
+            return $defaultPayload;
+        }
+
+        if (!Schema::hasColumn('users', 'is_employee') || !Schema::hasColumn('users', 'payroll_member_id')) {
+            return $defaultPayload;
+        }
+
+        if (!(bool) ($user->is_employee ?? false)) {
+            return $defaultPayload;
+        }
+
+        $payload = $defaultPayload;
+        $payload['enabled'] = true;
+
+        $payrollMemberId = (int) ($user->payroll_member_id ?? 0);
+        if ($payrollMemberId <= 0) {
+            $payload['warning'] = 'Akun ditandai sebagai karyawan, tetapi teknisi payroll belum dipilih.';
+            return $payload;
+        }
+
+        if (
+            !Schema::hasTable('payroll_members')
+            || !Schema::hasTable('payroll_project_members')
+            || !Schema::hasTable('payroll_projects')
+            || !Schema::hasTable('payroll_member_payments')
+        ) {
+            $payload['warning'] = 'Data payroll belum siap. Pastikan migrasi payroll sudah dijalankan.';
+            return $payload;
+        }
+
+        $member = PayrollMember::query()->find($payrollMemberId, ['id', 'nama']);
+        if (!$member) {
+            $payload['warning'] = 'Teknisi payroll terkait akun ini tidak ditemukan.';
+            return $payload;
+        }
+
+        $totalBagian = (float) DB::table('payroll_project_members')
+            ->where('payroll_member_id', $payrollMemberId)
+            ->sum('bagian');
+        $totalPaid = (float) DB::table('payroll_member_payments')
+            ->where('payroll_member_id', $payrollMemberId)
+            ->sum('nominal');
+
+        $historyRows = DB::table('payroll_project_members as ppm')
+            ->join('payroll_projects as pp', 'pp.id', '=', 'ppm.payroll_project_id')
+            ->where('ppm.payroll_member_id', $payrollMemberId)
+            ->orderByDesc('pp.tanggal')
+            ->orderByDesc('pp.id')
+            ->limit(50)
+            ->get([
+                'pp.id as project_id',
+                'pp.tanggal',
+                'pp.catatan',
+                'pp.status',
+                'pp.total',
+                'ppm.bagian',
+            ]);
+
+        $payload['member'] = [
+            'id' => (int) $member->id,
+            'nama' => (string) $member->nama,
+        ];
+        $payload['salary_total'] = (int) round($totalBagian);
+        $payload['salary_paid'] = (int) round($totalPaid);
+        $payload['salary_unpaid'] = (int) round(max(0, $totalBagian - $totalPaid));
+        $payload['project_history'] = $historyRows->map(function ($row) {
+            return [
+                'project_id' => (int) ($row->project_id ?? 0),
+                'tanggal' => (string) ($row->tanggal ?? ''),
+                'catatan' => $row->catatan,
+                'status' => (string) ($row->status ?? ''),
+                'project_total' => (int) round((float) ($row->total ?? 0)),
+                'bagian' => (int) round((float) ($row->bagian ?? 0)),
+            ];
+        })->values()->all();
+
+        return $payload;
     }
 
     public function revenueForecast(Request $request)
@@ -2077,6 +2173,28 @@ class DashboardController extends Controller
             : $openingBalance;
         $actualBalanceTodayDate = $todayDateKey;
         $actualBalanceTodaySource = $ledgerReady ? 'ledger_as_of_today' : 'opening_balance_fallback';
+        $realDailyIncome = 0.0;
+        $realDailyIncomeSource = 'none';
+
+        if ($ledgerReady) {
+            $realDailyIncome = (float) FinancialTransaction::query()
+                ->where('type', 'income')
+                ->whereDate('transaction_date', $todayDateKey)
+                ->sum('amount');
+
+            if ($realDailyIncome > 0) {
+                $realDailyIncomeSource = 'ledger_today';
+            }
+        } else {
+            $realDailyIncome = (float) Invoice::query()
+                ->where('status', 'paid')
+                ->whereDate('paid_at', $todayDateKey)
+                ->sum('amount');
+
+            if ($realDailyIncome > 0) {
+                $realDailyIncomeSource = 'invoice_paid_today_fallback';
+            }
+        }
 
         $todayProjectedBalance = null;
         foreach ($dailyProjection as $row) {
@@ -2147,6 +2265,9 @@ class DashboardController extends Controller
                 'actual_balance_today' => (int) round($actualBalanceToday),
                 'actual_balance_today_date' => $actualBalanceTodayDate,
                 'actual_balance_today_source' => $actualBalanceTodaySource,
+                'real_daily_income' => (int) round($realDailyIncome),
+                'real_daily_income_date' => $todayDateKey,
+                'real_daily_income_source' => $realDailyIncomeSource,
                 'mandatory_total_events' => $mandatoryTotalEvents,
                 'mandatory_covered_events' => $coveredMandatory,
                 'mandatory_confirmed_events' => $confirmedMandatory,

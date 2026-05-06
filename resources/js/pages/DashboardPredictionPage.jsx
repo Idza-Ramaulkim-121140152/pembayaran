@@ -512,6 +512,24 @@ function DashboardPredictionPage() {
                 order: 3,
             },
             {
+                type: 'line',
+                label: 'Pendapatan Real Harian',
+                data: projectionDailyRows.map((row) => (
+                    row.income_source === 'actual'
+                        ? Number(row.predicted_income || 0)
+                        : null
+                )),
+                borderColor: '#16a34a',
+                backgroundColor: 'rgba(22, 163, 74, 0.15)',
+                fill: false,
+                borderWidth: 3,
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                spanGaps: false,
+                tension: 0.2,
+                order: 1,
+            },
+            {
                 label: 'Saldo Proyeksi',
                 data: projectionDailyRows.map((row) => Number(
                     row.chart_balance ?? row.projected_balance ?? 0
@@ -1253,7 +1271,7 @@ function DashboardPredictionPage() {
                                         </p>
                                         <p className="text-xs text-gray-600 mt-1">{projectionAssistant.headline}</p>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap lg:justify-end">
                                         <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(projectionAssistant.risk_level)}`}>
                                             Risiko {projectionAssistant.risk_level}
                                         </span>
@@ -1270,7 +1288,29 @@ function DashboardPredictionPage() {
                         </div>
 
                         <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                            <p className="text-sm font-semibold text-gray-900">Riwayat Total Saldo (Harian - {formatMonthLabel(financialProjectionMonth)})</p>
+                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                                <p className="text-sm font-semibold text-gray-900">Riwayat Total Saldo (Harian - {formatMonthLabel(financialProjectionMonth)})</p>
+                                <div className="flex items-end gap-2">
+                                    <div>
+                                        <label className="block text-xs text-gray-600 mb-1">Bulan Riwayat</label>
+                                        <input
+                                            type="month"
+                                            value={financialProjectionMonth}
+                                            onChange={(e) => setFinancialProjectionMonth(e.target.value)}
+                                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleApplyFinancialProjectionRange}
+                                        disabled={financialProjectionLoading}
+                                        className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold disabled:opacity-60"
+                                    >
+                                        Terapkan
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-500">Pemilih bulan ini sinkron dengan filter Proyeksi Keuangan Bulanan.</p>
                             <div className="overflow-x-auto border border-gray-100 rounded-lg">
                                 <table className="w-full text-sm min-w-[980px]">
                                     <thead className="bg-gray-50 text-gray-600 text-left">
@@ -1299,7 +1339,7 @@ function DashboardPredictionPage() {
                                         ) : projectionDailyRows.length === 0 ? (
                                             <tr>
                                                 <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                    Belum ada data riwayat saldo di bulan ini.
+                                                    Belum ada data riwayat saldo di bulan {formatMonthLabel(financialProjectionMonth)}.
                                                 </td>
                                             </tr>
                                         ) : projectionDailyRows.map((row) => {

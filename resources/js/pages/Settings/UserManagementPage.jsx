@@ -21,6 +21,8 @@ function UserManagementPage() {
     const [success, setSuccess] = useState(null);
     const [deleteConfirm, setDeleteConfirm] = useState(null);
     const [currentUserRole, setCurrentUserRole] = useState('');
+    const [payrollMembers, setPayrollMembers] = useState([]);
+    const [loadingPayrollMembers, setLoadingPayrollMembers] = useState(false);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -29,11 +31,14 @@ function UserManagementPage() {
         role: 'admin',
         can_confirm_payments: false,
         can_edit_mutations: false,
+        is_employee: false,
+        payroll_member_id: '',
     });
 
     useEffect(() => {
         fetchUsers();
         fetchCurrentUser();
+        fetchPayrollMembers();
     }, []);
 
     const fetchCurrentUser = async () => {
@@ -61,9 +66,34 @@ function UserManagementPage() {
         }
     };
 
+    const fetchPayrollMembers = async () => {
+        try {
+            setLoadingPayrollMembers(true);
+            const res = await fetch('/api/payroll/members-lite', {
+                headers: { 'Accept': 'application/json' },
+            });
+            const data = await res.json();
+            setPayrollMembers(Array.isArray(data?.data) ? data.data : []);
+        } catch (err) {
+            console.error('Failed to fetch payroll members', err);
+            setPayrollMembers([]);
+        } finally {
+            setLoadingPayrollMembers(false);
+        }
+    };
+
     const openAddModal = () => {
         setEditingUser(null);
-        setFormData({ name: '', email: '', password: '', role: 'admin', can_confirm_payments: false, can_edit_mutations: false });
+        setFormData({
+            name: '',
+            email: '',
+            password: '',
+            role: 'admin',
+            can_confirm_payments: false,
+            can_edit_mutations: false,
+            is_employee: false,
+            payroll_member_id: '',
+        });
         setShowPassword(false);
         setShowModal(true);
         setError(null);
@@ -78,6 +108,8 @@ function UserManagementPage() {
             role: user.role,
             can_confirm_payments: !!user.can_confirm_payments,
             can_edit_mutations: !!user.can_edit_mutations,
+            is_employee: !!user.is_employee,
+            payroll_member_id: user.payroll_member_id ? String(user.payroll_member_id) : '',
         });
         setShowPassword(false);
         setShowModal(true);
@@ -95,7 +127,11 @@ function UserManagementPage() {
         const method = isEdit ? 'PUT' : 'POST';
 
         const body = { ...formData };
+        body.payroll_member_id = body.is_employee && body.payroll_member_id ? Number(body.payroll_member_id) : null;
         if (isEdit && !body.password) delete body.password;
+        if (!body.is_employee) {
+            body.payroll_member_id = null;
+        }
 
         try {
             const res = await fetch(url, {
@@ -219,6 +255,7 @@ function UserManagementPage() {
                                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Nama</th>
                                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Email</th>
                                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Role</th>
+                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">As Karyawan</th>
                                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Dibuat</th>
                                 <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Aksi</th>
                             </tr>
@@ -245,6 +282,18 @@ function UserManagementPage() {
                                             <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${roleInfo.color}`}>
                                                 {roleInfo.label}
                                             </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-gray-600">
+                                            {user.is_employee ? (
+                                                <div>
+                                                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                                                        Ya
+                                                    </span>
+                                                    <p className="text-xs text-gray-500 mt-1">{user.payroll_member_name || '-'}</p>
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400">Tidak</span>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4 text-sm text-gray-500">
                                             {new Date(user.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -274,7 +323,7 @@ function UserManagementPage() {
                             })}
                             {users.length === 0 && (
                                 <tr>
-                                    <td colSpan="5" className="px-6 py-12 text-center text-gray-400">
+                                    <td colSpan="6" className="px-6 py-12 text-center text-gray-400">
                                         Belum ada data pengguna.
                                     </td>
                                 </tr>
@@ -383,6 +432,44 @@ function UserManagementPage() {
                                     <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat tambah/edit/hapus mutasi.</p>
                                 </div>
                             </label>
+                            <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={!!formData.is_employee}
+                                    onChange={e => setFormData({
+                                        ...formData,
+                                        is_employee: e.target.checked,
+                                        payroll_member_id: e.target.checked ? formData.payroll_member_id : '',
+                                    })}
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-800">As Karyawan</p>
+                                    <p className="text-xs text-gray-500">Jika aktif, akun wajib dikaitkan ke teknisi payroll.</p>
+                                </div>
+                            </label>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Teknisi Payroll</label>
+                                <select
+                                    value={formData.payroll_member_id}
+                                    onChange={e => setFormData({ ...formData, payroll_member_id: e.target.value })}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    disabled={!formData.is_employee || loadingPayrollMembers}
+                                    required={!!formData.is_employee}
+                                >
+                                    <option value="">
+                                        {loadingPayrollMembers ? 'Memuat teknisi payroll...' : 'Pilih teknisi payroll'}
+                                    </option>
+                                    {payrollMembers.map((member) => (
+                                        <option key={member.id} value={member.id}>
+                                            {member.nama}{member.telepon ? ` (${member.telepon})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                {formData.is_employee && payrollMembers.length === 0 && !loadingPayrollMembers && (
+                                    <p className="text-xs text-amber-600 mt-1">Belum ada data teknisi payroll. Tambahkan dulu di menu Payroll.</p>
+                                )}
+                            </div>
                             <div className="flex gap-3 pt-2">
                                 <button
                                     type="button"

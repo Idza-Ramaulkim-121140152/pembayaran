@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use App\Models\PayrollMember;
 
 class User extends Authenticatable
 {
@@ -36,6 +37,8 @@ class User extends Authenticatable
         'role',
         'can_confirm_payments',
         'can_edit_mutations',
+        'is_employee',
+        'payroll_member_id',
     ];
 
     public function isSuperAdmin(): bool
@@ -85,7 +88,13 @@ class User extends Authenticatable
             'password' => 'hashed',
             'can_confirm_payments' => 'boolean',
             'can_edit_mutations' => 'boolean',
+            'is_employee' => 'boolean',
         ];
+    }
+
+    public function payrollMember()
+    {
+        return $this->belongsTo(PayrollMember::class, 'payroll_member_id');
     }
 
     public function canConfirmPayments(): bool

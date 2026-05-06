@@ -81,6 +81,15 @@ const DEFAULT_STATS = {
     package_distribution: [],
     active_package_distribution: [],
     finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
+    employee_payroll: {
+        enabled: false,
+        warning: null,
+        member: null,
+        salary_total: 0,
+        salary_paid: 0,
+        salary_unpaid: 0,
+        project_history: [],
+    },
 };
 
 function Dashboard() {
@@ -107,6 +116,7 @@ function Dashboard() {
     });
     const [showManualIncomeModal, setShowManualIncomeModal] = useState(false);
     const [manualIncomeSubmitting, setManualIncomeSubmitting] = useState(false);
+    const [visibleEmployeeHistoryCount, setVisibleEmployeeHistoryCount] = useState(3);
     const [manualIncomeForm, setManualIncomeForm] = useState({
         source: 'manual',
         description: '',
@@ -160,6 +170,10 @@ function Dashboard() {
         fetchIsolatedCount();
         fetchTransactions();
     }, []);
+
+    useEffect(() => {
+        setVisibleEmployeeHistoryCount(3);
+    }, [stats?.employee_payroll?.member?.id]);
 
     const handleAdjustBalance = async (e) => {
         e.preventDefault();
@@ -460,6 +474,18 @@ function Dashboard() {
         return actions;
     }, [isFinance, isTeknisi]);
 
+    const employeePayroll = stats?.employee_payroll || DEFAULT_STATS.employee_payroll;
+    const employeePayrollHistory = Array.isArray(employeePayroll?.project_history) ? employeePayroll.project_history : [];
+    const visibleEmployeePayrollHistory = employeePayrollHistory.slice(0, visibleEmployeeHistoryCount);
+    const hasMoreEmployeePayrollHistory = employeePayrollHistory.length > visibleEmployeeHistoryCount;
+
+    const formatShortDate = (value) => {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -509,6 +535,93 @@ function Dashboard() {
 
             {loading && (
                 <Alert type="info" title="Memuat Dashboard" message="Ringkasan utama sedang diproses." />
+            )}
+
+            {employeePayroll?.enabled && (
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                        <div>
+                            <h2 className="text-lg font-bold text-gray-900">Ringkasan Payroll Karyawan</h2>
+                            <p className="text-sm text-gray-500 mt-1">
+                                {employeePayroll?.member?.nama
+                                    ? `Akun terhubung ke teknisi: ${employeePayroll.member.nama}`
+                                    : 'Akun terhubung sebagai karyawan payroll.'}
+                            </p>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-xs text-gray-500 uppercase tracking-wide">Total Gaji Payroll</p>
+                            <p className="text-2xl font-bold text-emerald-700">{formatCurrency(employeePayroll?.salary_total || 0)}</p>
+                        </div>
+                    </div>
+
+                    {employeePayroll?.warning && (
+                        <div className="mt-4">
+                            <Alert type="warning" title="Perhatian" message={employeePayroll.warning} />
+                        </div>
+                    )}
+
+                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <p className="text-xs font-semibold text-gray-600">Sudah Dibayar</p>
+                            <p className="text-xl font-bold text-blue-700 mt-1">{formatCurrency(employeePayroll?.salary_paid || 0)}</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                            <p className="text-xs font-semibold text-gray-600">Sisa Gaji</p>
+                            <p className="text-xl font-bold text-orange-700 mt-1">{formatCurrency(employeePayroll?.salary_unpaid || 0)}</p>
+                        </div>
+                    </div>
+
+                    <div className="mt-5">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                            <h3 className="text-sm font-semibold text-gray-900">Riwayat Proyek Payroll</h3>
+                            {hasMoreEmployeePayrollHistory && (
+                                <button
+                                    type="button"
+                                    onClick={() => setVisibleEmployeeHistoryCount((prev) => prev + 3)}
+                                    className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                                >
+                                    Lihat Lebih Banyak
+                                </button>
+                            )}
+                        </div>
+
+                        {visibleEmployeePayrollHistory.length === 0 ? (
+                            <p className="text-sm text-gray-500">Belum ada riwayat proyek payroll.</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm min-w-[720px]">
+                                    <thead className="bg-gray-50 text-gray-600">
+                                        <tr>
+                                            <th className="text-left px-3 py-2">Tanggal</th>
+                                            <th className="text-left px-3 py-2">Proyek</th>
+                                            <th className="text-left px-3 py-2">Status</th>
+                                            <th className="text-right px-3 py-2">Bagian Anda</th>
+                                            <th className="text-right px-3 py-2">Total Proyek</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {visibleEmployeePayrollHistory.map((item) => (
+                                            <tr key={`employee-payroll-${item.project_id}-${item.tanggal}`} className="border-t border-gray-100">
+                                                <td className="px-3 py-2 text-gray-700">{formatShortDate(item.tanggal)}</td>
+                                                <td className="px-3 py-2 text-gray-700">
+                                                    <p className="font-medium text-gray-900">#{item.project_id}</p>
+                                                    <p className="text-xs text-gray-500">{item.catatan || '-'}</p>
+                                                </td>
+                                                <td className="px-3 py-2">
+                                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${item.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                        {item.status === 'paid' ? 'Dibayar' : 'Belum Dibayar'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-right font-semibold text-blue-700">{formatCurrency(item.bagian || 0)}</td>
+                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(item.project_total || 0)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </div>
             )}
 
             {canViewBalance && (

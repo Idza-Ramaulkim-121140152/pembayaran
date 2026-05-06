@@ -16,17 +16,26 @@ class UserManagementController extends Controller
     public function index()
     {
         $select = ['id', 'name', 'email', 'role', 'created_at'];
+        $hasEmployeeFields = Schema::hasColumn('users', 'is_employee') && Schema::hasColumn('users', 'payroll_member_id');
         if (Schema::hasColumn('users', 'can_confirm_payments')) {
             $select[] = 'can_confirm_payments';
         }
         if (Schema::hasColumn('users', 'can_edit_mutations')) {
             $select[] = 'can_edit_mutations';
         }
+        if ($hasEmployeeFields) {
+            $select[] = 'is_employee';
+            $select[] = 'payroll_member_id';
+        }
 
-        $users = User::select($select)
+        $usersQuery = User::select($select)
             ->orderBy('role')
-            ->orderBy('name')
-            ->get();
+            ->orderBy('name');
+        if ($hasEmployeeFields) {
+            $usersQuery->with('payrollMember:id,nama');
+        }
+
+        $users = $usersQuery->get();
 
         if (!Schema::hasColumn('users', 'can_confirm_payments')) {
             $users = $users->map(function ($user) {
@@ -42,6 +51,20 @@ class UserManagementController extends Controller
             });
         }
 
+        if (!$hasEmployeeFields) {
+            $users = $users->map(function ($user) {
+                $user->is_employee = false;
+                $user->payroll_member_id = null;
+                $user->payroll_member_name = null;
+                return $user;
+            });
+        } else {
+            $users = $users->map(function ($user) {
+                $user->payroll_member_name = $user->payrollMember?->nama;
+                return $user;
+            });
+        }
+
         return response()->json(['data' => $users]);
     }
 
@@ -50,6 +73,7 @@ class UserManagementController extends Controller
      */
     public function store(Request $request)
     {
+        $hasEmployeeFields = Schema::hasColumn('users', 'is_employee') && Schema::hasColumn('users', 'payroll_member_id');
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
@@ -57,11 +81,20 @@ class UserManagementController extends Controller
             'role' => ['required', Rule::in(User::ROLES)],
             'can_confirm_payments' => 'nullable|boolean',
             'can_edit_mutations' => 'nullable|boolean',
+            'is_employee' => $hasEmployeeFields ? 'nullable|boolean' : 'nullable',
+            'payroll_member_id' => $hasEmployeeFields ? 'nullable|integer|exists:payroll_members,id' : 'nullable',
         ]);
 
         // Only superadmin can create superadmin accounts
         if ($validated['role'] === User::ROLE_SUPERADMIN && !auth()->user()->isSuperAdmin()) {
             return response()->json(['error' => 'Hanya superadmin yang dapat membuat akun superadmin.'], 403);
+        }
+
+        $isEmployee = $hasEmployeeFields ? (bool) ($validated['is_employee'] ?? false) : false;
+        $payrollMemberId = $hasEmployeeFields ? ($validated['payroll_member_id'] ?? null) : null;
+
+        if ($hasEmployeeFields && $isEmployee && empty($payrollMemberId)) {
+            return response()->json(['message' => 'Pilih teknisi payroll jika akun ditandai sebagai karyawan.'], 422);
         }
 
         $user = User::create([
@@ -71,11 +104,17 @@ class UserManagementController extends Controller
             'role' => $validated['role'],
             'can_confirm_payments' => (bool) ($validated['can_confirm_payments'] ?? false),
             'can_edit_mutations' => (bool) ($validated['can_edit_mutations'] ?? false),
+            'is_employee' => $isEmployee,
+            'payroll_member_id' => $isEmployee ? $payrollMemberId : null,
         ]);
 
+        $user->loadMissing('payrollMember:id,nama');
         return response()->json([
             'message' => 'Akun berhasil dibuat.',
-            'data' => $user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'created_at'),
+            'data' => [
+                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'is_employee', 'payroll_member_id', 'created_at'),
+                'payroll_member_name' => $user->payrollMember?->nama,
+            ],
         ], 201);
     }
 
@@ -99,6 +138,7 @@ class UserManagementController extends Controller
             }
         }
 
+        $hasEmployeeFields = Schema::hasColumn('users', 'is_employee') && Schema::hasColumn('users', 'payroll_member_id');
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => ['required', 'email', Rule::unique('users')->ignore($user->id)],
@@ -106,23 +146,39 @@ class UserManagementController extends Controller
             'role' => ['required', Rule::in(User::ROLES)],
             'can_confirm_payments' => 'nullable|boolean',
             'can_edit_mutations' => 'nullable|boolean',
+            'is_employee' => $hasEmployeeFields ? 'nullable|boolean' : 'nullable',
+            'payroll_member_id' => $hasEmployeeFields ? 'nullable|integer|exists:payroll_members,id' : 'nullable',
         ]);
+
+        $isEmployee = $hasEmployeeFields ? (bool) ($validated['is_employee'] ?? false) : false;
+        $payrollMemberId = $hasEmployeeFields ? ($validated['payroll_member_id'] ?? null) : null;
+        if ($hasEmployeeFields && $isEmployee && empty($payrollMemberId)) {
+            return response()->json(['message' => 'Pilih teknisi payroll jika akun ditandai sebagai karyawan.'], 422);
+        }
 
         $user->name = $validated['name'];
         $user->email = $validated['email'];
         $user->role = $validated['role'];
         $user->can_confirm_payments = (bool) ($validated['can_confirm_payments'] ?? false);
         $user->can_edit_mutations = (bool) ($validated['can_edit_mutations'] ?? false);
+        if ($hasEmployeeFields) {
+            $user->is_employee = $isEmployee;
+            $user->payroll_member_id = $isEmployee ? $payrollMemberId : null;
+        }
 
         if (!empty($validated['password'])) {
             $user->password = Hash::make($validated['password']);
         }
 
         $user->save();
+        $user->loadMissing('payrollMember:id,nama');
 
         return response()->json([
             'message' => 'Akun berhasil diperbarui.',
-            'data' => $user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'created_at'),
+            'data' => [
+                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'is_employee', 'payroll_member_id', 'created_at'),
+                'payroll_member_name' => $user->payrollMember?->nama,
+            ],
         ]);
     }
 
