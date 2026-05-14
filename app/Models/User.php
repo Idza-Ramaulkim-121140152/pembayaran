@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use App\Models\PayrollMember;
+use App\Models\AccessGroup;
+use App\Models\UserPermissionRule;
 
 class User extends Authenticatable
 {
@@ -105,5 +107,15 @@ class User extends Authenticatable
     public function canEditMutations(): bool
     {
         return $this->isSuperAdmin() || (bool) $this->can_edit_mutations;
+    }
+
+    public function accessGroups()
+    {
+        return $this->belongsToMany(AccessGroup::class, 'group_user_memberships')->withTimestamps();
+    }
+
+    public function permissionRules()
+    {
+        return $this->hasMany(UserPermissionRule::class);
     }
 }

@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import { HOME_ROUTER_OPTIONS, getHomeRouterPreset } from '../../constants/homeRouterPresets';
-import odpService from '../../services/odpService';
 
 const DEFAULT_FORM_DATA = {
     google_sheets_timestamp: '',
@@ -53,7 +52,6 @@ function CustomerVerificationForm() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
-    const [odpList, setOdpList] = useState([]);
     const [packageList, setPackageList] = useState([]);
     const [gettingLocation, setGettingLocation] = useState(false);
     const [sheetsReference, setSheetsReference] = useState(null);
@@ -65,6 +63,12 @@ function CustomerVerificationForm() {
     const [kecamatanOptions, setKecamatanOptions] = useState([]);
     const [desaOptions, setDesaOptions] = useState([]);
     const [dusunOptions, setDusunOptions] = useState([]);
+    const [odpList, setOdpList] = useState([]);
+    const [odpLoading, setOdpLoading] = useState(false);
+    const [odpScope, setOdpScope] = useState('dusun');
+    const [odpDropdownOpen, setOdpDropdownOpen] = useState(false);
+    const [odpSearch, setOdpSearch] = useState('');
+    const [showExpandOdp, setShowExpandOdp] = useState(false);
     const [installInventoryOptions, setInstallInventoryOptions] = useState({
         all_items: [],
         router_items: [],
@@ -85,14 +89,54 @@ function CustomerVerificationForm() {
         ? installInventoryOptions.cable_items
         : installInventoryOptions.all_items;
 
+    const odpDropdownRef = useRef(null);
+    const odpListContainerRef = useRef(null);
+
     useEffect(() => {
-        fetchOdpList();
         fetchPackageList();
         fetchPayrollMembers();
         fetchInstallInventoryOptions();
         fetchKecamatanOptions();
         fetchCustomerData();
     }, [timestamp]);
+
+    useEffect(() => {
+        if (!formData.desa_id || !formData.dusun_id) {
+            setOdpList([]);
+            setOdpScope('dusun');
+            setShowExpandOdp(false);
+            setFormData((prev) => ({ ...prev, odp: '' }));
+            return;
+        }
+
+        fetchOdpOptions('dusun');
+    }, [formData.desa_id, formData.dusun_id]);
+
+    useEffect(() => {
+        const handler = (event) => {
+            if (odpDropdownRef.current && !odpDropdownRef.current.contains(event.target)) {
+                setOdpDropdownOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    useEffect(() => {
+        if (!odpDropdownOpen || odpScope !== 'dusun' || odpLoading) {
+            return;
+        }
+
+        const el = odpListContainerRef.current;
+        if (!el) {
+            return;
+        }
+
+        if (el.scrollHeight <= el.clientHeight) {
+            setShowExpandOdp(true);
+        }
+    }, [odpDropdownOpen, odpScope, odpLoading, odpList]);
 
     useEffect(() => {
         if (!formData.kecamatan_id) {
@@ -185,14 +229,57 @@ function CustomerVerificationForm() {
         }
     };
 
-    const fetchOdpList = async () => {
+    const fetchOdpOptions = async (scope = 'dusun') => {
         try {
-            const response = await odpService.getAll();
-            setOdpList(response.data.data || []);
+            setOdpLoading(true);
+            setShowExpandOdp(false);
+            const url = `/api/customer-verification/odps/options?desa_id=${encodeURIComponent(formData.desa_id)}&dusun_id=${encodeURIComponent(formData.dusun_id)}&scope=${scope}`;
+            const response = await fetch(url, {
+                headers: {
+                    'Accept': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            if (!response.ok) {
+                throw new Error('Gagal memuat opsi ODP');
+            }
+
+            const data = await response.json();
+            setOdpList(data.data || []);
+            setOdpScope(data?.meta?.scope || scope);
         } catch (err) {
-            console.error('Failed to load ODP list', err);
+            console.error('Failed to load ODP options', err);
+            setOdpList([]);
+        } finally {
+            setOdpLoading(false);
         }
     };
+
+    const filteredOdpOptions = useMemo(() => {
+        const keyword = odpSearch.trim().toLowerCase();
+        if (keyword === '') {
+            return odpList;
+        }
+
+        return odpList.filter((item) =>
+            (item.nama || '').toLowerCase().includes(keyword)
+            || (item.alamat_detail || '').toLowerCase().includes(keyword)
+        );
+    }, [odpList, odpSearch]);
+
+    const selectedOdpLabel = useMemo(() => {
+        if (!formData.odp) {
+            return 'Pilih ODP';
+        }
+
+        const found = odpList.find((item) => item.nama === formData.odp);
+        if (!found) {
+            return formData.odp;
+        }
+
+        return `${found.nama}${found.rasio_distribusi ? ` (${found.rasio_distribusi})` : ''}`;
+    }, [formData.odp, odpList]);
 
     const fetchPayrollMembers = async () => {
         try {
@@ -461,6 +548,25 @@ function CustomerVerificationForm() {
         });
     };
 
+    const handleOdpListScroll = (event) => {
+        if (odpScope !== 'dusun') {
+            return;
+        }
+
+        const element = event.currentTarget;
+        const reachedBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
+        setShowExpandOdp(reachedBottom);
+    };
+
+    const handleExpandOdp = async () => {
+        await fetchOdpOptions('desa');
+    };
+
+    const selectOdp = (odpName) => {
+        setFormData((prev) => ({ ...prev, odp: odpName }));
+        setOdpDropdownOpen(false);
+    };
+
     const getCurrentLocation = () => {
         if (!navigator.geolocation) {
             setError('Geolocation tidak didukung oleh browser Anda');
@@ -575,10 +681,10 @@ function CustomerVerificationForm() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
-            <div className="max-w-4xl mx-auto">
+        <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8 overflow-x-hidden">
+            <div className="max-w-4xl mx-auto min-w-0">
                 {/* Header */}
-                <div className="mb-6">
+                <div className="app-section-header mb-6">
                     <button
                         onClick={() => navigate('/customer-verification')}
                         className="flex items-center text-blue-600 hover:text-blue-700 mb-4"
@@ -625,7 +731,7 @@ function CustomerVerificationForm() {
                                                 href={sheetsReference.photo_ktp_url} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
-                                                className="text-blue-600 hover:underline flex items-center gap-1"
+                                                className="text-blue-600 hover:underline flex items-center gap-1 break-all"
                                             >
                                                 Lihat Foto KTP <ExternalLink size={14} />
                                             </a>
@@ -637,7 +743,7 @@ function CustomerVerificationForm() {
                                                 href={sheetsReference.photo_front_url} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
-                                                className="text-blue-600 hover:underline flex items-center gap-1"
+                                                className="text-blue-600 hover:underline flex items-center gap-1 break-all"
                                             >
                                                 Lihat Foto Depan <ExternalLink size={14} />
                                             </a>
@@ -649,7 +755,7 @@ function CustomerVerificationForm() {
                                                 href={sheetsReference.photo_modem_url} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
-                                                className="text-blue-600 hover:underline flex items-center gap-1"
+                                                className="text-blue-600 hover:underline flex items-center gap-1 break-all"
                                             >
                                                 Lihat Foto Modem <ExternalLink size={14} />
                                             </a>
@@ -661,7 +767,7 @@ function CustomerVerificationForm() {
                                                 href={sheetsReference.photo_opm_url} 
                                                 target="_blank" 
                                                 rel="noopener noreferrer"
-                                                className="text-blue-600 hover:underline flex items-center gap-1"
+                                                className="text-blue-600 hover:underline flex items-center gap-1 break-all"
                                             >
                                                 Lihat Foto OPM <ExternalLink size={14} />
                                             </a>
@@ -674,7 +780,7 @@ function CustomerVerificationForm() {
                 )}
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-sm p-6 space-y-8">
+                <form onSubmit={handleSubmit} className="app-card p-6 space-y-8 min-w-0 overflow-hidden">
                     {/* Personal Information */}
                     <div>
                         <h2 className="text-xl font-bold text-gray-900 mb-4">Informasi Pribadi</h2>
@@ -855,19 +961,70 @@ function CustomerVerificationForm() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                     ODP
                                 </label>
-                                <select
-                                    name="odp"
-                                    value={formData.odp}
-                                    onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                >
-                                    <option value="">Pilih ODP</option>
-                                    {odpList.map((odp) => (
-                                        <option key={odp.id} value={odp.nama}>
-                                            {odp.nama} {odp.rasio_distribusi ? `(${odp.rasio_distribusi})` : ''}
-                                        </option>
-                                    ))}
-                                </select>
+                                <div ref={odpDropdownRef} className="relative">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOdpDropdownOpen((prev) => !prev)}
+                                        disabled={!formData.desa_id || !formData.dusun_id}
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg text-left focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500"
+                                    >
+                                        {selectedOdpLabel}
+                                    </button>
+                                    {odpDropdownOpen && (
+                                        <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                                            <div className="p-2 border-b border-gray-100">
+                                                <input
+                                                    type="text"
+                                                    value={odpSearch}
+                                                    onChange={(e) => setOdpSearch(e.target.value)}
+                                                    placeholder="Cari ODP..."
+                                                    className="w-full px-3 py-2 border border-gray-200 rounded-md text-sm"
+                                                />
+                                            </div>
+                                            <div
+                                                ref={odpListContainerRef}
+                                                className="max-h-52 overflow-y-auto"
+                                                onScroll={handleOdpListScroll}
+                                            >
+                                                {odpLoading ? (
+                                                    <div className="px-3 py-3 text-sm text-gray-500">Memuat ODP...</div>
+                                                ) : filteredOdpOptions.length === 0 ? (
+                                                    <div className="px-3 py-3 text-sm text-gray-500">Tidak ada ODP sesuai wilayah.</div>
+                                                ) : (
+                                                    filteredOdpOptions.map((odp) => (
+                                                        <button
+                                                            key={odp.id}
+                                                            type="button"
+                                                            onClick={() => selectOdp(odp.nama)}
+                                                            className="block w-full px-3 py-2 text-left text-sm hover:bg-blue-50"
+                                                        >
+                                                            <div className="font-medium text-gray-900">
+                                                                {odp.nama} {odp.rasio_distribusi ? `(${odp.rasio_distribusi})` : ''}
+                                                            </div>
+                                                            {odp.alamat_detail && (
+                                                                <div className="text-xs text-gray-500 truncate">{odp.alamat_detail}</div>
+                                                            )}
+                                                        </button>
+                                                    ))
+                                                )}
+                                            </div>
+                                            {odpScope === 'dusun' && showExpandOdp && (
+                                                <div className="border-t border-gray-100 p-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleExpandOdp}
+                                                        className="w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
+                                                    >
+                                                        Tampilkan lebih lengkap (semua ODP di desa)
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Default menampilkan ODP di dusun terpilih. Scroll ke bawah untuk opsi desa lengkap.
+                                </p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">

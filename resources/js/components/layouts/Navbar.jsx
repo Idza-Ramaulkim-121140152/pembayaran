@@ -1,8 +1,34 @@
-import { useState, useEffect, useRef } from 'react';
-import { Menu, X, ChevronDown, User, Settings, LogOut, MapPin, CreditCard, Megaphone, MessageSquare, AlertTriangle, Send, Activity, Package, Shield, Users, Wallet, GitBranch, FileText, Brain, Target } from 'lucide-react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+    Menu,
+    X,
+    ChevronDown,
+    User,
+    LogOut,
+    MapPin,
+    CreditCard,
+    Megaphone,
+    MessageSquare,
+    AlertTriangle,
+    Send,
+    Activity,
+    Package,
+    Shield,
+    Users,
+    Wallet,
+    GitBranch,
+    FileText,
+    Brain,
+    Target,
+    Home,
+    Settings2,
+    FolderKanban,
+    Wrench,
+    ClipboardList,
+} from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import accessControlService from '../../services/accessControlService';
 
-// Role-based access: which roles can see each menu
 const ACCESS = {
     dashboard: ['superadmin', 'admin', 'teknisi', 'finance'],
     dashboardPrediction: ['superadmin', 'admin', 'finance'],
@@ -15,7 +41,9 @@ const ACCESS = {
     payroll: ['superadmin', 'admin', 'finance'],
     mutasi: ['superadmin', 'admin', 'finance'],
     odp: ['superadmin', 'admin', 'teknisi'],
+    odpMapping: ['superadmin', 'admin', 'teknisi'],
     distributionRoute: ['superadmin', 'admin', 'teknisi'],
+    installation: ['superadmin', 'admin', 'teknisi'],
     monitoring: ['superadmin', 'admin', 'teknisi'],
     monitoringMaps: ['superadmin', 'admin', 'teknisi'],
     isolir: ['superadmin', 'admin', 'teknisi'],
@@ -26,430 +54,358 @@ const ACCESS = {
     paymentReceipts: ['superadmin', 'admin', 'finance'],
     masterData: ['superadmin', 'admin', 'finance'],
     masterWilayah: ['superadmin', 'admin'],
+    masterMikrotik: ['superadmin', 'admin'],
     packages: ['superadmin', 'admin'],
     promo: ['superadmin', 'admin'],
     userManagement: ['superadmin'],
     invoiceManagement: ['superadmin'],
     financialTargets: ['superadmin'],
+    accessPolicyMaster: ['superadmin'],
     profile: ['superadmin', 'admin', 'teknisi', 'finance'],
 };
 
+const MENU_PERMISSION_MAP = {
+    dashboard: 'dashboard.view',
+    dashboardPrediction: 'dashboard.prediction.view',
+    penagihan: 'billing.invoice.view',
+    pelanggan: 'customer.view',
+    verifikasi: 'customer.verification',
+    inventory: 'inventory.view',
+    inventoryMaster: 'inventory.master.manage',
+    pengeluaran: 'finance.expense.manage',
+    payroll: 'payroll.view',
+    mutasi: 'finance.mutation.view',
+    odp: 'odp.view',
+    odpMapping: 'odp.mapping.view',
+    distributionRoute: 'odp.mapping.view',
+    installation: 'installation.view',
+    monitoring: 'monitoring.view',
+    monitoringMaps: 'monitoring.maps.view',
+    isolir: 'isolir.view',
+    complaints: 'complaint.view',
+    networkNotices: 'master.network_notice.manage',
+    waNotification: 'master.network_notice.manage',
+    paymentMethods: 'master.payment.manage',
+    paymentReceipts: 'master.payment.manage',
+    masterData: 'masterdata.view',
+    masterWilayah: 'master.wilayah.manage',
+    masterMikrotik: 'master.mikrotik.manage',
+    packages: 'master.package.manage',
+    promo: 'master.promo.manage',
+    userManagement: 'user.manage',
+    invoiceManagement: 'billing.invoice.manage',
+    financialTargets: 'financial_target.manage',
+    accessPolicyMaster: 'access_policy.manage',
+    profile: 'dashboard.view',
+};
+
+const MENU_GROUPS = [
+    {
+        key: 'operasional',
+        label: 'Operasional',
+        icon: Wrench,
+        items: [
+            { key: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: Home, match: (p) => p === '/dashboard' },
+            { key: 'dashboardPrediction', label: 'Prediksi', to: '/dashboard/prediksi', icon: Brain, match: (p) => p === '/dashboard/prediksi' },
+            { key: 'pelanggan', label: 'Pelanggan', to: '/customers', icon: Users, match: (p) => p.startsWith('/customers') || p.startsWith('/pelanggan') },
+            { key: 'verifikasi', label: 'Verifikasi', to: '/customer-verification', icon: ClipboardList, match: (p) => p.startsWith('/customer-verification') },
+            { key: 'odpMapping', label: 'Pemetaan ODP', to: '/odp-mapping', icon: MapPin, match: (p) => p.startsWith('/odp-mapping') },
+            { key: 'odp', label: 'Kelola ODP', to: '/odp', icon: FolderKanban, match: (p) => p.startsWith('/odp') && !p.startsWith('/odp-mapping') },
+            { key: 'distributionRoute', label: 'Jalur Distribusi', to: '/jalur-distribusi', icon: GitBranch, match: (p) => p.startsWith('/jalur-distribusi') },
+            { key: 'installation', label: 'Instalasi', to: '/instalasi', icon: Settings2, match: (p) => p.startsWith('/instalasi') },
+            { key: 'complaints', label: 'Aduan', to: '/complaints', icon: MessageSquare, match: (p) => p.startsWith('/complaints') || p.startsWith('/aduan') },
+            { key: 'monitoring', label: 'Monitoring', to: '/monitoring', icon: Activity, match: (p) => p === '/monitoring' },
+            { key: 'monitoringMaps', label: 'Monitoring Maps', to: '/monitoring-maps', icon: MapPin, match: (p) => p === '/monitoring-maps' },
+            { key: 'isolir', label: 'Isolir', to: '/isolir', icon: AlertTriangle, match: (p) => p.startsWith('/isolir') },
+        ],
+    },
+    {
+        key: 'keuangan',
+        label: 'Keuangan',
+        icon: Wallet,
+        items: [
+            { key: 'penagihan', label: 'Penagihan', to: '/penagihan', icon: CreditCard, match: (p) => p.startsWith('/penagihan') || p.startsWith('/billing') },
+            { key: 'pengeluaran', label: 'Pengeluaran', to: '/pengeluaran', icon: Wallet, match: (p) => p.startsWith('/pengeluaran') },
+            { key: 'payroll', label: 'Payroll', to: '/payroll', icon: Users, match: (p) => p.startsWith('/payroll') },
+            { key: 'mutasi', label: 'Mutasi', to: '/mutasi', icon: FileText, match: (p) => p.startsWith('/mutasi') },
+            { key: 'inventory', label: 'Inventori', to: '/inventori', icon: Package, match: (p) => p === '/inventori' },
+            { key: 'inventoryMaster', label: 'Master Inventori', to: '/inventori/master', icon: Package, match: (p) => p.startsWith('/inventori/master') },
+        ],
+    },
+    {
+        key: 'master',
+        label: 'Master',
+        icon: FolderKanban,
+        items: [
+            { key: 'masterData', label: 'Master Data', to: '/settings/master-data', icon: Settings2, match: (p) => p === '/settings/master-data' },
+            { key: 'paymentMethods', label: 'Metode Pembayaran', to: '/settings/payment-methods', icon: CreditCard, match: (p) => p === '/settings/payment-methods' },
+            { key: 'paymentReceipts', label: 'Receipt Pembayaran', to: '/settings/payment-receipts', icon: CreditCard, match: (p) => p === '/settings/payment-receipts' },
+            { key: 'packages', label: 'Paket Internet', to: '/settings/packages', icon: Package, match: (p) => p === '/settings/packages' },
+            { key: 'promo', label: 'Promosi', to: '/settings/promo', icon: Megaphone, match: (p) => p === '/settings/promo' },
+            { key: 'masterWilayah', label: 'Master Wilayah', to: '/settings/master-wilayah', icon: MapPin, match: (p) => p === '/settings/master-wilayah' },
+            { key: 'masterMikrotik', label: 'Master Mikrotik', to: '/settings/master-mikrotik', icon: Activity, match: (p) => p === '/settings/master-mikrotik' },
+            { key: 'networkNotices', label: 'Info Gangguan', to: '/settings/network-notices', icon: AlertTriangle, match: (p) => p === '/settings/network-notices' },
+            { key: 'waNotification', label: 'Notifikasi WA', to: '/settings/send-notification', icon: Send, match: (p) => p === '/settings/send-notification' },
+        ],
+    },
+    {
+        key: 'sistem',
+        label: 'Sistem',
+        icon: Shield,
+        items: [
+            { key: 'profile', label: 'Profil Saya', to: '/profile', icon: User, match: (p) => p === '/profile' },
+            { key: 'userManagement', label: 'Kelola Akun', to: '/settings/users', icon: Users, match: (p) => p === '/settings/users' },
+            { key: 'invoiceManagement', label: 'Manajemen Invoice', to: '/settings/invoice-management', icon: FileText, match: (p) => p === '/settings/invoice-management' },
+            { key: 'financialTargets', label: 'Target Keuangan', to: '/settings/financial-targets', icon: Target, match: (p) => p === '/settings/financial-targets' },
+            { key: 'accessPolicyMaster', label: 'Akses & Policy', to: '/settings/access-policy', icon: Shield, match: (p) => p === '/settings/access-policy' },
+        ],
+    },
+];
+
 function can(menu) {
     const role = window.appUserRole || 'admin';
+    const permissionKey = MENU_PERMISSION_MAP[menu];
+
+    if (permissionKey && window.appCapabilities && Object.prototype.hasOwnProperty.call(window.appCapabilities, permissionKey)) {
+        return !!window.appCapabilities[permissionKey];
+    }
+
     return ACCESS[menu]?.includes(role) ?? false;
 }
 
-export function Navbar() {
-    const [isOpen, setIsOpen] = useState(false);
+function Navbar() {
+    const location = useLocation();
+    const [isMobileOpen, setIsMobileOpen] = useState(false);
+    const [openDesktopGroup, setOpenDesktopGroup] = useState(null);
+    const [openMobileGroups, setOpenMobileGroups] = useState({});
     const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [capVersion, setCapVersion] = useState(0);
     const [userName, setUserName] = useState('User');
     const [userRole, setUserRole] = useState('');
-    const location = useLocation();
-    const dropdownRef = useRef(null);
+    const navRef = useRef(null);
+    const profileRef = useRef(null);
 
     useEffect(() => {
-        let name = 'User';
-        
-        if (typeof window !== 'undefined' && window.appUser) {
-            name = window.appUser;
-        } else if (typeof localStorage !== 'undefined') {
-            const stored = localStorage.getItem('appUserName');
-            if (stored) name = stored;
-        }
-        
-        if (name === 'User') {
-            const metaName = document.querySelector('meta[name="user-name"]');
-            if (metaName) {
-                name = metaName.getAttribute('content');
-            }
-        }
-        
-        setUserName(name);
+        setUserName(window.appUser || localStorage.getItem('appUserName') || 'User');
         setUserRole(window.appUserRole || 'admin');
     }, []);
 
     useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        let mounted = true;
+        accessControlService.me()
+            .then((response) => {
+                if (!mounted) return;
+                window.appCapabilities = response?.data?.data?.capabilities || {};
+                setCapVersion((prev) => prev + 1);
+            })
+            .catch(() => {});
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    useEffect(() => {
+        const handleOutside = (event) => {
+            if (navRef.current && !navRef.current.contains(event.target)) {
+                setOpenDesktopGroup(null);
+            }
+            if (profileRef.current && !profileRef.current.contains(event.target)) {
                 setIsProfileOpen(false);
             }
         };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
+
+        document.addEventListener('mousedown', handleOutside);
+        return () => document.removeEventListener('mousedown', handleOutside);
     }, []);
 
-    const isActive = (path) => {
-        if (path === '/dashboard') return location.pathname === '/dashboard';
-        if (path === '/dashboard/prediksi') return location.pathname === '/dashboard/prediksi';
-        if (path === '/customers') return location.pathname === '/customers';
-        if (path === '/customers/create') return location.pathname === '/customers/create';
-        if (path === '/odp') return location.pathname.startsWith('/odp');
-        if (path === '/jalur-distribusi') return location.pathname.startsWith('/jalur-distribusi');
-        if (path === '/inventori') return location.pathname === '/inventori';
-        if (path === '/inventori/master') return location.pathname === '/inventori/master';
-        if (path === '/pengeluaran') return location.pathname.startsWith('/pengeluaran');
-        if (path === '/payroll') return location.pathname.startsWith('/payroll');
-        if (path === '/mutasi') return location.pathname.startsWith('/mutasi');
-        if (path === '/complaints') return location.pathname.startsWith('/complaints') || location.pathname.startsWith('/aduan');
-        if (path === '/monitoring') return location.pathname === '/monitoring';
-        if (path === '/monitoring-maps') return location.pathname === '/monitoring-maps';
-        if (path === '/isolir') return location.pathname.startsWith('/isolir');
-        if (path === '/profile') return location.pathname === '/profile';
-        if (path === '/settings/payment-methods') return location.pathname === '/settings/payment-methods';
-        if (path === '/settings/payment-receipts') return location.pathname === '/settings/payment-receipts';
-        if (path === '/settings/master-data') return location.pathname === '/settings/master-data';
-        if (path === '/settings/master-wilayah') return location.pathname === '/settings/master-wilayah';
-        if (path === '/settings/packages') return location.pathname === '/settings/packages';
-        if (path === '/settings/promo') return location.pathname === '/settings/promo';
-        if (path === '/settings/invoice-management') return location.pathname === '/settings/invoice-management';
-        if (path === '/settings/financial-targets') return location.pathname === '/settings/financial-targets';
-        if (path === '/settings/network-notices') return location.pathname === '/settings/network-notices';
-        if (path === '/settings/send-notification') return location.pathname === '/settings/send-notification';
-        if (path === '/settings/users') return location.pathname === '/settings/users';
-        return false;
-    };
+    const groupedMenus = useMemo(() => {
+        return MENU_GROUPS.map((group) => ({
+            ...group,
+            items: group.items.filter((item) => can(item.key)),
+        })).filter((group) => group.items.length > 0);
+    }, [location.pathname, capVersion]);
 
-    const ROLE_LABELS = {
+    const isItemActive = (item) => (item.match ? item.match(location.pathname) : location.pathname === item.to);
+
+    const activeGroupKey = useMemo(() => {
+        for (const group of groupedMenus) {
+            if (group.items.some((item) => isItemActive(item))) {
+                return group.key;
+            }
+        }
+        return null;
+    }, [groupedMenus, location.pathname]);
+
+    const roleLabel = {
         superadmin: 'Super Admin',
         admin: 'Administrator',
         teknisi: 'Teknisi',
         finance: 'Finance',
+    }[userRole] || 'User';
+
+    const toggleMobileGroup = (groupKey) => {
+        setOpenMobileGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
     };
 
-    const roleLabel = ROLE_LABELS[userRole] || 'User';
-
     return (
-        <nav className="bg-white shadow-md sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-4">
-                <div className="flex justify-between items-center h-16">
-                    {/* Logo */}
-                    <div className="flex items-center gap-3">
-                        <Link to="/dashboard" className="flex items-center gap-2">
-                            <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-10 w-auto" />
-                            <span className="font-bold text-lg text-gray-800 hidden sm:inline">Rumah Kita Net</span>
-                        </Link>
+        <nav className="sticky top-0 z-50 border-b border-[var(--app-border)] bg-white/90 backdrop-blur-xl shadow-[0_8px_24px_rgba(15,23,42,0.08)]" ref={navRef}>
+            <div className="max-w-[1400px] mx-auto px-4 md:px-6">
+                <div className="h-16 flex items-center justify-between gap-4">
+                    <Link to="/dashboard" className="flex items-center gap-2 min-w-0">
+                        <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-9 w-auto" />
+                        <div className="min-w-0 hidden sm:block">
+                            <p className="font-bold text-slate-800 truncate">Rumah Kita Net</p>
+                            <p className="text-xs text-slate-500 truncate">ISP Management Console</p>
+                        </div>
+                    </Link>
+
+                    <div className="hidden lg:flex items-center gap-2">
+                        {groupedMenus.map((group) => {
+                            const Icon = group.icon;
+                            const isOpen = openDesktopGroup === group.key;
+                            const isActive = activeGroupKey === group.key;
+                            return (
+                                <div key={group.key} className="relative">
+                                    <button
+                                        type="button"
+                                        onClick={() => setOpenDesktopGroup((prev) => (prev === group.key ? null : group.key))}
+                                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                                            isOpen || isActive
+                                                ? 'bg-[var(--app-primary-soft)] text-[var(--app-primary)] shadow-sm'
+                                                : 'text-slate-700 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        <Icon size={16} />
+                                        <span>{group.label}</span>
+                                        <ChevronDown size={15} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                    </button>
+
+                                    {isOpen && (
+                                        <div className="absolute right-0 mt-2 min-w-[260px] rounded-2xl border border-[var(--app-border)] bg-white shadow-2xl p-2 animate-[fadeIn_.18s_ease-out]">
+                                            {group.items.map((item) => {
+                                                const ItemIcon = item.icon;
+                                                const active = isItemActive(item);
+                                                return (
+                                                    <Link
+                                                        key={item.key}
+                                                        to={item.to}
+                                                        onClick={() => setOpenDesktopGroup(null)}
+                                                        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition ${
+                                                            active
+                                                                ? 'bg-[var(--app-primary-soft)] text-[var(--app-primary)] font-semibold'
+                                                                : 'text-slate-700 hover:bg-slate-100'
+                                                        }`}
+                                                    >
+                                                        <ItemIcon size={16} />
+                                                        <span className="truncate">{item.label}</span>
+                                                    </Link>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
 
-                    {/* Desktop Menu */}
-                    <div className="hidden md:flex items-center gap-5">
-                        {can('dashboard') && (
-                            <Link to="/dashboard" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/dashboard') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-4 7 4M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-                                <span>Dashboard</span>
-                            </Link>
-                        )}
-                        {can('dashboardPrediction') && (
-                            <Link to="/dashboard/prediksi" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/dashboard/prediksi') ? 'text-indigo-600 bg-indigo-50 font-semibold' : 'text-gray-700 hover:text-indigo-600 hover:bg-gray-50'}`}>
-                                <Brain size={18} />
-                                <span>Prediksi</span>
-                            </Link>
-                        )}
-                        {can('penagihan') && (
-                            <Link to="/penagihan" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${location.pathname.startsWith('/penagihan') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Penagihan</span>
-                            </Link>
-                        )}
-                        {can('pelanggan') && (
-                            <Link to="/customers" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/customers') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Pelanggan</span>
-                            </Link>
-                        )}
-                        {can('verifikasi') && (
-                            <Link to="/customer-verification" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${location.pathname.startsWith('/customer-verification') ? 'text-green-600 bg-green-50 font-semibold' : 'text-gray-700 hover:text-green-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                <span>Verifikasi</span>
-                            </Link>
-                        )}
-                        {can('inventory') && (
-                            <Link to="/inventori" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/inventori') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <Package size={18} />
-                                <span>Inventori</span>
-                            </Link>
-                        )}
-                        {can('pengeluaran') && (
-                            <Link to="/pengeluaran" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/pengeluaran') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/></svg>
-                                <span>Pengeluaran</span>
-                            </Link>
-                        )}
-                        {can('payroll') && (
-                            <Link to="/payroll" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/payroll') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Payroll</span>
-                            </Link>
-                        )}
-                        {can('mutasi') && (
-                            <Link to="/mutasi" className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isActive('/mutasi') ? 'text-blue-600 bg-blue-50 font-semibold' : 'text-gray-700 hover:text-blue-600 hover:bg-gray-50'}`}>
-                                <Wallet size={18} />
-                                <span>Mutasi</span>
-                            </Link>
-                        )}
-                    </div>
-
-                    {/* Profile Dropdown */}
-                    <div className="hidden md:flex items-center" ref={dropdownRef}>
+                    <div className="hidden lg:flex items-center" ref={profileRef}>
                         <div className="relative">
                             <button
-                                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition ${isProfileOpen ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
+                                onClick={() => setIsProfileOpen((prev) => !prev)}
+                                className="flex items-center gap-2 rounded-xl px-3 py-2 hover:bg-slate-100 transition"
                             >
-                                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                                    {userName.charAt(0).toUpperCase()}
+                                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 text-white text-sm font-semibold grid place-items-center">
+                                    {(userName || 'U').charAt(0).toUpperCase()}
                                 </div>
-                                <span className="text-gray-700 font-medium">{userName}</span>
-                                <ChevronDown size={16} className={`text-gray-500 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+                                <div className="text-left">
+                                    <p className="text-sm font-semibold text-slate-800 leading-none max-w-[130px] truncate">{userName}</p>
+                                    <p className="text-[11px] text-slate-500 leading-none mt-1">{roleLabel}</p>
+                                </div>
+                                <ChevronDown size={15} className={`text-slate-500 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
                             </button>
-                            
+
                             {isProfileOpen && (
-                                <div className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-50 max-h-[80vh] overflow-y-auto">
-                                    <div className="px-4 py-2 border-b border-gray-100">
-                                        <p className="text-sm font-medium text-gray-900">{userName}</p>
-                                        <p className="text-xs text-gray-500">{roleLabel}</p>
-                                    </div>
-                                    
-                                    <div className="py-1">
-                                        {can('profile') && (
-                                            <Link to="/profile" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/profile') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <User size={18} />
-                                                <span>Profil Saya</span>
-                                            </Link>
-                                        )}
-                                        {can('userManagement') && (
-                                            <Link to="/settings/users" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/users') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Users size={18} />
-                                                <span>Kelola Akun</span>
-                                            </Link>
-                                        )}
-                                        {can('invoiceManagement') && (
-                                            <Link to="/settings/invoice-management" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/invoice-management') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <FileText size={18} />
-                                                <span>Manajemen Invoice</span>
-                                            </Link>
-                                        )}
-                                        {can('masterData') && (
-                                            <Link to="/settings/master-data" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/master-data') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Settings size={18} />
-                                                <span>Master Data</span>
-                                            </Link>
-                                        )}
-                                        {can('odp') && (
-                                            <Link to="/odp" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/odp') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <MapPin size={18} />
-                                                <span>Kelola ODP</span>
-                                            </Link>
-                                        )}
-                                        {can('distributionRoute') && (
-                                            <Link to="/jalur-distribusi" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <GitBranch size={18} />
-                                                <span>Jalur Distribusi</span>
-                                            </Link>
-                                        )}
-                                        {can('complaints') && (
-                                            <Link to="/complaints" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/complaints') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <MessageSquare size={18} />
-                                                <span>Aduan Pelanggan</span>
-                                            </Link>
-                                        )}
-                                        {can('monitoring') && (
-                                            <Link to="/monitoring" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/monitoring') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Activity size={18} />
-                                                <span>Monitoring</span>
-                                            </Link>
-                                        )}
-                                        {can('monitoringMaps') && (
-                                            <Link to="/monitoring-maps" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/monitoring-maps') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <MapPin size={18} />
-                                                <span>Monitoring Maps</span>
-                                            </Link>
-                                        )}
-                                        {can('isolir') && (
-                                            <Link to="/isolir" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/isolir') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <AlertTriangle size={18} />
-                                                <span>Isolir</span>
-                                            </Link>
-                                        )}
-                                        {can('networkNotices') && (
-                                            <Link to="/settings/network-notices" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/network-notices') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <AlertTriangle size={18} />
-                                                <span>Info Gangguan</span>
-                                            </Link>
-                                        )}
-                                        {can('waNotification') && (
-                                            <Link to="/settings/send-notification" onClick={() => setIsProfileOpen(false)} className={`flex items-center gap-3 px-4 py-2 text-sm transition ${isActive('/settings/send-notification') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                                <Send size={18} />
-                                                <span>Kirim Notifikasi WA</span>
-                                            </Link>
-                                        )}
-                                    </div>
-                                    
-                                    <div className="border-t border-gray-100 pt-1">
-                                        <form method="POST" action="/logout">
-                                            <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')} />
-                                            <button type="submit" className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition">
-                                                <LogOut size={18} />
-                                                <span>Keluar</span>
-                                            </button>
-                                        </form>
-                                    </div>
+                                <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-[var(--app-border)] bg-white shadow-2xl p-2 animate-[fadeIn_.18s_ease-out]">
+                                    {can('profile') && (
+                                        <Link to="/profile" onClick={() => setIsProfileOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-slate-700 hover:bg-slate-100">
+                                            <User size={16} /> Profil Saya
+                                        </Link>
+                                    )}
+                                    <form method="POST" action="/logout" className="pt-1 border-t border-slate-100 mt-1">
+                                        <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')} />
+                                        <button type="submit" className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm text-rose-600 hover:bg-rose-50">
+                                            <LogOut size={16} /> Keluar
+                                        </button>
+                                    </form>
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    {/* Mobile menu button */}
-                    <div className="md:hidden">
-                        <button onClick={() => setIsOpen(!isOpen)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                            {isOpen ? <X size={24} /> : <Menu size={24} />}
-                        </button>
-                    </div>
+                    <button
+                        type="button"
+                        className="lg:hidden h-10 w-10 grid place-items-center rounded-xl border border-slate-200 text-slate-700"
+                        onClick={() => setIsMobileOpen((prev) => !prev)}
+                    >
+                        {isMobileOpen ? <X size={20} /> : <Menu size={20} />}
+                    </button>
                 </div>
             </div>
 
-            {/* Mobile Menu */}
-            {isOpen && (
-                <div className="md:hidden bg-white border-t border-gray-200">
-                    <div className="p-3 space-y-1">
-                        {can('dashboard') && (
-                            <Link to="/dashboard" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/dashboard') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-4 7 4M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-                                <span>Dashboard</span>
-                            </Link>
-                        )}
-                        {can('dashboardPrediction') && (
-                            <Link to="/dashboard/prediksi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/dashboard/prediksi') ? 'text-indigo-600 bg-indigo-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <Brain size={20} />
-                                <span>Prediksi</span>
-                            </Link>
-                        )}
-                        {can('penagihan') && (
-                            <Link to="/penagihan" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${location.pathname.startsWith('/penagihan') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Penagihan</span>
-                            </Link>
-                        )}
-                        {can('pelanggan') && (
-                            <Link to="/customers" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/customers') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Pelanggan</span>
-                            </Link>
-                        )}
-                        {can('verifikasi') && (
-                            <Link to="/customer-verification" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${location.pathname.startsWith('/customer-verification') ? 'text-green-600 bg-green-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                                <span>Verifikasi Pelanggan</span>
-                            </Link>
-                        )}
-                        {can('inventory') && (
-                            <Link to="/inventori" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/inventori') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <Package size={20} />
-                                <span>Inventori</span>
-                            </Link>
-                        )}
-                        {can('pengeluaran') && (
-                            <Link to="/pengeluaran" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/pengeluaran') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/></svg>
-                                <span>Pengeluaran</span>
-                            </Link>
-                        )}
-                        {can('payroll') && (
-                            <Link to="/payroll" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/payroll') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                                <span>Payroll</span>
-                            </Link>
-                        )}
-                        {can('mutasi') && (
-                            <Link to="/mutasi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/mutasi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                <Wallet size={20} />
-                                <span>Mutasi</span>
-                            </Link>
-                        )}
-                        <div className="border-t border-gray-200 my-2 pt-2">
-                            <p className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase">Pengaturan</p>
-                            {can('profile') && (
-                                <Link to="/profile" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/profile') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <User size={20} />
-                                    <span>Profil Saya</span>
-                                </Link>
-                            )}
-                            {can('userManagement') && (
-                                <Link to="/settings/users" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/users') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Users size={20} />
-                                    <span>Kelola Akun</span>
-                                </Link>
-                            )}
-                            {can('invoiceManagement') && (
-                                <Link to="/settings/invoice-management" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/invoice-management') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <FileText size={20} />
-                                    <span>Manajemen Invoice</span>
-                                </Link>
-                            )}
-                            {can('masterData') && (
-                                <Link to="/settings/master-data" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/master-data') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Settings size={20} />
-                                    <span>Master Data</span>
-                                </Link>
-                            )}
-                            {can('odp') && (
-                                <Link to="/odp" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/odp') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <MapPin size={20} />
-                                    <span>Kelola ODP</span>
-                                </Link>
-                            )}
-                            {can('distributionRoute') && (
-                                <Link to="/jalur-distribusi" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/jalur-distribusi') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <GitBranch size={20} />
-                                    <span>Jalur Distribusi</span>
-                                </Link>
-                            )}
-                            {can('complaints') && (
-                                <Link to="/complaints" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/complaints') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <MessageSquare size={20} />
-                                    <span>Aduan Pelanggan</span>
-                                </Link>
-                            )}
-                            {can('monitoring') && (
-                                <Link to="/monitoring" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/monitoring') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Activity size={20} />
-                                    <span>Monitoring</span>
-                                </Link>
-                            )}
-                            {can('monitoringMaps') && (
-                                <Link to="/monitoring-maps" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/monitoring-maps') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <MapPin size={20} />
-                                    <span>Monitoring Maps</span>
-                                </Link>
-                            )}
-                            {can('isolir') && (
-                                <Link to="/isolir" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/isolir') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <AlertTriangle size={20} />
-                                    <span>Isolir</span>
-                                </Link>
-                            )}
-                            {can('networkNotices') && (
-                                <Link to="/settings/network-notices" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/network-notices') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <AlertTriangle size={20} />
-                                    <span>Info Gangguan</span>
-                                </Link>
-                            )}
-                            {can('waNotification') && (
-                                <Link to="/settings/send-notification" onClick={() => setIsOpen(false)} className={`flex items-center gap-3 px-4 py-3 rounded-lg ${isActive('/settings/send-notification') ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'}`}>
-                                    <Send size={20} />
-                                    <span>Kirim Notifikasi WA</span>
-                                </Link>
-                            )}
-                        </div>
-                        
-                        <div className="border-t border-gray-200 pt-2">
-                            <form method="POST" action="/logout">
-                                <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')} />
-                                <button type="submit" className="w-full flex items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-lg">
-                                    <LogOut size={20} />
-                                    <span>Keluar</span>
+            {isMobileOpen && (
+                <div className="lg:hidden border-t border-slate-200 bg-white/95 backdrop-blur px-4 py-4 space-y-3 max-h-[calc(100vh-64px)] overflow-y-auto">
+                    {groupedMenus.map((group) => {
+                        const Icon = group.icon;
+                        const isOpen = !!openMobileGroups[group.key];
+                        const isActive = activeGroupKey === group.key;
+                        return (
+                            <div key={group.key} className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+                                <button
+                                    type="button"
+                                    className={`w-full flex items-center justify-between px-3 py-2.5 ${isActive ? 'bg-[var(--app-primary-soft)] text-[var(--app-primary)]' : 'text-slate-800'}`}
+                                    onClick={() => toggleMobileGroup(group.key)}
+                                >
+                                    <span className="inline-flex items-center gap-2 font-semibold text-sm">
+                                        <Icon size={16} /> {group.label}
+                                    </span>
+                                    <ChevronDown size={16} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                                 </button>
-                            </form>
-                        </div>
+                                {isOpen && (
+                                    <div className="border-t border-slate-200 p-2 space-y-1">
+                                        {group.items.map((item) => {
+                                            const ItemIcon = item.icon;
+                                            const active = isItemActive(item);
+                                            return (
+                                                <Link
+                                                    key={item.key}
+                                                    to={item.to}
+                                                    onClick={() => setIsMobileOpen(false)}
+                                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${active ? 'bg-[var(--app-primary-soft)] text-[var(--app-primary)] font-semibold' : 'text-slate-700 hover:bg-slate-100'}`}
+                                                >
+                                                    <ItemIcon size={15} />
+                                                    <span>{item.label}</span>
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-2">
+                        {can('profile') && (
+                            <Link to="/profile" onClick={() => setIsMobileOpen(false)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-700 hover:bg-slate-100">
+                                <User size={15} /> Profil Saya
+                            </Link>
+                        )}
+                        <form method="POST" action="/logout" className="pt-2 mt-1 border-t border-slate-200">
+                            <input type="hidden" name="_token" value={document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')} />
+                            <button type="submit" className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-rose-600 hover:bg-rose-50">
+                                <LogOut size={15} /> Keluar
+                            </button>
+                        </form>
                     </div>
                 </div>
             )}

@@ -752,7 +752,7 @@ function DashboardPredictionPage() {
 
     if (isTeknisi) {
         return (
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
                 <div className="flex items-center gap-2 text-gray-700">
                     <Calendar size={16} />
                     <p className="text-sm">
@@ -769,8 +769,8 @@ function DashboardPredictionPage() {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+        <div className="space-y-6 min-w-0">
+            <div className="app-section-header flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Prediksi Multi-Aspek</h1>
                     <p className="text-gray-500 mt-1 flex items-center gap-2">
@@ -853,7 +853,7 @@ function DashboardPredictionPage() {
                 </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+            <div className="app-card p-6 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                     <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                         <Target size={18} className="text-amber-600" />
@@ -887,7 +887,7 @@ function DashboardPredictionPage() {
                 )}
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+            <div className="app-card p-6 space-y-5">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -1007,7 +1007,7 @@ function DashboardPredictionPage() {
                 )}
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+            <div className="app-card p-6 space-y-5">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -1157,7 +1157,7 @@ function DashboardPredictionPage() {
                 )}
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+            <div className="app-card p-6 space-y-5">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -1475,7 +1475,7 @@ function DashboardPredictionPage() {
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+                <div className="app-card p-6 space-y-5">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -1589,7 +1589,7 @@ function DashboardPredictionPage() {
                     )}
                 </div>
 
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
+                <div className="app-card p-6 space-y-5">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                             <Users size={18} className="text-teal-600" />
@@ -1678,7 +1678,7 @@ function DashboardPredictionPage() {
                 </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <div className="app-card p-6">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <AlertTriangle size={18} className="text-red-500" />
                     Ringkasan Risiko Cepat

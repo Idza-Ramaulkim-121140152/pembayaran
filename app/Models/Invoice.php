@@ -40,4 +40,9 @@ class Invoice extends Model
     {
         return $this->belongsTo(\App\Models\PaymentReceiptOption::class, 'received_via_payment_receipt_option_id');
     }
+
+    public function items()
+    {
+        return $this->hasMany(InvoiceItem::class);
+    }
 }

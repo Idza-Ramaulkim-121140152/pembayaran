@@ -338,9 +338,9 @@ function SendNotificationPage() {
     }
 
     return (
-        <div className="p-6">
+        <div className="p-4 sm:p-6 space-y-6 min-w-0">
             {/* Header */}
-            <div className="mb-6 flex items-center justify-between">
+            <div className="app-section-header mb-6 flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">Kirim Informasi Gangguan</h1>
                     <p className="text-gray-600">Kirim notifikasi gangguan ke pelanggan via WhatsApp</p>
@@ -420,7 +420,7 @@ function SendNotificationPage() {
                 {/* Left: Settings */}
                 <div className="lg:col-span-2 space-y-6">
                     {/* Select Notice */}
-                    <div className="bg-white rounded-xl shadow-sm border p-5">
+                    <div className="app-card p-5">
                         <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                             <AlertTriangle size={18} className="text-orange-500" />
                             Pilih Informasi Gangguan
@@ -496,7 +496,7 @@ function SendNotificationPage() {
                     </div>
 
                     {/* Select Mode */}
-                    <div className="bg-white rounded-xl shadow-sm border p-5">
+                    <div className="app-card p-5">
                         <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                             <Users size={18} className="text-orange-500" />
                             Pilih Penerima
@@ -641,7 +641,7 @@ function SendNotificationPage() {
                 {/* Right: Summary & Send */}
                 <div className="space-y-6">
                     {/* Summary */}
-                    <div className="bg-white rounded-xl shadow-sm border p-5">
+                    <div className="app-card p-5">
                         <h3 className="font-semibold text-gray-900 mb-4">Ringkasan</h3>
                         
                         <div className="space-y-3 text-sm">
@@ -994,8 +994,8 @@ function SendNotificationPage() {
                             ) : logs.length === 0 ? (
                                 <p className="text-center text-gray-500 py-8">Belum ada log pengiriman</p>
                             ) : (
-                                <div className="overflow-y-auto flex-1">
-                                    <table className="w-full text-sm">
+                                <div className="overflow-y-auto overflow-x-auto flex-1">
+                                    <table className="w-full min-w-[760px] text-sm">
                                         <thead className="bg-gray-50 sticky top-0">
                                             <tr>
                                                 <th className="text-left px-3 py-2 font-medium text-gray-600">Waktu</th>

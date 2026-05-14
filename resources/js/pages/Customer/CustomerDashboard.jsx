@@ -449,7 +449,7 @@ function CustomerDashboard() {
     const LatestInvoiceIcon = latestInvoiceStatus.icon;
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50">
+        <div className="min-h-screen bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 overflow-x-hidden">
             {showNoticePopup && networkNotices.length > 0 && (
                 <NetworkNoticePopup
                     notices={networkNotices}
@@ -487,7 +487,7 @@ function CustomerDashboard() {
                 </div>
             </header>
 
-            <main className="mx-auto max-w-6xl space-y-6 px-4 py-8">
+            <main className="mx-auto max-w-6xl space-y-6 px-4 py-8 min-w-0">
                 {successMessage && (
                     <div className="flex items-center gap-3 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-green-700">
                         <CheckCircle size={20} />

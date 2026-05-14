@@ -30,4 +30,14 @@ class Package extends Model
     {
         return $query->where('is_active', true)->orderBy('sort_order');
     }
+
+    public function priceHistories()
+    {
+        return $this->hasMany(PackagePriceHistory::class);
+    }
+
+    public function customers()
+    {
+        return $this->hasMany(Customer::class, 'package_id');
+    }
 }

@@ -800,7 +800,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 
                 {!isCollapsed && (
                     <div className="overflow-x-auto">
-                        <table className="w-full">
+                        <table className="w-full min-w-[980px]">
                             <thead className="bg-gray-50 border-t border-gray-100">
                                 <tr>
                                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">No</th>
@@ -1007,9 +1007,9 @@ Tim Layanan Pelanggan Rumah Kita Net`;
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="app-section-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Menu Penagihan</h1>
                     <p className="text-gray-600 mt-1">Kelola tagihan dan pembayaran pelanggan</p>
@@ -1021,7 +1021,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
 
             {/* Search */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div className="app-card p-4">
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                     <input
@@ -1157,8 +1157,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             Set layanan terlebih dahulu lalu jalankan ulang.
                         </p>
                     </div>
-                    <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg">
-                        <table className="w-full text-sm">
+                    <div className="max-h-80 overflow-y-auto overflow-x-auto border border-gray-100 rounded-lg">
+                        <table className="w-full min-w-[680px] text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
                                     <th className="px-3 py-2 text-left">Pelanggan</th>
@@ -1228,8 +1228,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></div>
                     </div>
-                    <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg">
-                        <table className="w-full text-sm">
+                    <div className="max-h-72 overflow-y-auto overflow-x-auto border border-gray-100 rounded-lg">
+                        <table className="w-full min-w-[760px] text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
                                     <th className="px-3 py-2 text-left">Customer ID</th>

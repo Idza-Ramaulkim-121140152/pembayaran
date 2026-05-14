@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\InventoryDebt;
 use App\Models\InventoryDebtPayment;
 use App\Models\InventoryMovement;
+use App\Models\InstallationWorkOrder;
 use App\Models\PayrollProject;
 use App\Models\Pengeluaran;
 use Illuminate\Support\Collection;
@@ -247,6 +248,55 @@ class InventoryService
                     'kind' => 'cable',
                     'installation_notes' => $payload['notes'] ?? null,
                     'payroll_project_id' => $payload['payroll_project_id'] ?? null,
+                ],
+            ]);
+        }
+
+        return $movements;
+    }
+
+    /**
+     * @param array<int, array{inventory_item_id:int, quantity:numeric-string|float|int, notes?:string|null}> $materials
+     * @return array<int, InventoryMovement>
+     */
+    public function recordInstallationOutgoingForWorkOrder(
+        InstallationWorkOrder $workOrder,
+        array $materials,
+        ?string $transactionDate,
+        ?string $notes,
+        int $actorId
+    ): array {
+        if (!$this->isReady()) {
+            return [];
+        }
+
+        $date = $transactionDate ?: now()->toDateString();
+        $movements = [];
+
+        foreach ($materials as $material) {
+            $inventoryItemId = (int) ($material['inventory_item_id'] ?? 0);
+            $quantity = (float) ($material['quantity'] ?? 0);
+
+            if ($inventoryItemId <= 0 || $quantity <= 0) {
+                continue;
+            }
+
+            $this->assertSufficientStock($inventoryItemId, $quantity);
+
+            $movements[] = InventoryMovement::create([
+                'inventory_item_id' => $inventoryItemId,
+                'movement_type' => 'out',
+                'source' => 'installation',
+                'quantity' => $quantity,
+                'transaction_date' => $date,
+                'notes' => $material['notes'] ?? $notes ?? ('Pemakaian material WO #' . $workOrder->id),
+                'created_by' => $actorId,
+                'reference_type' => InstallationWorkOrder::class,
+                'reference_id' => $workOrder->id,
+                'meta' => [
+                    'installation_work_order_id' => $workOrder->id,
+                    'customer_id' => $workOrder->customer_id,
+                    'lead_id' => $workOrder->lead_id,
                 ],
             ]);
         }

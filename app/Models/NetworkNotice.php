@@ -14,6 +14,7 @@ class NetworkNotice extends Model
         'is_mass',
         'affected_area',
         'affected_odp',
+        'network_incident_id',
         'start_time',
         'end_time',
         'is_active',
@@ -31,6 +32,11 @@ class NetworkNotice extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function incident()
+    {
+        return $this->belongsTo(NetworkIncident::class, 'network_incident_id');
     }
 
     // Scope untuk notice yang aktif

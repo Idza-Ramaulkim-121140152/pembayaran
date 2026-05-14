@@ -6,9 +6,12 @@ use App\Jobs\ProcessBillingAutoInvoiceJob;
 use App\Models\BillingAutoInvoiceJob;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\NotificationLog;
 use App\Models\Package;
 use App\Services\BillingAutoInvoiceService;
+use App\Services\BillingItemService;
+use App\Services\FeatureService;
 use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -32,7 +35,11 @@ class BillingController extends Controller
         'overdue',
     ];
 
-    public function __construct(private FinancialLedgerService $ledgerService)
+    public function __construct(
+        private FinancialLedgerService $ledgerService,
+        private FeatureService $featureService,
+        private BillingItemService $billingItemService,
+    )
     {
     }
 
@@ -266,6 +273,8 @@ class BillingController extends Controller
                 'status' => 'unpaid',
                 'invoice_link' => uniqid('inv_'),
             ]);
+
+            $this->ensureLegacyInvoiceItem($invoice, $customer, (float) $amount);
         });
 
         // TODO: Kirim link invoice ke pelanggan jika perlu
@@ -548,10 +557,24 @@ class BillingController extends Controller
             ], 422);
         }
 
+        $oldPackageId = $customer->package_id ? (int) $customer->package_id : null;
+        $oldPackageLabel = (string) ($customer->package_type ?? '');
+
         $customer->package_type = $package->name;
+        $customer->package_id = $package->id;
         $customer->custom_package = null;
         $customer->mikrotik_profile = $package->mikrotik_profile ?: $package->name;
         $customer->save();
+
+        $this->billingItemService->appendPackageHistory(
+            $customer,
+            $oldPackageId,
+            $package->id,
+            $oldPackageLabel,
+            $package->name,
+            'Update package from billing screen',
+            Auth::id()
+        );
 
         return response()->json([
             'message' => 'Layanan pelanggan berhasil diperbarui.',
@@ -565,6 +588,34 @@ class BillingController extends Controller
     private function normalizeServiceLabel(?string $value): string
     {
         return strtolower(trim((string) $value));
+    }
+
+    private function ensureLegacyInvoiceItem(Invoice $invoice, Customer $customer, float $amount): void
+    {
+        if (!$this->featureService->enabled('billing_items_v1')) {
+            return;
+        }
+
+        if ($invoice->items()->exists()) {
+            $this->billingItemService->recalculateInvoiceTotal($invoice);
+            return;
+        }
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'item_type' => 'package',
+            'description' => 'Paket bulanan ' . ($customer->package_type ?: 'Layanan'),
+            'quantity' => 1,
+            'unit_price' => $amount,
+            'amount' => $amount,
+            'meta' => [
+                'source' => 'legacy_invoice_creation',
+                'package_id' => $customer->package_id,
+            ],
+            'created_by' => Auth::id(),
+        ]);
+
+        $this->billingItemService->recalculateInvoiceTotal($invoice);
     }
 
     private function resolveCustomerServiceLabel(Customer $customer): string
@@ -763,8 +814,14 @@ class BillingController extends Controller
 
     public function showInvoiceApi($invoice_link)
     {
-        $invoice = \App\Models\Invoice::where('invoice_link', $invoice_link)->with('customer')->firstOrFail();
-        return response()->json(['data' => $invoice]);
+        $invoice = \App\Models\Invoice::where('invoice_link', $invoice_link)->with(['customer', 'items'])->firstOrFail();
+        return response()->json([
+            'data' => $invoice,
+            'breakdown' => [
+                'total' => (float) $invoice->amount,
+                'items_count' => $invoice->items->count(),
+            ],
+        ]);
     }
 
     public function confirmPaymentApi($invoiceId)
@@ -886,8 +943,27 @@ class BillingController extends Controller
         ]);
 
         $invoice = Invoice::findOrFail($invoiceId);
-        $invoice->amount = $validated['amount'];
+        $oldAmount = (float) $invoice->amount;
+        $newAmount = (float) $validated['amount'];
+        $invoice->amount = $newAmount;
         $invoice->save();
+
+        if ($this->featureService->enabled('billing_items_v1') && $invoice->items()->exists()) {
+            $diff = round($newAmount - $oldAmount, 2);
+            if (abs($diff) > 0.0001) {
+                InvoiceItem::create([
+                    'invoice_id' => $invoice->id,
+                    'item_type' => 'adjustment',
+                    'description' => 'Penyesuaian nominal invoice manual',
+                    'quantity' => 1,
+                    'unit_price' => $diff,
+                    'amount' => $diff,
+                    'meta' => ['source' => 'updateInvoiceAmountApi'],
+                    'created_by' => Auth::id(),
+                ]);
+                $this->billingItemService->recalculateInvoiceTotal($invoice);
+            }
+        }
 
         if ($invoice->status === 'paid') {
             $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
@@ -972,9 +1048,11 @@ class BillingController extends Controller
         $newStatus = $validated['status'];
 
         DB::transaction(function () use ($invoice, $validated, $newStatus) {
+            $oldAmount = (float) $invoice->amount;
+            $newAmount = (float) $validated['amount'];
             $invoice->invoice_date = $validated['invoice_date'];
             $invoice->due_date = $validated['due_date'];
-            $invoice->amount = $validated['amount'];
+            $invoice->amount = $newAmount;
             $invoice->status = $newStatus;
 
             if ($newStatus === 'paid') {
@@ -993,6 +1071,24 @@ class BillingController extends Controller
             }
 
             $invoice->save();
+
+            if ($this->featureService->enabled('billing_items_v1') && $invoice->items()->exists()) {
+                $diff = round($newAmount - $oldAmount, 2);
+                if (abs($diff) > 0.0001) {
+                    InvoiceItem::create([
+                        'invoice_id' => $invoice->id,
+                        'item_type' => 'adjustment',
+                        'description' => 'Penyesuaian nominal dari invoice management',
+                        'quantity' => 1,
+                        'unit_price' => $diff,
+                        'amount' => $diff,
+                        'meta' => ['source' => 'updateInvoiceManagementApi'],
+                        'created_by' => Auth::id(),
+                    ]);
+                    $this->billingItemService->recalculateInvoiceTotal($invoice);
+                }
+            }
+
             $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
         });
 

@@ -150,6 +150,8 @@ class CustomerAuthController extends Controller
             'category' => $request->category,
             'status' => 'pending',
             'priority' => 'medium',
+            'opened_at' => now(),
+            'last_activity_at' => now(),
         ]);
 
         return response()->json([

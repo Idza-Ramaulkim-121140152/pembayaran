@@ -17,3 +17,8 @@ Schedule::command('mikrotik:health-check')
     ->everyMinute()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('incident:run-odp-engine')
+    ->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();

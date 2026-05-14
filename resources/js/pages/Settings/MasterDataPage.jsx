@@ -60,6 +60,13 @@ const MASTER_MENU = [
         path: '/settings/financial-targets',
         roles: ['superadmin'],
     },
+    {
+        title: 'Akses & Policy',
+        description: 'Kelola permission role, grup, dan override akun.',
+        icon: Shield,
+        path: '/settings/access-policy',
+        roles: ['superadmin'],
+    },
 ];
 
 function MasterDataPage() {

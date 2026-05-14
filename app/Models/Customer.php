@@ -12,8 +12,10 @@ class Customer extends Model
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
         'pppoe_username', 'mikrotik_profile', 'home_router_type', 'home_router_host',
         'home_router_port', 'home_router_username', 'home_router_password',
+        'mobile_password', 'mobile_force_password_change', 'mobile_password_changed_at',
+        'mobile_password_reset_at', 'mobile_password_reset_meta', 'mobile_password_reset_by_user_id',
         'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
-        'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp'
+        'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp'
     ];
 
     protected $casts = [
@@ -25,13 +27,19 @@ class Customer extends Model
         'longitude' => 'decimal:8',
         'home_router_port' => 'integer',
         'home_router_monitoring_enabled' => 'boolean',
+        'odp_id' => 'integer',
+        'package_id' => 'integer',
         'enable_home_router' => 'boolean',
         'enable_installation_team' => 'boolean',
         'home_router_password' => 'encrypted',
+        'mobile_force_password_change' => 'boolean',
+        'mobile_password_changed_at' => 'datetime',
+        'mobile_password_reset_at' => 'datetime',
+        'mobile_password_reset_meta' => 'array',
     ];
 
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
-    protected $hidden = ['home_router_password'];
+    protected $hidden = ['home_router_password', 'mobile_password'];
 
     // Accessor untuk kompatibilitas dengan field lama
     public function getNamaAttribute()
@@ -84,9 +92,34 @@ class Customer extends Model
         return $this->hasMany(\App\Models\Complaint::class);
     }
 
+    public function mobileTokens()
+    {
+        return $this->hasMany(\App\Models\MobileCustomerToken::class);
+    }
+
     public function odp()
     {
+        return $this->belongsTo(\App\Models\Odp::class, 'odp_id');
+    }
+
+    public function odpLegacy()
+    {
         return $this->belongsTo(\App\Models\Odp::class, 'odp', 'nama');
+    }
+
+    public function package()
+    {
+        return $this->belongsTo(\App\Models\Package::class, 'package_id');
+    }
+
+    public function billingProfile()
+    {
+        return $this->hasOne(\App\Models\CustomerBillingProfile::class);
+    }
+
+    public function packageHistories()
+    {
+        return $this->hasMany(\App\Models\CustomerPackageHistory::class);
     }
 
     public function kecamatan()

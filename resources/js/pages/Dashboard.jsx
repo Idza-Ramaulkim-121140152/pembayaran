@@ -487,8 +487,8 @@ function Dashboard() {
     };
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="space-y-6 min-w-0">
+            <div className="app-section-header flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard</h1>
                     <p className="text-gray-500 mt-1 flex items-center gap-2">
@@ -538,7 +538,7 @@ function Dashboard() {
             )}
 
             {employeePayroll?.enabled && (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="app-card p-6">
                     <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900">Ringkasan Payroll Karyawan</h2>
@@ -718,7 +718,7 @@ function Dashboard() {
 
             {!isTeknisi && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="lg:col-span-2 app-card p-6">
                         <div className="flex items-center justify-between mb-6">
                             <div>
                                 <h2 className="text-lg font-bold text-gray-900">Pemasukan vs Pengeluaran</h2>
@@ -734,7 +734,7 @@ function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="app-card p-6">
                         <div className="mb-6">
                             <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
                             <p className="text-sm text-gray-500">Distribusi aktif dan tidak aktif (lewat jatuh tempo atau isolir)</p>
@@ -763,7 +763,7 @@ function Dashboard() {
             )}
 
             {!isTeknisi && (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="app-card p-6">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900">Persentase Paket Layanan</h2>
@@ -858,7 +858,7 @@ function Dashboard() {
 
             {!isFinance ? (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                    <div className="lg:col-span-2 app-card p-6">
                         <div className="flex items-center justify-between mb-6">
                             <div>
                                 <h2 className="text-lg font-bold text-gray-900">Pemasangan Baru</h2>
@@ -924,7 +924,7 @@ function Dashboard() {
             )}
 
             {!isTeknisi && (
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                <div className="app-card p-6">
                     <div className="mb-6">
                         <h2 className="text-lg font-bold text-gray-900">Transaksi Keuangan Terintegrasi</h2>
                         <p className="text-sm text-gray-500">Pemasukan, pengeluaran, payroll, dan adjustment dalam satu ledger</p>

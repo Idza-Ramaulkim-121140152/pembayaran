@@ -614,9 +614,9 @@ function CustomersPage() {
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="app-section-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">Daftar Pelanggan</h1>
                     <p className="text-gray-600 mt-1">Total {customers.length} pelanggan terdaftar</p>
@@ -644,7 +644,7 @@ function CustomersPage() {
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
 
             {/* Search & Filter */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+            <div className="app-card p-4">
                 <div className="flex flex-col gap-4">
                     {/* Search */}
                     <div className="flex flex-col md:flex-row gap-4">
@@ -729,8 +729,8 @@ function CustomersPage() {
                                             {customer.name?.charAt(0).toUpperCase()}
                                         </div>
                                         <div>
-                                            <h3 className="font-semibold text-gray-900">{customer.name}</h3>
-                                            <p className="text-sm text-gray-500">{customer.pppoe_username || '-'}</p>
+                                            <h3 className="font-semibold text-gray-900 break-words">{customer.name}</h3>
+                                            <p className="text-sm text-gray-500 break-all">{customer.pppoe_username || '-'}</p>
                                         </div>
                                     </div>
                                     <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
@@ -747,7 +747,7 @@ function CustomersPage() {
                             <div className="p-4 space-y-3">
                                 <div className="flex items-center gap-2 text-sm">
                                     <Phone size={16} className="text-gray-400" />
-                                    <span className="text-gray-700">{customer.phone || '-'}</span>
+                                    <span className="text-gray-700 break-all">{customer.phone || '-'}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-sm">
                                     <Wifi size={16} className="text-gray-400" />
@@ -755,7 +755,7 @@ function CustomersPage() {
                                 </div>
                                 <div className="flex items-center gap-2 text-sm">
                                     <MapPin size={16} className="text-gray-400" />
-                                    <span className="text-gray-700 truncate">{customer.address || '-'}</span>
+                                    <span className="text-gray-700 break-words">{customer.address || '-'}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-sm">
                                     <Calendar size={16} className="text-gray-400" />

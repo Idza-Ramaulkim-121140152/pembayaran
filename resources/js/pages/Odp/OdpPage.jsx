@@ -7,21 +7,76 @@ import Modal from '../../components/common/Modal';
 import MapPicker from '../../components/common/MapPicker';
 import apiClient from '../../services/api';
 import odpService from '../../services/odpService';
+import masterWilayahService from '../../services/masterWilayahService';
+
+function extractOdpSequence(name, prefix) {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`^${escapedPrefix}-(\\d{3})$`);
+    const match = String(name || '').match(regex);
+    return match ? Number(match[1]) : null;
+}
+
+function buildOdpNamePreview({
+    kecamatanId,
+    desaId,
+    dusunId,
+    kecamatanOptions,
+    desaOptions,
+    dusunOptions,
+    odps,
+    excludeOdpId = null,
+}) {
+    const kecamatan = kecamatanOptions.find((item) => Number(item.id) === Number(kecamatanId));
+    const desa = desaOptions.find((item) => Number(item.id) === Number(desaId));
+    const dusun = dusunOptions.find((item) => Number(item.id) === Number(dusunId));
+
+    if (!kecamatan?.code || !desa?.code || !dusun?.code) {
+        return 'Auto: pilih kecamatan, desa, dan dusun';
+    }
+
+    const prefix = `${String(kecamatan.code).toUpperCase()}-${String(desa.code).toUpperCase()}-${String(dusun.code).toUpperCase()}`;
+    const maxSequence = odps
+        .filter((odp) => Number(odp?.desa_id) === Number(desaId) && Number(odp?.dusun_id) === Number(dusunId))
+        .filter((odp) => Number(odp?.id) !== Number(excludeOdpId))
+        .reduce((max, odp) => {
+            const current = extractOdpSequence(odp?.nama, prefix);
+            if (current === null) return max;
+            return current > max ? current : max;
+        }, 0);
+
+    return `${prefix}-${String(maxSequence + 1).padStart(3, '0')}`;
+}
 
 // OdpForm component extracted outside to prevent re-creation on every render
-const OdpForm = ({ formData, handleInputChange, onSubmit, isEdit, submitting, previewImage, setPreviewImage, setFormData, onCancel, isModalOpen, mapKey }) => (
+const OdpForm = ({
+    formData,
+    handleInputChange,
+    onSubmit,
+    isEdit,
+    submitting,
+    previewImage,
+    setPreviewImage,
+    setFormData,
+    onCancel,
+    isModalOpen,
+    mapKey,
+    kecamatanOptions,
+    desaOptions,
+    dusunOptions,
+    handleKecamatanChange,
+    handleDesaChange,
+    generatedNamePreview,
+}) => (
     <form onSubmit={onSubmit} className="space-y-4">
         <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nama ODP *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nama ODP (Auto)</label>
             <input
                 type="text"
-                name="nama"
-                value={formData.nama}
-                onChange={handleInputChange}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                placeholder="Contoh: ODP-001"
+                value={generatedNamePreview}
+                readOnly
+                className="w-full px-3 py-2 border border-gray-300 bg-gray-100 rounded-lg text-gray-700"
             />
+            <p className="mt-1 text-xs text-gray-500">Nama akan dibuat otomatis dari kode kecamatan-desa-dusun + nomor urut.</p>
         </div>
         <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Rasio Distribusi *</label>
@@ -47,6 +102,66 @@ const OdpForm = ({ formData, handleInputChange, onSubmit, isEdit, submitting, pr
                 onChange={handleInputChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="Contoh: 1:32"
+            />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kecamatan</label>
+                <select
+                    name="kecamatan_id"
+                    value={formData.kecamatan_id || ''}
+                    onChange={handleKecamatanChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                    <option value="">Pilih Kecamatan</option>
+                    {kecamatanOptions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name} ({item.code})</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Desa *</label>
+                <select
+                    name="desa_id"
+                    value={formData.desa_id || ''}
+                    onChange={handleDesaChange}
+                    required
+                    disabled={!formData.kecamatan_id}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                >
+                    <option value="">Pilih Desa</option>
+                    {desaOptions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name} ({item.code})</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Dusun *</label>
+                <select
+                    name="dusun_id"
+                    value={formData.dusun_id || ''}
+                    onChange={handleInputChange}
+                    required
+                    disabled={!formData.desa_id}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                >
+                    <option value="">Pilih Dusun</option>
+                    {dusunOptions.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name} ({item.code})</option>
+                    ))}
+                </select>
+            </div>
+        </div>
+        <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Alamat Detail *</label>
+            <textarea
+                name="alamat_detail"
+                value={formData.alamat_detail || ''}
+                onChange={handleInputChange}
+                required
+                rows={2}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Patokan lokasi ODP di lapangan"
             />
         </div>
         
@@ -138,17 +253,23 @@ function OdpPage() {
     
     // Form states
     const [formData, setFormData] = useState({
-        nama: '',
         rasio_spesial: '',
         rasio_distribusi: '1:8',
         foto: null,
         latitude: null,
         longitude: null,
+        kecamatan_id: '',
+        desa_id: '',
+        dusun_id: '',
+        alamat_detail: '',
     });
     const [submitting, setSubmitting] = useState(false);
     const [previewImage, setPreviewImage] = useState(null);
     const [selectedCustomerId, setSelectedCustomerId] = useState('');
     const [selectedOdpCustomers, setSelectedOdpCustomers] = useState([]);
+    const [kecamatanOptions, setKecamatanOptions] = useState([]);
+    const [desaOptions, setDesaOptions] = useState([]);
+    const [dusunOptions, setDusunOptions] = useState([]);
 
     useEffect(() => {
         fetchInitialData();
@@ -163,13 +284,15 @@ function OdpPage() {
     const fetchInitialData = async () => {
         try {
             setLoading(true);
-            const [odpResponse, customerResponse] = await Promise.all([
+            const [odpResponse, customerResponse, kecamatanResponse] = await Promise.all([
                 odpService.getAll(),
                 apiClient.get('/customers?api=1'),
+                masterWilayahService.getKecamatans(),
             ]);
 
             setOdps(odpResponse.data.data || []);
             setCustomers(customerResponse.data.data || []);
+            setKecamatanOptions(kecamatanResponse?.data?.data || []);
         } catch (err) {
             setError('Gagal memuat data ODP');
             console.error(err);
@@ -229,14 +352,53 @@ function OdpPage() {
 
     const resetForm = () => {
         setFormData({
-            nama: '',
             rasio_spesial: '',
             rasio_distribusi: '1:8',
             foto: null,
             latitude: null,
             longitude: null,
+            kecamatan_id: '',
+            desa_id: '',
+            dusun_id: '',
+            alamat_detail: '',
         });
+        setDesaOptions([]);
+        setDusunOptions([]);
         setPreviewImage(null);
+    };
+
+    const handleKecamatanChange = async (event) => {
+        const value = event.target.value;
+        setFormData((prev) => ({ ...prev, kecamatan_id: value, desa_id: '', dusun_id: '' }));
+        if (!value) {
+            setDesaOptions([]);
+            setDusunOptions([]);
+            return;
+        }
+
+        try {
+            const response = await masterWilayahService.getDesas(Number(value));
+            setDesaOptions(response?.data?.data || []);
+            setDusunOptions([]);
+        } catch (err) {
+            setError('Gagal memuat desa untuk kecamatan terpilih.');
+        }
+    };
+
+    const handleDesaChange = async (event) => {
+        const value = event.target.value;
+        setFormData((prev) => ({ ...prev, desa_id: value, dusun_id: '' }));
+        if (!value) {
+            setDusunOptions([]);
+            return;
+        }
+
+        try {
+            const response = await masterWilayahService.getDusuns(Number(value));
+            setDusunOptions(response?.data?.data || []);
+        } catch (err) {
+            setError('Gagal memuat dusun untuk desa terpilih.');
+        }
     };
 
     const handleCreate = async (e) => {
@@ -302,16 +464,76 @@ function OdpPage() {
 
     const openEditModal = (odp) => {
         setFormData({
-            nama: odp.nama,
             rasio_spesial: odp.rasio_spesial || '',
             rasio_distribusi: odp.rasio_distribusi,
             foto: null,
             latitude: odp.latitude || null,
             longitude: odp.longitude || null,
+            kecamatan_id: odp.kecamatan_id || '',
+            desa_id: odp.desa_id || '',
+            dusun_id: odp.dusun_id || '',
+            alamat_detail: odp.alamat_detail || '',
         });
+        if (odp.kecamatan_id) {
+            masterWilayahService.getDesas(Number(odp.kecamatan_id))
+                .then((response) => setDesaOptions(response?.data?.data || []))
+                .catch(() => setDesaOptions([]));
+        }
+        if (odp.desa_id) {
+            masterWilayahService.getDusuns(Number(odp.desa_id))
+                .then((response) => setDusunOptions(response?.data?.data || []))
+                .catch(() => setDusunOptions([]));
+        }
         setPreviewImage(odp.foto ? `/storage/${odp.foto}` : null);
         setEditModal({ open: true, odp });
     };
+
+    const createGeneratedNamePreview = useMemo(() => {
+        return buildOdpNamePreview({
+            kecamatanId: formData.kecamatan_id,
+            desaId: formData.desa_id,
+            dusunId: formData.dusun_id,
+            kecamatanOptions,
+            desaOptions,
+            dusunOptions,
+            odps,
+        });
+    }, [formData.kecamatan_id, formData.desa_id, formData.dusun_id, kecamatanOptions, desaOptions, dusunOptions, odps]);
+
+    const editGeneratedNamePreview = useMemo(() => {
+        if (!editModal.odp) {
+            return 'Auto: pilih kecamatan, desa, dan dusun';
+        }
+
+        const scopeUnchanged =
+            Number(formData.kecamatan_id) === Number(editModal.odp.kecamatan_id) &&
+            Number(formData.desa_id) === Number(editModal.odp.desa_id) &&
+            Number(formData.dusun_id) === Number(editModal.odp.dusun_id);
+
+        if (scopeUnchanged) {
+            return editModal.odp.nama;
+        }
+
+        return buildOdpNamePreview({
+            kecamatanId: formData.kecamatan_id,
+            desaId: formData.desa_id,
+            dusunId: formData.dusun_id,
+            kecamatanOptions,
+            desaOptions,
+            dusunOptions,
+            odps,
+            excludeOdpId: editModal.odp.id,
+        });
+    }, [
+        editModal.odp,
+        formData.kecamatan_id,
+        formData.desa_id,
+        formData.dusun_id,
+        kecamatanOptions,
+        desaOptions,
+        dusunOptions,
+        odps,
+    ]);
 
     const closeViewModal = () => {
         setViewModal({ open: false, odp: null });
@@ -522,6 +744,12 @@ function OdpPage() {
                     onCancel={() => { setCreateModal(false); resetForm(); }}
                     isModalOpen={createModal}
                     mapKey="create"
+                    kecamatanOptions={kecamatanOptions}
+                    desaOptions={desaOptions}
+                    dusunOptions={dusunOptions}
+                    handleKecamatanChange={handleKecamatanChange}
+                    handleDesaChange={handleDesaChange}
+                    generatedNamePreview={createGeneratedNamePreview}
                 />
             </Modal>
 
@@ -539,6 +767,12 @@ function OdpPage() {
                     onCancel={() => { setEditModal({ open: false, odp: null }); resetForm(); }}
                     isModalOpen={editModal.open}
                     mapKey={editModal.odp?.id ? `edit-${editModal.odp.id}` : 'edit'}
+                    kecamatanOptions={kecamatanOptions}
+                    desaOptions={desaOptions}
+                    dusunOptions={dusunOptions}
+                    handleKecamatanChange={handleKecamatanChange}
+                    handleDesaChange={handleDesaChange}
+                    generatedNamePreview={editGeneratedNamePreview}
                 />
             </Modal>
 

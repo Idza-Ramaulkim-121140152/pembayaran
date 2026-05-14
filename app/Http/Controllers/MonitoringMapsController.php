@@ -24,11 +24,14 @@ class MonitoringMapsController extends Controller
                     'pppoe_username',
                     'package_type',
                     'odp',
+                    'odp_id',
                     'due_date',
                     'latitude',
                     'longitude'
                 ])
                 ->get();
+
+            $odpNameById = Odp::query()->pluck('nama', 'id');
 
             // Get ODPs with coordinates and customer count
             $odps = Odp::whereNotNull('latitude')
@@ -93,6 +96,14 @@ class MonitoringMapsController extends Controller
                     return $customer;
                 });
             }
+
+            $customers = $customers->map(function ($customer) use ($odpNameById) {
+                if (empty($customer->odp) && !empty($customer->odp_id)) {
+                    $customer->odp = $odpNameById[$customer->odp_id] ?? null;
+                }
+
+                return $customer;
+            });
 
             // Apply customer service activity rule
             $customers = $customers

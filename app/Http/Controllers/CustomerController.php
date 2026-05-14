@@ -3,14 +3,24 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\CustomerPackageHistory;
+use App\Models\Odp;
 use App\Models\Package;
+use App\Services\AuditLogService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 
 class CustomerController extends Controller
 {
+    private const DEFAULT_MOBILE_PASSWORD = '12345678';
+
+    public function __construct(private AuditLogService $auditLogService)
+    {
+    }
+
     public function list()
     {
         $query = Customer::query();
@@ -246,6 +256,8 @@ class CustomerController extends Controller
         $customer = Customer::findOrFail($customerId);
         $validated = $request->validate($this->customerValidationRules(false));
         $validated = $this->normalizeHomeRouterInput($validated, $customer);
+        $validated = $this->syncLegacyReferences($validated, $customer);
+        $validated = $this->ensureMobilePasswordDefaults($validated, $customer);
 
         $customer->update($validated);
         
@@ -285,8 +297,10 @@ class CustomerController extends Controller
     {
         $validated = $request->validate($this->customerValidationRules(true));
         $validated = $this->normalizeHomeRouterInput($validated);
+        $validated = $this->syncLegacyReferences($validated);
 
         $validated['is_active'] = $validated['is_active'] ?? true;
+        $validated = $this->ensureMobilePasswordDefaults($validated);
         
         // Auto-calculate due_date = activation_date + 30 days
         if (!empty($validated['activation_date']) && empty($validated['due_date'])) {
@@ -591,10 +605,25 @@ class CustomerController extends Controller
             ]);
 
             DB::transaction(function () use ($customer, $package, $resolvedProfile): void {
+                $oldPackageId = $customer->package_id ? (int) $customer->package_id : null;
+                $oldPackageLabel = (string) ($customer->package_type ?? '');
+
                 $customer->package_type = $package->name;
+                $customer->package_id = $package->id;
                 $customer->custom_package = null;
                 $customer->mikrotik_profile = $resolvedProfile;
                 $customer->save();
+
+                CustomerPackageHistory::create([
+                    'customer_id' => $customer->id,
+                    'old_package_id' => $oldPackageId,
+                    'new_package_id' => $package->id,
+                    'old_package_label' => $oldPackageLabel,
+                    'new_package_label' => $package->name,
+                    'effective_from' => now()->toDateString(),
+                    'reason' => 'Update via customer service-package endpoint',
+                    'changed_by' => auth()->id(),
+                ]);
             });
 
             return response()->json([
@@ -736,9 +765,11 @@ class CustomerController extends Controller
             'custom_package' => 'nullable|string',
             'pppoe_username' => 'nullable|string|max:64',
             'odp' => 'nullable|string|max:64',
+            'odp_id' => 'nullable|integer|exists:odps,id',
             'phone' => 'nullable|string|max:20',
             'installation_fee' => 'nullable|numeric',
             'email' => 'nullable|email',
+            'package_id' => 'nullable|integer|exists:packages,id',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable|boolean',
@@ -786,6 +817,72 @@ class CustomerController extends Controller
             }
         } elseif ($customer && !empty($customer->getRawOriginal('home_router_password'))) {
             unset($validated['home_router_password']);
+        }
+
+        return $validated;
+    }
+
+    private function ensureMobilePasswordDefaults(array $validated, ?Customer $customer = null): array
+    {
+        $isActive = (bool) ($validated['is_active'] ?? $customer?->is_active ?? true);
+
+        if (!$isActive) {
+            return $validated;
+        }
+
+        $hasExistingPassword = !empty($customer?->mobile_password);
+
+        if (!$hasExistingPassword) {
+            $validated['mobile_password'] = Hash::make(self::DEFAULT_MOBILE_PASSWORD);
+            $validated['mobile_force_password_change'] = true;
+            $validated['mobile_password_changed_at'] = null;
+            $validated['mobile_password_reset_at'] = now();
+            $validated['mobile_password_reset_meta'] = [
+                'reason' => $customer ? 'activation_without_mobile_password' : 'new_active_customer',
+            ];
+        } else {
+            $validated['mobile_password'] = $customer->mobile_password;
+            $validated['mobile_force_password_change'] = $customer->mobile_force_password_change;
+            $validated['mobile_password_changed_at'] = $customer->mobile_password_changed_at;
+            $validated['mobile_password_reset_at'] = $customer->mobile_password_reset_at;
+            $validated['mobile_password_reset_meta'] = $customer->mobile_password_reset_meta;
+            $validated['mobile_password_reset_by_user_id'] = $customer->mobile_password_reset_by_user_id;
+        }
+
+        return $validated;
+    }
+
+    private function syncLegacyReferences(array $validated, ?Customer $customer = null): array
+    {
+        if (array_key_exists('odp_id', $validated)) {
+            if (!empty($validated['odp_id'])) {
+                $odp = Odp::query()->find((int) $validated['odp_id']);
+                $validated['odp'] = $odp?->nama;
+            } else {
+                $validated['odp'] = null;
+            }
+        } elseif (!empty($validated['odp'])) {
+            $odp = Odp::query()->where('nama', $validated['odp'])->first();
+            $validated['odp_id'] = $odp?->id;
+        } elseif ($customer && array_key_exists('odp', $validated) && empty($validated['odp'])) {
+            $validated['odp_id'] = null;
+        }
+
+        if (array_key_exists('package_id', $validated)) {
+            if (!empty($validated['package_id'])) {
+                $package = Package::query()->find((int) $validated['package_id']);
+                if ($package) {
+                    $validated['package_type'] = $package->name;
+                    $validated['custom_package'] = null;
+                }
+            } elseif (empty($validated['package_type'])) {
+                $validated['package_type'] = null;
+            }
+        } elseif (!empty($validated['package_type'])) {
+            $package = Package::query()->whereRaw('LOWER(name) = ?', [strtolower((string) $validated['package_type'])])->first();
+            $validated['package_id'] = $package?->id;
+        } elseif ($customer && array_key_exists('package_type', $validated) && empty($validated['package_type'])) {
+            $validated['package_id'] = null;
         }
 
         return $validated;

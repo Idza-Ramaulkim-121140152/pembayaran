@@ -9,24 +9,24 @@ export function Button({
     ...props
 }) {
     const baseStyles =
-        'font-semibold rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2';
+        'inline-flex items-center justify-center gap-2 font-semibold rounded-xl border transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed';
 
     const variantStyles = {
         primary:
-            'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-blue-300 focus:ring-blue-500',
+            'border-transparent bg-gradient-to-r from-sky-600 to-blue-700 text-white hover:from-sky-700 hover:to-blue-800 disabled:from-sky-300 disabled:to-blue-400 shadow-sm focus:ring-sky-500',
         secondary:
-            'bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:bg-gray-100 focus:ring-gray-500',
-        danger: 'bg-red-600 text-white hover:bg-red-700 disabled:bg-red-300 focus:ring-red-500',
-        warning: 'bg-yellow-500 text-white hover:bg-yellow-600 disabled:bg-yellow-300 focus:ring-yellow-500',
-        success: 'bg-green-600 text-white hover:bg-green-700 disabled:bg-green-300 focus:ring-green-500',
+            'border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:bg-slate-100 disabled:text-slate-400 focus:ring-slate-400',
+        danger: 'border-transparent bg-gradient-to-r from-rose-600 to-red-600 text-white hover:from-rose-700 hover:to-red-700 disabled:from-rose-300 disabled:to-red-300 focus:ring-rose-500',
+        warning: 'border-transparent bg-gradient-to-r from-amber-500 to-yellow-500 text-white hover:from-amber-600 hover:to-yellow-600 disabled:from-amber-300 disabled:to-yellow-300 focus:ring-amber-500',
+        success: 'border-transparent bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-700 hover:to-teal-700 disabled:from-emerald-300 disabled:to-teal-300 focus:ring-emerald-500',
         ghost:
-            'bg-transparent text-gray-700 hover:bg-gray-100 disabled:text-gray-400 focus:ring-gray-500',
+            'border-transparent bg-transparent text-slate-700 hover:bg-slate-100 disabled:text-slate-400 focus:ring-slate-400',
     };
 
     const sizeStyles = {
         sm: 'px-3 py-1.5 text-sm',
-        md: 'px-4 py-2 text-base',
-        lg: 'px-6 py-3 text-lg',
+        md: 'px-4 py-2.5 text-sm',
+        lg: 'px-6 py-3 text-base',
     };
 
     return (

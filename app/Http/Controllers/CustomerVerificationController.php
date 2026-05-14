@@ -7,6 +7,7 @@ use App\Models\InventoryItem;
 use App\Models\MasterWilayahDesa;
 use App\Models\MasterWilayahDusun;
 use App\Models\MasterWilayahKecamatan;
+use App\Models\Odp;
 use App\Models\Package;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
@@ -17,6 +18,7 @@ use App\Services\InventoryService;
 use App\Services\MikroTikService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Exception;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +27,7 @@ class CustomerVerificationController extends Controller
 {
     private const SETTING_DEFAULT_INSTALLATION_LABOR_FEE = 'default_installation_labor_fee_payroll';
     private const SETTING_DEFAULT_INSTALLATION_CABLE_RATE = 'default_installation_cable_rate_payroll';
+    private const DEFAULT_MOBILE_PASSWORD = '12345678';
 
     protected $sheetsService;
     protected $sheetsError;
@@ -195,6 +198,15 @@ class CustomerVerificationController extends Controller
             }
 
             $validated['is_active'] = $validated['is_active'] ?? true;
+            if ($validated['is_active']) {
+                $validated['mobile_password'] = Hash::make(self::DEFAULT_MOBILE_PASSWORD);
+                $validated['mobile_force_password_change'] = true;
+                $validated['mobile_password_changed_at'] = null;
+                $validated['mobile_password_reset_at'] = now();
+                $validated['mobile_password_reset_meta'] = [
+                    'reason' => 'verified_customer_default_password',
+                ];
+            }
             $mikrotik = new MikroTikService();
             $serviceLabel = $this->resolveServiceLabelForSecret($validated);
             $profileName = $this->resolveStrictProfileName($mikrotik, $serviceLabel);
@@ -286,6 +298,48 @@ class CustomerVerificationController extends Controller
             'success' => true,
             'timestamps' => $timestamps,
             'count' => count($timestamps)
+        ]);
+    }
+
+    public function odpOptions(Request $request)
+    {
+        $validated = $request->validate([
+            'desa_id' => 'required|integer|exists:master_wilayah_desas,id',
+            'dusun_id' => 'required|integer|exists:master_wilayah_dusuns,id',
+            'scope' => 'nullable|in:dusun,desa',
+        ]);
+
+        $scope = (string) ($validated['scope'] ?? 'dusun');
+        $desaId = (int) $validated['desa_id'];
+        $dusunId = (int) $validated['dusun_id'];
+
+        $query = Odp::query()
+            ->whereNotNull('desa_id')
+            ->whereNotNull('dusun_id')
+            ->where('desa_id', $desaId);
+
+        if ($scope === 'dusun') {
+            $query->where('dusun_id', $dusunId);
+        }
+
+        $items = $query
+            ->with(['desa:id,name,code', 'dusun:id,name,code'])
+            ->orderBy('nama')
+            ->get([
+                'id',
+                'nama',
+                'rasio_distribusi',
+                'alamat_detail',
+                'desa_id',
+                'dusun_id',
+            ]);
+
+        return response()->json([
+            'data' => $items,
+            'meta' => [
+                'scope' => $scope,
+                'count' => $items->count(),
+            ],
         ]);
     }
 

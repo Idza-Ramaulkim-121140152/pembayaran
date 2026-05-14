@@ -1,330 +1,311 @@
-import { useState, useEffect, useRef } from 'react';
-import { MapPin, Users, Network, Eye, EyeOff, Loader } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import {
+    AlertTriangle,
+    Eye,
+    EyeOff,
+    Loader,
+    MapPin,
+    Network,
+    RefreshCw,
+    Users,
+} from 'lucide-react';
 import Alert from '../components/common/Alert';
+import apiClient from '../services/api';
+import { attachSatelliteLayerWithFallback } from '../utils/leafletTileFallback';
+
+const DEFAULT_CENTER = [-5.632727646, 105.548014641];
 
 function MonitoringMaps() {
     const mapRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markersRef = useRef({ customers: [], odps: [] });
     const resizeObserverRef = useRef(null);
-    
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [mapLoaded, setMapLoaded] = useState(false);
-    
-    const [data, setData] = useState({
-        customers: [],
-        odps: []
-    });
-    
+    const tileFallbackRef = useRef(null);
+
+    const [loadingData, setLoadingData] = useState(true);
+    const [dataError, setDataError] = useState(null);
+    const [mapInitError, setMapInitError] = useState(null);
+    const [mapReady, setMapReady] = useState(false);
+    const [mapResetKey, setMapResetKey] = useState(0);
+    const [tileLayerMode, setTileLayerMode] = useState('satellite');
+
+    const [data, setData] = useState({ customers: [], odps: [] });
     const [filters, setFilters] = useState({
         showCustomers: true,
         showOdps: true,
         showOnlineOnly: false,
     });
 
-    // Load Leaflet CSS and JS
-    useEffect(() => {
-        if (window.L) {
-            setMapLoaded(true);
-            return;
+    const fetchMapData = useCallback(async () => {
+        try {
+            setLoadingData(true);
+            setDataError(null);
+
+            const response = await apiClient.get('/monitoring-maps');
+            const payload = response?.data;
+
+            if (payload?.success && payload?.data) {
+                setData({
+                    customers: payload.data.customers || [],
+                    odps: payload.data.odps || [],
+                });
+                return;
+            }
+
+            setDataError(payload?.message || 'Data peta tidak valid.');
+        } catch (err) {
+            const status = err?.response?.status;
+            if (status === 403) {
+                setDataError('Akses monitoring maps ditolak oleh policy.');
+            } else if (status === 401) {
+                setDataError('Sesi login berakhir. Silakan login ulang.');
+            } else if (status >= 500) {
+                setDataError('Server sedang bermasalah. Silakan coba lagi.');
+            } else {
+                setDataError('Gagal memuat data peta.');
+            }
+        } finally {
+            setLoadingData(false);
         }
-
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-        link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
-        link.crossOrigin = '';
-        document.head.appendChild(link);
-
-        const script = document.createElement('script');
-        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-        script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
-        script.crossOrigin = '';
-        script.onload = () => setMapLoaded(true);
-        document.head.appendChild(script);
-
-        return () => {
-            document.head.removeChild(link);
-            document.head.removeChild(script);
-        };
     }, []);
 
-    // Fetch data
     useEffect(() => {
         fetchMapData();
-    }, []);
+    }, [fetchMapData]);
 
-    const fetchMapData = async () => {
+    useEffect(() => {
+        if (!mapRef.current) {
+            return undefined;
+        }
+
+        setMapReady(false);
+        setMapInitError(null);
+        setTileLayerMode('satellite');
+
         try {
-            setLoading(true);
-            const response = await fetch('/api/monitoring-maps');
-            const result = await response.json();
-            
-            if (result.success) {
-                setData(result.data);
-            } else {
-                setError(result.message || 'Gagal memuat data');
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.remove();
+                mapInstanceRef.current = null;
             }
-        } catch (err) {
-            setError('Terjadi kesalahan saat memuat data');
-            console.error(err);
-        } finally {
-            setLoading(false);
-        }
-    };
 
-    // Initialize map
-    useEffect(() => {
-        if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return;
-
-        const L = window.L;
-        const map = L.map(mapRef.current, {
-            center: [-5.6342425, 105.5631682],
-            zoom: 14,
-            scrollWheelZoom: true,
-            dragging: true,
-            zoomControl: true,
-        });
-
-        // Google Satellite Tiles
-        L.tileLayer('https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-            attribution: '&copy; Google',
-            maxZoom: 20,
-            minZoom: 5,
-            subdomains: ['0', '1', '2', '3'],
-            keepBuffer: 2,
-            updateWhenIdle: false,
-            detectRetina: true,
-        }).addTo(map);
-
-        // Force map to recalculate size after initialization
-        setTimeout(() => {
-            map.invalidateSize();
-        }, 100);
-
-        // Setup ResizeObserver to handle dynamic container size changes
-        if (window.ResizeObserver && mapRef.current) {
-            resizeObserverRef.current = new ResizeObserver(() => {
-                if (mapInstanceRef.current) {
-                    mapInstanceRef.current.invalidateSize();
-                }
+            const map = L.map(mapRef.current, {
+                center: DEFAULT_CENTER,
+                zoom: 14,
+                zoomControl: true,
+                dragging: true,
+                scrollWheelZoom: true,
             });
-            resizeObserverRef.current.observe(mapRef.current);
-        }
 
-        mapInstanceRef.current = map;
+            tileFallbackRef.current = attachSatelliteLayerWithFallback(L, map, {
+                onFallback: () => setTileLayerMode('osm'),
+            });
 
-        return () => {
-            if (resizeObserverRef.current) {
-                resizeObserverRef.current.disconnect();
-            }
-            map.remove();
-            mapInstanceRef.current = null;
-        };
-    }, [mapLoaded]);
+            mapInstanceRef.current = map;
+            setMapReady(true);
 
-    // Re-invalidate map size when loaded
-    useEffect(() => {
-        if (mapInstanceRef.current && mapRef.current) {
-            const timeouts = [100, 300, 500, 1000];
-            const timers = timeouts.map(delay => 
-                setTimeout(() => {
+            requestAnimationFrame(() => {
+                map.invalidateSize();
+            });
+
+            const timers = [120, 350, 700].map((delay) =>
+                window.setTimeout(() => {
+                    map.invalidateSize();
+                }, delay)
+            );
+
+            if (window.ResizeObserver) {
+                resizeObserverRef.current = new ResizeObserver(() => {
                     if (mapInstanceRef.current) {
                         mapInstanceRef.current.invalidateSize();
                     }
-                }, delay)
-            );
-            
+                });
+                resizeObserverRef.current.observe(mapRef.current);
+            }
+
             return () => {
-                timers.forEach(timer => clearTimeout(timer));
+                timers.forEach((id) => window.clearTimeout(id));
+
+                if (resizeObserverRef.current) {
+                    resizeObserverRef.current.disconnect();
+                    resizeObserverRef.current = null;
+                }
+
+                if (tileFallbackRef.current) {
+                    tileFallbackRef.current.cleanup();
+                    tileFallbackRef.current = null;
+                }
+
+                markersRef.current.customers = [];
+                markersRef.current.odps = [];
+
+                if (mapInstanceRef.current) {
+                    mapInstanceRef.current.remove();
+                    mapInstanceRef.current = null;
+                }
             };
+        } catch (error) {
+            setMapInitError('Mesin peta gagal diinisialisasi.');
+            return undefined;
         }
-    }, [mapLoaded]);
+    }, [mapResetKey]);
 
-    // Update markers based on data and filters
     useEffect(() => {
-        if (!mapInstanceRef.current || !window.L) return;
+        if (!mapInstanceRef.current || !mapReady) {
+            return;
+        }
 
-        const L = window.L;
         const map = mapInstanceRef.current;
-
-        // Clear existing markers
-        markersRef.current.customers.forEach(marker => map.removeLayer(marker));
-        markersRef.current.odps.forEach(marker => map.removeLayer(marker));
+        markersRef.current.customers.forEach((marker) => map.removeLayer(marker));
+        markersRef.current.odps.forEach((marker) => map.removeLayer(marker));
         markersRef.current.customers = [];
         markersRef.current.odps = [];
 
-        // Add ODP markers
         if (filters.showOdps) {
-            data.odps.forEach(odp => {
-                if (odp.latitude && odp.longitude) {
-                    const marker = L.marker([parseFloat(odp.latitude), parseFloat(odp.longitude)], {
-                        icon: L.divIcon({
-                            className: 'custom-div-icon',
-                            html: `<div style="background-color: #3b82f6; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
-                                <svg width="16" height="16" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7L12 12L22 7L12 2Z"></path><path d="M2 17L12 22L22 17"></path><path d="M2 12L12 17L22 12"></path></svg>
-                            </div>`,
-                            iconSize: [30, 30],
-                            iconAnchor: [15, 15]
-                        })
-                    }).addTo(map);
+            data.odps.forEach((odp) => {
+                if (!odp.latitude || !odp.longitude) return;
 
-                    marker.bindPopup(`
-                        <div style="min-width: 200px;">
-                            <h3 style="font-weight: bold; margin-bottom: 8px; color: #3b82f6;">📡 ${odp.nama}</h3>
-                            <div style="font-size: 12px; color: #666;">
-                                <p><strong>Rasio Distribusi:</strong> ${odp.rasio_distribusi}</p>
-                                ${odp.rasio_spesial ? `<p><strong>Rasio Spesial:</strong> ${odp.rasio_spesial}</p>` : ''}
-                                <p><strong>Pelanggan:</strong> ${odp.customers_count || 0} pelanggan</p>
-                                <p style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;">
-                                    <strong>Koordinat:</strong><br/>
-                                    ${parseFloat(odp.latitude).toFixed(6)}, ${parseFloat(odp.longitude).toFixed(6)}
-                                </p>
-                            </div>
+                const marker = L.marker([parseFloat(odp.latitude), parseFloat(odp.longitude)], {
+                    icon: L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background-color:#2563eb;width:30px;height:30px;border-radius:9999px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3);">
+                            <svg width="16" height="16" fill="white" viewBox="0 0 24 24"><path d="M12 2L2 7L12 12L22 7L12 2Z"></path><path d="M2 17L12 22L22 17"></path><path d="M2 12L12 17L22 12"></path></svg>
+                        </div>`,
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15],
+                    }),
+                }).addTo(map);
+
+                marker.bindPopup(`
+                    <div style="min-width:200px;">
+                        <h3 style="font-weight:700;margin-bottom:8px;color:#2563eb;">${odp.nama}</h3>
+                        <div style="font-size:12px;color:#4b5563;">
+                            <p><strong>Rasio:</strong> ${odp.rasio_distribusi || '-'}</p>
+                            <p><strong>Pelanggan:</strong> ${odp.customers_count || 0}</p>
+                            <p style="margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb;">
+                                <strong>Koordinat:</strong><br/>
+                                ${parseFloat(odp.latitude).toFixed(6)}, ${parseFloat(odp.longitude).toFixed(6)}
+                            </p>
                         </div>
-                    `);
+                    </div>
+                `);
 
-                    markersRef.current.odps.push(marker);
-                }
+                markersRef.current.odps.push(marker);
             });
         }
 
-        // Add Customer markers
         if (filters.showCustomers) {
-            data.customers.forEach(customer => {
-                if (customer.latitude && customer.longitude) {
-                    // Filter online only if enabled
-                    if (filters.showOnlineOnly && !customer.is_online) return;
+            data.customers.forEach((customer) => {
+                if (!customer.latitude || !customer.longitude) return;
+                if (filters.showOnlineOnly && !customer.is_online) return;
 
-                    const isOnline = customer.is_online;
-                    const color = isOnline ? '#10b981' : '#ef4444';
+                const isOnline = !!customer.is_online;
+                const color = isOnline ? '#059669' : '#dc2626';
 
-                    const marker = L.marker([parseFloat(customer.latitude), parseFloat(customer.longitude)], {
-                        icon: L.divIcon({
-                            className: 'custom-div-icon',
-                            html: `<div style="background-color: ${color}; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">
-                                <svg width="12" height="12" fill="white" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"></path></svg>
-                            </div>`,
-                            iconSize: [24, 24],
-                            iconAnchor: [12, 12]
-                        })
-                    }).addTo(map);
+                const marker = L.marker([parseFloat(customer.latitude), parseFloat(customer.longitude)], {
+                    icon: L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background-color:${color};width:24px;height:24px;border-radius:9999px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3);">
+                            <svg width="12" height="12" fill="white" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"></path></svg>
+                        </div>`,
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12],
+                    }),
+                }).addTo(map);
 
-                    marker.bindPopup(`
-                        <div style="min-width: 220px;">
-                            <h3 style="font-weight: bold; margin-bottom: 8px; color: ${color};">
-                                ${isOnline ? '🟢' : '🔴'} ${customer.name}
-                            </h3>
-                            <div style="font-size: 12px; color: #666;">
-                                <p><strong>Username PPPoE:</strong> ${customer.pppoe_username || '-'}</p>
-                                <p><strong>Paket:</strong> ${customer.package_type || '-'}</p>
-                                <p><strong>ODP:</strong> ${customer.odp || '-'}</p>
-                                <p><strong>Alamat:</strong> ${customer.address || '-'}</p>
-                                <p><strong>Telepon:</strong> ${customer.phone || '-'}</p>
-                                ${customer.ip_address ? `<p><strong>IP Address:</strong> ${customer.ip_address}</p>` : ''}
-                                <p style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;">
-                                    <strong>Status:</strong> 
-                                    <span style="color: ${color}; font-weight: bold;">
-                                        ${isOnline ? 'Online' : 'Offline'}
-                                    </span>
-                                </p>
-                                <p style="margin-top: 4px;">
-                                    <strong>Koordinat:</strong><br/>
-                                    ${parseFloat(customer.latitude).toFixed(6)}, ${parseFloat(customer.longitude).toFixed(6)}
-                                </p>
-                            </div>
+                marker.bindPopup(`
+                    <div style="min-width:220px;">
+                        <h3 style="font-weight:700;margin-bottom:8px;color:${color};">${customer.name}</h3>
+                        <div style="font-size:12px;color:#4b5563;">
+                            <p><strong>PPPoE:</strong> ${customer.pppoe_username || '-'}</p>
+                            <p><strong>Paket:</strong> ${customer.package_type || '-'}</p>
+                            <p><strong>ODP:</strong> ${customer.odp || '-'}</p>
+                            <p><strong>Alamat:</strong> ${customer.address || '-'}</p>
+                            <p><strong>Status:</strong> ${isOnline ? 'Online' : 'Offline'}</p>
                         </div>
-                    `);
+                    </div>
+                `);
 
-                    markersRef.current.customers.push(marker);
-                }
+                markersRef.current.customers.push(marker);
             });
         }
-    }, [data, filters, mapLoaded]);
+    }, [data, filters, mapReady]);
 
-    const toggleFilter = (filterKey) => {
-        setFilters(prev => ({ ...prev, [filterKey]: !prev[filterKey] }));
+    const handleRetryData = () => {
+        fetchMapData();
     };
 
-    const customersWithCoords = data.customers.filter(c => c.latitude && c.longitude);
-    const onlineCustomers = customersWithCoords.filter(c => c.is_online);
-    const odpsWithCoords = data.odps.filter(o => o.latitude && o.longitude);
+    const handleRetryMap = () => {
+        setMapInitError(null);
+        setMapResetKey((prev) => prev + 1);
+    };
 
-    if (loading && !mapLoaded) {
-        return (
-            <div className="flex items-center justify-center min-h-[60vh]">
-                <div className="text-center">
-                    <Loader className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
-                    <p className="text-gray-600">Memuat peta...</p>
-                </div>
-            </div>
-        );
-    }
+    const toggleFilter = (key) => {
+        setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
+    };
+
+    const customersWithCoords = useMemo(
+        () => data.customers.filter((c) => c.latitude && c.longitude),
+        [data.customers]
+    );
+    const onlineCustomers = useMemo(
+        () => customersWithCoords.filter((c) => c.is_online),
+        [customersWithCoords]
+    );
+    const odpsWithCoords = useMemo(
+        () => data.odps.filter((o) => o.latitude && o.longitude),
+        [data.odps]
+    );
 
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div>
                 <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Monitoring Maps</h1>
-                <p className="text-gray-600 mt-1">Pemetaan lokasi pelanggan dan ODP secara real-time</p>
+                <p className="text-gray-600 mt-1">Pemetaan lokasi pelanggan dan ODP real-time.</p>
             </div>
 
-            {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
+            {mapInitError && (
+                <Alert
+                    type="error"
+                    message={`${mapInitError} Klik "Re-init Peta" untuk mencoba ulang.`}
+                    onClose={() => setMapInitError(null)}
+                />
+            )}
+            {dataError && (
+                <Alert
+                    type="error"
+                    message={dataError}
+                    onClose={() => setDataError(null)}
+                />
+            )}
 
-            {/* Statistics Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-600">Total ODP</p>
-                            <p className="text-2xl font-bold text-blue-600">{odpsWithCoords.length}</p>
-                            <p className="text-xs text-gray-500 mt-1">dengan koordinat</p>
-                        </div>
-                        <Network className="w-12 h-12 text-blue-600 opacity-20" />
-                    </div>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <p className="text-sm text-gray-500">Total ODP</p>
+                    <p className="text-2xl font-bold text-blue-600">{odpsWithCoords.length}</p>
+                    <Network className="w-10 h-10 text-blue-300 mt-2" />
                 </div>
-
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-600">Total Pelanggan</p>
-                            <p className="text-2xl font-bold text-gray-800">{customersWithCoords.length}</p>
-                            <p className="text-xs text-gray-500 mt-1">dengan koordinat</p>
-                        </div>
-                        <Users className="w-12 h-12 text-gray-600 opacity-20" />
-                    </div>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <p className="text-sm text-gray-500">Total Pelanggan</p>
+                    <p className="text-2xl font-bold text-slate-800">{customersWithCoords.length}</p>
+                    <Users className="w-10 h-10 text-slate-300 mt-2" />
                 </div>
-
-                <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-sm text-gray-600">Pelanggan Online</p>
-                            <p className="text-2xl font-bold text-green-600">{onlineCustomers.length}</p>
-                            <p className="text-xs text-gray-500 mt-1">
-                                {customersWithCoords.length > 0 
-                                    ? Math.round((onlineCustomers.length / customersWithCoords.length) * 100) 
-                                    : 0}% dari total
-                            </p>
-                        </div>
-                        <MapPin className="w-12 h-12 text-green-600 opacity-20" />
-                    </div>
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <p className="text-sm text-gray-500">Pelanggan Online</p>
+                    <p className="text-2xl font-bold text-emerald-600">{onlineCustomers.length}</p>
+                    <MapPin className="w-10 h-10 text-emerald-300 mt-2" />
                 </div>
             </div>
 
-            {/* Map Container */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-                {/* Map Controls */}
-                <div className="p-4 border-b border-gray-200 bg-gray-50">
-                    <div className="flex flex-wrap items-center gap-3">
-                        <h3 className="font-semibold text-gray-800">Filter Tampilan:</h3>
-                        
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="p-4 border-b border-gray-200 bg-slate-50 space-y-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-slate-800 mr-2">Filter:</h3>
+
                         <button
                             onClick={() => toggleFilter('showOdps')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                filters.showOdps 
-                                    ? 'bg-blue-600 text-white' 
-                                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition ${
+                                filters.showOdps ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
                             }`}
                         >
                             {filters.showOdps ? <Eye size={16} /> : <EyeOff size={16} />}
@@ -333,10 +314,8 @@ function MonitoringMaps() {
 
                         <button
                             onClick={() => toggleFilter('showCustomers')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                filters.showCustomers 
-                                    ? 'bg-gray-800 text-white' 
-                                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition ${
+                                filters.showCustomers ? 'bg-slate-800 text-white' : 'bg-slate-200 text-slate-700'
                             }`}
                         >
                             {filters.showCustomers ? <Eye size={16} /> : <EyeOff size={16} />}
@@ -345,58 +324,70 @@ function MonitoringMaps() {
 
                         <button
                             onClick={() => toggleFilter('showOnlineOnly')}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                filters.showOnlineOnly 
-                                    ? 'bg-green-600 text-white' 
-                                    : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                            className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 transition ${
+                                filters.showOnlineOnly ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'
                             }`}
                         >
                             {filters.showOnlineOnly ? <Eye size={16} /> : <EyeOff size={16} />}
-                            Online Saja
+                            Online saja
                         </button>
 
-                        <button
-                            onClick={fetchMapData}
-                            className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            Refresh
-                        </button>
+                        <div className="ml-auto flex flex-wrap items-center gap-2">
+                            <button
+                                onClick={handleRetryData}
+                                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-2"
+                            >
+                                <RefreshCw size={14} />
+                                Coba Lagi Data
+                            </button>
+                            <button
+                                onClick={handleRetryMap}
+                                className="px-3 py-1.5 rounded-lg text-sm font-medium bg-slate-700 text-white hover:bg-slate-800 transition flex items-center gap-2"
+                            >
+                                <RefreshCw size={14} />
+                                Re-init Peta
+                            </button>
+                        </div>
                     </div>
 
-                    {/* Legend */}
-                    <div className="mt-3 flex flex-wrap items-center gap-4 text-xs">
-                        <div className="flex items-center gap-2">
-                            <div className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow"></div>
-                            <span className="text-gray-600">ODP</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-green-600 border-2 border-white shadow"></div>
-                            <span className="text-gray-600">Pelanggan Online</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-red-600 border-2 border-white shadow"></div>
-                            <span className="text-gray-600">Pelanggan Offline</span>
-                        </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                        <span className="inline-flex items-center gap-2 px-2 py-1 rounded bg-white border border-slate-200 text-slate-600">
+                            Mode Tile:
+                            <strong className={tileLayerMode === 'satellite' ? 'text-blue-700' : 'text-amber-700'}>
+                                {tileLayerMode === 'satellite' ? 'Satelit (Esri)' : 'Fallback OSM'}
+                            </strong>
+                        </span>
+                        {tileLayerMode !== 'satellite' && (
+                            <span className="inline-flex items-center gap-1 text-amber-700">
+                                <AlertTriangle size={14} />
+                                Sinyal tile satelit terganggu, sistem pindah otomatis ke OSM.
+                            </span>
+                        )}
                     </div>
                 </div>
 
-                {/* Map */}
-                <div 
-                    ref={mapRef} 
-                    style={{ 
-                        height: '600px', 
-                        width: '100%',
-                        position: 'relative',
-                        zIndex: 0
-                    }}
-                    className="relative bg-gray-100"
-                >
-                    {loading && (
-                        <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
-                            <Loader className="w-8 h-8 text-blue-600 animate-spin" />
+                <div className="relative h-[600px] w-full bg-slate-100">
+                    <div
+                        ref={mapRef}
+                        className="absolute inset-0 z-0"
+                        style={{ minHeight: '600px' }}
+                    />
+
+                    {loadingData && (
+                        <div className="absolute inset-0 z-20 bg-white/70 backdrop-blur-[1px] flex items-center justify-center">
+                            <div className="flex items-center gap-2 text-slate-700 font-medium">
+                                <Loader className="w-5 h-5 animate-spin" />
+                                Memuat data peta...
+                            </div>
+                        </div>
+                    )}
+
+                    {!mapReady && !mapInitError && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center text-slate-600">
+                            <div className="text-center">
+                                <Loader className="w-8 h-8 animate-spin mx-auto mb-2" />
+                                Menyiapkan mesin peta...
+                            </div>
                         </div>
                     )}
                 </div>

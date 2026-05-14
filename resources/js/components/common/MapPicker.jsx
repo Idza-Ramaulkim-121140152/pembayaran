@@ -1,106 +1,102 @@
 import { useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
 import { MapPin, Navigation } from 'lucide-react';
+import { attachSatelliteLayerWithFallback } from '../../utils/leafletTileFallback';
 
-function MapPicker({ latitude, longitude, onLocationChange, height = '400px', isOpen = true }) {
+const LAMPUNG_DEFAULT = {
+    lat: -5.632727646,
+    lng: 105.548014641,
+};
+
+function toValidCoordinatePair(latitude, longitude) {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return { lat, lng };
+    }
+
+    return null;
+}
+
+function createPickerIcon() {
+    return L.divIcon({
+        className: '',
+        html: '<div style="width:18px;height:18px;border-radius:9999px;background:#2563eb;border:2px solid #ffffff;box-shadow:0 1px 4px rgba(0,0,0,0.35);"></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+    });
+}
+
+function MapPicker({
+    latitude,
+    longitude,
+    onLocationChange,
+    height = '400px',
+    isOpen = true,
+    showCoordinateInputs = true,
+}) {
     const mapRef = useRef(null);
     const mapInstanceRef = useRef(null);
     const markerRef = useRef(null);
     const resizeObserverRef = useRef(null);
-    const [currentLocation, setCurrentLocation] = useState({ lat: latitude || -7.2575, lng: longitude || 112.7521 }); // Default: Surabaya
+    const tileFallbackRef = useRef(null);
+    const onLocationChangeRef = useRef(onLocationChange);
     const [isLoadingLocation, setIsLoadingLocation] = useState(false);
-    const [mapLoaded, setMapLoaded] = useState(false);
+    const [usingFallbackTiles, setUsingFallbackTiles] = useState(false);
 
-    // Load Leaflet CSS and JS
+    const initialCoordinates = toValidCoordinatePair(latitude, longitude) || LAMPUNG_DEFAULT;
+    const [currentLocation, setCurrentLocation] = useState(initialCoordinates);
+
     useEffect(() => {
-        // Check if Leaflet is already loaded
-        if (window.L) {
-            setMapLoaded(true);
-            return;
-        }
+        onLocationChangeRef.current = onLocationChange;
+    }, [onLocationChange]);
 
-        // Load CSS
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-        link.integrity = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
-        link.crossOrigin = '';
-        document.head.appendChild(link);
-
-        // Load JS
-        const script = document.createElement('script');
-        script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-        script.integrity = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=';
-        script.crossOrigin = '';
-        script.onload = () => {
-            setMapLoaded(true);
-        };
-        document.head.appendChild(script);
-
-        return () => {
-            document.head.removeChild(link);
-            document.head.removeChild(script);
-        };
-    }, []);
-
-    // Initialize map
     useEffect(() => {
-        if (!mapLoaded || !mapRef.current || mapInstanceRef.current) return;
+        if (!mapRef.current || mapInstanceRef.current) return undefined;
 
-        const L = window.L;
         const map = L.map(mapRef.current, {
-            center: [currentLocation.lat, currentLocation.lng],
+            center: [initialCoordinates.lat, initialCoordinates.lng],
             zoom: 13,
             scrollWheelZoom: true,
             dragging: true,
             zoomControl: true,
         });
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19,
-            minZoom: 5,
-            keepBuffer: 2,
-            updateWhenIdle: false,
-            updateWhenZooming: false,
-            detectRetina: true,
-        }).addTo(map);
+        tileFallbackRef.current = attachSatelliteLayerWithFallback(L, map, {
+            onFallback: () => setUsingFallbackTiles(true),
+        });
 
-        // Force map to recalculate size after initialization
-        setTimeout(() => {
-            map.invalidateSize();
-        }, 100);
-
-        // Add marker
-        const marker = L.marker([currentLocation.lat, currentLocation.lng], {
+        const marker = L.marker([initialCoordinates.lat, initialCoordinates.lng], {
             draggable: true,
+            icon: createPickerIcon(),
         }).addTo(map);
 
-        // Update coordinates on marker drag
-        marker.on('dragend', function(e) {
-            const position = e.target.getLatLng();
-            const lat = parseFloat(position.lat.toFixed(9));
-            const lng = parseFloat(position.lng.toFixed(9));
+        marker.on('dragend', (event) => {
+            const position = event.target.getLatLng();
+            const lat = Number(position.lat.toFixed(9));
+            const lng = Number(position.lng.toFixed(9));
             setCurrentLocation({ lat, lng });
-            if (onLocationChange) {
-                onLocationChange(lat, lng);
+
+            if (typeof onLocationChangeRef.current === 'function') {
+                onLocationChangeRef.current(lat, lng);
             }
         });
 
-        // Update marker on map click
-        map.on('click', function(e) {
-            marker.setLatLng(e.latlng);
-            const lat = parseFloat(e.latlng.lat.toFixed(9));
-            const lng = parseFloat(e.latlng.lng.toFixed(9));
+        map.on('click', (event) => {
+            marker.setLatLng(event.latlng);
+            const lat = Number(event.latlng.lat.toFixed(9));
+            const lng = Number(event.latlng.lng.toFixed(9));
             setCurrentLocation({ lat, lng });
-            if (onLocationChange) {
-                onLocationChange(lat, lng);
+
+            if (typeof onLocationChangeRef.current === 'function') {
+                onLocationChangeRef.current(lat, lng);
             }
         });
 
         mapInstanceRef.current = map;
         markerRef.current = marker;
 
-        // Setup ResizeObserver to handle dynamic container size changes
         if (window.ResizeObserver && mapRef.current) {
             resizeObserverRef.current = new ResizeObserver(() => {
                 if (mapInstanceRef.current) {
@@ -110,61 +106,50 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px', is
             resizeObserverRef.current.observe(mapRef.current);
         }
 
+        const initialInvalidateTimer = window.setTimeout(() => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.invalidateSize();
+            }
+        }, 80);
+
         return () => {
+            window.clearTimeout(initialInvalidateTimer);
             if (resizeObserverRef.current) {
                 resizeObserverRef.current.disconnect();
             }
+            if (tileFallbackRef.current) {
+                tileFallbackRef.current.cleanup();
+                tileFallbackRef.current = null;
+            }
             map.remove();
             mapInstanceRef.current = null;
+            markerRef.current = null;
         };
-    }, [mapLoaded]);
+    }, [initialCoordinates.lat, initialCoordinates.lng]);
 
-    // Re-invalidate map size when container becomes visible or changes
     useEffect(() => {
-        if (mapInstanceRef.current && mapRef.current) {
-            // Multiple attempts to ensure map renders properly
-            const timeouts = [100, 300, 500, 1000];
-            const timers = timeouts.map(delay => 
-                setTimeout(() => {
-                    if (mapInstanceRef.current) {
-                        mapInstanceRef.current.invalidateSize();
-                    }
-                }, delay)
-            );
-            
-            return () => {
-                timers.forEach(timer => clearTimeout(timer));
-            };
-        }
-    }, [mapLoaded]);
+        if (!mapInstanceRef.current) return undefined;
 
-    // Trigger invalidateSize when modal opens (isOpen changes to true)
-    useEffect(() => {
-        if (isOpen && mapInstanceRef.current) {
-            // Wait for modal animation to complete before invalidating size
-            const timeouts = [50, 150, 300, 600];
-            const timers = timeouts.map(delay => 
-                setTimeout(() => {
-                    if (mapInstanceRef.current) {
-                        mapInstanceRef.current.invalidateSize();
-                    }
-                }, delay)
-            );
-            
-            return () => {
-                timers.forEach(timer => clearTimeout(timer));
-            };
-        }
-    }, [isOpen]);
+        const delays = [40, 140, 280];
+        const timers = delays.map((delay) => window.setTimeout(() => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.invalidateSize();
+            }
+        }, delay));
 
-    // Update marker position when latitude/longitude props change
+        return () => {
+            timers.forEach((timer) => window.clearTimeout(timer));
+        };
+    }, [isOpen, height]);
+
     useEffect(() => {
-        if (mapInstanceRef.current && markerRef.current && latitude && longitude) {
-            const newLatLng = window.L.latLng(latitude, longitude);
-            markerRef.current.setLatLng(newLatLng);
-            mapInstanceRef.current.setView(newLatLng, 13);
-            setCurrentLocation({ lat: latitude, lng: longitude });
-        }
+        const nextCoordinates = toValidCoordinatePair(latitude, longitude);
+        if (!nextCoordinates || !mapInstanceRef.current || !markerRef.current) return;
+
+        const newLatLng = L.latLng(nextCoordinates.lat, nextCoordinates.lng);
+        markerRef.current.setLatLng(newLatLng);
+        mapInstanceRef.current.setView(newLatLng, mapInstanceRef.current.getZoom(), { animate: false });
+        setCurrentLocation(nextCoordinates);
     }, [latitude, longitude]);
 
     const getCurrentLocation = () => {
@@ -174,20 +159,21 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px', is
         }
 
         setIsLoadingLocation(true);
+
         navigator.geolocation.getCurrentPosition(
             (position) => {
-                const lat = parseFloat(position.coords.latitude.toFixed(9));
-                const lng = parseFloat(position.coords.longitude.toFixed(9));
-                
+                const lat = Number(position.coords.latitude.toFixed(9));
+                const lng = Number(position.coords.longitude.toFixed(9));
+
                 if (mapInstanceRef.current && markerRef.current) {
-                    const newLatLng = window.L.latLng(lat, lng);
+                    const newLatLng = L.latLng(lat, lng);
                     markerRef.current.setLatLng(newLatLng);
                     mapInstanceRef.current.setView(newLatLng, 15);
                 }
-                
+
                 setCurrentLocation({ lat, lng });
-                if (onLocationChange) {
-                    onLocationChange(lat, lng);
+                if (typeof onLocationChangeRef.current === 'function') {
+                    onLocationChangeRef.current(lat, lng);
                 }
                 setIsLoadingLocation(false);
             },
@@ -195,7 +181,7 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px', is
                 console.error('Error getting location:', error);
                 alert('Gagal mendapatkan lokasi. Pastikan Anda mengizinkan akses lokasi.');
                 setIsLoadingLocation(false);
-            }
+            },
         );
     };
 
@@ -217,63 +203,75 @@ function MapPicker({ latitude, longitude, onLocationChange, height = '400px', is
                 </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-                <div>
-                    <label className="block text-xs text-gray-600 mb-1">Latitude</label>
-                    <input
-                        type="number"
-                        step="any"
-                        value={currentLocation.lat}
-                        onChange={(e) => {
-                            const lat = parseFloat(e.target.value) || 0;
-                            setCurrentLocation(prev => ({ ...prev, lat }));
-                            if (mapInstanceRef.current && markerRef.current) {
-                                const newLatLng = window.L.latLng(lat, currentLocation.lng);
-                                markerRef.current.setLatLng(newLatLng);
-                                mapInstanceRef.current.setView(newLatLng);
-                            }
-                            if (onLocationChange) {
-                                onLocationChange(lat, currentLocation.lng);
-                            }
-                        }}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="-7.2575"
-                    />
-                </div>
-                <div>
-                    <label className="block text-xs text-gray-600 mb-1">Longitude</label>
-                    <input
-                        type="number"
-                        step="any"
-                        value={currentLocation.lng}
-                        onChange={(e) => {
-                            const lng = parseFloat(e.target.value) || 0;
-                            setCurrentLocation(prev => ({ ...prev, lng }));
-                            if (mapInstanceRef.current && markerRef.current) {
-                                const newLatLng = window.L.latLng(currentLocation.lat, lng);
-                                markerRef.current.setLatLng(newLatLng);
-                                mapInstanceRef.current.setView(newLatLng);
-                            }
-                            if (onLocationChange) {
-                                onLocationChange(currentLocation.lat, lng);
-                            }
-                        }}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        placeholder="112.7521"
-                    />
-                </div>
-            </div>
+            {showCoordinateInputs && (
+                <div className="grid grid-cols-2 gap-2">
+                    <div>
+                        <label className="block text-xs text-gray-600 mb-1">Latitude</label>
+                        <input
+                            type="number"
+                            step="any"
+                            value={currentLocation.lat}
+                            onChange={(event) => {
+                                const lat = Number(event.target.value);
+                                if (!Number.isFinite(lat)) return;
 
-            <div 
-                ref={mapRef} 
-                style={{ 
-                    height, 
+                                setCurrentLocation((prev) => ({ ...prev, lat }));
+                                if (mapInstanceRef.current && markerRef.current) {
+                                    const newLatLng = L.latLng(lat, currentLocation.lng);
+                                    markerRef.current.setLatLng(newLatLng);
+                                    mapInstanceRef.current.setView(newLatLng, mapInstanceRef.current.getZoom(), { animate: false });
+                                }
+                                if (typeof onLocationChangeRef.current === 'function') {
+                                    onLocationChangeRef.current(lat, currentLocation.lng);
+                                }
+                            }}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="-5.632727646"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs text-gray-600 mb-1">Longitude</label>
+                        <input
+                            type="number"
+                            step="any"
+                            value={currentLocation.lng}
+                            onChange={(event) => {
+                                const lng = Number(event.target.value);
+                                if (!Number.isFinite(lng)) return;
+
+                                setCurrentLocation((prev) => ({ ...prev, lng }));
+                                if (mapInstanceRef.current && markerRef.current) {
+                                    const newLatLng = L.latLng(currentLocation.lat, lng);
+                                    markerRef.current.setLatLng(newLatLng);
+                                    mapInstanceRef.current.setView(newLatLng, mapInstanceRef.current.getZoom(), { animate: false });
+                                }
+                                if (typeof onLocationChangeRef.current === 'function') {
+                                    onLocationChangeRef.current(currentLocation.lat, lng);
+                                }
+                            }}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="105.548014641"
+                        />
+                    </div>
+                </div>
+            )}
+
+            <div
+                ref={mapRef}
+                style={{
+                    height,
                     width: '100%',
                     position: 'relative',
-                    zIndex: 0
-                }} 
+                    zIndex: 0,
+                }}
                 className="rounded-lg border border-gray-300 overflow-hidden bg-gray-100"
             />
+
+            {usingFallbackTiles && (
+                <p className="text-xs text-amber-700">
+                    Tile satelit bermasalah, otomatis dialihkan ke peta standar agar peta tetap tampil.
+                </p>
+            )}
 
             <p className="text-xs text-gray-500">
                 Klik pada peta atau drag marker untuk mengatur lokasi ODP

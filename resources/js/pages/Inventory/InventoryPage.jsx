@@ -474,8 +474,8 @@ function InventoryPage() {
     }
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="space-y-6 min-w-0">
+            <div className="app-section-header flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Inventori</h1>
                     <p className="text-gray-500 mt-1">Kelola stok, pemasukan, pengeluaran barang, hutang inventori, dan histori</p>
@@ -496,21 +496,21 @@ function InventoryPage() {
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <div className="app-card p-5">
                     <p className="text-sm text-gray-500">Total Master Barang</p>
                     <p className="text-2xl font-bold text-gray-900 mt-1">{formatNumber(totalStockItem)}</p>
                 </div>
-                <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <div className="app-card p-5">
                     <p className="text-sm text-gray-500">Akumulasi Stok (semua unit)</p>
                     <p className="text-2xl font-bold text-gray-900 mt-1">{formatNumber(stockTrackedUnits)}</p>
                 </div>
-                <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <div className="app-card p-5">
                     <p className="text-sm text-gray-500">Outstanding Hutang Diketahui</p>
                     <p className="text-2xl font-bold text-red-600 mt-1">{formatCurrency(debtSummary.known_outstanding)}</p>
                 </div>
             </div>
 
-            <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="app-card overflow-hidden">
                 <div className="border-b border-gray-100 px-4 py-3 flex flex-wrap gap-2">
                     {TAB_ITEMS.map((tab) => {
                         const Icon = tab.icon;
@@ -796,7 +796,7 @@ function InventoryPage() {
                             </form>
 
                             <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                                <table className="w-full text-sm">
+                                <table className="w-full min-w-[860px] text-sm">
                                     <thead className="bg-gray-50 text-gray-600">
                                         <tr>
                                             <th className="px-3 py-2 text-left">Pilih</th>
@@ -920,7 +920,7 @@ function InventoryPage() {
                             </div>
 
                             <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                                <table className="w-full text-sm">
+                                <table className="w-full min-w-[860px] text-sm">
                                     <thead className="bg-gray-50 text-gray-600">
                                         <tr>
                                             <th className="px-3 py-2 text-left">Tanggal</th>
@@ -993,12 +993,12 @@ function InventoryPage() {
                 </div>
             </div>
 
-            <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="app-card overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 text-gray-800 font-semibold">
                     <Package size={18} /> Stok Saat Ini
                 </div>
                 <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
+                    <table className="w-full min-w-[900px] text-sm">
                         <thead className="bg-gray-50 text-gray-600">
                             <tr>
                                 <th className="px-3 py-2 text-left">Barang</th>

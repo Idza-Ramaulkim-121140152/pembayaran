@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\BillingAutoInvoiceJob;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\NotificationLog;
 use App\Models\Package;
 use Carbon\Carbon;
@@ -17,6 +18,12 @@ class BillingAutoInvoiceService
     private const ALMOST_LATE_DAYS = 5;
     private const CUSTOMER_CHUNK_SIZE = 50;
     private const WA_RETRY_COUNT = 2;
+
+    public function __construct(
+        private FeatureService $featureService,
+        private BillingItemService $billingItemService,
+    ) {
+    }
 
     /**
      * @throws \Throwable
@@ -271,6 +278,8 @@ class BillingAutoInvoiceService
                         'status' => 'unpaid',
                         'invoice_link' => uniqid('inv_'),
                     ]);
+
+                    $this->ensureLegacyInvoiceItem($invoice, $customer, $matchedPackage);
                     $wasCreated = true;
                 });
 
@@ -445,6 +454,33 @@ class BillingAutoInvoiceService
         }
 
         return trim((string) ($customer->custom_package ?? ''));
+    }
+
+    private function ensureLegacyInvoiceItem(Invoice $invoice, Customer $customer, Package $package): void
+    {
+        if (!$this->featureService->enabled('billing_items_v1')) {
+            return;
+        }
+
+        if ($invoice->items()->exists()) {
+            $this->billingItemService->recalculateInvoiceTotal($invoice);
+            return;
+        }
+
+        InvoiceItem::create([
+            'invoice_id' => $invoice->id,
+            'item_type' => 'package',
+            'description' => 'Paket bulanan ' . $package->name,
+            'quantity' => 1,
+            'unit_price' => (float) $package->price,
+            'amount' => (float) $package->price,
+            'meta' => [
+                'source' => 'auto_invoice_job',
+                'package_id' => $package->id,
+            ],
+        ]);
+
+        $this->billingItemService->recalculateInvoiceTotal($invoice);
     }
 
     private function isValidPhone(?string $phone): bool
