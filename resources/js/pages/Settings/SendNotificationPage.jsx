@@ -410,7 +410,7 @@ function SendNotificationPage() {
                             onClick={handleShowQR}
                             className="text-sm text-blue-600 hover:underline"
                         >
-                            Lihat QR Code →
+                            Lihat QR Code {'->'}
                         </button>
                     </div>
                 )}
@@ -503,10 +503,10 @@ function SendNotificationPage() {
                         </h3>
 
                         {/* Mode Tabs */}
-                        <div className="flex gap-2 mb-4">
+                        <div className="flex flex-col md:flex-row gap-2 mb-4">
                             <button
                                 onClick={() => setMode('all')}
-                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
+                                className={`w-full md:flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
                                     mode === 'all' 
                                         ? 'border-orange-500 bg-orange-50 text-orange-700' 
                                         : 'border-gray-200 hover:border-orange-300'
@@ -517,7 +517,7 @@ function SendNotificationPage() {
                             </button>
                             <button
                                 onClick={() => setMode('area')}
-                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
+                                className={`w-full md:flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
                                     mode === 'area' 
                                         ? 'border-orange-500 bg-orange-50 text-orange-700' 
                                         : 'border-gray-200 hover:border-orange-300'
@@ -528,7 +528,7 @@ function SendNotificationPage() {
                             </button>
                             <button
                                 onClick={() => setMode('select')}
-                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
+                                className={`w-full md:flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition ${
                                     mode === 'select' 
                                         ? 'border-orange-500 bg-orange-50 text-orange-700' 
                                         : 'border-gray-200 hover:border-orange-300'
@@ -568,7 +568,7 @@ function SendNotificationPage() {
                         {/* Mode: Select */}
                         {mode === 'select' && (
                             <div>
-                                <div className="flex gap-2 mb-3">
+                                <div className="flex flex-wrap gap-2 mb-3">
                                     <div className="flex-1 relative">
                                         <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                                         <input
@@ -581,13 +581,13 @@ function SendNotificationPage() {
                                     </div>
                                     <button
                                         onClick={selectAllFiltered}
-                                        className="px-3 py-2 text-sm text-orange-600 hover:bg-orange-50 rounded-lg border border-orange-200"
+                                        className="w-full sm:w-auto px-3 py-2 text-sm text-orange-600 hover:bg-orange-50 rounded-lg border border-orange-200"
                                     >
                                         Pilih Semua
                                     </button>
                                     <button
                                         onClick={deselectAll}
-                                        className="px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg border"
+                                        className="w-full sm:w-auto px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg border"
                                     >
                                         Reset
                                     </button>
@@ -980,22 +980,24 @@ function SendNotificationPage() {
                 <div className="fixed inset-0 z-50 overflow-y-auto">
                     <div className="flex min-h-full items-center justify-center p-4">
                         <div className="fixed inset-0 bg-black/50" onClick={() => setShowLogsModal(false)}></div>
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 max-h-[80vh] flex flex-col">
-                            <div className="flex items-center justify-between mb-4">
+                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                            <div className="shrink-0 px-4 sm:px-6 py-4 border-b border-gray-100 bg-white">
+                                <div className="flex items-center justify-between">
                                 <h3 className="text-lg font-semibold text-gray-900">Log Pengiriman Notifikasi</h3>
                                 <button onClick={() => setShowLogsModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
                                     <X size={20} className="text-gray-500" />
                                 </button>
+                                </div>
                             </div>
                             {logsLoading ? (
-                                <div className="flex justify-center py-8">
+                                <div className="flex justify-center py-8 px-4 sm:px-6 flex-1 overflow-y-auto">
                                     <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
                                 </div>
                             ) : logs.length === 0 ? (
-                                <p className="text-center text-gray-500 py-8">Belum ada log pengiriman</p>
+                                <p className="text-center text-gray-500 py-8 px-4 sm:px-6 flex-1 overflow-y-auto">Belum ada log pengiriman</p>
                             ) : (
-                                <div className="overflow-y-auto overflow-x-auto flex-1">
-                                    <table className="w-full min-w-[760px] text-sm">
+                                <div className="px-4 sm:px-6 py-3 overflow-y-auto overflow-x-auto flex-1">
+                                    <table className="w-full min-w-[680px] text-sm">
                                         <thead className="bg-gray-50 sticky top-0">
                                             <tr>
                                                 <th className="text-left px-3 py-2 font-medium text-gray-600">Waktu</th>
@@ -1022,13 +1024,21 @@ function SendNotificationPage() {
                                                             {log.status === 'sent' ? 'Terkirim' : log.status === 'failed' ? 'Gagal' : 'Dilewati'}
                                                         </span>
                                                     </td>
-                                                    <td className="px-3 py-2 text-red-500 text-xs truncate max-w-[150px]">{log.error || '-'}</td>
+                                                    <td className="px-3 py-2 text-red-500 text-xs min-w-[180px] max-w-[280px] whitespace-normal break-words">{log.error || '-'}</td>
                                                 </tr>
                                             ))}
                                         </tbody>
                                     </table>
                                 </div>
                             )}
+                            <div className="shrink-0 px-4 sm:px-6 py-3 border-t border-gray-100 bg-white flex justify-end">
+                                <button
+                                    onClick={() => setShowLogsModal(false)}
+                                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                                >
+                                    Tutup
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -16,6 +16,7 @@ use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -54,6 +55,52 @@ class BillingController extends Controller
             abort(response()->json([
                 'message' => 'Anda tidak memiliki izin untuk konfirmasi pembayaran. Hubungi superadmin.',
             ], 403));
+        }
+    }
+
+    private function normalizePaymentProofPath(?string $rawPath): ?string
+    {
+        $path = trim((string) $rawPath);
+        if ($path === '') {
+            return null;
+        }
+
+        $path = str_replace('\\', '/', $path);
+        $path = ltrim($path, '/');
+
+        if (str_starts_with($path, 'storage/')) {
+            $path = substr($path, strlen('storage/'));
+        }
+
+        if (str_starts_with($path, 'public/')) {
+            $path = substr($path, strlen('public/'));
+        }
+
+        $path = ltrim((string) $path, '/');
+        return $path !== '' ? $path : null;
+    }
+
+    private function buildPaymentProofUrl(?Invoice $invoice): ?string
+    {
+        if (!$invoice || empty($invoice->bukti_pembayaran)) {
+            return null;
+        }
+
+        return route('billing.invoice.payment-proof', ['invoice' => $invoice->id]);
+    }
+
+    private function warnIfPublicStorageLinkMissing(): void
+    {
+        $publicStoragePath = public_path('storage');
+        if (is_link($publicStoragePath) || is_dir($publicStoragePath)) {
+            return;
+        }
+
+        $cacheKey = 'billing:missing-public-storage-link:warned';
+        if (Cache::add($cacheKey, now()->toIso8601String(), now()->addHours(12))) {
+            Log::warning('public/storage symlink tidak ditemukan. File bukti mungkin tidak bisa dibuka via URL langsung.', [
+                'expected_path' => $publicStoragePath,
+            ]);
         }
     }
 
@@ -333,6 +380,8 @@ class BillingController extends Controller
     // API Methods for React
     public function apiIndex()
     {
+        $this->warnIfPublicStorageLinkMissing();
+
         $today = Carbon::today();
         $almostLateEndDate = $today->copy()->addDays(self::ALMOST_LATE_DAYS);
         $startOfMonth = $today->copy()->startOfMonth();
@@ -389,6 +438,14 @@ class BillingController extends Controller
         foreach ($customers as $customer) {
             $latestInvoice = $customer->latestInvoice;
             $activeInvoice = $activeInvoiceMap[(int) $customer->id] ?? null;
+
+            if ($latestInvoice) {
+                $latestInvoice->setAttribute('bukti_pembayaran_url', $this->buildPaymentProofUrl($latestInvoice));
+            }
+            if ($activeInvoice) {
+                $activeInvoice->setAttribute('bukti_pembayaran_url', $this->buildPaymentProofUrl($activeInvoice));
+            }
+
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
             $isAlmostLate = $dueDate && $dueDate->gte($today) && $dueDate->lte($almostLateEndDate);
@@ -435,6 +492,35 @@ class BillingController extends Controller
                 'paid' => $paid,
                 'isolationStatus' => $isolationStatus,
             ]
+        ]);
+    }
+
+    public function paymentProof(Invoice $invoice)
+    {
+        $this->warnIfPublicStorageLinkMissing();
+
+        if (empty($invoice->bukti_pembayaran)) {
+            abort(404, 'Bukti pembayaran tidak tersedia.');
+        }
+
+        $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
+        if ($normalizedPath === null) {
+            abort(404, 'Path bukti pembayaran tidak valid.');
+        }
+
+        if (!Storage::disk('public')->exists($normalizedPath)) {
+            abort(404, 'File bukti pembayaran tidak ditemukan di penyimpanan.');
+        }
+
+        $absolutePath = Storage::disk('public')->path($normalizedPath);
+        $mimeType = Storage::disk('public')->mimeType($normalizedPath) ?: 'application/octet-stream';
+        $fileName = basename($normalizedPath);
+
+        return response()->file($absolutePath, [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, max-age=60',
         ]);
     }
 

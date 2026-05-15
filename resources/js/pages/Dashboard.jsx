@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+    Activity,
     Calendar,
     DollarSign,
     FileText,
     Plus,
     Settings,
+    TrendingDown,
+    TrendingUp,
     Wallet,
     Zap,
 } from 'lucide-react';
@@ -81,6 +84,7 @@ const DEFAULT_STATS = {
     package_distribution: [],
     active_package_distribution: [],
     finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
+    cashflow: { balance: 0, month_income: 0, month_expense: 0, month_net: 0, net_delta_pct: 0, runway_days: null, runway_status: 'normal' },
     employee_payroll: {
         enabled: false,
         warning: null,
@@ -252,6 +256,25 @@ function Dashboard() {
         stats?.monthly_installations ?? stats?.new_installations?.[stats?.new_installations?.length - 1] ?? 0
     );
     const financeSummary = stats?.finance_summary || DEFAULT_STATS.finance_summary;
+    const monthlyFinance = stats?.monthly_finance || null;
+    const cashflowSummary = stats?.cashflow || DEFAULT_STATS.cashflow;
+    const cashBalance = Number(cashflowSummary?.balance ?? financeSummary?.balance ?? 0);
+    const monthExpense = Number(cashflowSummary?.month_expense ?? monthlyFinance?.current_month?.expense ?? stats?.monthly_expense ?? 0);
+    const monthIncome = Number(cashflowSummary?.month_income ?? monthlyFinance?.current_month?.income ?? stats?.monthly_revenue ?? 0);
+    const monthNet = Number(cashflowSummary?.month_net ?? monthlyFinance?.current_month?.net ?? stats?.monthly_net ?? 0);
+    const netDeltaPct = Number(cashflowSummary?.net_delta_pct ?? monthlyFinance?.comparison?.net_change_percentage ?? 0);
+    const elapsedDays = Math.max(new Date().getDate(), 1);
+    const avgDailyExpense = monthExpense > 0 ? monthExpense / elapsedDays : 0;
+    const fallbackRunwayDays = cashBalance <= 0 ? 0 : avgDailyExpense > 0 ? Math.floor(cashBalance / avgDailyExpense) : null;
+    const runwayDays = cashflowSummary?.runway_days ?? fallbackRunwayDays;
+    const runwayStatus = cashflowSummary?.runway_status
+        || (runwayDays === null ? 'normal' : runwayDays < 15 ? 'critical' : runwayDays <= 45 ? 'warning' : 'normal');
+    const runwayBadgeClass = runwayStatus === 'critical'
+        ? 'bg-rose-100 text-rose-700 border-rose-200'
+        : runwayStatus === 'warning'
+            ? 'bg-amber-100 text-amber-700 border-amber-200'
+            : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    const isPositiveNetDelta = netDeltaPct >= 0;
     const packageDistribution = Array.isArray(stats?.package_distribution) ? stats.package_distribution : [];
     const activePackageDistribution = Array.isArray(stats?.active_package_distribution) ? stats.active_package_distribution : [];
     const packageDistributionTotal = packageDistribution.reduce((sum, item) => sum + Number(item?.count || 0), 0);
@@ -537,8 +560,48 @@ function Dashboard() {
                 <Alert type="info" title="Memuat Dashboard" message="Ringkasan utama sedang diproses." />
             )}
 
+            {canViewBalance && (
+                <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6 md:p-7 text-white shadow-xl shadow-slate-900/35 motion-safe:animate-[fadeIn_.35s_ease-out]">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+                        <div className="min-w-0">
+                            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
+                                <Wallet size={14} />
+                                Saldo Kas Saat Ini
+                            </div>
+                            <p className="mt-3 text-3xl md:text-5xl font-black tracking-tight">{loading ? 'Memuat...' : formatCurrency(cashBalance)}</p>
+                            <p className="mt-2 text-sm text-slate-200">
+                                {loading ? 'Menghitung ringkasan kas...' : `Masuk ${formatCurrency(monthIncome)} | Keluar ${formatCurrency(monthExpense)} | Net ${formatCurrency(monthNet)}`}
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0 lg:min-w-[360px]">
+                            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
+                                <p className="text-xs text-slate-200">Cash Runway</p>
+                                <p className="mt-1 text-2xl font-bold" title="Estimasi hari kas bertahan berdasarkan rata-rata pengeluaran harian bulan berjalan.">
+                                    {runwayDays === null ? '-' : `${runwayDays} hari`}
+                                </p>
+                                <span className={`mt-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${runwayBadgeClass} ${runwayStatus === 'critical' ? 'animate-pulse' : ''}`}>
+                                    {runwayStatus}
+                                </span>
+                            </div>
+                            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
+                                <p className="text-xs text-slate-200">Perubahan Net (MoM)</p>
+                                <p className={`mt-1 text-2xl font-bold inline-flex items-center gap-1 ${isPositiveNetDelta ? 'text-emerald-200' : 'text-rose-200'}`}>
+                                    {isPositiveNetDelta ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                                    {Math.abs(netDeltaPct).toFixed(1)}%
+                                </p>
+                                <p className="text-xs text-slate-300 mt-2 inline-flex items-center gap-1">
+                                    <Activity size={13} />
+                                    Dibanding bulan sebelumnya
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            )}
+
             {employeePayroll?.enabled && (
-                <div className="app-card p-6">
+                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                     <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900">Ringkasan Payroll Karyawan</h2>
@@ -624,31 +687,9 @@ function Dashboard() {
                 </div>
             )}
 
-            {canViewBalance && (
-                <div className="bg-gradient-to-br from-slate-700 to-slate-900 rounded-xl p-4 md:p-5 text-white shadow-lg shadow-slate-500/30">
-                    <div className="flex items-center gap-2 mb-3">
-                        <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
-                            <Wallet className="w-5 h-5" />
-                        </div>
-                        <div>
-                            <h2 className="text-lg md:text-xl font-bold">Saldo Saat Ini</h2>
-                            <p className="text-slate-100 text-xs">Ringkasan kas pemasukan dan pengeluaran</p>
-                        </div>
-                    </div>
-                    <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
-                        <p className="text-2xl md:text-3xl font-bold">{loading ? 'Memuat...' : formatCurrency(financeSummary.balance)}</p>
-                        <p className="text-sm text-slate-100 mt-1 font-medium">
-                            {loading
-                                ? 'Menghitung ringkasan kas...'
-                                : `Masuk ${formatCurrency(financeSummary.total_income)} | Keluar ${formatCurrency(financeSummary.total_expense)}`}
-                        </p>
-                    </div>
-                </div>
-            )}
-
             {!isFinance && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl p-6 text-white">
+                    <div className="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
                         <h2 className="text-xl font-bold mb-1">Monitoring Perangkat</h2>
                         <p className="text-sm text-purple-100">Status perangkat PPPoE real-time</p>
                         <div className="mt-4 flex items-end gap-2">
@@ -661,7 +702,7 @@ function Dashboard() {
                         </a>
                     </div>
 
-                    <div className="bg-gradient-to-br from-red-600 to-orange-600 rounded-2xl p-6 text-white">
+                    <div className="bg-gradient-to-br from-red-600 to-orange-600 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
                         <h2 className="text-xl font-bold mb-1">Perangkat Isolir</h2>
                         <p className="text-sm text-red-100">Terbatas karena lewat jatuh tempo</p>
                         <div className="mt-4 flex items-end gap-2">
@@ -678,38 +719,38 @@ function Dashboard() {
 
             <div className={`grid grid-cols-2 ${isFinance ? 'lg:grid-cols-3' : isTeknisi ? 'lg:grid-cols-4' : 'lg:grid-cols-6'} gap-4`}>
                 {!isFinance && (
-                    <div className="bg-blue-600 rounded-2xl p-5 text-white">
+                    <div className="bg-blue-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-blue-100">Total Pelanggan</p>
                         <p className="text-3xl font-bold mt-1">{loading ? '...' : totalCustomerCount}</p>
                     </div>
                 )}
                 {!isFinance && (
-                    <div className="bg-emerald-600 rounded-2xl p-5 text-white">
+                    <div className="bg-emerald-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-emerald-100">Pelanggan Aktif</p>
                         <p className="text-3xl font-bold mt-1">{loading ? '...' : activeCustomerCount}</p>
                         <p className="text-xs text-emerald-100 mt-1">Di luar pelanggan lewat jatuh tempo atau isolir</p>
                     </div>
                 )}
                 {!isTeknisi && (
-                    <div className="bg-violet-600 rounded-2xl p-5 text-white">
+                    <div className="bg-violet-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-violet-100">Pendapatan Bulan Ini</p>
                         <p className="text-2xl font-bold mt-1">{loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}`}</p>
                     </div>
                 )}
                 {!isFinance && (
-                    <div className="bg-cyan-600 rounded-2xl p-5 text-white">
+                    <div className="bg-cyan-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-cyan-100">Pemasangan Bulan Ini</p>
                         <p className="text-3xl font-bold mt-1">{loading ? '...' : monthlyInstallations}</p>
                     </div>
                 )}
                 {!isTeknisi && (
-                    <div className="bg-orange-600 rounded-2xl p-5 text-white">
+                    <div className="bg-orange-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-orange-100">Invoice Tertunda</p>
                         <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.pending_invoices || 0)}</p>
                     </div>
                 )}
                 {!isFinance && (
-                    <div className="bg-pink-600 rounded-2xl p-5 text-white">
+                    <div className="bg-pink-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
                         <p className="text-sm text-pink-100">Aduan Aktif</p>
                         <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.total_active_complaints || 0)}</p>
                     </div>
@@ -718,7 +759,7 @@ function Dashboard() {
 
             {!isTeknisi && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 app-card p-6">
+                    <div className="lg:col-span-2 app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                         <div className="flex items-center justify-between mb-6">
                             <div>
                                 <h2 className="text-lg font-bold text-gray-900">Pemasukan vs Pengeluaran</h2>
@@ -734,7 +775,7 @@ function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="app-card p-6">
+                    <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                         <div className="mb-6">
                             <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
                             <p className="text-sm text-gray-500">Distribusi aktif dan tidak aktif (lewat jatuh tempo atau isolir)</p>
@@ -763,7 +804,7 @@ function Dashboard() {
             )}
 
             {!isTeknisi && (
-                <div className="app-card p-6">
+                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
                         <div>
                             <h2 className="text-lg font-bold text-gray-900">Persentase Paket Layanan</h2>
@@ -858,7 +899,7 @@ function Dashboard() {
 
             {!isFinance ? (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 app-card p-6">
+                    <div className="lg:col-span-2 app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                         <div className="flex items-center justify-between mb-6">
                             <div>
                                 <h2 className="text-lg font-bold text-gray-900">Pemasangan Baru</h2>
@@ -874,7 +915,7 @@ function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white">
+                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
                         <div className="mb-6">
                             <h2 className="text-lg font-bold flex items-center gap-2">
                                 <Zap size={20} className="text-yellow-400" />
@@ -905,7 +946,7 @@ function Dashboard() {
                     </div>
                 </div>
             ) : (
-                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white">
+                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
                     <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
                         <Zap size={20} className="text-yellow-400" />
                         Aksi Cepat Keuangan
@@ -924,7 +965,7 @@ function Dashboard() {
             )}
 
             {!isTeknisi && (
-                <div className="app-card p-6">
+                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
                     <div className="mb-6">
                         <h2 className="text-lg font-bold text-gray-900">Transaksi Keuangan Terintegrasi</h2>
                         <p className="text-sm text-gray-500">Pemasukan, pengeluaran, payroll, dan adjustment dalam satu ledger</p>

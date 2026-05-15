@@ -726,6 +726,23 @@ function BillingPage() {
         return `${window.location.origin}/invoice/${link}`;
     };
 
+    const resolvePaymentProofUrl = (invoice) => {
+        if (!invoice) return '';
+
+        const proofUrl = (invoice.bukti_pembayaran_url || '').toString().trim();
+        if (proofUrl) {
+            if (/^https?:\/\//i.test(proofUrl)) return proofUrl;
+            if (proofUrl.startsWith('/')) return `${window.location.origin}${proofUrl}`;
+            return `${window.location.origin}/${proofUrl}`;
+        }
+
+        const rawProofPath = (invoice.bukti_pembayaran || '').toString().trim();
+        if (!rawProofPath) return '';
+
+        const normalized = rawProofPath.replace(/^\/+/, '').replace(/^storage\//i, '');
+        return `${window.location.origin}/storage/${normalized}`;
+    };
+
     const generateTemplate = (customer, invoiceOrLink) => {
         const invoiceUrl = resolveInvoiceUrl(invoiceOrLink);
 
@@ -1103,7 +1120,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <p>Fase: {phaseLabel(autoProcessModal.phase)}</p>
                         {autoProcessModal.jobId && <p>Job ID: {autoProcessModal.jobId}</p>}
                     </div>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                         <div className="rounded border border-gray-200 p-2">Total: <strong>{autoProcessModal.summary?.total ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Diproses: <strong>{autoProcessModal.summary?.processed ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoProcessModal.summary?.verified_wa ?? 0}</strong></div>
@@ -1217,7 +1234,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
                         Section: {autoResultModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Hampir Telat (H-5)'}
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                         <div className="rounded border border-gray-200 p-2">Total: <strong>{autoResultModal.summary?.total ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoResultModal.summary?.verified_wa ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Dibuat: <strong>{autoResultModal.summary?.created ?? 0}</strong></div>
@@ -1413,17 +1430,21 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             >
                 {confirmModal.invoice && (
                     <form onSubmit={handleConfirmPayment} className="space-y-4">
-                        {confirmModal.invoice.bukti_pembayaran && (
+                        {(confirmModal.invoice.bukti_pembayaran || confirmModal.invoice.bukti_pembayaran_url) && (
                             <div className="bg-blue-50 rounded-lg p-4">
                                 <p className="text-sm text-blue-700 mb-2">Pelanggan telah mengupload bukti pembayaran</p>
-                                <a
-                                    href={`/storage/${confirmModal.invoice.bukti_pembayaran}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 hover:underline text-sm flex items-center gap-1"
-                                >
-                                    <Eye size={14} /> Lihat Bukti Pembayaran
-                                </a>
+                                {resolvePaymentProofUrl(confirmModal.invoice) ? (
+                                    <a
+                                        href={resolvePaymentProofUrl(confirmModal.invoice)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 hover:underline text-sm flex items-center gap-1"
+                                    >
+                                        <Eye size={14} /> Lihat Bukti Pembayaran
+                                    </a>
+                                ) : (
+                                    <p className="text-xs text-gray-600">Bukti tidak tersedia.</p>
+                                )}
                             </div>
                         )}
                         <div>

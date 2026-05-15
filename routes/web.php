@@ -35,6 +35,7 @@ use App\Http\Controllers\NetworkIncidentController;
 use App\Http\Controllers\OdpMappingController;
 use App\Http\Controllers\PackagePriceHistoryController;
 use App\Http\Controllers\AccessControlController;
+use App\Http\Controllers\BillingAutomationController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -274,6 +275,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/dashboard/isp-intelligence', [DashboardController::class, 'ispIntelligence'])->name('api.dashboard.isp-intelligence');
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
+        Route::post('/api/dashboard/financial-projection/purchase-goals/fulfill', [DashboardController::class, 'fulfillPurchaseGoal'])->name('api.dashboard.financial-projection.purchase.fulfill');
 
         // Billing/Penagihan API
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->middleware('permission:billing.invoice.view')->name('api.billing.index');
@@ -283,6 +285,15 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->middleware('permission:billing.invoice.approve')->name('api.billing.confirm');
         Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->middleware('permission:billing.invoice.approve')->name('api.billing.reject');
         Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->middleware('permission:billing.invoice.adjust')->name('api.billing.update-amount');
+        Route::get('/billing/invoice/{invoice}/payment-proof', [BillingController::class, 'paymentProof'])->middleware('permission:billing.invoice.view')->name('billing.invoice.payment-proof');
+        Route::get('/api/billing/dunning/config', [BillingAutomationController::class, 'dunningConfig'])->middleware('permission:billing.dunning.view')->name('api.billing.dunning.config');
+        Route::put('/api/billing/dunning/config', [BillingAutomationController::class, 'updateDunningConfig'])->middleware('permission:billing.dunning.manage')->name('api.billing.dunning.config.update');
+        Route::post('/api/billing/dunning/run', [BillingAutomationController::class, 'runDunning'])->middleware('permission:billing.dunning.manage')->name('api.billing.dunning.run');
+        Route::get('/api/billing/dunning/logs', [BillingAutomationController::class, 'dunningLogs'])->middleware('permission:billing.dunning.view')->name('api.billing.dunning.logs');
+        Route::post('/api/billing/payments/capture', [BillingAutomationController::class, 'capturePayment'])->middleware('permission:billing.payment_capture.manage')->name('api.billing.payments.capture');
+        Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->middleware('permission:billing.payment_capture.manage')->name('api.billing.payments.match');
+        Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->middleware('permission:billing.payment_capture.review')->name('api.billing.payments.unmatched');
+        Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->middleware('permission:billing.payment_capture.review')->name('api.billing.payments.resolve');
         Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
         Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');

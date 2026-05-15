@@ -187,6 +187,10 @@ function DashboardPredictionPage() {
     const [financialProjectionData, setFinancialProjectionData] = useState(null);
     const [financialProjectionLoading, setFinancialProjectionLoading] = useState(false);
     const [financialProjectionError, setFinancialProjectionError] = useState(null);
+    const [financialProjectionActionMessage, setFinancialProjectionActionMessage] = useState(null);
+    const [mandatoryActionLoadingKey, setMandatoryActionLoadingKey] = useState(null);
+    const [purchaseActionLoadingId, setPurchaseActionLoadingId] = useState(null);
+    const [mandatoryProjectionFilter, setMandatoryProjectionFilter] = useState('all');
     const [ispIntelligenceData, setIspIntelligenceData] = useState(null);
     const [ispIntelligenceLoading, setIspIntelligenceLoading] = useState(false);
     const [ispIntelligenceError, setIspIntelligenceError] = useState(null);
@@ -325,6 +329,28 @@ function DashboardPredictionPage() {
     const ispServiceForecast = ispIntelligenceData?.service_forecast || null;
     const ispFinancialForecast = ispIntelligenceData?.financial_forecast || null;
     const ispRecommendations = ispIntelligenceData?.recommendations || [];
+
+    const mandatoryProjectionCounters = useMemo(() => {
+        const total = mandatoryProjectionRows.length;
+        const confirmed = mandatoryProjectionRows.filter((row) => row?.is_confirmed === true).length;
+        const pending = total - confirmed;
+
+        return {
+            total,
+            confirmed,
+            pending,
+        };
+    }, [mandatoryProjectionRows]);
+
+    const filteredMandatoryRows = useMemo(() => {
+        if (mandatoryProjectionFilter === 'confirmed') {
+            return mandatoryProjectionRows.filter((row) => row?.is_confirmed === true);
+        }
+        if (mandatoryProjectionFilter === 'pending') {
+            return mandatoryProjectionRows.filter((row) => row?.is_confirmed !== true);
+        }
+        return mandatoryProjectionRows;
+    }, [mandatoryProjectionRows, mandatoryProjectionFilter]);
 
     const scoreSummary = useMemo(() => {
         const modelAccuracyScore = clampScore(
@@ -750,6 +776,94 @@ function DashboardPredictionPage() {
         await fetchFinancialProjection(defaultRange);
     };
 
+    const handleConfirmMandatoryExecution = async (row) => {
+        if (!row || !row.target_id || !row.due_date) return;
+        if (!window.confirm(`Tandai target "${row.name}" jatuh tempo ${row.due_date} sebagai terlaksana?`)) return;
+
+        const actionKey = String(row.event_id || `${row.target_id}-${row.due_date}`);
+        try {
+            setMandatoryActionLoadingKey(actionKey);
+            setFinancialProjectionActionMessage(null);
+
+            await apiClient.post('/dashboard/financial-projection/mandatory-events/confirm', {
+                target_id: row.target_id,
+                due_date: row.due_date,
+                amount: Number(row.amount || 0),
+            });
+
+            setFinancialProjectionActionMessage({
+                type: 'success',
+                text: `Target wajib "${row.name}" berhasil ditandai terlaksana.`,
+            });
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            setFinancialProjectionActionMessage({
+                type: 'error',
+                text: err.response?.data?.message || 'Gagal menandai target wajib sebagai terlaksana.',
+            });
+        } finally {
+            setMandatoryActionLoadingKey(null);
+        }
+    };
+
+    const handleRevokeMandatoryExecution = async (row) => {
+        if (!row || !row.target_id || !row.due_date) return;
+        if (!window.confirm(`Batalkan status terlaksana untuk target "${row.name}" jatuh tempo ${row.due_date}?`)) return;
+
+        const actionKey = String(row.event_id || `${row.target_id}-${row.due_date}`);
+        try {
+            setMandatoryActionLoadingKey(actionKey);
+            setFinancialProjectionActionMessage(null);
+
+            await apiClient.delete('/dashboard/financial-projection/mandatory-events/confirm', {
+                data: {
+                    target_id: row.target_id,
+                    due_date: row.due_date,
+                },
+            });
+
+            setFinancialProjectionActionMessage({
+                type: 'success',
+                text: `Status terlaksana untuk "${row.name}" berhasil dibatalkan.`,
+            });
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            setFinancialProjectionActionMessage({
+                type: 'error',
+                text: err.response?.data?.message || 'Gagal membatalkan status terlaksana.',
+            });
+        } finally {
+            setMandatoryActionLoadingKey(null);
+        }
+    };
+
+    const handleFulfillPurchaseGoal = async (row) => {
+        if (!row || !row.id) return;
+        if (!window.confirm(`Tandai target pembelian "${row.name}" sebagai rencana terpenuhi? Target akan dinonaktifkan.`)) return;
+
+        try {
+            setPurchaseActionLoadingId(Number(row.id));
+            setFinancialProjectionActionMessage(null);
+
+            await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
+                target_id: row.id,
+            });
+
+            setFinancialProjectionActionMessage({
+                type: 'success',
+                text: `Target pembelian "${row.name}" berhasil ditandai terpenuhi dan dinonaktifkan.`,
+            });
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            setFinancialProjectionActionMessage({
+                type: 'error',
+                text: err.response?.data?.message || 'Gagal menandai target pembelian sebagai terpenuhi.',
+            });
+        } finally {
+            setPurchaseActionLoadingId(null);
+        }
+    };
+
     if (isTeknisi) {
         return (
             <div className="space-y-4 min-w-0">
@@ -801,6 +915,15 @@ function DashboardPredictionPage() {
                 />
             )}
 
+            {financialProjectionActionMessage && (
+                <Alert
+                    type={financialProjectionActionMessage.type}
+                    title={financialProjectionActionMessage.type === 'success' ? 'Berhasil' : 'Error'}
+                    message={financialProjectionActionMessage.text}
+                    onClose={() => setFinancialProjectionActionMessage(null)}
+                />
+            )}
+
             <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white shadow-lg">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
                     <div>
@@ -821,7 +944,7 @@ function DashboardPredictionPage() {
                     </span>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
                     <div className="bg-white/10 rounded-xl p-3">
                         <p className="text-xs text-slate-200">Akurasi Model</p>
                         <p className="text-2xl font-bold mt-1">{scoreSummary.modelAccuracyScore.toFixed(1)}</p>
@@ -1373,7 +1496,44 @@ function DashboardPredictionPage() {
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                        <p className="text-sm font-semibold text-gray-900">Prediksi Pengeluaran Wajib</p>
+                        <div className="flex flex-col gap-2">
+                            <p className="text-sm font-semibold text-gray-900">Prediksi Pengeluaran Wajib</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('all')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'all'
+                                            ? 'bg-slate-800 text-white'
+                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    Semua ({mandatoryProjectionCounters.total})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('confirmed')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'confirmed'
+                                            ? 'bg-indigo-700 text-white'
+                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                                    }`}
+                                >
+                                    Sudah Terlaksana ({mandatoryProjectionCounters.confirmed})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('pending')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'pending'
+                                            ? 'bg-emerald-700 text-white'
+                                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                    }`}
+                                >
+                                    Belum Terlaksana ({mandatoryProjectionCounters.pending})
+                                </button>
+                            </div>
+                        </div>
                         <div className="overflow-x-auto border border-gray-100 rounded-lg">
                             <table className="w-full text-sm min-w-[860px]">
                                 <thead className="bg-gray-50 text-gray-600 text-left">
@@ -1384,22 +1544,29 @@ function DashboardPredictionPage() {
                                         <th className="px-3 py-2 text-right">Coverage</th>
                                         <th className="px-3 py-2 text-right">Shortfall</th>
                                         <th className="px-3 py-2 text-center">Status</th>
+                                        <th className="px-3 py-2 text-center">Aksi</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
                                         <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
                                                 Memuat proyeksi pengeluaran wajib...
                                             </td>
                                         </tr>
                                     ) : mandatoryProjectionRows.length === 0 ? (
                                         <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
                                                 Tidak ada kejadian pengeluaran wajib pada periode ini.
                                             </td>
                                         </tr>
-                                    ) : mandatoryProjectionRows.map((row) => (
+                                    ) : filteredMandatoryRows.length === 0 ? (
+                                        <tr>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
+                                                Tidak ada data untuk filter yang dipilih.
+                                            </td>
+                                        </tr>
+                                    ) : filteredMandatoryRows.map((row) => (
                                         <tr key={row.event_id} className="border-t border-gray-100">
                                             <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
                                             <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
@@ -1412,6 +1579,38 @@ function DashboardPredictionPage() {
                                                 <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>
                                                     {row.indicator || '-'}
                                                 </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    {row.is_confirmed ? (
+                                                        <>
+                                                            <button
+                                                                type="button"
+                                                                disabled
+                                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
+                                                            >
+                                                                Sudah Terlaksana
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRevokeMandatoryExecution(row)}
+                                                                disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
+                                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                                            >
+                                                                {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleConfirmMandatoryExecution(row)}
+                                                            disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
+                                                            className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                                                        >
+                                                            {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}
@@ -1431,18 +1630,19 @@ function DashboardPredictionPage() {
                                         <th className="px-3 py-2">Target Tanggal</th>
                                         <th className="px-3 py-2">Prediksi Bisa Dibeli</th>
                                         <th className="px-3 py-2 text-center">Status</th>
+                                        <th className="px-3 py-2 text-center">Aksi</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
                                         <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
                                                 Memuat proyeksi target pembelian...
                                             </td>
                                         </tr>
                                     ) : purchaseGoalRows.length === 0 ? (
                                         <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
+                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
                                                 Belum ada target pembelian aktif.
                                             </td>
                                         </tr>
@@ -1464,6 +1664,16 @@ function DashboardPredictionPage() {
                                                 }`}>
                                                     {row.indicator || '-'}
                                                 </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleFulfillPurchaseGoal(row)}
+                                                    disabled={purchaseActionLoadingId === Number(row.id) || row.is_actionable === false}
+                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                                                >
+                                                    {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}

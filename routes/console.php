@@ -22,3 +22,8 @@ Schedule::command('incident:run-odp-engine')
     ->everyMinute()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('billing:dunning-run')
+    ->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();

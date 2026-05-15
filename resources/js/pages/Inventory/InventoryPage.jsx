@@ -634,11 +634,11 @@ function InventoryPage() {
                             </div>
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                                <Button type="button" variant="secondary" onClick={addIncomingRow} className="inline-flex items-center gap-2">
+                                <Button type="button" variant="secondary" onClick={addIncomingRow} className="w-full sm:w-auto inline-flex items-center justify-center gap-2">
                                     <Plus size={14} /> Tambah Baris
                                 </Button>
 
-                                <div className="text-sm text-gray-600">
+                                <div className="text-sm text-gray-600 min-w-0 flex-1 break-words sm:text-right">
                                     {incomingForm.payment_type === 'cash' ? (
                                         <span>Total Tunai: <strong>{formatCurrency(incomingCashTotal)}</strong></span>
                                     ) : (
@@ -647,9 +647,9 @@ function InventoryPage() {
                                 </div>
                             </div>
 
-                            <div className="pt-3 border-t border-gray-100 flex gap-2 justify-end">
-                                <Button type="button" variant="secondary" onClick={resetIncomingForm}>Reset</Button>
-                                <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan Pemasukan'}</Button>
+                            <div className="pt-3 border-t border-gray-100 flex flex-col sm:flex-row gap-2 sm:justify-end">
+                                <Button type="button" variant="secondary" onClick={resetIncomingForm} className="w-full sm:w-auto">Reset</Button>
+                                <Button type="submit" variant="primary" disabled={saving} className="w-full sm:w-auto">{saving ? 'Menyimpan...' : 'Simpan Pemasukan'}</Button>
                             </div>
                         </form>
                     )}
@@ -717,15 +717,15 @@ function InventoryPage() {
                             </div>
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                                <Button type="button" variant="secondary" onClick={addOutgoingRow} className="inline-flex items-center gap-2">
+                                <Button type="button" variant="secondary" onClick={addOutgoingRow} className="w-full sm:w-auto inline-flex items-center justify-center gap-2">
                                     <Plus size={14} /> Tambah Baris
                                 </Button>
-                                <p className="text-sm text-gray-500">Pengeluaran inventori manual akan tercatat di histori dengan penanggung jawab.</p>
+                                <p className="text-sm text-gray-500 min-w-0 flex-1 break-words sm:text-right">Pengeluaran inventori manual akan tercatat di histori dengan penanggung jawab.</p>
                             </div>
 
-                            <div className="pt-3 border-t border-gray-100 flex gap-2 justify-end">
-                                <Button type="button" variant="secondary" onClick={resetOutgoingForm}>Reset</Button>
-                                <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan Pengeluaran'}</Button>
+                            <div className="pt-3 border-t border-gray-100 flex flex-col sm:flex-row gap-2 sm:justify-end">
+                                <Button type="button" variant="secondary" onClick={resetOutgoingForm} className="w-full sm:w-auto">Reset</Button>
+                                <Button type="submit" variant="primary" disabled={saving} className="w-full sm:w-auto">{saving ? 'Menyimpan...' : 'Simpan Pengeluaran'}</Button>
                             </div>
                         </form>
                     )}

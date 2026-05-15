@@ -343,10 +343,21 @@ class DashboardController extends Controller
         $monthlyExpense = null;
         $monthlyNet = null;
         $pendingInvoices = null;
+        $overdueInvoiceAmount = 0.0;
+        $awaitingConfirmationCount = 0;
+        $dueNext7dCount = 0;
+        $collectionRate = 0.0;
         $incomeByMonth = array_fill(0, 6, 0);
         $expenseByMonth = array_fill(0, 6, 0);
         $monthlyFinance = null;
         $financeSummary = null;
+        $incidentOpenCount = 0;
+
+        if (Schema::hasTable('network_incidents')) {
+            $incidentOpenCount = (int) DB::table('network_incidents')
+                ->where('status', 'open')
+                ->count();
+        }
 
         if ($canViewFinancialMetrics) {
             $ledgerService = app(FinancialLedgerService::class);
@@ -476,6 +487,20 @@ class DashboardController extends Controller
             $pendingInvoices = \App\Models\Invoice::whereIn('status', ['unpaid', 'menunggu konfirmasi'])
                 ->where('due_date', '<', $today)
                 ->count();
+            $overdueInvoiceAmount = (float) \App\Models\Invoice::whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                ->where('due_date', '<', $today)
+                ->sum('amount');
+
+            $awaitingConfirmationCount = (int) \App\Models\Invoice::where('status', 'menunggu konfirmasi')->count();
+            $dueNext7dCount = (int) \App\Models\Invoice::whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                ->whereBetween('due_date', [$now->copy()->startOfDay()->toDateString(), $now->copy()->addDays(7)->endOfDay()->toDateString()])
+                ->count();
+
+            $collectionMetrics = $this->computeCollectionMetrics(
+                $startOfMonth->copy()->startOfDay(),
+                $endOfMonth->copy()->endOfDay()
+            );
+            $collectionRate = (float) ($collectionMetrics['collection_rate'] ?? 0);
 
         }
 
@@ -519,6 +544,69 @@ class DashboardController extends Controller
             $online_customers = 0;
         }
 
+        $alerts = [];
+        if ($canViewFinancialMetrics) {
+            if ($pendingInvoices >= 25 || $overdueInvoiceAmount >= 10000000) {
+                $alerts[] = [
+                    'severity' => 'critical',
+                    'title' => 'Overdue invoice tinggi',
+                    'description' => $pendingInvoices . ' invoice overdue dengan nominal ' . number_format($overdueInvoiceAmount, 0, ',', '.'),
+                    'href' => '/penagihan',
+                ];
+            } elseif ($pendingInvoices >= 10 || $overdueInvoiceAmount >= 3000000) {
+                $alerts[] = [
+                    'severity' => 'warning',
+                    'title' => 'Overdue invoice perlu perhatian',
+                    'description' => $pendingInvoices . ' invoice overdue aktif',
+                    'href' => '/penagihan',
+                ];
+            }
+
+            if ($collectionRate < 75) {
+                $alerts[] = [
+                    'severity' => 'critical',
+                    'title' => 'Collection rate rendah',
+                    'description' => 'Collection rate bulan ini ' . number_format($collectionRate, 1) . '%.',
+                    'href' => '/mutasi',
+                ];
+            } elseif ($collectionRate < 90) {
+                $alerts[] = [
+                    'severity' => 'warning',
+                    'title' => 'Collection rate perlu ditingkatkan',
+                    'description' => 'Collection rate bulan ini ' . number_format($collectionRate, 1) . '%.',
+                    'href' => '/mutasi',
+                ];
+            }
+        }
+
+        if ($incidentOpenCount > 0) {
+            $alerts[] = [
+                'severity' => 'critical',
+                'title' => 'Incident jaringan aktif',
+                'description' => $incidentOpenCount . ' incident jaringan masih open.',
+                'href' => '/monitoring-maps',
+            ];
+        }
+
+        if ($totalActiveComplaints >= 20) {
+            $alerts[] = [
+                'severity' => 'warning',
+                'title' => 'Aduan aktif tinggi',
+                'description' => $totalActiveComplaints . ' aduan aktif perlu percepatan penanganan.',
+                'href' => '/complaints',
+            ];
+        }
+
+        if (count($alerts) === 0) {
+            $alerts[] = [
+                'severity' => 'normal',
+                'title' => 'Semua indikator utama stabil',
+                'description' => 'Tidak ada alert kritis untuk cashflow, tagihan, dan operasional saat ini.',
+                'href' => '/dashboard',
+            ];
+        }
+        $alerts = array_slice($alerts, 0, 5);
+
         $payload = [
             'total_customers' => $totalCustomers,
             'active_customers' => $activeCustomers,
@@ -535,6 +623,16 @@ class DashboardController extends Controller
             'in_progress_complaints' => $inProgressComplaints,
             'total_active_complaints' => $totalActiveComplaints,
             'employee_payroll' => $employeePayroll,
+            'customers' => [
+                'active_count' => $activeCustomers,
+                'inactive_count' => $inactiveCustomers,
+                'online_count' => $online_customers,
+            ],
+            'support' => [
+                'active_complaints' => $totalActiveComplaints,
+                'incident_open_count' => $incidentOpenCount,
+            ],
+            'alerts' => $alerts,
         ];
 
         if ($canViewFinancialMetrics) {
@@ -547,6 +645,40 @@ class DashboardController extends Controller
             $payload['expense_by_month'] = $expenseByMonth;
             $payload['monthly_finance'] = $monthlyFinance;
             $payload['finance_summary'] = $financeSummary;
+            $cashBalance = (float) ($financeSummary['balance'] ?? 0);
+            $monthExpenseValue = (float) ($monthlyFinance['current_month']['expense'] ?? 0);
+            $elapsedDayOfMonth = max(1, (int) $now->day);
+            $avgDailyExpense = $monthExpenseValue > 0 ? $monthExpenseValue / $elapsedDayOfMonth : 0.0;
+            $runwayDays = null;
+            if ($cashBalance <= 0) {
+                $runwayDays = 0;
+            } elseif ($avgDailyExpense > 0) {
+                $runwayDays = (int) floor($cashBalance / $avgDailyExpense);
+            }
+            $runwayStatus = 'normal';
+            if ($runwayDays !== null) {
+                if ($runwayDays < 15) {
+                    $runwayStatus = 'critical';
+                } elseif ($runwayDays <= 45) {
+                    $runwayStatus = 'warning';
+                }
+            }
+            $payload['cashflow'] = [
+                'balance' => $cashBalance,
+                'month_income' => (float) ($monthlyFinance['current_month']['income'] ?? 0),
+                'month_expense' => $monthExpenseValue,
+                'month_net' => (float) ($monthlyFinance['current_month']['net'] ?? 0),
+                'net_delta_pct' => (float) ($monthlyFinance['comparison']['net_change_percentage'] ?? 0),
+                'runway_days' => $runwayDays,
+                'runway_status' => $runwayStatus,
+            ];
+            $payload['billing'] = [
+                'overdue_count' => (int) ($pendingInvoices ?? 0),
+                'overdue_amount' => (float) $overdueInvoiceAmount,
+                'awaiting_confirmation_count' => (int) $awaitingConfirmationCount,
+                'due_next_7d_count' => (int) $dueNext7dCount,
+                'collection_rate' => round($collectionRate, 2),
+            ];
         }
 
         return response()->json([
@@ -982,6 +1114,79 @@ class DashboardController extends Controller
 
         return response()->json([
             'message' => 'Konfirmasi pengeluaran wajib berhasil dibatalkan.',
+        ]);
+    }
+
+    public function fulfillPurchaseGoal(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin menandai target pembelian sebagai terpenuhi.',
+            ], 403);
+        }
+
+        if (!$this->isFinancialTargetsReady()) {
+            return response()->json([
+                'message' => 'Data target keuangan belum siap. Jalankan migrasi terlebih dahulu.',
+            ], 503);
+        }
+
+        $validated = $request->validate([
+            'target_id' => 'required|integer|exists:financial_planning_targets,id',
+            'fulfilled_date' => 'nullable|date',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        $target = FinancialPlanningTarget::query()->find((int) $validated['target_id']);
+        if (!$target || $target->type !== FinancialPlanningTarget::TYPE_PURCHASE_TARGET) {
+            return response()->json([
+                'message' => 'Target yang dipilih bukan target pembelian.',
+            ], 422);
+        }
+
+        if (!(bool) $target->is_active) {
+            return response()->json([
+                'message' => 'Target pembelian sudah nonaktif sebelumnya.',
+                'data' => [
+                    'target_id' => (int) $target->id,
+                    'is_active' => false,
+                ],
+            ]);
+        }
+
+        $fulfilledDate = isset($validated['fulfilled_date'])
+            ? Carbon::parse($validated['fulfilled_date'])->toDateString()
+            : Carbon::today()->toDateString();
+        $notes = isset($validated['notes']) ? trim((string) $validated['notes']) : null;
+
+        $targetMeta = is_array($target->meta) ? $target->meta : [];
+        $history = is_array($targetMeta['fulfillment_history'] ?? null)
+            ? $targetMeta['fulfillment_history']
+            : [];
+
+        $history[] = [
+            'fulfilled_date' => $fulfilledDate,
+            'fulfilled_at' => now()->toIso8601String(),
+            'fulfilled_by' => $request->user()?->id,
+            'notes' => $notes,
+        ];
+
+        $targetMeta['last_fulfillment'] = end($history);
+        $targetMeta['fulfillment_history'] = $history;
+
+        $target->update([
+            'is_active' => false,
+            'meta' => $targetMeta,
+            'updated_by' => $request->user()?->id,
+        ]);
+
+        return response()->json([
+            'message' => 'Target pembelian ditandai terpenuhi dan dinonaktifkan.',
+            'data' => [
+                'target_id' => (int) $target->id,
+                'fulfilled_date' => $fulfilledDate,
+                'is_active' => false,
+            ],
         ]);
     }
 
@@ -2041,6 +2246,8 @@ class DashboardController extends Controller
                     'coverage_ratio' => round($coverageRatio * 100, 2),
                     'shortfall' => (int) round($shortfall),
                     'indicator' => $indicator,
+                    'is_actionable' => !$isConfirmed,
+                    'action_state' => $isConfirmed ? 'confirmed' : 'pending',
                     'is_confirmed' => $isConfirmed,
                     'confirmed_transaction_id' => $isConfirmed ? (int) ($confirmation['transaction_id'] ?? 0) : null,
                     'confirmed_transaction_date' => $isConfirmed ? ($confirmation['transaction_date'] ?? null) : null,
@@ -2163,6 +2370,9 @@ class DashboardController extends Controller
                     ? (int) round($desiredDateDiscretionaryBalance)
                     : null,
                 'indicator' => $indicator,
+                'is_actionable' => true,
+                'action_state' => 'active',
+                'is_active_target' => true,
             ];
         }
 

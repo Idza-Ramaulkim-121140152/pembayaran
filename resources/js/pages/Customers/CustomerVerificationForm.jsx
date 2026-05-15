@@ -780,7 +780,7 @@ function CustomerVerificationForm() {
                 )}
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="app-card p-6 space-y-8 min-w-0 overflow-hidden">
+                <form onSubmit={handleSubmit} className="app-card p-6 space-y-8 min-w-0 overflow-visible">
                     {/* Personal Information */}
                     <div>
                         <h2 className="text-xl font-bold text-gray-900 mb-4">Informasi Pribadi</h2>
@@ -971,7 +971,7 @@ function CustomerVerificationForm() {
                                         {selectedOdpLabel}
                                     </button>
                                     {odpDropdownOpen && (
-                                        <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                                        <div className="absolute z-[80] mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
                                             <div className="p-2 border-b border-gray-100">
                                                 <input
                                                     type="text"

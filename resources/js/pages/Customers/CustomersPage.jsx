@@ -621,18 +621,18 @@ function CustomersPage() {
                     <h1 className="text-2xl font-bold text-gray-900">Daftar Pelanggan</h1>
                     <p className="text-gray-600 mt-1">Total {customers.length} pelanggan terdaftar</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2 sm:justify-end">
                     {!isTeknisi && (
                         <button
                             onClick={handleExport}
-                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition"
+                            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl hover:bg-green-700 transition"
                         >
                             <Download size={20} />
                             Export Data
                         </button>
                     )}
-                    <Link to="/customer-verification">
-                        <Button className="flex items-center gap-2">
+                    <Link to="/customer-verification" className="w-full sm:w-auto">
+                        <Button className="w-full sm:w-auto flex items-center justify-center gap-2">
                             <Plus size={20} />
                             Aktivasi Baru
                         </Button>
@@ -658,22 +658,22 @@ function CustomersPage() {
                                 className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             />
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                             <button
                                 onClick={() => setFilterStatus('all')}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                className={`flex-1 sm:flex-initial min-w-[96px] px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                             >
                                 Semua
                             </button>
                             <button
                                 onClick={() => setFilterStatus('active')}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'active' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                className={`flex-1 sm:flex-initial min-w-[96px] px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'active' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                             >
                                 Aktif
                             </button>
                             <button
                                 onClick={() => setFilterStatus('inactive')}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'inactive' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                className={`flex-1 sm:flex-initial min-w-[96px] px-4 py-2 rounded-xl text-sm font-medium transition ${filterStatus === 'inactive' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                             >
                                 Nonaktif
                             </button>
