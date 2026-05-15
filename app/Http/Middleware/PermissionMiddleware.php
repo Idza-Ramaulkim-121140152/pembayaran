@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Services\AccessPolicyService;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class PermissionMiddleware
@@ -26,6 +27,16 @@ class PermissionMiddleware
         $user = auth()->user();
 
         if (!$this->accessPolicyService->has($user, $permissionKey)) {
+            if (str_starts_with($permissionKey, 'billing.')) {
+                Log::warning('Billing permission denied', [
+                    'permission' => $permissionKey,
+                    'user_id' => $user?->id,
+                    'role' => $user?->role,
+                    'path' => $request->path(),
+                    'method' => $request->method(),
+                ]);
+            }
+
             if ($request->wantsJson() || $request->is('api/*')) {
                 return response()->json([
                     'error' => 'Forbidden by access policy.',

@@ -75,6 +75,7 @@ return [
             'billing.invoice.create',
             'billing.invoice.approve',
             'billing.invoice.adjust',
+            'billing.invoice.manage',
             'billing.dunning.view',
             'billing.dunning.manage',
             'billing.payment_capture.manage',

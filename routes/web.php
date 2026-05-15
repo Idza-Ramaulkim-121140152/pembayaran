@@ -267,6 +267,58 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/installations/work-orders/{installationWorkOrder}/complete', [InstallationWorkflowController::class, 'completeWorkOrder'])->middleware('permission:installation.manage')->name('api.installations.work-orders.complete');
     }); // end teknisi routes
 
+    // Billing/Penagihan API (permission-driven, role-agnostic)
+    Route::middleware('permission:billing.invoice.view')->group(function () {
+        Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
+        Route::get('/api/billing/auto-invoice/{jobId}', [BillingController::class, 'autoInvoiceStatus'])->name('api.billing.auto-invoice.status');
+        Route::get('/billing/invoice/{invoice}/payment-proof', [BillingController::class, 'paymentProof'])->name('billing.invoice.payment-proof');
+        Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
+        Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');
+        Route::get('/api/invoices/{invoice}', [InvoiceItemController::class, 'show'])->name('api.invoices.show');
+    });
+
+    Route::middleware('permission:billing.invoice.create')->group(function () {
+        Route::post('/api/billing/auto-invoice', [BillingController::class, 'autoInvoice'])->name('api.billing.auto-invoice');
+        Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->name('api.billing.create-invoice');
+    });
+
+    Route::middleware('permission:billing.invoice.approve')->group(function () {
+        Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->name('api.billing.confirm');
+        Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->name('api.billing.reject');
+    });
+
+    Route::middleware('permission:billing.invoice.adjust')->group(function () {
+        Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->name('api.billing.update-amount');
+        Route::post('/api/invoices/{invoice}/items', [InvoiceItemController::class, 'store'])->name('api.invoices.items.store');
+        Route::put('/api/invoices/{invoice}/items/{item}', [InvoiceItemController::class, 'update'])->name('api.invoices.items.update');
+        Route::delete('/api/invoices/{invoice}/items/{item}', [InvoiceItemController::class, 'destroy'])->name('api.invoices.items.destroy');
+    });
+
+    Route::middleware('permission:billing.invoice.manage')->group(function () {
+        Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
+        Route::patch('/api/billing/customer/{customer}/service-package', [BillingController::class, 'updateCustomerServicePackage'])->name('api.billing.customer.service-package');
+    });
+
+    Route::middleware('permission:billing.dunning.view')->group(function () {
+        Route::get('/api/billing/dunning/config', [BillingAutomationController::class, 'dunningConfig'])->name('api.billing.dunning.config');
+        Route::get('/api/billing/dunning/logs', [BillingAutomationController::class, 'dunningLogs'])->name('api.billing.dunning.logs');
+    });
+
+    Route::middleware('permission:billing.dunning.manage')->group(function () {
+        Route::put('/api/billing/dunning/config', [BillingAutomationController::class, 'updateDunningConfig'])->name('api.billing.dunning.config.update');
+        Route::post('/api/billing/dunning/run', [BillingAutomationController::class, 'runDunning'])->name('api.billing.dunning.run');
+    });
+
+    Route::middleware('permission:billing.payment_capture.manage')->group(function () {
+        Route::post('/api/billing/payments/capture', [BillingAutomationController::class, 'capturePayment'])->name('api.billing.payments.capture');
+        Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->name('api.billing.payments.match');
+    });
+
+    Route::middleware('permission:billing.payment_capture.review')->group(function () {
+        Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
+        Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
+    });
+
     // Finance routes: admin + finance
     Route::middleware('role:finance')->group(function () {
         Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
@@ -276,34 +328,6 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
         Route::post('/api/dashboard/financial-projection/purchase-goals/fulfill', [DashboardController::class, 'fulfillPurchaseGoal'])->name('api.dashboard.financial-projection.purchase.fulfill');
-
-        // Billing/Penagihan API
-        Route::get('/api/billing', [BillingController::class, 'apiIndex'])->middleware('permission:billing.invoice.view')->name('api.billing.index');
-        Route::post('/api/billing/auto-invoice', [BillingController::class, 'autoInvoice'])->middleware('permission:billing.invoice.create')->name('api.billing.auto-invoice');
-        Route::get('/api/billing/auto-invoice/{jobId}', [BillingController::class, 'autoInvoiceStatus'])->name('api.billing.auto-invoice.status');
-        Route::post('/api/billing/{customer}/create-invoice', [BillingController::class, 'createInvoice'])->middleware('permission:billing.invoice.create')->name('api.billing.create-invoice');
-        Route::post('/api/billing/invoice/{invoice}/confirm', [BillingController::class, 'confirmPaymentApi'])->middleware('permission:billing.invoice.approve')->name('api.billing.confirm');
-        Route::post('/api/billing/invoice/{invoice}/reject', [BillingController::class, 'rejectPaymentApi'])->middleware('permission:billing.invoice.approve')->name('api.billing.reject');
-        Route::put('/api/billing/invoice/{invoice}/amount', [BillingController::class, 'updateInvoiceAmountApi'])->middleware('permission:billing.invoice.adjust')->name('api.billing.update-amount');
-        Route::get('/billing/invoice/{invoice}/payment-proof', [BillingController::class, 'paymentProof'])->middleware('permission:billing.invoice.view')->name('billing.invoice.payment-proof');
-        Route::get('/api/billing/dunning/config', [BillingAutomationController::class, 'dunningConfig'])->middleware('permission:billing.dunning.view')->name('api.billing.dunning.config');
-        Route::put('/api/billing/dunning/config', [BillingAutomationController::class, 'updateDunningConfig'])->middleware('permission:billing.dunning.manage')->name('api.billing.dunning.config.update');
-        Route::post('/api/billing/dunning/run', [BillingAutomationController::class, 'runDunning'])->middleware('permission:billing.dunning.manage')->name('api.billing.dunning.run');
-        Route::get('/api/billing/dunning/logs', [BillingAutomationController::class, 'dunningLogs'])->middleware('permission:billing.dunning.view')->name('api.billing.dunning.logs');
-        Route::post('/api/billing/payments/capture', [BillingAutomationController::class, 'capturePayment'])->middleware('permission:billing.payment_capture.manage')->name('api.billing.payments.capture');
-        Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->middleware('permission:billing.payment_capture.manage')->name('api.billing.payments.match');
-        Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->middleware('permission:billing.payment_capture.review')->name('api.billing.payments.unmatched');
-        Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->middleware('permission:billing.payment_capture.review')->name('api.billing.payments.resolve');
-        Route::post('/api/billing/customer/{customer}/isolate', [BillingController::class, 'isolateCustomer'])->name('api.billing.isolate');
-        Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
-        Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');
-        Route::patch('/api/billing/customer/{customer}/service-package', [BillingController::class, 'updateCustomerServicePackage'])->name('api.billing.customer.service-package');
-
-        // Billing breakdown (invoice items) - compat-first extension
-        Route::get('/api/invoices/{invoice}', [InvoiceItemController::class, 'show'])->middleware('permission:billing.invoice.view')->name('api.invoices.show');
-        Route::post('/api/invoices/{invoice}/items', [InvoiceItemController::class, 'store'])->middleware('permission:billing.invoice.adjust')->name('api.invoices.items.store');
-        Route::put('/api/invoices/{invoice}/items/{item}', [InvoiceItemController::class, 'update'])->middleware('permission:billing.invoice.adjust')->name('api.invoices.items.update');
-        Route::delete('/api/invoices/{invoice}/items/{item}', [InvoiceItemController::class, 'destroy'])->middleware('permission:billing.invoice.adjust')->name('api.invoices.items.destroy');
 
         // Unified finance transactions
         Route::get('/api/finance/transactions', [FinancialTransactionController::class, 'index'])->name('api.finance.transactions.index');

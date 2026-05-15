@@ -219,7 +219,20 @@ function BillingPage() {
             fetchIsolationStatusBulk(payload.late || [], requestId);
         } catch (err) {
             if (requestId !== latestBillingRequestRef.current) return;
-            setError('Gagal memuat data penagihan');
+            const status = err?.response?.status;
+            const backendMessage = err?.response?.data?.error || err?.response?.data?.message;
+            const deniedPermission = err?.response?.data?.permission;
+
+            if (status === 403) {
+                const permissionSuffix = deniedPermission ? ` (${deniedPermission})` : '';
+                setError(`${backendMessage || 'Akses ditolak oleh access policy.'}${permissionSuffix}. Hubungi superadmin untuk grant akses.`);
+            } else if (status === 401) {
+                setError('Sesi login Anda berakhir. Silakan login ulang lalu buka menu penagihan lagi.');
+            } else if (status >= 500) {
+                setError('Server sedang bermasalah saat memuat data penagihan. Coba lagi beberapa saat.');
+            } else {
+                setError('Gagal memuat data penagihan.');
+            }
             console.error(err);
         } finally {
             if (requestId === latestBillingRequestRef.current) {
