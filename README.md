@@ -25,6 +25,31 @@ Laravel is accessible, powerful, and provides tools required for large, robust a
 
 Lihat analisis dan checklist kesiapan produksi di [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
 
+## Worker Prediksi (Python)
+
+Jika fitur prediksi dashboard aktif, Laravel akan memanggil worker Python melalui command:
+
+- `php artisan dashboard:prediction-train`
+- `php artisan dashboard:prediction-snapshot`
+
+Konfigurasi penting di `.env`:
+
+```env
+PREDICTION_PYTHON_BIN=python3
+```
+
+Jika memakai virtual environment, gunakan path absolut:
+
+```env
+PREDICTION_PYTHON_BIN=/path/to/venv/bin/python
+```
+
+Langkah verifikasi cepat di server:
+
+1. `php artisan config:clear`
+2. `php artisan dashboard:prediction-train`
+3. `php artisan dashboard:prediction-snapshot`
+
 ## Learning Laravel
 
 Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
