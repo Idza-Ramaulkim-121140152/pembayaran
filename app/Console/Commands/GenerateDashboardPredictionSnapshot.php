@@ -1,0 +1,336 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Http\Controllers\DashboardController;
+use App\Models\Customer;
+use App\Models\FinancialTransaction;
+use App\Models\Invoice;
+use App\Services\DashboardPredictionPythonWorker;
+use App\Services\DashboardPredictionSnapshotService;
+use Carbon\Carbon;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+class GenerateDashboardPredictionSnapshot extends Command
+{
+    protected $signature = 'dashboard:prediction-snapshot {--scope=prediction_bundle} {--month=}';
+
+    protected $description = 'Generate hourly dashboard prediction snapshot bundle';
+
+    public function __construct(
+        private DashboardPredictionSnapshotService $snapshotService,
+        private DashboardPredictionPythonWorker $pythonWorker,
+    ) {
+        parent::__construct();
+    }
+
+    public function handle(): int
+    {
+        $scope = (string) $this->option('scope');
+        $now = Carbon::now();
+        $monthArg = (string) ($this->option('month') ?? '');
+        $monthReference = preg_match('/^\d{4}-\d{2}$/', $monthArg) === 1
+            ? Carbon::parse($monthArg . '-01')
+            : Carbon::today();
+
+        $ranges = [
+            'kpi_start' => Carbon::today()->subDays(29)->startOfDay(),
+            'kpi_end' => Carbon::today()->endOfDay(),
+            'forecast_start' => Carbon::today()->startOfDay(),
+            'forecast_end' => Carbon::today()->addDays(6)->endOfDay(),
+            'projection_start' => $monthReference->copy()->startOfMonth()->startOfDay(),
+            'projection_end' => $monthReference->copy()->endOfMonth()->endOfDay(),
+        ];
+
+        try {
+            $controller = app(DashboardController::class);
+            $baseBundle = $controller->buildPredictionBundleData($ranges);
+
+            $pythonPayload = [
+                'generated_at' => $now->toIso8601String(),
+                'daily_finance_history' => $this->buildDailyFinanceHistory(120),
+                'invoice_signals' => $this->buildInvoiceSignals(),
+                'customer_signals' => $this->buildCustomerSignals(),
+                'monthly_revenue_sources' => $this->buildMonthlyRevenueSources(12),
+                'existing_summary' => [
+                    'kpi' => $baseBundle['management_kpis']['summary'] ?? [],
+                    'forecast' => $baseBundle['revenue_forecast']['summary'] ?? [],
+                    'projection' => $baseBundle['financial_projection']['summary'] ?? [],
+                    'isp' => $baseBundle['isp_intelligence']['summary'] ?? [],
+                ],
+            ];
+
+            $pythonResult = $this->pythonWorker->snapshot($pythonPayload);
+            $innovations = [];
+            $modelMeta = [
+                'model_version' => 'xgboost-lag-v2',
+                'worker_status' => $pythonResult['ok'] ? 'ok' : 'failed_fallback',
+            ];
+
+            if ($pythonResult['ok']) {
+                $workerData = (array) ($pythonResult['data'] ?? []);
+                $innovations = [
+                    'risk_alarm_24h' => $workerData['risk_alarm_24h'] ?? [],
+                    'collection_probability' => $workerData['collection_probability'] ?? [],
+                    'what_if_simulator' => $workerData['what_if_simulator'] ?? [],
+                    'customer_growth_forecast_monthly' => $workerData['customer_growth_forecast_monthly'] ?? [],
+                    'monthly_total_revenue_forecast' => $workerData['monthly_total_revenue_forecast'] ?? [],
+                ];
+                $modelMeta = array_merge($modelMeta, (array) ($workerData['model_meta'] ?? []));
+            } else {
+                $this->warn('Python worker gagal, memakai fallback lokal: ' . ($pythonResult['error'] ?? 'unknown_error'));
+                $innovations = $this->buildFallbackInnovations($baseBundle);
+                $modelMeta['worker_error'] = $pythonResult['error'] ?? 'unknown_error';
+            }
+
+            $bundle = $controller->buildPredictionBundleData($ranges, $innovations, [
+                'snapshot_generated_at' => $now->toIso8601String(),
+                'is_stale' => false,
+                'model_version' => (string) ($modelMeta['model_version'] ?? 'xgboost-lag-v2'),
+            ]);
+
+            $snapshot = $this->snapshotService->saveReady(
+                $scope,
+                $ranges['kpi_start'],
+                $ranges['projection_end'],
+                $bundle,
+                $modelMeta,
+                Carbon::now()->addHour()
+            );
+
+            $this->info('Snapshot prediksi berhasil dibuat. ID: ' . $snapshot->id);
+            return self::SUCCESS;
+        } catch (\Throwable $e) {
+            if (Schema::hasTable('dashboard_prediction_snapshots')) {
+                $this->snapshotService->saveFailed(
+                    $scope,
+                    $ranges['kpi_start'],
+                    $ranges['projection_end'],
+                    $e->getMessage(),
+                    ['model_version' => 'xgboost-lag-v2']
+                );
+            }
+            $this->error('Gagal membuat snapshot prediksi: ' . $e->getMessage());
+            return self::FAILURE;
+        }
+    }
+
+    private function buildDailyFinanceHistory(int $days = 120): array
+    {
+        $start = Carbon::today()->subDays(max($days - 1, 1))->toDateString();
+
+        $rows = FinancialTransaction::query()
+            ->selectRaw('transaction_date, SUM(CASE WHEN type = "income" THEN amount ELSE 0 END) as income_total, SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) as expense_total, SUM(CASE WHEN type = "adjustment" THEN amount ELSE 0 END) as adjustment_total')
+            ->whereDate('transaction_date', '>=', $start)
+            ->groupBy('transaction_date')
+            ->orderBy('transaction_date')
+            ->get();
+
+        return $rows->map(fn ($row) => [
+            'date' => (string) $row->transaction_date,
+            'income' => (float) ($row->income_total ?? 0),
+            'expense' => (float) ($row->expense_total ?? 0),
+            'adjustment' => (float) ($row->adjustment_total ?? 0),
+            'net' => (float) (($row->income_total ?? 0) - ($row->expense_total ?? 0) + ($row->adjustment_total ?? 0)),
+        ])->values()->all();
+    }
+
+    private function buildInvoiceSignals(): array
+    {
+        $today = Carbon::today();
+        $horizon = Carbon::today()->addDays(30);
+
+        $summary = Invoice::query()
+            ->selectRaw('status, COUNT(*) as total_count, COALESCE(SUM(amount), 0) as total_amount')
+            ->groupBy('status')
+            ->get()
+            ->keyBy('status');
+
+        $dueBuckets = Invoice::query()
+            ->whereDate('due_date', '>=', $today->toDateString())
+            ->whereDate('due_date', '<=', $horizon->toDateString())
+            ->selectRaw('DATE(due_date) as due_day, COUNT(*) as total_count, COALESCE(SUM(amount), 0) as total_amount')
+            ->groupBy(DB::raw('DATE(due_date)'))
+            ->orderBy('due_day')
+            ->get();
+
+        return [
+            'status_summary' => [
+                'unpaid_count' => (int) ($summary['unpaid']->total_count ?? 0),
+                'waiting_count' => (int) ($summary['menunggu konfirmasi']->total_count ?? 0),
+                'paid_count' => (int) ($summary['paid']->total_count ?? 0),
+                'overdue_count' => (int) ($summary['overdue']->total_count ?? 0),
+                'unpaid_amount' => (float) ($summary['unpaid']->total_amount ?? 0),
+                'waiting_amount' => (float) ($summary['menunggu konfirmasi']->total_amount ?? 0),
+                'overdue_amount' => (float) ($summary['overdue']->total_amount ?? 0),
+            ],
+            'due_buckets' => $dueBuckets->map(fn ($row) => [
+                'date' => (string) $row->due_day,
+                'count' => (int) ($row->total_count ?? 0),
+                'amount' => (float) ($row->total_amount ?? 0),
+            ])->values()->all(),
+        ];
+    }
+
+    private function buildCustomerSignals(): array
+    {
+        $today = Carbon::today();
+
+        $rows = Customer::query()
+            ->leftJoin('invoices as i', function ($join) {
+                $join->on('i.customer_id', '=', 'customers.id')
+                    ->whereIn('i.status', ['unpaid', 'overdue', 'menunggu konfirmasi']);
+            })
+            ->selectRaw('customers.id, customers.name, customers.due_date, customers.is_active, COUNT(i.id) as open_invoice_count, COALESCE(SUM(i.amount), 0) as open_invoice_amount')
+            ->groupBy('customers.id', 'customers.name', 'customers.due_date', 'customers.is_active')
+            ->orderByDesc('open_invoice_amount')
+            ->limit(500)
+            ->get();
+
+        return $rows->map(function ($row) use ($today) {
+            $dueDate = $row->due_date ? Carbon::parse($row->due_date) : null;
+            $daysOverdue = $dueDate && $dueDate->lt($today) ? $dueDate->diffInDays($today) : 0;
+
+            return [
+                'customer_id' => (int) $row->id,
+                'name' => (string) ($row->name ?? ''),
+                'is_active' => (bool) ($row->is_active ?? false),
+                'days_overdue' => (int) $daysOverdue,
+                'open_invoice_count' => (int) ($row->open_invoice_count ?? 0),
+                'open_invoice_amount' => (float) ($row->open_invoice_amount ?? 0),
+            ];
+        })->values()->all();
+    }
+
+    private function buildMonthlyRevenueSources(int $months = 12): array
+    {
+        $startMonth = Carbon::today()->startOfMonth()->subMonths(max($months - 1, 1));
+        $startDate = $startMonth->toDateString();
+
+        $invoiceRows = Invoice::query()
+            ->where('status', 'paid')
+            ->whereNotNull('paid_at')
+            ->whereDate('paid_at', '>=', $startDate)
+            ->selectRaw('DATE_FORMAT(paid_at, "%Y-%m") as ym, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('ym')
+            ->orderBy('ym')
+            ->get()
+            ->keyBy('ym');
+
+        $installationRows = FinancialTransaction::query()
+            ->where('type', 'income')
+            ->whereDate('transaction_date', '>=', $startDate)
+            ->where(function ($query) {
+                $query->where('source', 'installation')
+                    ->orWhere('category', 'installation')
+                    ->orWhere('description', 'like', '%instal%');
+            })
+            ->selectRaw('DATE_FORMAT(transaction_date, "%Y-%m") as ym, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('ym')
+            ->orderBy('ym')
+            ->get()
+            ->keyBy('ym');
+
+        $otherIncomeRows = FinancialTransaction::query()
+            ->where('type', 'income')
+            ->whereDate('transaction_date', '>=', $startDate)
+            ->where(function ($query) {
+                $query->where('source', '!=', 'installation')
+                    ->orWhereNull('source');
+            })
+            ->selectRaw('DATE_FORMAT(transaction_date, "%Y-%m") as ym, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('ym')
+            ->orderBy('ym')
+            ->get()
+            ->keyBy('ym');
+
+        $expenseRows = FinancialTransaction::query()
+            ->where('type', 'expense')
+            ->whereDate('transaction_date', '>=', $startDate)
+            ->selectRaw('DATE_FORMAT(transaction_date, "%Y-%m") as ym, COALESCE(SUM(amount), 0) as total')
+            ->groupBy('ym')
+            ->orderBy('ym')
+            ->get()
+            ->keyBy('ym');
+
+        $result = [];
+        $cursor = $startMonth->copy();
+        $end = Carbon::today()->startOfMonth();
+
+        while ($cursor->lte($end)) {
+            $ym = $cursor->format('Y-m');
+            $billing = (float) ($invoiceRows[$ym]->total ?? 0);
+            $installation = (float) ($installationRows[$ym]->total ?? 0);
+            $other = (float) ($otherIncomeRows[$ym]->total ?? 0);
+            $expense = (float) ($expenseRows[$ym]->total ?? 0);
+
+            $gross = $billing + $installation + $other;
+            $net = $gross - $expense;
+
+            $result[] = [
+                'month' => $ym,
+                'billing_recurring' => $billing,
+                'installation' => $installation,
+                'other_financial_income' => $other,
+                'gross_total' => $gross,
+                'expense_total' => $expense,
+                'net_total' => $net,
+            ];
+
+            $cursor->addMonth();
+        }
+
+        return $result;
+    }
+
+    private function buildFallbackInnovations(array $baseBundle): array
+    {
+        $kpiSummary = (array) ($baseBundle['management_kpis']['summary'] ?? []);
+        $projectionSummary = (array) ($baseBundle['financial_projection']['summary'] ?? []);
+        $ispSummary = (array) ($baseBundle['isp_intelligence']['summary'] ?? []);
+        $forecastSummary = (array) ($baseBundle['revenue_forecast']['summary'] ?? []);
+
+        $riskScore = 0;
+        $riskScore += ((float) ($kpiSummary['overdue_rate'] ?? 0)) * 0.4;
+        $riskScore += max(0, 100 - (float) ($kpiSummary['collection_rate'] ?? 0)) * 0.3;
+        $riskScore += ((float) ($ispSummary['network_instability_ratio'] ?? 0)) * 0.3;
+
+        $riskLevel = $riskScore >= 70 ? 'critical' : ($riskScore >= 40 ? 'warning' : 'normal');
+
+        return [
+            'risk_alarm_24h' => [
+                'risk_level' => $riskLevel,
+                'risk_score' => round($riskScore, 2),
+                'top_drivers' => [
+                    'overdue_rate' => (float) ($kpiSummary['overdue_rate'] ?? 0),
+                    'collection_rate' => (float) ($kpiSummary['collection_rate'] ?? 0),
+                    'network_instability_ratio' => (float) ($ispSummary['network_instability_ratio'] ?? 0),
+                ],
+            ],
+            'collection_probability' => [],
+            'what_if_simulator' => [
+                'baseline_month_net' => (float) ($projectionSummary['net_projection'] ?? 0),
+                'scenarios' => [
+                    [
+                        'key' => 'collection_plus_10pct',
+                        'label' => 'Collection +10%',
+                        'estimated_delta_net' => round(((float) ($forecastSummary['predicted_total_revenue'] ?? 0)) * 0.10, 2),
+                    ],
+                    [
+                        'key' => 'expense_minus_10pct',
+                        'label' => 'Expense -10%',
+                        'estimated_delta_net' => round(((float) ($projectionSummary['projected_total_expense'] ?? 0)) * 0.10, 2),
+                    ],
+                ],
+            ],
+            'customer_growth_forecast_monthly' => [
+                'months' => [],
+            ],
+            'monthly_total_revenue_forecast' => [
+                'months' => [],
+            ],
+        ];
+    }
+}

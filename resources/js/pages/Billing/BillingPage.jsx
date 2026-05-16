@@ -790,6 +790,23 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         );
     }
 
+    const waitingMap = new Map();
+    [...(customers.late || []), ...(customers.almostLate || []), ...(customers.others || [])].forEach((item) => {
+        const customerId = item?.customer?.id;
+        const activeStatus = (item?.active_invoice?.status || '').toString().trim().toLowerCase();
+        if (!customerId || activeStatus !== 'menunggu konfirmasi') return;
+        if (!waitingMap.has(customerId)) {
+            waitingMap.set(customerId, item);
+        }
+    });
+
+    const waitingConfirmation = Array.from(waitingMap.values());
+    const waitingCustomerIds = new Set(waitingConfirmation.map((item) => item?.customer?.id).filter(Boolean));
+
+    const lateFiltered = (customers.late || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
+    const almostLateFiltered = (customers.almostLate || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
+    const othersFiltered = (customers.others || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
+
     const CustomerTable = ({ title, data, icon: Icon, iconColor, segment, defaultCollapsed = false }) => {
         const sectionKey = title.toLowerCase().replace(/[^a-z]/g, '');
         const isCollapsed = collapsed[sectionKey] ?? defaultCollapsed;
@@ -1073,22 +1090,29 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {/* Tables */}
             <div className="space-y-4">
                 <CustomerTable
+                    title="Pelanggan Menunggu Konfirmasi"
+                    data={waitingConfirmation}
+                    segment="waitingConfirmation"
+                    icon={Clock}
+                    iconColor="bg-amber-500"
+                />
+                <CustomerTable
                     title="Pelanggan Telat"
-                    data={customers.late}
+                    data={lateFiltered}
                     segment="late"
                     icon={AlertTriangle}
                     iconColor="bg-red-500"
                 />
                 <CustomerTable
                     title="Pelanggan Hampir Telat (H-5)"
-                    data={customers.almostLate}
+                    data={almostLateFiltered}
                     segment="almostLate"
                     icon={Clock}
                     iconColor="bg-orange-500"
                 />
                 <CustomerTable
                     title="Pelanggan Lainnya"
-                    data={customers.others}
+                    data={othersFiltered}
                     segment="others"
                     icon={Users}
                     iconColor="bg-blue-500"

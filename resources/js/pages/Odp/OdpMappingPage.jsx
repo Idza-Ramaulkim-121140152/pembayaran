@@ -45,6 +45,7 @@ function OdpMappingPage() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [rows, setRows] = useState([]);
+    const [selectedRowsMap, setSelectedRowsMap] = useState({});
     const [odps, setOdps] = useState([]);
     const [selectedIds, setSelectedIds] = useState([]);
     const [selectedOdpId, setSelectedOdpId] = useState('');
@@ -144,15 +145,75 @@ function OdpMappingPage() {
 
     const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-    const selectedCustomerWithCoordinate = useMemo(() => {
-        return rows.find((row) => {
-            if (!selectedSet.has(row.id)) {
-                return false;
+    useEffect(() => {
+        setSelectedRowsMap((prev) => {
+            if (selectedIds.length === 0) {
+                return {};
             }
 
-            return row.latitude !== null && row.latitude !== undefined && row.longitude !== null && row.longitude !== undefined;
+            const next = { ...prev };
+            const rowById = new Map((rows || []).map((row) => [Number(row.id), row]));
+            const selectedIdSet = new Set(selectedIds.map((id) => Number(id)));
+
+            selectedIdSet.forEach((id) => {
+                const latestRow = rowById.get(id);
+                if (latestRow) {
+                    next[id] = latestRow;
+                }
+            });
+
+            Object.keys(next).forEach((id) => {
+                if (!selectedIdSet.has(Number(id))) {
+                    delete next[id];
+                }
+            });
+
+            return next;
         });
-    }, [rows, selectedSet]);
+    }, [rows, selectedIds]);
+
+    const displayRows = useMemo(() => {
+        const rowById = new Map((rows || []).map((row) => [Number(row.id), row]));
+        const pinnedRows = [];
+        const seen = new Set();
+
+        selectedIds.forEach((id) => {
+            const numericId = Number(id);
+            const row = rowById.get(numericId) || selectedRowsMap[numericId];
+            if (!row || seen.has(numericId)) {
+                return;
+            }
+
+            pinnedRows.push(row);
+            seen.add(numericId);
+        });
+
+        const regularRows = (rows || []).filter((row) => {
+            const numericId = Number(row.id);
+            if (seen.has(numericId)) {
+                return false;
+            }
+            seen.add(numericId);
+            return true;
+        });
+
+        return [...pinnedRows, ...regularRows];
+    }, [rows, selectedIds, selectedRowsMap]);
+
+    const selectedCustomerWithCoordinate = useMemo(() => {
+        const rowById = new Map((rows || []).map((row) => [Number(row.id), row]));
+
+        for (const id of selectedIds) {
+            const numericId = Number(id);
+            const row = rowById.get(numericId) || selectedRowsMap[numericId];
+            if (!row) continue;
+            if (row.latitude !== null && row.latitude !== undefined && row.longitude !== null && row.longitude !== undefined) {
+                return row;
+            }
+        }
+
+        return null;
+    }, [rows, selectedIds, selectedRowsMap]);
 
     const toggleSelect = (id) => {
         setSelectedIds((prev) => {
@@ -162,6 +223,22 @@ function OdpMappingPage() {
 
             return [...prev, id];
         });
+
+        if (selectedSet.has(id)) {
+            setSelectedRowsMap((prev) => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+        } else {
+            const selectedRow = (rows || []).find((row) => Number(row.id) === Number(id));
+            if (selectedRow) {
+                setSelectedRowsMap((prev) => ({
+                    ...prev,
+                    [id]: selectedRow,
+                }));
+            }
+        }
     };
 
     const tryAssign = async (forceReassign = false) => {
@@ -364,72 +441,6 @@ function OdpMappingPage() {
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white border border-gray-100 rounded-lg p-4">
-                    <p className="text-sm text-gray-500">Assigned</p>
-                    <p className="text-2xl font-bold text-green-600">{stats.assigned}</p>
-                </div>
-                <div className="bg-white border border-gray-100 rounded-lg p-4">
-                    <p className="text-sm text-gray-500">Unassigned</p>
-                    <p className="text-2xl font-bold text-amber-600">{stats.unassigned}</p>
-                </div>
-                <div className="bg-white border border-gray-100 rounded-lg p-4">
-                    <p className="text-sm text-gray-500">Mismatch</p>
-                    <p className="text-2xl font-bold text-red-600">{stats.mismatch}</p>
-                </div>
-            </div>
-
-            <div className="bg-white border border-gray-100 rounded-lg p-4 space-y-4">
-                <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                    <input
-                        type="text"
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        placeholder="Search pelanggan: nama/PPPoE/telepon/alamat"
-                        className="px-3 py-2 border border-gray-300 rounded-lg md:col-span-2"
-                    />
-                    <select
-                        value={filters.status}
-                        onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Semua status</option>
-                        <option value="assigned">Assigned</option>
-                        <option value="unassigned">Unassigned</option>
-                        <option value="mismatch">Mismatch</option>
-                    </select>
-                    <select
-                        value={filters.odp_id}
-                        onChange={(e) => setFilters((prev) => ({ ...prev, odp_id: e.target.value }))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Semua ODP</option>
-                        {odps.map((odp) => (
-                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
-                        ))}
-                    </select>
-                    <Button type="submit" variant="primary">Cari Pelanggan</Button>
-                    <Button type="button" variant="secondary" onClick={handleSearchReset}>Reset Search</Button>
-                    <Button type="button" variant="secondary" onClick={() => reloadCustomers()}>Terapkan Filter</Button>
-                </form>
-
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3">
-                    <select
-                        value={selectedOdpId}
-                        onChange={(e) => setSelectedOdpId(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Pilih ODP tujuan bulk assign</option>
-                        {odps.map((odp) => (
-                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
-                        ))}
-                    </select>
-                    <Button type="button" variant="primary" onClick={handleAssign} disabled={submitting}>Bulk Assign</Button>
-                    <Button type="button" variant="danger" onClick={handleUnassign} disabled={submitting}>Bulk Unassign</Button>
-                    <Button type="button" variant="secondary" onClick={handleBackfill} disabled={submitting}>Backfill</Button>
-                </div>
-            </div>
-
             <form onSubmit={handleQuickCreate} className="bg-white border border-gray-100 rounded-lg p-4 space-y-3">
                 <div>
                     <h2 className="text-lg font-semibold text-gray-900">Quick Create ODP</h2>
@@ -526,6 +537,72 @@ function OdpMappingPage() {
                 </div>
             </form>
 
+            <div className="bg-white border border-gray-100 rounded-lg p-4 space-y-4">
+                <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                    <input
+                        type="text"
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        placeholder="Search pelanggan: nama/PPPoE/telepon/alamat"
+                        className="px-3 py-2 border border-gray-300 rounded-lg md:col-span-2"
+                    />
+                    <select
+                        value={filters.status}
+                        onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                        <option value="">Semua status</option>
+                        <option value="assigned">Assigned</option>
+                        <option value="unassigned">Unassigned</option>
+                        <option value="mismatch">Mismatch</option>
+                    </select>
+                    <select
+                        value={filters.odp_id}
+                        onChange={(e) => setFilters((prev) => ({ ...prev, odp_id: e.target.value }))}
+                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                        <option value="">Semua ODP</option>
+                        {odps.map((odp) => (
+                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
+                        ))}
+                    </select>
+                    <Button type="submit" variant="primary">Cari Pelanggan</Button>
+                    <Button type="button" variant="secondary" onClick={handleSearchReset}>Reset Search</Button>
+                    <Button type="button" variant="secondary" onClick={() => reloadCustomers()}>Terapkan Filter</Button>
+                </form>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white border border-gray-100 rounded-lg p-4">
+                        <p className="text-sm text-gray-500">Assigned</p>
+                        <p className="text-2xl font-bold text-green-600">{stats.assigned}</p>
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-lg p-4">
+                        <p className="text-sm text-gray-500">Unassigned</p>
+                        <p className="text-2xl font-bold text-amber-600">{stats.unassigned}</p>
+                    </div>
+                    <div className="bg-white border border-gray-100 rounded-lg p-4">
+                        <p className="text-sm text-gray-500">Mismatch</p>
+                        <p className="text-2xl font-bold text-red-600">{stats.mismatch}</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3">
+                    <select
+                        value={selectedOdpId}
+                        onChange={(e) => setSelectedOdpId(e.target.value)}
+                        className="px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                        <option value="">Pilih ODP tujuan bulk assign</option>
+                        {odps.map((odp) => (
+                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
+                        ))}
+                    </select>
+                    <Button type="button" variant="primary" onClick={handleAssign} disabled={submitting}>Bulk Assign</Button>
+                    <Button type="button" variant="danger" onClick={handleUnassign} disabled={submitting}>Bulk Unassign</Button>
+                    <Button type="button" variant="secondary" onClick={handleBackfill} disabled={submitting}>Backfill</Button>
+                </div>
+            </div>
+
             <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
                 {loading ? (
                     <div className="p-8">
@@ -546,7 +623,7 @@ function OdpMappingPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {rows.map((row) => (
+                                {displayRows.map((row) => (
                                     <tr key={row.id} className={selectedSet.has(row.id) ? 'bg-blue-50' : ''}>
                                         <td className="px-4 py-3">
                                             <input
@@ -567,7 +644,7 @@ function OdpMappingPage() {
                                         </td>
                                     </tr>
                                 ))}
-                                {rows.length === 0 && (
+                                {displayRows.length === 0 && (
                                     <tr>
                                         <td className="px-4 py-8 text-center text-gray-500" colSpan={7}>Tidak ada data pelanggan.</td>
                                     </tr>

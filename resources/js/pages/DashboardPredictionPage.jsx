@@ -171,6 +171,7 @@ function DashboardPredictionPage() {
 
     const [error, setError] = useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [bundleMeta, setBundleMeta] = useState(null);
 
     const [kpiRange, setKpiRange] = useState(getDefaultKpiRange());
     const [kpiData, setKpiData] = useState(null);
@@ -194,6 +195,32 @@ function DashboardPredictionPage() {
     const [ispIntelligenceData, setIspIntelligenceData] = useState(null);
     const [ispIntelligenceLoading, setIspIntelligenceLoading] = useState(false);
     const [ispIntelligenceError, setIspIntelligenceError] = useState(null);
+    const [riskAlarm24h, setRiskAlarm24h] = useState(null);
+    const [collectionProbability, setCollectionProbability] = useState([]);
+    const [whatIfSimulator, setWhatIfSimulator] = useState(null);
+    const [customerGrowthForecastMonthly, setCustomerGrowthForecastMonthly] = useState(null);
+    const [monthlyTotalRevenueForecast, setMonthlyTotalRevenueForecast] = useState(null);
+
+    const applyPredictionBundle = (bundle) => {
+        setKpiData(bundle?.management_kpis || null);
+        setForecastData(bundle?.revenue_forecast || null);
+        setFinancialProjectionData(bundle?.financial_projection || null);
+        setIspIntelligenceData(bundle?.isp_intelligence || null);
+        setRiskAlarm24h(bundle?.risk_alarm_24h || null);
+        setCollectionProbability(Array.isArray(bundle?.collection_probability) ? bundle.collection_probability : []);
+        setWhatIfSimulator(bundle?.what_if_simulator || null);
+        setCustomerGrowthForecastMonthly(bundle?.customer_growth_forecast_monthly || null);
+        setMonthlyTotalRevenueForecast(bundle?.monthly_total_revenue_forecast || null);
+        setBundleMeta(bundle?.meta || null);
+    };
+
+    const fetchPredictionBundle = async () => {
+        const response = await apiClient.get('/dashboard/prediction-bundle');
+        const bundle = response.data?.data || null;
+        if (!bundle) return false;
+        applyPredictionBundle(bundle);
+        return true;
+    };
 
     const fetchManagementKpis = async (range = kpiRange) => {
         try {
@@ -208,6 +235,7 @@ function DashboardPredictionPage() {
             });
 
             setKpiData(response.data?.data || null);
+            if (response.data?.meta) setBundleMeta(response.data.meta);
         } catch (err) {
             setKpiError(err.response?.data?.message || 'Gagal memuat KPI manajemen.');
         } finally {
@@ -228,6 +256,7 @@ function DashboardPredictionPage() {
             });
 
             setForecastData(response.data?.data || null);
+            if (response.data?.meta) setBundleMeta(response.data.meta);
         } catch (err) {
             setForecastError(err.response?.data?.message || 'Gagal memuat prediksi pendapatan.');
         } finally {
@@ -248,6 +277,7 @@ function DashboardPredictionPage() {
             });
 
             setFinancialProjectionData(response.data?.data || null);
+            if (response.data?.meta) setBundleMeta(response.data.meta);
         } catch (err) {
             setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat proyeksi keuangan.');
         } finally {
@@ -268,6 +298,7 @@ function DashboardPredictionPage() {
             });
 
             setIspIntelligenceData(response.data?.data || null);
+            if (response.data?.meta) setBundleMeta(response.data.meta);
         } catch (err) {
             setIspIntelligenceError(err.response?.data?.message || 'Gagal memuat intelijen operasional ISP.');
         } finally {
@@ -281,13 +312,21 @@ function DashboardPredictionPage() {
                 setIsRefreshing(true);
             }
             setError(null);
+            let bundleLoaded = false;
+            try {
+                bundleLoaded = await fetchPredictionBundle();
+            } catch (_) {
+                bundleLoaded = false;
+            }
 
-            await Promise.allSettled([
-                fetchManagementKpis(kpiRange),
-                fetchRevenueForecast(forecastRange),
-                fetchFinancialProjection(financialProjectionRange),
-                fetchIspIntelligence(kpiRange),
-            ]);
+            if (!bundleLoaded) {
+                await Promise.allSettled([
+                    fetchManagementKpis(kpiRange),
+                    fetchRevenueForecast(forecastRange),
+                    fetchFinancialProjection(financialProjectionRange),
+                    fetchIspIntelligence(kpiRange),
+                ]);
+            }
         } catch (err) {
             setError('Terjadi kendala saat memuat semua data prediksi.');
         } finally {
@@ -894,6 +933,23 @@ function DashboardPredictionPage() {
                     <p className="text-sm text-gray-500 mt-2">
                         Fokus halaman ini hanya untuk analitik prediksi operasional dan keuangan, tanpa tombol operasional dashboard.
                     </p>
+                    {bundleMeta?.snapshot_generated_at && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                            <span className="inline-flex px-2 py-1 rounded-full bg-blue-100 text-blue-700">
+                                Update terakhir: {new Date(bundleMeta.snapshot_generated_at).toLocaleString('id-ID')}
+                            </span>
+                            <span className={`inline-flex px-2 py-1 rounded-full ${
+                                bundleMeta?.is_stale ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                            }`}>
+                                {bundleMeta?.is_stale ? 'Stale snapshot' : 'Snapshot fresh'}
+                            </span>
+                            {bundleMeta?.model_version && (
+                                <span className="inline-flex px-2 py-1 rounded-full bg-slate-100 text-slate-700">
+                                    Model: {bundleMeta.model_version}
+                                </span>
+                            )}
+                        </div>
+                    )}
                 </div>
                 <button
                     type="button"
@@ -976,6 +1032,68 @@ function DashboardPredictionPage() {
                 </div>
             </div>
 
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="app-card p-5 space-y-3">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <ShieldAlert size={16} className="text-rose-600" />
+                        Risk Alarm 24h
+                    </h3>
+                    {!riskAlarm24h ? (
+                        <p className="text-sm text-gray-500">Risk alarm belum tersedia.</p>
+                    ) : (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                    riskAlarm24h.risk_level === 'critical'
+                                        ? 'bg-rose-100 text-rose-700'
+                                        : riskAlarm24h.risk_level === 'warning'
+                                            ? 'bg-amber-100 text-amber-700'
+                                            : 'bg-emerald-100 text-emerald-700'
+                                }`}>
+                                    {riskAlarm24h.risk_level || 'normal'}
+                                </span>
+                                <span className="text-sm text-gray-700">Score: {Number(riskAlarm24h.risk_score || 0).toFixed(1)}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                                <div className="rounded-lg bg-gray-50 p-2">Overdue rate: {formatPercent(riskAlarm24h?.top_drivers?.overdue_rate || 0, 1)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">Overdue amount: {formatCurrency(riskAlarm24h?.top_drivers?.overdue_amount || 0)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">Waiting confirm: {formatCurrency(riskAlarm24h?.top_drivers?.waiting_confirmation_amount || 0)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">Prediksi net 24h: {formatCurrency(riskAlarm24h?.top_drivers?.predicted_net_24h || 0)}</div>
+                            </div>
+                        </>
+                    )}
+                </div>
+
+                <div className="app-card p-5 space-y-3">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <DollarSign size={16} className="text-teal-600" />
+                        What-if Simulator
+                    </h3>
+                    {!whatIfSimulator ? (
+                        <p className="text-sm text-gray-500">Data simulasi belum tersedia.</p>
+                    ) : (
+                        <>
+                            <p className="text-sm text-gray-600">
+                                Baseline net bulan: <span className="font-semibold text-gray-900">{formatCurrency(whatIfSimulator.baseline_month_net || 0)}</span>
+                            </p>
+                            <div className="space-y-2">
+                                {(whatIfSimulator.scenarios || []).map((scenario) => (
+                                    <div key={scenario.key} className="rounded-lg border border-gray-200 p-3 flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate">{scenario.label}</p>
+                                            <p className="text-xs text-gray-500">Net baru: {formatCurrency(scenario.new_net_estimate || 0)}</p>
+                                        </div>
+                                        <span className={`text-sm font-semibold ${(scenario.estimated_delta_net || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {(scenario.estimated_delta_net || 0) >= 0 ? '+' : ''}{formatCurrency(scenario.estimated_delta_net || 0)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+
             <div className="app-card p-6 space-y-4">
                 <div className="flex items-center justify-between gap-2">
                     <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
@@ -1008,6 +1126,97 @@ function DashboardPredictionPage() {
                         ))}
                     </div>
                 )}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="app-card p-5 space-y-3 min-w-0">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <Users size={16} className="text-blue-600" />
+                        Collection Probability per Pelanggan
+                    </h3>
+                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                        <table className="w-full text-sm min-w-[620px]">
+                            <thead className="bg-gray-50 text-gray-600 text-left">
+                                <tr>
+                                    <th className="px-3 py-2">Pelanggan</th>
+                                    <th className="px-3 py-2 text-right">Probabilitas</th>
+                                    <th className="px-3 py-2 text-right">Open Amount</th>
+                                    <th className="px-3 py-2 text-right">Overdue (hari)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {collectionProbability.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Data collection probability belum tersedia.</td>
+                                    </tr>
+                                ) : (
+                                    collectionProbability.slice(0, 10).map((row) => (
+                                        <tr key={`cp-${row.customer_id}`} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 text-gray-900 font-medium">{row.name}</td>
+                                            <td className="px-3 py-2 text-right">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                                    Number(row.collection_probability_pct || 0) < 45
+                                                        ? 'bg-rose-100 text-rose-700'
+                                                        : Number(row.collection_probability_pct || 0) < 70
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : 'bg-emerald-100 text-emerald-700'
+                                                }`}>
+                                                    {Number(row.collection_probability_pct || 0).toFixed(1)}%
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.open_invoice_amount || 0)}</td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{row.days_overdue || 0}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div className="app-card p-5 space-y-3 min-w-0">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <Wallet size={16} className="text-violet-600" />
+                        Forecast Bulanan (Pelanggan + Pendapatan)
+                    </h3>
+                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                        <table className="w-full text-sm min-w-[740px]">
+                            <thead className="bg-gray-50 text-gray-600 text-left">
+                                <tr>
+                                    <th className="px-3 py-2">Bulan</th>
+                                    <th className="px-3 py-2 text-right">Total Pelanggan</th>
+                                    <th className="px-3 py-2 text-right">Billing</th>
+                                    <th className="px-3 py-2 text-right">Pemasangan</th>
+                                    <th className="px-3 py-2 text-right">Pendapatan Lain</th>
+                                    <th className="px-3 py-2 text-right">Total Netto</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {((monthlyTotalRevenueForecast?.months || []).length === 0) ? (
+                                    <tr>
+                                        <td colSpan={6} className="px-3 py-4 text-center text-gray-500">Forecast bulanan belum tersedia.</td>
+                                    </tr>
+                                ) : (
+                                    (monthlyTotalRevenueForecast?.months || []).map((row) => {
+                                        const growthRow = (customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month);
+                                        return (
+                                            <tr key={`month-forecast-${row.month}`} className="border-t border-gray-100">
+                                                <td className="px-3 py-2 font-medium text-gray-900">{row.month}</td>
+                                                <td className="px-3 py-2 text-right text-gray-700">{growthRow?.predicted_total_customers ?? '-'}</td>
+                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.billing_recurring || 0)}</td>
+                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.installation || 0)}</td>
+                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.other_financial_income || 0)}</td>
+                                                <td className={`px-3 py-2 text-right font-semibold ${(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                    {formatCurrency(row.net_total || 0)}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <div className="app-card p-6 space-y-5">

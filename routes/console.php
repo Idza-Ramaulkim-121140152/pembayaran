@@ -27,3 +27,13 @@ Schedule::command('billing:dunning-run')
     ->everyMinute()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('dashboard:prediction-snapshot')
+    ->hourlyAt(5)
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+Schedule::command('dashboard:prediction-train')
+    ->dailyAt('01:10')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();

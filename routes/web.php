@@ -321,6 +321,7 @@ Route::middleware('auth')->group(function () {
 
     // Finance routes: admin + finance
     Route::middleware('role:finance')->group(function () {
+        Route::get('/api/dashboard/prediction-bundle', [DashboardController::class, 'predictionBundle'])->name('api.dashboard.prediction-bundle');
         Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
         Route::get('/api/dashboard/management-kpis', [DashboardController::class, 'managementKpis'])->name('api.dashboard.management-kpis');
         Route::get('/api/dashboard/financial-projection', [DashboardController::class, 'financialProjection'])->name('api.dashboard.financial-projection');

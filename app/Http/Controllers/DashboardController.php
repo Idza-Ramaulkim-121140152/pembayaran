@@ -13,6 +13,7 @@ use App\Models\FinancialTransaction;
 use App\Models\NetworkNotice;
 use App\Models\PayrollMember;
 use App\Models\User;
+use App\Services\DashboardPredictionSnapshotService;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -24,6 +25,55 @@ use Illuminate\Validation\Rule;
 
 class DashboardController extends Controller
 {
+    private function defaultPredictionRanges(): array
+    {
+        $today = Carbon::today();
+
+        return [
+            'kpi_start' => $today->copy()->subDays(29)->startOfDay(),
+            'kpi_end' => $today->copy()->endOfDay(),
+            'forecast_start' => $today->copy()->startOfDay(),
+            'forecast_end' => $today->copy()->addDays(6)->endOfDay(),
+            'projection_start' => $today->copy()->startOfMonth()->startOfDay(),
+            'projection_end' => $today->copy()->endOfMonth()->endOfDay(),
+        ];
+    }
+
+    public function buildPredictionBundleData(array $ranges = [], array $innovations = [], array $meta = []): array
+    {
+        $defaults = $this->defaultPredictionRanges();
+
+        $kpiStart = $ranges['kpi_start'] ?? $defaults['kpi_start'];
+        $kpiEnd = $ranges['kpi_end'] ?? $defaults['kpi_end'];
+        $forecastStart = $ranges['forecast_start'] ?? $defaults['forecast_start'];
+        $forecastEnd = $ranges['forecast_end'] ?? $defaults['forecast_end'];
+        $projectionStart = $ranges['projection_start'] ?? $defaults['projection_start'];
+        $projectionEnd = $ranges['projection_end'] ?? $defaults['projection_end'];
+
+        $managementKpis = $this->buildManagementKpis($kpiStart, $kpiEnd);
+        $revenueForecast = $this->buildRevenueForecast($forecastStart, $forecastEnd);
+        $financialProjection = $this->buildFinancialProjection($projectionStart, $projectionEnd);
+        $financialProjection['ai_assistant'] = $this->buildFinancialProjectionAssistant($financialProjection);
+        $ispIntelligence = $this->buildIspIntelligence($kpiStart, $kpiEnd);
+
+        return [
+            'management_kpis' => $managementKpis,
+            'revenue_forecast' => $revenueForecast,
+            'financial_projection' => $financialProjection,
+            'isp_intelligence' => $ispIntelligence,
+            'risk_alarm_24h' => $innovations['risk_alarm_24h'] ?? null,
+            'collection_probability' => $innovations['collection_probability'] ?? [],
+            'what_if_simulator' => $innovations['what_if_simulator'] ?? null,
+            'customer_growth_forecast_monthly' => $innovations['customer_growth_forecast_monthly'] ?? null,
+            'monthly_total_revenue_forecast' => $innovations['monthly_total_revenue_forecast'] ?? null,
+            'meta' => array_merge([
+                'snapshot_generated_at' => null,
+                'is_stale' => false,
+                'model_version' => null,
+            ], $meta),
+        ];
+    }
+
     private function canViewFinancialMetrics(?User $user): bool
     {
         return $user !== null && !$user->isTeknisi();
@@ -791,6 +841,17 @@ class DashboardController extends Controller
             'end_date' => 'nullable|date',
         ]);
 
+        if (!isset($validated['start_date']) && !isset($validated['end_date'])) {
+            $snapshotBundle = app(DashboardPredictionSnapshotService::class)
+                ->asBundleResponse(app(DashboardPredictionSnapshotService::class)->latestUsable());
+            if ($snapshotBundle && isset($snapshotBundle['revenue_forecast'])) {
+                return response()->json([
+                    'data' => $snapshotBundle['revenue_forecast'],
+                    'meta' => $snapshotBundle['meta'] ?? [],
+                ]);
+            }
+        }
+
         $startDate = isset($validated['start_date'])
             ? Carbon::parse($validated['start_date'])->startOfDay()
             : Carbon::today()->startOfDay();
@@ -814,6 +875,11 @@ class DashboardController extends Controller
 
         return response()->json([
             'data' => $this->buildRevenueForecast($startDate, $endDate),
+            'meta' => [
+                'snapshot_generated_at' => now()->toIso8601String(),
+                'is_stale' => false,
+                'model_version' => 'live-direct',
+            ],
         ]);
     }
 
@@ -829,6 +895,17 @@ class DashboardController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
         ]);
+
+        if (!isset($validated['start_date']) && !isset($validated['end_date'])) {
+            $snapshotBundle = app(DashboardPredictionSnapshotService::class)
+                ->asBundleResponse(app(DashboardPredictionSnapshotService::class)->latestUsable());
+            if ($snapshotBundle && isset($snapshotBundle['management_kpis'])) {
+                return response()->json([
+                    'data' => $snapshotBundle['management_kpis'],
+                    'meta' => $snapshotBundle['meta'] ?? [],
+                ]);
+            }
+        }
 
         $startDate = isset($validated['start_date'])
             ? Carbon::parse($validated['start_date'])->startOfDay()
@@ -853,6 +930,11 @@ class DashboardController extends Controller
 
         return response()->json([
             'data' => $this->buildManagementKpis($startDate, $endDate),
+            'meta' => [
+                'snapshot_generated_at' => now()->toIso8601String(),
+                'is_stale' => false,
+                'model_version' => 'live-direct',
+            ],
         ]);
     }
 
@@ -868,6 +950,17 @@ class DashboardController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
         ]);
+
+        if (!isset($validated['start_date']) && !isset($validated['end_date'])) {
+            $snapshotBundle = app(DashboardPredictionSnapshotService::class)
+                ->asBundleResponse(app(DashboardPredictionSnapshotService::class)->latestUsable());
+            if ($snapshotBundle && isset($snapshotBundle['financial_projection'])) {
+                return response()->json([
+                    'data' => $snapshotBundle['financial_projection'],
+                    'meta' => $snapshotBundle['meta'] ?? [],
+                ]);
+            }
+        }
 
         $hasStartDate = isset($validated['start_date']);
         $hasEndDate = isset($validated['end_date']);
@@ -907,6 +1000,11 @@ class DashboardController extends Controller
 
         return response()->json([
             'data' => $projectionData,
+            'meta' => [
+                'snapshot_generated_at' => now()->toIso8601String(),
+                'is_stale' => false,
+                'model_version' => 'live-direct',
+            ],
         ]);
     }
 
@@ -922,6 +1020,17 @@ class DashboardController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
         ]);
+
+        if (!isset($validated['start_date']) && !isset($validated['end_date'])) {
+            $snapshotBundle = app(DashboardPredictionSnapshotService::class)
+                ->asBundleResponse(app(DashboardPredictionSnapshotService::class)->latestUsable());
+            if ($snapshotBundle && isset($snapshotBundle['isp_intelligence'])) {
+                return response()->json([
+                    'data' => $snapshotBundle['isp_intelligence'],
+                    'meta' => $snapshotBundle['meta'] ?? [],
+                ]);
+            }
+        }
 
         $startDate = isset($validated['start_date'])
             ? Carbon::parse($validated['start_date'])->startOfDay()
@@ -946,6 +1055,39 @@ class DashboardController extends Controller
 
         return response()->json([
             'data' => $this->buildIspIntelligence($startDate, $endDate),
+            'meta' => [
+                'snapshot_generated_at' => now()->toIso8601String(),
+                'is_stale' => false,
+                'model_version' => 'live-direct',
+            ],
+        ]);
+    }
+
+    public function predictionBundle(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin melihat data prediksi ISP.',
+            ], 403);
+        }
+
+        $snapshotService = app(DashboardPredictionSnapshotService::class);
+        $snapshotBundle = $snapshotService->asBundleResponse($snapshotService->latestUsable());
+        if ($snapshotBundle) {
+            return response()->json([
+                'data' => $snapshotBundle,
+            ]);
+        }
+
+        $bundle = $this->buildPredictionBundleData([], [], [
+            'snapshot_generated_at' => now()->toIso8601String(),
+            'is_stale' => false,
+            'model_version' => 'live-fallback',
+            'fallback_live' => true,
+        ]);
+
+        return response()->json([
+            'data' => $bundle,
         ]);
     }
 
