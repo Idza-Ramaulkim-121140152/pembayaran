@@ -200,6 +200,8 @@ function DashboardPredictionPage() {
     const [whatIfSimulator, setWhatIfSimulator] = useState(null);
     const [customerGrowthForecastMonthly, setCustomerGrowthForecastMonthly] = useState(null);
     const [monthlyTotalRevenueForecast, setMonthlyTotalRevenueForecast] = useState(null);
+    const [hourlyForecastRows, setHourlyForecastRows] = useState([]);
+    const [backtestReport, setBacktestReport] = useState(null);
 
     const applyPredictionBundle = (bundle) => {
         setKpiData(bundle?.management_kpis || null);
@@ -211,6 +213,8 @@ function DashboardPredictionPage() {
         setWhatIfSimulator(bundle?.what_if_simulator || null);
         setCustomerGrowthForecastMonthly(bundle?.customer_growth_forecast_monthly || null);
         setMonthlyTotalRevenueForecast(bundle?.monthly_total_revenue_forecast || null);
+        setHourlyForecastRows(Array.isArray(bundle?.hourly_forecast_24h) ? bundle.hourly_forecast_24h : []);
+        setBacktestReport(bundle?.backtest_report || null);
         setBundleMeta(bundle?.meta || null);
     };
 
@@ -522,6 +526,68 @@ function DashboardPredictionPage() {
             },
         ],
     }), [forecastDailyRows]);
+
+    const hourlyForecastChartData = useMemo(() => ({
+        labels: hourlyForecastRows.map((item) => {
+            const ts = String(item.ts || '');
+            const parts = ts.split('T');
+            return parts.length > 1 ? parts[1].slice(0, 5) : ts.slice(11, 16);
+        }),
+        datasets: [
+            {
+                label: 'Prediksi Revenue / Jam',
+                data: hourlyForecastRows.map((item) => Number(item.predicted_revenue || 0)),
+                borderColor: '#0ea5e9',
+                backgroundColor: 'rgba(14, 165, 233, 0.18)',
+                borderWidth: 3,
+                fill: true,
+                tension: 0.3,
+            },
+            {
+                label: 'Batas Bawah',
+                data: hourlyForecastRows.map((item) => Number(item.lower_bound || 0)),
+                borderColor: '#94a3b8',
+                borderWidth: 1,
+                fill: false,
+                tension: 0.2,
+            },
+            {
+                label: 'Batas Atas',
+                data: hourlyForecastRows.map((item) => Number(item.upper_bound || 0)),
+                borderColor: '#64748b',
+                borderWidth: 1,
+                fill: false,
+                tension: 0.2,
+            },
+        ],
+    }), [hourlyForecastRows]);
+
+    const hourlyForecastChartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'bottom' },
+            tooltip: {
+                callbacks: {
+                    label: (context) => `${context.dataset.label}: ${formatCurrency(context.raw)}`,
+                },
+            },
+        },
+        scales: {
+            x: { grid: { display: false }, ticks: { color: '#6b7280', maxRotation: 0 } },
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    color: '#6b7280',
+                    callback: (value) => {
+                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
+                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
+                        return value;
+                    },
+                },
+            },
+        },
+    };
 
     const forecastChartOptions = {
         responsive: true,
@@ -1058,7 +1124,13 @@ function DashboardPredictionPage() {
                                 <div className="rounded-lg bg-gray-50 p-2">Overdue rate: {formatPercent(riskAlarm24h?.top_drivers?.overdue_rate || 0, 1)}</div>
                                 <div className="rounded-lg bg-gray-50 p-2">Overdue amount: {formatCurrency(riskAlarm24h?.top_drivers?.overdue_amount || 0)}</div>
                                 <div className="rounded-lg bg-gray-50 p-2">Waiting confirm: {formatCurrency(riskAlarm24h?.top_drivers?.waiting_confirmation_amount || 0)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">Prediksi net 24h: {formatCurrency(riskAlarm24h?.top_drivers?.predicted_net_24h || 0)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">
+                                    Prediksi 24h: {formatCurrency(
+                                        riskAlarm24h?.top_drivers?.predicted_revenue_24h
+                                        ?? riskAlarm24h?.top_drivers?.predicted_net_24h
+                                        ?? 0
+                                    )}
+                                </div>
                             </div>
                         </>
                     )}
@@ -1091,6 +1163,85 @@ function DashboardPredictionPage() {
                             </div>
                         </>
                     )}
+                </div>
+            </div>
+
+            <div className="app-card p-6 space-y-5">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <TrendingUp size={18} className="text-sky-600" />
+                            Prediksi Pendapatan Per Jam (24h)
+                        </h2>
+                        <p className="text-sm text-gray-500 mt-1">Forecast utama berbasis horizon 24 jam dengan update snapshot per 1 jam.</p>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                        Granularitas: {bundleMeta?.data_granularity || 'hourly'}
+                    </span>
+                </div>
+
+                {hourlyForecastRows.length === 0 ? (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                        Prediksi per jam belum tersedia pada snapshot ini.
+                    </div>
+                ) : (
+                    <>
+                        <div className="h-[300px]">
+                            <Line data={hourlyForecastChartData} options={hourlyForecastChartOptions} />
+                        </div>
+
+                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                            <table className="w-full text-sm min-w-[820px]">
+                                <thead className="bg-gray-50 text-gray-600 text-left">
+                                    <tr>
+                                        <th className="px-3 py-2">Waktu</th>
+                                        <th className="px-3 py-2 text-right">Prediksi Revenue</th>
+                                        <th className="px-3 py-2 text-right">Confidence</th>
+                                        <th className="px-3 py-2 text-right">Lower Bound</th>
+                                        <th className="px-3 py-2 text-right">Upper Bound</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {hourlyForecastRows.map((row, idx) => (
+                                        <tr key={`hourly-forecast-${idx}`} className="border-t border-gray-100">
+                                            <td className="px-3 py-2 text-gray-700">{row.ts || '-'}</td>
+                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.predicted_revenue || 0)}</td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.confidence || 0, 1)}</td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.lower_bound || 0)}</td>
+                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.upper_bound || 0)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                        <p className="text-xs text-gray-500">Backtest 7 Hari</p>
+                        <p className="text-xl font-bold text-gray-900 mt-1">
+                            MAPE: {backtestReport?.window_7d?.mape === null || backtestReport?.window_7d?.mape === undefined ? '-' : formatPercent(backtestReport?.window_7d?.mape, 2)}
+                        </p>
+                        <p className="text-sm text-gray-700 mt-1">
+                            SMAPE: {backtestReport?.window_7d?.smape === null || backtestReport?.window_7d?.smape === undefined ? '-' : formatPercent(backtestReport?.window_7d?.smape, 2)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-2">
+                            Sample: {backtestReport?.window_7d?.sample_size ?? 0}
+                        </p>
+                    </div>
+                    <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                        <p className="text-xs text-gray-500">Backtest 30 Hari</p>
+                        <p className="text-xl font-bold text-gray-900 mt-1">
+                            MAPE: {backtestReport?.window_30d?.mape === null || backtestReport?.window_30d?.mape === undefined ? '-' : formatPercent(backtestReport?.window_30d?.mape, 2)}
+                        </p>
+                        <p className="text-sm text-gray-700 mt-1">
+                            SMAPE: {backtestReport?.window_30d?.smape === null || backtestReport?.window_30d?.smape === undefined ? '-' : formatPercent(backtestReport?.window_30d?.smape, 2)}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-2">
+                            Sample: {backtestReport?.window_30d?.sample_size ?? 0}
+                        </p>
+                    </div>
                 </div>
             </div>
 

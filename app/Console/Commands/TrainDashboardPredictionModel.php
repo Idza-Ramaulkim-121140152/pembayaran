@@ -11,7 +11,7 @@ class TrainDashboardPredictionModel extends Command
 {
     protected $signature = 'dashboard:prediction-train';
 
-    protected $description = 'Train dashboard prediction ML model (daily)';
+    protected $description = 'Train dashboard prediction ML model (hourly series)';
 
     public function __construct(
         private DashboardPredictionPythonWorker $pythonWorker,
@@ -23,7 +23,7 @@ class TrainDashboardPredictionModel extends Command
     {
         $payload = [
             'generated_at' => now()->toIso8601String(),
-            'daily_finance_history' => $this->buildDailyFinanceHistory(180),
+            'hourly_revenue_history' => $this->buildHourlyRevenueHistory(90),
         ];
 
         $result = $this->pythonWorker->train($payload);
@@ -41,24 +41,43 @@ class TrainDashboardPredictionModel extends Command
         return self::SUCCESS;
     }
 
-    private function buildDailyFinanceHistory(int $days = 180): array
+    private function buildHourlyRevenueHistory(int $days = 90): array
     {
-        $start = Carbon::today()->subDays(max($days - 1, 1))->toDateString();
+        $start = Carbon::now()->subDays(max($days, 2))->startOfHour();
+        $end = Carbon::now()->startOfHour();
 
         $rows = FinancialTransaction::query()
-            ->selectRaw('transaction_date, SUM(CASE WHEN type = "income" THEN amount ELSE 0 END) as income_total, SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) as expense_total, SUM(CASE WHEN type = "adjustment" THEN amount ELSE 0 END) as adjustment_total')
-            ->whereDate('transaction_date', '>=', $start)
-            ->groupBy('transaction_date')
-            ->orderBy('transaction_date')
+            ->selectRaw('DATE_FORMAT(created_at, "%Y-%m-%d %H:00:00") as ts_hour, SUM(CASE WHEN type = "income" THEN amount ELSE 0 END) as income_total, SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) as expense_total, SUM(CASE WHEN type = "adjustment" THEN amount ELSE 0 END) as adjustment_total')
+            ->whereBetween('created_at', [$start, $end->copy()->addHour()])
+            ->groupBy('ts_hour')
+            ->orderBy('ts_hour')
             ->get();
 
-        return $rows->map(fn ($row) => [
-            'date' => (string) $row->transaction_date,
-            'income' => (float) ($row->income_total ?? 0),
-            'expense' => (float) ($row->expense_total ?? 0),
-            'adjustment' => (float) ($row->adjustment_total ?? 0),
-            'net' => (float) (($row->income_total ?? 0) - ($row->expense_total ?? 0) + ($row->adjustment_total ?? 0)),
-        ])->values()->all();
+        $map = [];
+        foreach ($rows as $row) {
+            $map[(string) $row->ts_hour] = [
+                'revenue' => max(0.0, (float) ($row->income_total ?? 0)),
+                'expense' => max(0.0, (float) ($row->expense_total ?? 0)),
+                'adjustment' => (float) ($row->adjustment_total ?? 0),
+            ];
+        }
+
+        $result = [];
+        $cursor = $start->copy();
+        while ($cursor->lte($end)) {
+            $hourKey = $cursor->format('Y-m-d H:00:00');
+            $item = $map[$hourKey] ?? ['revenue' => 0.0, 'expense' => 0.0, 'adjustment' => 0.0];
+            $result[] = [
+                'ts' => $hourKey,
+                'revenue' => (float) ($item['revenue'] ?? 0),
+                'expense' => (float) ($item['expense'] ?? 0),
+                'adjustment' => (float) ($item['adjustment'] ?? 0),
+                'complaint_count' => 0,
+                'incident_count' => 0,
+            ];
+            $cursor->addHour();
+        }
+
+        return $result;
     }
 }
-

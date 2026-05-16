@@ -61,6 +61,12 @@ class DashboardController extends Controller
             'revenue_forecast' => $revenueForecast,
             'financial_projection' => $financialProjection,
             'isp_intelligence' => $ispIntelligence,
+            'hourly_forecast_24h' => $innovations['hourly_forecast_24h'] ?? [],
+            'backtest_report' => $innovations['backtest_report'] ?? [
+                'window_7d' => null,
+                'window_30d' => null,
+                'last_calculated_at' => null,
+            ],
             'risk_alarm_24h' => $innovations['risk_alarm_24h'] ?? null,
             'collection_probability' => $innovations['collection_probability'] ?? [],
             'what_if_simulator' => $innovations['what_if_simulator'] ?? null,
@@ -70,6 +76,7 @@ class DashboardController extends Controller
                 'snapshot_generated_at' => null,
                 'is_stale' => false,
                 'model_version' => null,
+                'data_granularity' => null,
             ], $meta),
         ];
     }

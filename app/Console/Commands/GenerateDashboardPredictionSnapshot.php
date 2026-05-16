@@ -6,6 +6,8 @@ use App\Http\Controllers\DashboardController;
 use App\Models\Customer;
 use App\Models\FinancialTransaction;
 use App\Models\Invoice;
+use App\Models\NetworkIncident;
+use App\Models\Complaint;
 use App\Services\DashboardPredictionPythonWorker;
 use App\Services\DashboardPredictionSnapshotService;
 use Carbon\Carbon;
@@ -50,7 +52,7 @@ class GenerateDashboardPredictionSnapshot extends Command
 
             $pythonPayload = [
                 'generated_at' => $now->toIso8601String(),
-                'daily_finance_history' => $this->buildDailyFinanceHistory(120),
+                'hourly_revenue_history' => $this->buildHourlyRevenueHistory(60),
                 'invoice_signals' => $this->buildInvoiceSignals(),
                 'customer_signals' => $this->buildCustomerSignals(),
                 'monthly_revenue_sources' => $this->buildMonthlyRevenueSources(12),
@@ -65,13 +67,15 @@ class GenerateDashboardPredictionSnapshot extends Command
             $pythonResult = $this->pythonWorker->snapshot($pythonPayload);
             $innovations = [];
             $modelMeta = [
-                'model_version' => 'xgboost-lag-v2',
+                'model_version' => 'xgboost-hourly-v2.1',
                 'worker_status' => $pythonResult['ok'] ? 'ok' : 'failed_fallback',
             ];
 
             if ($pythonResult['ok']) {
                 $workerData = (array) ($pythonResult['data'] ?? []);
                 $innovations = [
+                    'hourly_forecast_24h' => $workerData['hourly_forecast_24h'] ?? [],
+                    'backtest_report' => $workerData['backtest_report'] ?? [],
                     'risk_alarm_24h' => $workerData['risk_alarm_24h'] ?? [],
                     'collection_probability' => $workerData['collection_probability'] ?? [],
                     'what_if_simulator' => $workerData['what_if_simulator'] ?? [],
@@ -88,7 +92,8 @@ class GenerateDashboardPredictionSnapshot extends Command
             $bundle = $controller->buildPredictionBundleData($ranges, $innovations, [
                 'snapshot_generated_at' => $now->toIso8601String(),
                 'is_stale' => false,
-                'model_version' => (string) ($modelMeta['model_version'] ?? 'xgboost-lag-v2'),
+                'model_version' => (string) ($modelMeta['model_version'] ?? 'xgboost-hourly-v2.1'),
+                'data_granularity' => 'hourly',
             ]);
 
             $snapshot = $this->snapshotService->saveReady(
@@ -109,7 +114,7 @@ class GenerateDashboardPredictionSnapshot extends Command
                     $ranges['kpi_start'],
                     $ranges['projection_end'],
                     $e->getMessage(),
-                    ['model_version' => 'xgboost-lag-v2']
+                    ['model_version' => 'xgboost-hourly-v2.1']
                 );
             }
             $this->error('Gagal membuat snapshot prediksi: ' . $e->getMessage());
@@ -117,24 +122,91 @@ class GenerateDashboardPredictionSnapshot extends Command
         }
     }
 
-    private function buildDailyFinanceHistory(int $days = 120): array
+    private function buildHourlyRevenueHistory(int $days = 60): array
     {
-        $start = Carbon::today()->subDays(max($days - 1, 1))->toDateString();
+        $start = Carbon::now()->subDays(max($days, 2))->startOfHour();
+        $end = Carbon::now()->startOfHour();
 
-        $rows = FinancialTransaction::query()
-            ->selectRaw('transaction_date, SUM(CASE WHEN type = "income" THEN amount ELSE 0 END) as income_total, SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) as expense_total, SUM(CASE WHEN type = "adjustment" THEN amount ELSE 0 END) as adjustment_total')
-            ->whereDate('transaction_date', '>=', $start)
-            ->groupBy('transaction_date')
-            ->orderBy('transaction_date')
+        $txRows = FinancialTransaction::query()
+            ->selectRaw('DATE_FORMAT(created_at, "%Y-%m-%d %H:00:00") as ts_hour, SUM(CASE WHEN type = "income" THEN amount ELSE 0 END) as income_total, SUM(CASE WHEN type = "expense" THEN amount ELSE 0 END) as expense_total, SUM(CASE WHEN type = "adjustment" THEN amount ELSE 0 END) as adjustment_total')
+            ->whereBetween('created_at', [$start, $end->copy()->addHour()])
+            ->groupBy('ts_hour')
+            ->orderBy('ts_hour')
             ->get();
 
-        return $rows->map(fn ($row) => [
-            'date' => (string) $row->transaction_date,
-            'income' => (float) ($row->income_total ?? 0),
-            'expense' => (float) ($row->expense_total ?? 0),
-            'adjustment' => (float) ($row->adjustment_total ?? 0),
-            'net' => (float) (($row->income_total ?? 0) - ($row->expense_total ?? 0) + ($row->adjustment_total ?? 0)),
-        ])->values()->all();
+        $invoiceRows = Invoice::query()
+            ->where('status', 'paid')
+            ->whereNotNull('paid_at')
+            ->whereBetween('paid_at', [$start, $end->copy()->addHour()])
+            ->selectRaw('DATE_FORMAT(paid_at, "%Y-%m-%d %H:00:00") as ts_hour, SUM(amount) as paid_total')
+            ->groupBy('ts_hour')
+            ->orderBy('ts_hour')
+            ->get();
+
+        $complaintRows = Schema::hasTable('complaints')
+            ? Complaint::query()
+                ->whereBetween('created_at', [$start, $end->copy()->addHour()])
+                ->selectRaw('DATE_FORMAT(created_at, "%Y-%m-%d %H:00:00") as ts_hour, COUNT(*) as complaint_total')
+                ->groupBy('ts_hour')
+                ->orderBy('ts_hour')
+                ->get()
+            : collect();
+
+        $incidentRows = Schema::hasTable('network_incidents')
+            ? NetworkIncident::query()
+                ->whereBetween('created_at', [$start, $end->copy()->addHour()])
+                ->selectRaw('DATE_FORMAT(created_at, "%Y-%m-%d %H:00:00") as ts_hour, COUNT(*) as incident_total')
+                ->groupBy('ts_hour')
+                ->orderBy('ts_hour')
+                ->get()
+            : collect();
+
+        $txMap = [];
+        foreach ($txRows as $row) {
+            $txMap[(string) $row->ts_hour] = [
+                'income' => (float) ($row->income_total ?? 0),
+                'expense' => (float) ($row->expense_total ?? 0),
+                'adjustment' => (float) ($row->adjustment_total ?? 0),
+            ];
+        }
+
+        $invoiceMap = [];
+        foreach ($invoiceRows as $row) {
+            $invoiceMap[(string) $row->ts_hour] = (float) ($row->paid_total ?? 0);
+        }
+
+        $complaintMap = [];
+        foreach ($complaintRows as $row) {
+            $complaintMap[(string) $row->ts_hour] = (int) ($row->complaint_total ?? 0);
+        }
+
+        $incidentMap = [];
+        foreach ($incidentRows as $row) {
+            $incidentMap[(string) $row->ts_hour] = (int) ($row->incident_total ?? 0);
+        }
+
+        $payload = [];
+        $cursor = $start->copy();
+        while ($cursor->lte($end)) {
+            $hourKey = $cursor->format('Y-m-d H:00:00');
+            $tx = $txMap[$hourKey] ?? ['income' => 0.0, 'expense' => 0.0, 'adjustment' => 0.0];
+            $invoiceRevenue = (float) ($invoiceMap[$hourKey] ?? 0);
+            $ledgerIncome = (float) ($tx['income'] ?? 0);
+
+            $revenue = max($invoiceRevenue, $ledgerIncome);
+            $payload[] = [
+                'ts' => $hourKey,
+                'revenue' => $revenue,
+                'expense' => (float) ($tx['expense'] ?? 0),
+                'adjustment' => (float) ($tx['adjustment'] ?? 0),
+                'complaint_count' => (int) ($complaintMap[$hourKey] ?? 0),
+                'incident_count' => (int) ($incidentMap[$hourKey] ?? 0),
+            ];
+
+            $cursor->addHour();
+        }
+
+        return $payload;
     }
 
     private function buildInvoiceSignals(): array
@@ -300,6 +372,12 @@ class GenerateDashboardPredictionSnapshot extends Command
         $riskLevel = $riskScore >= 70 ? 'critical' : ($riskScore >= 40 ? 'warning' : 'normal');
 
         return [
+            'hourly_forecast_24h' => [],
+            'backtest_report' => [
+                'window_7d' => null,
+                'window_30d' => null,
+                'last_calculated_at' => null,
+            ],
             'risk_alarm_24h' => [
                 'risk_level' => $riskLevel,
                 'risk_score' => round($riskScore, 2),
