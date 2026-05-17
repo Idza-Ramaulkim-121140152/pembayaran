@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Activity,
     AlertTriangle,
@@ -200,6 +200,7 @@ function DashboardPredictionPage() {
     const [financialProjectionData, setFinancialProjectionData] = useState(null);
     const [financialProjectionLoading, setFinancialProjectionLoading] = useState(false);
     const [financialProjectionError, setFinancialProjectionError] = useState(null);
+    const [financialProjectionSourceMode, setFinancialProjectionSourceMode] = useState('snapshot');
     const [financialProjectionActionMessage, setFinancialProjectionActionMessage] = useState(null);
     const [mandatoryActionLoadingKey, setMandatoryActionLoadingKey] = useState(null);
     const [purchaseActionLoadingId, setPurchaseActionLoadingId] = useState(null);
@@ -212,21 +213,24 @@ function DashboardPredictionPage() {
     const [whatIfSimulator, setWhatIfSimulator] = useState(null);
     const [customerGrowthForecastMonthly, setCustomerGrowthForecastMonthly] = useState(null);
     const [monthlyTotalRevenueForecast, setMonthlyTotalRevenueForecast] = useState(null);
-    const [hourlyForecastRows, setHourlyForecastRows] = useState([]);
-    const [backtestReport, setBacktestReport] = useState(null);
+    const [purchaseSimulationDate, setPurchaseSimulationDate] = useState(formatDateInputLocal(new Date()));
+    const [purchaseSimulationAmount, setPurchaseSimulationAmount] = useState('');
+    const [purchaseSimulationLoading, setPurchaseSimulationLoading] = useState(false);
+    const [purchaseSimulationResult, setPurchaseSimulationResult] = useState(null);
+    const [purchaseSimulationError, setPurchaseSimulationError] = useState(null);
+    const projectionRequestSeqRef = useRef(0);
 
     const applyPredictionBundle = (bundle) => {
         setKpiData(bundle?.management_kpis || null);
         setForecastData(bundle?.revenue_forecast || null);
         setFinancialProjectionData(bundle?.financial_projection || null);
+        setFinancialProjectionSourceMode('snapshot');
         setIspIntelligenceData(bundle?.isp_intelligence || null);
         setRiskAlarm24h(bundle?.risk_alarm_24h || null);
         setCollectionProbability(Array.isArray(bundle?.collection_probability) ? bundle.collection_probability : []);
         setWhatIfSimulator(bundle?.what_if_simulator || null);
         setCustomerGrowthForecastMonthly(bundle?.customer_growth_forecast_monthly || null);
         setMonthlyTotalRevenueForecast(bundle?.monthly_total_revenue_forecast || null);
-        setHourlyForecastRows(Array.isArray(bundle?.hourly_forecast_24h) ? bundle.hourly_forecast_24h : []);
-        setBacktestReport(bundle?.backtest_report || null);
         setBundleMeta(bundle?.meta || null);
     };
 
@@ -280,7 +284,9 @@ function DashboardPredictionPage() {
         }
     };
 
-    const fetchFinancialProjection = async (range = financialProjectionRange) => {
+    const fetchFinancialProjection = async (range = financialProjectionRange, options = {}) => {
+        const requestSeq = ++projectionRequestSeqRef.current;
+        const sourceMode = options?.sourceMode || 'live';
         try {
             setFinancialProjectionLoading(true);
             setFinancialProjectionError(null);
@@ -292,12 +298,22 @@ function DashboardPredictionPage() {
                 },
             });
 
+            if (requestSeq !== projectionRequestSeqRef.current) {
+                return;
+            }
+
             setFinancialProjectionData(response.data?.data || null);
+            setFinancialProjectionSourceMode(sourceMode);
             if (response.data?.meta) setBundleMeta(response.data.meta);
         } catch (err) {
+            if (requestSeq !== projectionRequestSeqRef.current) {
+                return;
+            }
             setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat proyeksi keuangan.');
         } finally {
-            setFinancialProjectionLoading(false);
+            if (requestSeq === projectionRequestSeqRef.current) {
+                setFinancialProjectionLoading(false);
+            }
         }
     };
 
@@ -342,6 +358,8 @@ function DashboardPredictionPage() {
                     fetchFinancialProjection(financialProjectionRange),
                     fetchIspIntelligence(kpiRange),
                 ]);
+            } else {
+                await fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live' });
             }
         } catch (err) {
             setError('Terjadi kendala saat memuat semua data prediksi.');
@@ -544,6 +562,39 @@ function DashboardPredictionPage() {
         return recommendations.slice(0, 7);
     }, [projectionAssistant, kpiCustomerHealth, forecastSummary, ispRecommendations]);
 
+    const predictionBundleStatus = useMemo(() => {
+        const status = String(bundleMeta?.snapshot_status || '');
+        const warnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
+        const completeness = bundleMeta?.section_completeness || null;
+        const missing = Array.isArray(completeness?.missing_sections) ? completeness.missing_sections : [];
+
+        if (status === 'ready_complete' && warnings.length === 0) {
+            return {
+                label: 'Data lengkap',
+                className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+                detail: completeness ? `Kelengkapan ${completeness.percent || 100}%` : 'Semua section model tersedia.',
+            };
+        }
+
+        if (status === 'ready_rehydrated') {
+            return {
+                label: 'Data direhydrate',
+                className: 'border-blue-200 bg-blue-50 text-blue-700',
+                detail: warnings.length > 0
+                    ? `Section dipulihkan: ${warnings.map((w) => w?.section).filter(Boolean).join(', ')}`
+                    : 'Sebagian section dipulihkan dari snapshot valid lain.',
+            };
+        }
+
+        return {
+            label: 'Fallback aktif',
+            className: 'border-amber-200 bg-amber-50 text-amber-700',
+            detail: missing.length > 0
+                ? `Section belum penuh: ${missing.join(', ')}`
+                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Sumber data campuran fallback.'),
+        };
+    }, [bundleMeta]);
+
     const forecastChartData = useMemo(() => ({
         labels: forecastDailyRows.map((item) => item.date),
         datasets: [
@@ -569,68 +620,6 @@ function DashboardPredictionPage() {
             },
         ],
     }), [forecastDailyRows]);
-
-    const hourlyForecastChartData = useMemo(() => ({
-        labels: hourlyForecastRows.map((item) => {
-            const ts = String(item.ts || '');
-            const parts = ts.split('T');
-            return parts.length > 1 ? parts[1].slice(0, 5) : ts.slice(11, 16);
-        }),
-        datasets: [
-            {
-                label: 'Prediksi Revenue / Jam',
-                data: hourlyForecastRows.map((item) => Number(item.predicted_revenue || 0)),
-                borderColor: '#0ea5e9',
-                backgroundColor: 'rgba(14, 165, 233, 0.18)',
-                borderWidth: 3,
-                fill: true,
-                tension: 0.3,
-            },
-            {
-                label: 'Batas Bawah',
-                data: hourlyForecastRows.map((item) => Number(item.lower_bound || 0)),
-                borderColor: '#94a3b8',
-                borderWidth: 1,
-                fill: false,
-                tension: 0.2,
-            },
-            {
-                label: 'Batas Atas',
-                data: hourlyForecastRows.map((item) => Number(item.upper_bound || 0)),
-                borderColor: '#64748b',
-                borderWidth: 1,
-                fill: false,
-                tension: 0.2,
-            },
-        ],
-    }), [hourlyForecastRows]);
-
-    const hourlyForecastChartOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom' },
-            tooltip: {
-                callbacks: {
-                    label: (context) => `${context.dataset.label}: ${formatCurrency(context.raw)}`,
-                },
-            },
-        },
-        scales: {
-            x: { grid: { display: false }, ticks: { color: '#6b7280', maxRotation: 0 } },
-            y: {
-                beginAtZero: true,
-                ticks: {
-                    color: '#6b7280',
-                    callback: (value) => {
-                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
-                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
-                        return value;
-                    },
-                },
-            },
-        },
-    };
 
     const forecastChartOptions = {
         responsive: true,
@@ -716,7 +705,9 @@ function DashboardPredictionPage() {
             },
             {
                 label: 'Saldo Bebas',
-                data: projectionDailyRows.map((row) => Math.max(0, Number(row.discretionary_balance || 0))),
+                data: projectionDailyRows.map((row) => Math.max(0, Number(
+                    row.discretionary_balance_display ?? 0
+                ))),
                 borderColor: '#0ea5e9',
                 backgroundColor: 'rgba(14, 165, 233, 0.1)',
                 fill: false,
@@ -1012,6 +1003,39 @@ function DashboardPredictionPage() {
         }
     };
 
+    const handleSimulatePurchase = async () => {
+        const parsedAmount = Number(purchaseSimulationAmount);
+
+        if (!purchaseSimulationDate) {
+            setPurchaseSimulationError('Tanggal simulasi wajib diisi.');
+            return;
+        }
+
+        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+            setPurchaseSimulationError('Nominal simulasi harus lebih dari 0.');
+            return;
+        }
+
+        try {
+            setPurchaseSimulationLoading(true);
+            setPurchaseSimulationError(null);
+            setPurchaseSimulationResult(null);
+
+            const response = await apiClient.post('/dashboard/financial-projection/simulate-purchase', {
+                simulation_date: purchaseSimulationDate,
+                amount: parsedAmount,
+                start_date: financialProjectionRange.start_date,
+                end_date: financialProjectionRange.end_date,
+            });
+
+            setPurchaseSimulationResult(response.data?.data || null);
+        } catch (err) {
+            setPurchaseSimulationError(err.response?.data?.message || 'Gagal menjalankan simulasi pembelian.');
+        } finally {
+            setPurchaseSimulationLoading(false);
+        }
+    };
+
     if (isTeknisi) {
         return (
             <div className="space-y-4 min-w-0">
@@ -1078,6 +1102,13 @@ function DashboardPredictionPage() {
                     message={error}
                     onClose={() => setError(null)}
                 />
+            )}
+
+            {bundleMeta && (
+                <div className={`rounded-lg border px-4 py-3 text-sm ${predictionBundleStatus.className}`}>
+                    <p className="font-semibold">{predictionBundleStatus.label}</p>
+                    <p className="mt-1 text-xs opacity-90">{predictionBundleStatus.detail}</p>
+                </div>
             )}
 
             {financialProjectionActionMessage && (
@@ -1206,85 +1237,6 @@ function DashboardPredictionPage() {
                             </div>
                         </>
                     )}
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-5">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                    <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <TrendingUp size={18} className="text-sky-600" />
-                            Prediksi Pendapatan Per Jam (24h)
-                        </h2>
-                        <p className="text-sm text-gray-500 mt-1">Forecast utama berbasis horizon 24 jam dengan update snapshot per 1 jam.</p>
-                    </div>
-                    <span className="text-xs text-gray-500">
-                        Granularitas: {bundleMeta?.data_granularity || 'hourly'}
-                    </span>
-                </div>
-
-                {hourlyForecastRows.length === 0 ? (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Prediksi per jam belum tersedia pada snapshot ini.
-                    </div>
-                ) : (
-                    <>
-                        <div className="h-[300px]">
-                            <Line data={hourlyForecastChartData} options={hourlyForecastChartOptions} />
-                        </div>
-
-                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                            <table className="w-full text-sm min-w-[820px]">
-                                <thead className="bg-gray-50 text-gray-600 text-left">
-                                    <tr>
-                                        <th className="px-3 py-2">Waktu</th>
-                                        <th className="px-3 py-2 text-right">Prediksi Revenue</th>
-                                        <th className="px-3 py-2 text-right">Confidence</th>
-                                        <th className="px-3 py-2 text-right">Lower Bound</th>
-                                        <th className="px-3 py-2 text-right">Upper Bound</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {hourlyForecastRows.map((row, idx) => (
-                                        <tr key={`hourly-forecast-${idx}`} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 text-gray-700">{row.ts || '-'}</td>
-                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.predicted_revenue || 0)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.confidence || 0, 1)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.lower_bound || 0)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.upper_bound || 0)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                        <p className="text-xs text-gray-500">Backtest 7 Hari</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">
-                            MAPE: {backtestReport?.window_7d?.mape === null || backtestReport?.window_7d?.mape === undefined ? '-' : formatPercent(backtestReport?.window_7d?.mape, 2)}
-                        </p>
-                        <p className="text-sm text-gray-700 mt-1">
-                            SMAPE: {backtestReport?.window_7d?.smape === null || backtestReport?.window_7d?.smape === undefined ? '-' : formatPercent(backtestReport?.window_7d?.smape, 2)}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2">
-                            Sample: {backtestReport?.window_7d?.sample_size ?? 0}
-                        </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                        <p className="text-xs text-gray-500">Backtest 30 Hari</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">
-                            MAPE: {backtestReport?.window_30d?.mape === null || backtestReport?.window_30d?.mape === undefined ? '-' : formatPercent(backtestReport?.window_30d?.mape, 2)}
-                        </p>
-                        <p className="text-sm text-gray-700 mt-1">
-                            SMAPE: {backtestReport?.window_30d?.smape === null || backtestReport?.window_30d?.smape === undefined ? '-' : formatPercent(backtestReport?.window_30d?.smape, 2)}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2">
-                            Sample: {backtestReport?.window_30d?.sample_size ?? 0}
-                        </p>
-                    </div>
                 </div>
             </div>
 
@@ -1715,6 +1667,13 @@ function DashboardPredictionPage() {
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(projectionSectionSource).className}`}>
                                 Sumber: {getSectionSourceMeta(projectionSectionSource).label}
                             </span>
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                                financialProjectionSourceMode === 'live'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                            }`}>
+                                Proyeksi: {financialProjectionSourceMode === 'live' ? 'Live' : 'Snapshot'}
+                            </span>
                             {projectionSectionWarning && (
                                 <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                                     Warning: {projectionSectionWarning}
@@ -1876,7 +1835,9 @@ function DashboardPredictionPage() {
                                             <th className="px-3 py-2 text-center">Sumber</th>
                                             <th className="px-3 py-2 text-right">Prediksi Pemasukan</th>
                                             <th className="px-3 py-2 text-right">Pengeluaran Wajib</th>
-                                            <th className="px-3 py-2 text-right">Saldo Bebas</th>
+                                            <th className="px-3 py-2 text-right">
+                                                <span title="Saldo Bebas = max((90% x Total Saldo) - Wajib Pending - Akumulasi Alokasi Wajib Bulanan Terkonfirmasi, 0)">Saldo Bebas</span>
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -1915,7 +1876,9 @@ function DashboardPredictionPage() {
                                                     </td>
                                                     <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.predicted_income || 0)}</td>
                                                     <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.mandatory_expense || 0)}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(Math.max(0, Number(row.discretionary_balance || 0)))}</td>
+                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(Math.max(0, Number(
+                                                        row.discretionary_balance_display ?? 0
+                                                    )))}</td>
                                                 </tr>
                                             );
                                         })}
@@ -2114,6 +2077,84 @@ function DashboardPredictionPage() {
                             </table>
                         </div>
                     </div>
+                </div>
+
+                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <p className="text-sm font-semibold text-gray-900">Simulasi Pembelian vs Coverage Wajib</p>
+                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            projectionSummary?.coverage_status_now === false
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                            {projectionSummary?.coverage_status_now === false ? 'Coverage Saat Ini: Tidak Aman' : 'Coverage Saat Ini: Aman'}
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <div className="md:col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Tanggal Simulasi</label>
+                            <input
+                                type="date"
+                                value={purchaseSimulationDate}
+                                onChange={(e) => setPurchaseSimulationDate(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Nominal Pembelian</label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={purchaseSimulationAmount}
+                                onChange={(e) => setPurchaseSimulationAmount(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                placeholder="Contoh: 1500000"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={handleSimulatePurchase}
+                            disabled={purchaseSimulationLoading}
+                            className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                        >
+                            {purchaseSimulationLoading ? 'Memproses...' : 'Simulasikan'}
+                        </button>
+                    </div>
+
+                    {purchaseSimulationError && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
+                            {purchaseSimulationError}
+                        </div>
+                    )}
+
+                    {purchaseSimulationResult && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Status</p>
+                                <p className={`text-sm font-bold mt-1 ${
+                                    purchaseSimulationResult?.is_covered ? 'text-emerald-700' : 'text-rose-700'
+                                }`}>
+                                    {purchaseSimulationResult?.is_covered ? 'Aman' : 'Tidak Aman'}
+                                </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Tanggal Gagal Pertama</p>
+                                <p className="text-sm font-semibold text-gray-900 mt-1">
+                                    {purchaseSimulationResult?.first_failure_date || '-'}
+                                </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Minimum Saldo</p>
+                                <p className="text-sm font-semibold text-gray-900 mt-1">
+                                    {formatCurrency(purchaseSimulationResult?.minimum_balance || 0)}
+                                </p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 

@@ -36,6 +36,36 @@ class DashboardPredictionSnapshotService
             ->first();
     }
 
+    public function latestReadyWithinMinutes(int $minutes, string $scope = 'prediction_bundle'): ?DashboardPredictionSnapshot
+    {
+        if (!Schema::hasTable('dashboard_prediction_snapshots')) {
+            return null;
+        }
+
+        return DashboardPredictionSnapshot::query()
+            ->where('scope', $scope)
+            ->where('status', 'ready')
+            ->where('generated_at', '>=', now()->subMinutes(max($minutes, 1)))
+            ->orderByDesc('generated_at')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    public function recentReadySnapshots(int $limit = 10, string $scope = 'prediction_bundle')
+    {
+        if (!Schema::hasTable('dashboard_prediction_snapshots')) {
+            return collect();
+        }
+
+        return DashboardPredictionSnapshot::query()
+            ->where('scope', $scope)
+            ->where('status', 'ready')
+            ->orderByDesc('generated_at')
+            ->orderByDesc('id')
+            ->limit(max($limit, 1))
+            ->get();
+    }
+
     public function saveReady(
         string $scope,
         ?Carbon $periodStart,
@@ -96,6 +126,8 @@ class DashboardPredictionSnapshotService
         $payload['meta'] = array_merge(
             (array) ($payload['meta'] ?? []),
             [
+                'snapshot_id' => $snapshot->id,
+                'snapshot_status' => (string) ($snapshot->status ?? 'ready'),
                 'snapshot_generated_at' => optional($snapshot->generated_at)?->toIso8601String(),
                 'is_stale' => $isStale,
                 'model_version' => data_get($snapshot->model_meta_json, 'model_version'),

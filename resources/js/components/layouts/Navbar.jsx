@@ -35,6 +35,7 @@ const ACCESS = {
     penagihan: ['superadmin', 'admin', 'finance'],
     pelanggan: ['superadmin', 'admin', 'teknisi'],
     verifikasi: ['superadmin', 'admin', 'teknisi'],
+    customerPackageManagement: ['superadmin', 'admin', 'teknisi', 'finance'],
     inventory: ['superadmin', 'admin', 'teknisi', 'finance'],
     inventoryMaster: ['superadmin'],
     pengeluaran: ['superadmin', 'admin', 'finance'],
@@ -70,6 +71,7 @@ const MENU_PERMISSION_MAP = {
     penagihan: 'billing.invoice.view',
     pelanggan: 'customer.view',
     verifikasi: 'customer.verification',
+    customerPackageManagement: 'customer.package_audit.view',
     inventory: 'inventory.view',
     inventoryMaster: 'inventory.master.manage',
     pengeluaran: 'finance.expense.manage',
@@ -138,6 +140,7 @@ const MENU_GROUPS = [
         icon: FolderKanban,
         items: [
             { key: 'masterData', label: 'Master Data', to: '/settings/master-data', icon: Settings2, match: (p) => p === '/settings/master-data' },
+            { key: 'customerPackageManagement', label: 'Audit Paket Pelanggan', to: '/settings/customer-package-management', icon: Package, match: (p) => p === '/settings/customer-package-management' },
             { key: 'paymentMethods', label: 'Metode Pembayaran', to: '/settings/payment-methods', icon: CreditCard, match: (p) => p === '/settings/payment-methods' },
             { key: 'paymentReceipts', label: 'Receipt Pembayaran', to: '/settings/payment-receipts', icon: CreditCard, match: (p) => p === '/settings/payment-receipts' },
             { key: 'packages', label: 'Paket Internet', to: '/settings/packages', icon: Package, match: (p) => p === '/settings/packages' },

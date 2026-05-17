@@ -26,6 +26,13 @@ const MASTER_MENU = [
         roles: ['superadmin', 'admin'],
     },
     {
+        title: 'Manajemen Paket Pelanggan',
+        description: 'Audit kesesuaian paket sistem dengan profile PPPoE MikroTik.',
+        icon: Package,
+        path: '/settings/customer-package-management',
+        roles: ['superadmin', 'admin', 'teknisi', 'finance'],
+    },
+    {
         title: 'Master Inventori',
         description: 'Kelola jenis barang dan master item inventori.',
         icon: Shield,

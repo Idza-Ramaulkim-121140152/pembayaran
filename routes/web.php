@@ -36,6 +36,7 @@ use App\Http\Controllers\OdpMappingController;
 use App\Http\Controllers\PackagePriceHistoryController;
 use App\Http\Controllers\AccessControlController;
 use App\Http\Controllers\BillingAutomationController;
+use App\Http\Controllers\CustomerPackageManagementController;
 
 // Landing Page - HARUS PALING ATAS sebelum route lainnya
 Route::get('/', function () {
@@ -115,6 +116,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
     Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
+    Route::get('/settings/customer-package-management', fn() => view('app'))->name('settings.customer-package-management');
 
     // Shared routes: all authenticated staff can access
     Route::middleware('role:teknisi,finance')->group(function () {
@@ -319,6 +321,22 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
     });
 
+    Route::middleware('permission:customer.package_audit.view')->group(function () {
+        Route::get('/api/customer-package-management/summary', [CustomerPackageManagementController::class, 'summary'])->name('api.customer-package-management.summary');
+        Route::get('/api/customer-package-management/customers', [CustomerPackageManagementController::class, 'customers'])->name('api.customer-package-management.customers');
+        Route::get('/api/customer-package-management/pppoe-secrets', [CustomerPackageManagementController::class, 'pppoeSecrets'])->name('api.customer-package-management.pppoe-secrets');
+    });
+
+    Route::middleware('permission:customer.package_audit.manage')->group(function () {
+        Route::post('/api/customer-package-management/{customer}/resolve-system-to-mikrotik', [CustomerPackageManagementController::class, 'resolveSystemToMikrotik'])->name('api.customer-package-management.resolve-system-to-mikrotik');
+        Route::post('/api/customer-package-management/{customer}/resolve-mikrotik-to-system', [CustomerPackageManagementController::class, 'resolveMikrotikToSystem'])->name('api.customer-package-management.resolve-mikrotik-to-system');
+        Route::post('/api/customer-package-management/{customer}/pppoe/create', [CustomerPackageManagementController::class, 'createPppoe'])->name('api.customer-package-management.pppoe.create');
+        Route::post('/api/customer-package-management/{customer}/pppoe/link', [CustomerPackageManagementController::class, 'linkPppoe'])->name('api.customer-package-management.pppoe.link');
+        Route::post('/api/customer-package-management/{customer}/assign-package', [CustomerPackageManagementController::class, 'assignPackage'])->name('api.customer-package-management.assign-package');
+        Route::post('/api/customer-package-management/{customer}/ignore', [CustomerPackageManagementController::class, 'ignore'])->name('api.customer-package-management.ignore');
+        Route::delete('/api/customer-package-management/{customer}/ignore', [CustomerPackageManagementController::class, 'unignore'])->name('api.customer-package-management.unignore');
+    });
+
     // Finance routes: admin + finance
     Route::middleware('role:finance')->group(function () {
         Route::get('/api/dashboard/prediction-bundle', [DashboardController::class, 'predictionBundle'])->name('api.dashboard.prediction-bundle');
@@ -329,6 +347,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
         Route::post('/api/dashboard/financial-projection/purchase-goals/fulfill', [DashboardController::class, 'fulfillPurchaseGoal'])->name('api.dashboard.financial-projection.purchase.fulfill');
+        Route::post('/api/dashboard/financial-projection/simulate-purchase', [DashboardController::class, 'simulatePurchase'])->name('api.dashboard.financial-projection.purchase.simulate');
 
         // Unified finance transactions
         Route::get('/api/finance/transactions', [FinancialTransactionController::class, 'index'])->name('api.finance.transactions.index');

@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -73,6 +74,8 @@ class DashboardController extends Controller
             'customer_growth_forecast_monthly' => $innovations['customer_growth_forecast_monthly'] ?? null,
             'monthly_total_revenue_forecast' => $innovations['monthly_total_revenue_forecast'] ?? null,
             'meta' => array_merge([
+                'snapshot_id' => null,
+                'snapshot_status' => null,
                 'snapshot_generated_at' => null,
                 'is_stale' => false,
                 'model_version' => null,
@@ -80,6 +83,8 @@ class DashboardController extends Controller
                 'section_sources' => [],
                 'model_bundle_version' => null,
                 'bundle_warnings' => [],
+                'section_completeness' => null,
+                'last_rehydrate_at' => null,
             ], $meta),
         ];
     }
@@ -965,6 +970,23 @@ class DashboardController extends Controller
             $snapshotBundle = app(DashboardPredictionSnapshotService::class)
                 ->asBundleResponse(app(DashboardPredictionSnapshotService::class)->latestUsable());
             if ($snapshotBundle && isset($snapshotBundle['financial_projection'])) {
+                $this->logFinancialProjectionDebug(
+                    $request,
+                    [
+                        'source_mode' => 'snapshot',
+                        'start_date' => data_get($snapshotBundle, 'financial_projection.range.start_date'),
+                        'end_date' => data_get($snapshotBundle, 'financial_projection.range.end_date'),
+                        'mandatory_events_count' => count((array) data_get($snapshotBundle, 'financial_projection.mandatory_expense_projection', [])),
+                        'fallback_due_rows' => collect((array) data_get($snapshotBundle, 'financial_projection.mandatory_expense_projection', []))
+                            ->where('confirmation_anchor_source', 'due_date_fallback')
+                            ->count(),
+                        'reserve_h_plus_one_active_rows' => collect((array) data_get($snapshotBundle, 'financial_projection.mandatory_expense_projection', []))
+                            ->filter(function ($row) {
+                                return !empty($row['reserve_cycle_start_date']) && !empty($row['reserve_daily_amount']);
+                            })
+                            ->count(),
+                    ]
+                );
                 return response()->json([
                     'data' => $snapshotBundle['financial_projection'],
                     'meta' => $snapshotBundle['meta'] ?? [],
@@ -1007,6 +1029,23 @@ class DashboardController extends Controller
 
         $projectionData = $this->buildFinancialProjection($startDate, $endDate);
         $projectionData['ai_assistant'] = $this->buildFinancialProjectionAssistant($projectionData);
+        $this->logFinancialProjectionDebug(
+            $request,
+            [
+                'source_mode' => 'live',
+                'start_date' => $startDate->toDateString(),
+                'end_date' => $endDate->toDateString(),
+                'mandatory_events_count' => count((array) ($projectionData['mandatory_expense_projection'] ?? [])),
+                'fallback_due_rows' => collect((array) ($projectionData['mandatory_expense_projection'] ?? []))
+                    ->where('confirmation_anchor_source', 'due_date_fallback')
+                    ->count(),
+                'reserve_h_plus_one_active_rows' => collect((array) ($projectionData['mandatory_expense_projection'] ?? []))
+                    ->filter(function ($row) {
+                        return !empty($row['reserve_cycle_start_date']) && !empty($row['reserve_daily_amount']);
+                    })
+                    ->count(),
+            ]
+        );
 
         return response()->json([
             'data' => $projectionData,
@@ -1016,6 +1055,27 @@ class DashboardController extends Controller
                 'model_version' => 'live-direct',
             ],
         ]);
+    }
+
+    private function logFinancialProjectionDebug(Request $request, array $context): void
+    {
+        $userId = $request->user()?->id ?? 'guest';
+        $debugKey = 'dashboard:financial-projection:debug:' . $userId . ':' . now()->format('YmdH');
+
+        if (!Cache::has($debugKey)) {
+            Cache::put($debugKey, 0, now()->addHours(2));
+        }
+
+        $attempt = (int) Cache::increment($debugKey);
+        if ($attempt > 2) {
+            return;
+        }
+
+        Log::info('dashboard.financial_projection.debug', array_merge([
+            'user_id' => $request->user()?->id,
+            'attempt' => $attempt,
+            'timezone' => 'Asia/Jakarta',
+        ], $context));
     }
 
     public function ispIntelligence(Request $request)
@@ -1082,10 +1142,113 @@ class DashboardController extends Controller
         }
 
         $snapshotService = app(DashboardPredictionSnapshotService::class);
-        $snapshotBundle = $snapshotService->asBundleResponse($snapshotService->latestUsable());
+        $snapshot = $snapshotService->latestUsable();
+        $snapshotBundle = $snapshotService->asBundleResponse($snapshot);
+        $warnings = [];
+        $lastRehydrateAt = null;
+
         if ($snapshotBundle) {
+            $bundle = $snapshotBundle;
+            $sectionSources = is_array(data_get($bundle, 'meta.section_sources'))
+                ? (array) data_get($bundle, 'meta.section_sources')
+                : [];
+
+            foreach ($this->predictionCoverageSectionKeys() as $sectionKey) {
+                if (!array_key_exists($sectionKey, $sectionSources) && $this->hasPredictionSectionData($bundle, $sectionKey)) {
+                    $sectionSources[$sectionKey] = 'model';
+                }
+            }
+            $coverage = $this->summarizePredictionSectionCompleteness($bundle);
+
+            if (($coverage['percent'] ?? 0) < 100) {
+                $candidates = $snapshotService->recentReadySnapshots(20);
+
+                foreach ($coverage['missing_sections'] as $sectionKey) {
+                    foreach ($candidates as $candidate) {
+                        if ($snapshot && (int) $candidate->id === (int) $snapshot->id) {
+                            continue;
+                        }
+
+                        $candidateBundle = $snapshotService->asBundleResponse($candidate);
+                        if (!$candidateBundle || !$this->hasPredictionSectionData($candidateBundle, $sectionKey)) {
+                            continue;
+                        }
+
+                        $this->injectPredictionSectionData(
+                            $bundle,
+                            $sectionKey,
+                            $this->extractPredictionSectionData($candidateBundle, $sectionKey)
+                        );
+
+                        $sectionSources[$sectionKey] = 'rehydrated';
+                        $warnings[] = [
+                            'section' => $sectionKey,
+                            'reason' => 'rehydrated_from_ready_snapshot',
+                            'from_snapshot_id' => (int) $candidate->id,
+                        ];
+                        $lastRehydrateAt = now()->toIso8601String();
+                        break;
+                    }
+                }
+
+                $coverage = $this->summarizePredictionSectionCompleteness($bundle);
+
+                if (($coverage['percent'] ?? 0) < 100) {
+                    $liveFallbackBundle = $this->buildPredictionBundleData([], [], [
+                        'snapshot_generated_at' => now()->toIso8601String(),
+                        'is_stale' => false,
+                        'model_version' => 'live-fallback',
+                        'fallback_live' => true,
+                    ]);
+
+                    foreach ($coverage['missing_sections'] as $sectionKey) {
+                        if (!$this->hasPredictionSectionData($liveFallbackBundle, $sectionKey)) {
+                            continue;
+                        }
+
+                        $this->injectPredictionSectionData(
+                            $bundle,
+                            $sectionKey,
+                            $this->extractPredictionSectionData($liveFallbackBundle, $sectionKey)
+                        );
+                        $sectionSources[$sectionKey] = 'fallback';
+                        $warnings[] = [
+                            'section' => $sectionKey,
+                            'reason' => 'fallback_live_section',
+                        ];
+                    }
+                }
+            }
+
+            $coverage = $this->summarizePredictionSectionCompleteness($bundle);
+            $existingWarnings = is_array(data_get($bundle, 'meta.bundle_warnings'))
+                ? (array) data_get($bundle, 'meta.bundle_warnings')
+                : [];
+
+            data_set($bundle, 'meta.section_sources', $sectionSources);
+            data_set($bundle, 'meta.bundle_warnings', array_values(array_merge($existingWarnings, $warnings)));
+            data_set($bundle, 'meta.section_completeness', $coverage);
+            data_set($bundle, 'meta.last_rehydrate_at', $lastRehydrateAt);
+            data_set(
+                $bundle,
+                'meta.snapshot_status',
+                $coverage['percent'] >= 100
+                    ? (($lastRehydrateAt !== null || count($warnings) > 0) ? 'ready_rehydrated' : 'ready_complete')
+                    : 'ready_partial_fallback'
+            );
+
+            Log::info('dashboard.prediction.bundle_resolved', [
+                'user_id' => $request->user()?->id,
+                'snapshot_id' => $snapshot?->id,
+                'snapshot_age_minutes' => $snapshot?->generated_at ? $snapshot->generated_at->diffInMinutes(now()) : null,
+                'section_completeness' => $coverage,
+                'warning_count' => count((array) data_get($bundle, 'meta.bundle_warnings', [])),
+                'worker_status' => data_get($snapshot?->model_meta_json, 'worker_status'),
+                'action' => $lastRehydrateAt !== null ? 'rehydrate_applied' : (count($warnings) > 0 ? 'fallback_applied' : 'none'),
+            ]);
+
             return response()->json([
-                'data' => $snapshotBundle,
+                'data' => $bundle,
             ]);
         }
 
@@ -1094,11 +1257,100 @@ class DashboardController extends Controller
             'is_stale' => false,
             'model_version' => 'live-fallback',
             'fallback_live' => true,
+            'snapshot_status' => 'no_snapshot_fallback',
+        ]);
+        $fallbackSources = [];
+        foreach ($this->predictionCoverageSectionKeys() as $sectionKey) {
+            if ($this->hasPredictionSectionData($bundle, $sectionKey)) {
+                $fallbackSources[$sectionKey] = 'fallback';
+            }
+        }
+        data_set($bundle, 'meta.section_sources', $fallbackSources);
+        data_set($bundle, 'meta.section_completeness', $this->summarizePredictionSectionCompleteness($bundle));
+        data_set($bundle, 'meta.bundle_warnings', [[
+            'section' => 'bundle',
+            'reason' => 'no_snapshot_available',
+        ]]);
+
+        Log::warning('dashboard.prediction.bundle_resolved', [
+            'user_id' => $request->user()?->id,
+            'snapshot_id' => null,
+            'snapshot_age_minutes' => null,
+            'section_completeness' => data_get($bundle, 'meta.section_completeness'),
+            'warning_count' => 1,
+            'worker_status' => null,
+            'action' => 'fallback_applied',
         ]);
 
         return response()->json([
             'data' => $bundle,
         ]);
+    }
+
+    private function predictionCoverageSectionKeys(): array
+    {
+        return [
+            'risk_alarm_24h',
+            'what_if_simulator',
+            'collection_probability',
+            'monthly_total_revenue_forecast',
+        ];
+    }
+
+    private function hasPredictionSectionData(array $bundle, string $sectionKey): bool
+    {
+        return match ($sectionKey) {
+            'hourly_forecast_24h' => count((array) data_get($bundle, 'hourly_forecast_24h', [])) > 0,
+            'risk_alarm_24h' => is_array(data_get($bundle, 'risk_alarm_24h')) && count((array) data_get($bundle, 'risk_alarm_24h', [])) > 0,
+            'what_if_simulator' => is_array(data_get($bundle, 'what_if_simulator')) && count((array) data_get($bundle, 'what_if_simulator.scenarios', [])) > 0,
+            'collection_probability' => count((array) data_get($bundle, 'collection_probability', [])) > 0,
+            'monthly_total_revenue_forecast' => count((array) data_get($bundle, 'monthly_total_revenue_forecast.months', [])) > 0,
+            'backtest_report' => (
+                (int) data_get($bundle, 'backtest_report.window_7d.sample_size', 0) > 0
+                || (int) data_get($bundle, 'backtest_report.window_30d.sample_size', 0) > 0
+            ),
+            default => false,
+        };
+    }
+
+    private function extractPredictionSectionData(array $bundle, string $sectionKey): mixed
+    {
+        return match ($sectionKey) {
+            'monthly_total_revenue_forecast' => data_get($bundle, 'monthly_total_revenue_forecast'),
+            'backtest_report' => data_get($bundle, 'backtest_report'),
+            default => data_get($bundle, $sectionKey),
+        };
+    }
+
+    private function injectPredictionSectionData(array &$bundle, string $sectionKey, mixed $value): void
+    {
+        match ($sectionKey) {
+            'monthly_total_revenue_forecast' => data_set($bundle, 'monthly_total_revenue_forecast', $value),
+            'backtest_report' => data_set($bundle, 'backtest_report', $value),
+            default => data_set($bundle, $sectionKey, $value),
+        };
+    }
+
+    private function summarizePredictionSectionCompleteness(array $bundle): array
+    {
+        $keys = $this->predictionCoverageSectionKeys();
+        $missing = [];
+
+        foreach ($keys as $key) {
+            if (!$this->hasPredictionSectionData($bundle, $key)) {
+                $missing[] = $key;
+            }
+        }
+
+        $required = count($keys);
+        $available = $required - count($missing);
+
+        return [
+            'required' => $required,
+            'available' => $available,
+            'percent' => $required > 0 ? (int) round(($available / $required) * 100) : 100,
+            'missing_sections' => array_values($missing),
+        ];
     }
 
     public function confirmMandatoryExpenseExecution(Request $request)
@@ -1338,6 +1590,58 @@ class DashboardController extends Controller
                 'target_id' => (int) $target->id,
                 'fulfilled_date' => $fulfilledDate,
                 'is_active' => false,
+            ],
+        ]);
+    }
+
+    public function simulatePurchase(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json([
+                'message' => 'Anda tidak memiliki izin menjalankan simulasi pembelian.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'simulation_date' => 'required|date',
+            'amount' => 'required|numeric|gt:0',
+            'note' => 'nullable|string|max:500',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+        ]);
+
+        $defaults = $this->defaultPredictionRanges();
+        $startDate = isset($validated['start_date'])
+            ? Carbon::parse($validated['start_date'])->startOfDay()
+            : $defaults['projection_start']->copy();
+        $endDate = isset($validated['end_date'])
+            ? Carbon::parse($validated['end_date'])->endOfDay()
+            : $defaults['projection_end']->copy();
+
+        if ($startDate->gt($endDate)) {
+            return response()->json([
+                'message' => 'Tanggal mulai tidak boleh melebihi tanggal akhir.',
+            ], 422);
+        }
+
+        $projection = $this->buildFinancialProjection($startDate, $endDate);
+        $dailyProjection = is_array($projection['daily_projection'] ?? null)
+            ? $projection['daily_projection']
+            : [];
+
+        $simulationDate = Carbon::parse($validated['simulation_date'])->toDateString();
+        $amount = (float) $validated['amount'];
+        $coverage = $this->computeCoverageSimulation($dailyProjection, $simulationDate, $amount);
+
+        return response()->json([
+            'data' => [
+                'simulation_date' => $simulationDate,
+                'amount' => (int) round($amount),
+                'is_covered' => (bool) ($coverage['is_covered'] ?? false),
+                'first_failure_date' => $coverage['first_failure_date'] ?? null,
+                'minimum_balance' => (int) ($coverage['minimum_balance_after_purchase'] ?? 0),
+                'coverage_notes' => (string) ($coverage['coverage_notes'] ?? ''),
+                'daily_trace' => array_slice((array) ($coverage['daily_trace'] ?? []), 0, 45),
             ],
         ]);
     }
@@ -2232,11 +2536,15 @@ class DashboardController extends Controller
                 }
 
                 $key = $targetId . '|' . $dueDate;
+                $anchorDate = $actualDate ?: $dueDate;
+                $anchorSource = $actualDate ? 'actual_date' : 'due_date_fallback';
 
                 $confirmationMap[$key] = [
                     'target_id' => $targetId,
                     'due_date' => $dueDate,
-                    'transaction_date' => $actualDate,
+                    'transaction_date' => $anchorDate,
+                    'confirmation_anchor_date' => $anchorDate,
+                    'confirmation_anchor_source' => $anchorSource,
                     'amount' => (float) ($confirmation['amount'] ?? 0),
                     'confirmed_at' => $confirmedAt,
                 ];
@@ -2261,6 +2569,276 @@ class DashboardController extends Controller
         }
 
         return 'kritis';
+    }
+
+    private function computeRecurringMonthlyAllocationWindow(string $dueDate, ?string $confirmedDate = null): array
+    {
+        $due = Carbon::parse($dueDate)->startOfDay();
+        $nextDue = $due->copy()->addMonthNoOverflow();
+        $start = $confirmedDate
+            ? Carbon::parse($confirmedDate)->startOfDay()
+            : $due->copy();
+        $end = $nextDue->copy()->subDays(2)->startOfDay();
+
+        if ($end->lt($start)) {
+            $end = $start->copy();
+        }
+
+        $days = max(1, $start->diffInDays($end) + 1);
+
+        return [
+            'start' => $start,
+            'end' => $end,
+            'days' => $days,
+        ];
+    }
+
+    private function buildPendingUnconfirmedMandatoryMap(
+        array $mandatoryEvents,
+        array $mandatoryConfirmations,
+        Carbon $rangeStart,
+        Carbon $rangeEnd
+    ): array {
+        $pendingMap = [];
+        for ($cursor = $rangeStart->copy(); $cursor->lte($rangeEnd); $cursor->addDay()) {
+            $pendingMap[$cursor->toDateString()] = 0.0;
+        }
+
+        foreach ($mandatoryEvents as $event) {
+            $amount = (float) ($event['amount'] ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $dueDateRaw = (string) ($event['due_date'] ?? '');
+            if ($dueDateRaw === '') {
+                continue;
+            }
+
+            try {
+                $dueDate = Carbon::parse($dueDateRaw)->startOfDay();
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            $eventKey = ((int) ($event['target_id'] ?? 0)) . '|' . $dueDate->toDateString();
+            $confirmation = $mandatoryConfirmations[$eventKey] ?? null;
+            $pendingStart = $dueDate->copy();
+            $pendingEnd = $rangeEnd->copy();
+
+            if ($confirmation !== null) {
+                $anchorRaw = (string) ($confirmation['confirmation_anchor_date'] ?? $confirmation['transaction_date'] ?? '');
+                if ($anchorRaw !== '') {
+                    try {
+                        $anchorDate = Carbon::parse($anchorRaw)->startOfDay();
+                        if ($anchorDate->lte($dueDate)) {
+                            continue;
+                        }
+                        $pendingEnd = $anchorDate->copy()->subDay();
+                    } catch (\Throwable $e) {
+                        // Jika parsing gagal, fallback tetap treat sebagai pending sampai akhir range.
+                    }
+                }
+            }
+
+            if ($pendingEnd->lt($pendingStart)) {
+                continue;
+            }
+
+            if ($pendingEnd->lt($rangeStart) || $pendingStart->gt($rangeEnd)) {
+                continue;
+            }
+
+            $windowStart = $pendingStart->copy()->max($rangeStart->copy());
+            $windowEnd = $pendingEnd->copy()->min($rangeEnd->copy());
+
+            for ($dateCursor = $windowStart->copy(); $dateCursor->lte($windowEnd); $dateCursor->addDay()) {
+                $dateKey = $dateCursor->toDateString();
+                if (!array_key_exists($dateKey, $pendingMap)) {
+                    continue;
+                }
+                $pendingMap[$dateKey] += $amount;
+            }
+        }
+
+        return $pendingMap;
+    }
+
+    private function buildConfirmedMonthlyReserveMaps(
+        array $mandatoryEvents,
+        array $mandatoryConfirmations,
+        Carbon $rangeStart,
+        Carbon $rangeEnd
+    ): array {
+        $dailyDebitMap = [];
+        $stockMap = [];
+        $eventMeta = [];
+
+        for ($cursor = $rangeStart->copy(); $cursor->lte($rangeEnd); $cursor->addDay()) {
+            $dateKey = $cursor->toDateString();
+            $dailyDebitMap[$dateKey] = 0.0;
+            $stockMap[$dateKey] = 0.0;
+        }
+
+        foreach ($mandatoryEvents as $event) {
+            if (!(bool) ($event['is_recurring_monthly'] ?? false)) {
+                continue;
+            }
+
+            $eventKey = ((int) ($event['target_id'] ?? 0)) . '|' . ((string) ($event['due_date'] ?? ''));
+            $confirmation = $mandatoryConfirmations[$eventKey] ?? null;
+            if ($confirmation === null) {
+                continue;
+            }
+
+            $amount = (float) ($event['amount'] ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            try {
+                $dueDate = Carbon::parse((string) ($event['due_date'] ?? ''))->startOfDay();
+            } catch (\Throwable $e) {
+                continue;
+            }
+
+            $anchorRaw = (string) ($confirmation['confirmation_anchor_date'] ?? $confirmation['transaction_date'] ?? $dueDate->toDateString());
+            try {
+                $anchorDate = Carbon::parse($anchorRaw)->startOfDay();
+            } catch (\Throwable $e) {
+                $anchorDate = $dueDate->copy();
+            }
+
+            $nextDueDate = $dueDate->copy()->addMonthNoOverflow();
+            $reserveStart = $anchorDate->copy()->addDay();
+            $reserveEnd = $nextDueDate->copy()->subDays(2)->startOfDay();
+
+            if ($reserveEnd->lt($reserveStart)) {
+                $reserveEnd = $reserveStart->copy();
+            }
+
+            $effectiveDays = max(1, $reserveStart->diffInDays($reserveEnd) + 1);
+            $dailyAmount = $amount / $effectiveDays;
+
+            if (!is_finite($dailyAmount) || $dailyAmount < 0) {
+                Log::warning('dashboard.financial_projection.reserve_invalid_daily_amount', [
+                    'target_id' => (int) ($event['target_id'] ?? 0),
+                    'due_date' => $dueDate->toDateString(),
+                    'amount' => $amount,
+                    'effective_days' => $effectiveDays,
+                    'daily_amount' => $dailyAmount,
+                ]);
+                continue;
+            }
+
+            $eventMeta[$eventKey] = [
+                'reserve_cycle_start_date' => $reserveStart->toDateString(),
+                'reserve_cycle_end_date' => $reserveEnd->toDateString(),
+                'reserve_effective_days' => $effectiveDays,
+                'reserve_daily_amount' => (int) round($dailyAmount),
+            ];
+
+            $debitStart = $reserveStart->copy()->max($rangeStart->copy());
+            $debitEnd = $reserveEnd->copy()->min($rangeEnd->copy());
+            if ($debitEnd->gte($debitStart)) {
+                for ($cursor = $debitStart->copy(); $cursor->lte($debitEnd); $cursor->addDay()) {
+                    $dateKey = $cursor->toDateString();
+                    $dailyDebitMap[$dateKey] += $dailyAmount;
+                }
+            }
+
+            $stockStart = $reserveStart->copy()->max($rangeStart->copy());
+            $stockEnd = $nextDueDate->copy()->subDay()->min($rangeEnd->copy());
+            if ($stockEnd->gte($stockStart)) {
+                for ($cursor = $stockStart->copy(); $cursor->lte($stockEnd); $cursor->addDay()) {
+                    $dateKey = $cursor->toDateString();
+                    $units = $cursor->lte($reserveEnd)
+                        ? ($reserveStart->diffInDays($cursor) + 1)
+                        : $effectiveDays;
+                    $stockContribution = min($amount, $dailyAmount * $units);
+                    $stockMap[$dateKey] += $stockContribution;
+                }
+            }
+        }
+
+        return [
+            'daily_debit_map' => $dailyDebitMap,
+            'stock_map' => $stockMap,
+            'event_meta' => $eventMeta,
+        ];
+    }
+
+    private function computeCoverageSimulation(array $dailyProjection, string $simulationDate, float $purchaseAmount = 0): array
+    {
+        $rows = collect($dailyProjection)
+            ->filter(fn (array $row) => !empty($row['date']))
+            ->sortBy('date')
+            ->values();
+
+        if ($rows->isEmpty()) {
+            return [
+                'is_covered' => false,
+                'first_failure_date' => null,
+                'minimum_balance_after_purchase' => 0,
+                'coverage_notes' => 'Data proyeksi harian belum tersedia.',
+                'daily_trace' => [],
+            ];
+        }
+
+        $startIndex = $rows->search(function (array $row) use ($simulationDate) {
+            return (string) $row['date'] >= $simulationDate;
+        });
+
+        if ($startIndex === false) {
+            $startIndex = 0;
+        }
+
+        $selectedRows = $rows->slice((int) $startIndex)->values();
+        $purchaseSafeImpact = max(0.0, $purchaseAmount) * 0.9;
+        $minimumBalance = INF;
+        $firstFailureDate = null;
+        $trace = [];
+
+        foreach ($selectedRows as $index => $row) {
+            $dateKey = (string) ($row['date'] ?? '');
+            $chartBalance = (float) ($row['chart_balance'] ?? $row['projected_balance'] ?? 0);
+            $pendingMandatory = (float) ($row['pending_mandatory_unconfirmed_total'] ?? 0);
+            $confirmedAllocationAccumulated = (float) ($row['confirmed_monthly_allocation_accumulated'] ?? 0);
+            $baseDiscretionary = array_key_exists('discretionary_balance_display', $row)
+                ? (float) ($row['discretionary_balance_display'] ?? 0)
+                : max(0.0, (0.9 * $chartBalance) - $pendingMandatory - $confirmedAllocationAccumulated);
+            $effectivePurchaseImpact = $index >= 0 ? $purchaseSafeImpact : 0.0;
+            $adjustedDiscretionary = $baseDiscretionary - $effectivePurchaseImpact;
+
+            $minimumBalance = min($minimumBalance, $adjustedDiscretionary);
+
+            if ($adjustedDiscretionary < 0 && $firstFailureDate === null) {
+                $firstFailureDate = $dateKey;
+            }
+
+            $trace[] = [
+                'date' => $dateKey,
+                'chart_balance' => (int) round($chartBalance),
+                'safe_balance' => (int) round(0.9 * $chartBalance),
+                'pending_mandatory' => (int) round($pendingMandatory),
+                'confirmed_monthly_allocation_accumulated' => (int) round($confirmedAllocationAccumulated),
+                'discretionary_before_purchase' => (int) round($baseDiscretionary),
+                'purchase_safe_impact' => (int) round($effectivePurchaseImpact),
+                'discretionary_after_purchase' => (int) round($adjustedDiscretionary),
+            ];
+        }
+
+        $isCovered = $firstFailureDate === null;
+
+        return [
+            'is_covered' => $isCovered,
+            'first_failure_date' => $firstFailureDate,
+            'minimum_balance_after_purchase' => is_finite($minimumBalance) ? (int) round($minimumBalance) : 0,
+            'coverage_notes' => $isCovered
+                ? 'Saldo bebas tetap non-negatif pada seluruh horizon evaluasi.'
+                : 'Saldo bebas diproyeksikan negatif sebelum periode berakhir.',
+            'daily_trace' => $trace,
+        ];
     }
 
     private function buildFinancialProjection(Carbon $startDate, Carbon $endDate): array
@@ -2306,12 +2884,39 @@ class DashboardController extends Controller
             ->values();
 
         $mandatoryEvents = $this->expandMandatoryExpenseEvents($mandatoryTargets, $rangeStart->copy(), $rangeEnd->copy());
-        $mandatoryConfirmations = $this->buildMandatoryExecutionConfirmationMap($mandatoryTargets, $rangeStart->copy(), $rangeEnd->copy());
+        $mandatoryContextStart = $rangeStart->copy()->subMonthsNoOverflow(2)->startOfMonth();
+        $mandatoryContextEnd = $rangeEnd->copy()->addMonthNoOverflow()->endOfMonth();
+        $mandatoryEventsForTimeline = $this->expandMandatoryExpenseEvents(
+            $mandatoryTargets,
+            $mandatoryContextStart->copy(),
+            $mandatoryContextEnd->copy()
+        );
+        $mandatoryConfirmations = $this->buildMandatoryExecutionConfirmationMap(
+            $mandatoryTargets,
+            $mandatoryContextStart->copy(),
+            $mandatoryContextEnd->copy()
+        );
 
         $eventsByDate = [];
+
         foreach ($mandatoryEvents as $event) {
             $eventsByDate[$event['due_date']][] = $event;
         }
+        $pendingUnconfirmedMandatoryMap = $this->buildPendingUnconfirmedMandatoryMap(
+            $mandatoryEventsForTimeline,
+            $mandatoryConfirmations,
+            $rangeStart->copy(),
+            $rangeEnd->copy()
+        );
+        $confirmedReserveMaps = $this->buildConfirmedMonthlyReserveMaps(
+            $mandatoryEventsForTimeline,
+            $mandatoryConfirmations,
+            $rangeStart->copy(),
+            $rangeEnd->copy()
+        );
+        $confirmedMonthlyAllocationDailyMap = (array) ($confirmedReserveMaps['daily_debit_map'] ?? []);
+        $confirmedMonthlyAllocationStockMap = (array) ($confirmedReserveMaps['stock_map'] ?? []);
+        $confirmedReserveMetaByEvent = (array) ($confirmedReserveMaps['event_meta'] ?? []);
 
         $dailyForecastIncomeMap = [];
         foreach ($dailyForecast as $item) {
@@ -2369,6 +2974,9 @@ class DashboardController extends Controller
                 $eventKey = ((int) ($event['target_id'] ?? 0)) . '|' . ((string) ($event['due_date'] ?? $dateKey));
                 $confirmation = $mandatoryConfirmations[$eventKey] ?? null;
                 $isConfirmed = $confirmation !== null;
+                $confirmedMonthlyAllocationDaily = 0.0;
+                $confirmedMonthlyAllocationWindow = null;
+                $reserveMeta = $confirmedReserveMetaByEvent[$eventKey] ?? null;
 
                 if ($isConfirmed) {
                     $canCover = true;
@@ -2376,6 +2984,15 @@ class DashboardController extends Controller
                     $coverageRatio = 1.0;
                     $indicator = 'terlaksana';
                     $mandatoryCoveredAmount += $amount;
+
+                    if ((bool) ($event['is_recurring_monthly'] ?? false) && is_array($reserveMeta)) {
+                        $confirmedMonthlyAllocationDaily = (float) ($reserveMeta['reserve_daily_amount'] ?? 0);
+                        $confirmedMonthlyAllocationWindow = [
+                            'start_date' => $reserveMeta['reserve_cycle_start_date'] ?? null,
+                            'end_date' => $reserveMeta['reserve_cycle_end_date'] ?? null,
+                            'days' => (int) ($reserveMeta['reserve_effective_days'] ?? 0),
+                        ];
+                    }
                 } else {
                     $canCover = $availableBefore >= $amount;
                     $shortfall = max(0, $amount - $availableBefore);
@@ -2403,7 +3020,15 @@ class DashboardController extends Controller
                     'is_confirmed' => $isConfirmed,
                     'confirmed_transaction_id' => $isConfirmed ? (int) ($confirmation['transaction_id'] ?? 0) : null,
                     'confirmed_transaction_date' => $isConfirmed ? ($confirmation['transaction_date'] ?? null) : null,
+                    'confirmation_anchor_date' => $isConfirmed ? ($confirmation['confirmation_anchor_date'] ?? null) : null,
+                    'confirmation_anchor_source' => $isConfirmed ? ($confirmation['confirmation_anchor_source'] ?? null) : null,
                     'confirmed_at' => $isConfirmed ? ($confirmation['confirmed_at'] ?? null) : null,
+                    'confirmed_monthly_allocation_daily' => (int) round($confirmedMonthlyAllocationDaily),
+                    'confirmed_monthly_allocation_window' => $confirmedMonthlyAllocationWindow,
+                    'reserve_cycle_start_date' => $reserveMeta['reserve_cycle_start_date'] ?? null,
+                    'reserve_cycle_end_date' => $reserveMeta['reserve_cycle_end_date'] ?? null,
+                    'reserve_effective_days' => $reserveMeta['reserve_effective_days'] ?? null,
+                    'reserve_daily_amount' => $reserveMeta['reserve_daily_amount'] ?? null,
                 ]);
             }
 
@@ -2421,33 +3046,23 @@ class DashboardController extends Controller
             ];
         }
 
-        $remainingMandatoryReserve = 0.0;
         for ($index = count($dailyProjection) - 1; $index >= 0; $index--) {
             $projectedBalanceRaw = (float) ($dailyProjection[$index]['__projected_balance_raw'] ?? 0);
-            $mandatoryExpenseRaw = (float) ($dailyProjection[$index]['__mandatory_expense_raw'] ?? 0);
+            $dateKey = (string) ($dailyProjection[$index]['date'] ?? '');
+            $pendingStock = (float) ($pendingUnconfirmedMandatoryMap[$dateKey] ?? 0);
 
-            $dailyProjection[$index]['remaining_mandatory_reserve'] = (int) round($remainingMandatoryReserve);
-            $dailyProjection[$index]['discretionary_balance'] = (int) round($projectedBalanceRaw - $remainingMandatoryReserve);
-
-            $remainingMandatoryReserve += $mandatoryExpenseRaw;
+            $dailyProjection[$index]['remaining_mandatory_reserve'] = (int) round($pendingStock);
+            $dailyProjection[$index]['pending_mandatory_unconfirmed_total'] = (int) round($pendingStock);
+            $engineDiscretionaryBalance = (int) round($projectedBalanceRaw - $pendingStock);
+            $dailyProjection[$index]['discretionary_balance_engine'] = $engineDiscretionaryBalance;
+            $dailyProjection[$index]['discretionary_balance'] = $engineDiscretionaryBalance;
 
             unset($dailyProjection[$index]['__projected_balance_raw'], $dailyProjection[$index]['__mandatory_expense_raw']);
-        }
-
-        $discretionaryBalanceByDate = [];
-        foreach ($dailyProjection as $row) {
-            $dateKey = (string) ($row['date'] ?? '');
-            if ($dateKey === '') {
-                continue;
-            }
-
-            $discretionaryBalanceByDate[$dateKey] = (float) ($row['discretionary_balance'] ?? 0);
         }
 
         $coveredMandatory = collect($mandatoryExpenseProjection)->where('can_cover', true)->count();
         $confirmedMandatory = collect($mandatoryExpenseProjection)->where('is_confirmed', true)->count();
         $mandatoryTotalEvents = count($mandatoryExpenseProjection);
-        $mandatoryFullyCovered = $mandatoryTotalEvents === 0 || $coveredMandatory === $mandatoryTotalEvents;
 
         $budgetStartDate = $rangeStart->copy();
         if ($today->gt($budgetStartDate)) {
@@ -2463,48 +3078,54 @@ class DashboardController extends Controller
         })->values();
 
         $minimumDiscretionaryFromAsOf = $budgetRows->count() > 0
-            ? (float) $budgetRows->min('discretionary_balance')
-            : (float) ($dailyProjection[count($dailyProjection) - 1]['discretionary_balance'] ?? 0);
+            ? (float) $budgetRows->min('discretionary_balance_engine')
+            : (float) ($dailyProjection[count($dailyProjection) - 1]['discretionary_balance_engine'] ?? 0);
 
         $operationalSpendingBudget = (int) round(max(0, $minimumDiscretionaryFromAsOf));
         $recommendedOperationalBudget = (int) round(max(0, $operationalSpendingBudget * 0.9));
-        $currentDiscretionaryBalance = isset($discretionaryBalanceByDate[$budgetReferenceDate])
-            ? (float) $discretionaryBalanceByDate[$budgetReferenceDate]
-            : ($budgetRows->count() > 0 ? (float) ($budgetRows->first()['discretionary_balance'] ?? 0) : 0.0);
-
+        $simulationAnchorDate = $budgetReferenceDate;
+        $baselineCoverage = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, 0);
         $purchaseGoals = [];
+
         foreach ($purchaseTargets as $target) {
             $amount = (float) ($target->amount ?? 0);
             $desiredDate = $target->target_date ? Carbon::parse($target->target_date)->toDateString() : null;
+            $simulationStart = $desiredDate && $desiredDate >= $simulationAnchorDate
+                ? $desiredDate
+                : $simulationAnchorDate;
 
             $predictedBuyDate = null;
             foreach ($budgetRows as $row) {
-                if ((float) ($row['discretionary_balance'] ?? 0) >= $amount) {
-                    $predictedBuyDate = (string) $row['date'];
+                $candidateDate = (string) ($row['date'] ?? '');
+                if ($candidateDate === '') {
+                    continue;
+                }
+
+                $candidateCoverage = $this->computeCoverageSimulation($dailyProjection, $candidateDate, $amount);
+                if ($candidateCoverage['is_covered'] === true) {
+                    $predictedBuyDate = $candidateDate;
                     break;
                 }
             }
 
-            $canExecuteAtDesiredDate = null;
-            $desiredDateDiscretionaryBalance = null;
-            if ($desiredDate !== null && isset($discretionaryBalanceByDate[$desiredDate])) {
-                $desiredDateDiscretionaryBalance = (float) $discretionaryBalanceByDate[$desiredDate];
-                $canExecuteAtDesiredDate = $desiredDateDiscretionaryBalance >= $amount;
+            $desiredCoverage = null;
+            if ($desiredDate !== null) {
+                $desiredCoverage = $this->computeCoverageSimulation($dailyProjection, $desiredDate, $amount);
             }
 
-            $canExecuteNowByCash = $currentDiscretionaryBalance >= $amount;
-            $canExecuteInRangeByCash = $predictedBuyDate !== null;
-            $blockedByMandatory = !$mandatoryFullyCovered && ($canExecuteNowByCash || $canExecuteInRangeByCash);
-            $canExecuteNow = $canExecuteNowByCash && !$blockedByMandatory;
-            $canExecuteInRange = $canExecuteInRangeByCash && !$blockedByMandatory;
+            $nowCoverage = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, $amount);
+            $canExecuteNow = $nowCoverage['is_covered'] === true;
+            $canExecuteInRange = $predictedBuyDate !== null;
+            $canExecuteAtDesiredDate = $desiredCoverage ? ($desiredCoverage['is_covered'] === true) : null;
+            $blockedByMandatory = !$canExecuteNow && !$canExecuteInRange;
 
             $indicator = 'belum_terjangkau';
-            if ($blockedByMandatory) {
-                $indicator = 'tertahan_wajib';
-            } elseif ($canExecuteNow) {
+            if ($canExecuteNow) {
                 $indicator = 'siap';
-            } elseif ($predictedBuyDate !== null) {
+            } elseif ($canExecuteInRange) {
                 $indicator = 'menunggu';
+            } elseif ($desiredCoverage && $desiredCoverage['first_failure_date']) {
+                $indicator = 'tertahan_wajib';
             }
 
             $purchaseGoals[] = [
@@ -2518,10 +3139,15 @@ class DashboardController extends Controller
                 'can_execute_in_range' => $canExecuteInRange,
                 'can_execute_at_desired_date' => $canExecuteAtDesiredDate,
                 'blocked_by_mandatory' => $blockedByMandatory,
-                'desired_date_discretionary_balance' => $desiredDateDiscretionaryBalance !== null
-                    ? (int) round($desiredDateDiscretionaryBalance)
-                    : null,
+                'desired_date_discretionary_balance' => null,
                 'indicator' => $indicator,
+                'coverage' => [
+                    'simulation_start' => $simulationStart,
+                    'is_covered' => $desiredCoverage['is_covered'] ?? $nowCoverage['is_covered'],
+                    'first_failure_date' => $desiredCoverage['first_failure_date'] ?? $nowCoverage['first_failure_date'],
+                    'minimum_balance_after_purchase' => $desiredCoverage['minimum_balance_after_purchase'] ?? $nowCoverage['minimum_balance_after_purchase'],
+                    'coverage_notes' => $desiredCoverage['coverage_notes'] ?? $nowCoverage['coverage_notes'],
+                ],
                 'is_actionable' => true,
                 'action_state' => 'active',
                 'is_active_target' => true,
@@ -2609,6 +3235,25 @@ class DashboardController extends Controller
             $dailyProjection[$index]['chart_balance_source'] = 'forecast';
         }
 
+        foreach ($dailyProjection as $index => $row) {
+            $dateKey = (string) ($row['date'] ?? '');
+            $chartBalance = (float) ($row['chart_balance'] ?? $row['projected_balance'] ?? 0);
+            $pendingMandatoryReserve = (float) ($row['pending_mandatory_unconfirmed_total'] ?? $row['remaining_mandatory_reserve'] ?? 0);
+            $confirmedMonthlyAllocationDaily = (float) ($confirmedMonthlyAllocationDailyMap[$dateKey] ?? 0);
+            $confirmedMonthlyAllocationAccumulated = (float) ($confirmedMonthlyAllocationStockMap[$dateKey] ?? 0);
+            $displayDiscretionary = max(
+                0.0,
+                (0.9 * $chartBalance) - $pendingMandatoryReserve - $confirmedMonthlyAllocationAccumulated
+            );
+
+            $dailyProjection[$index]['confirmed_monthly_allocation_daily'] = (int) round($confirmedMonthlyAllocationDaily);
+            $dailyProjection[$index]['confirmed_monthly_allocation_accumulated'] = (int) round($confirmedMonthlyAllocationAccumulated);
+            $dailyProjection[$index]['pending_mandatory_unconfirmed_total'] = (int) round($pendingMandatoryReserve);
+            $dailyProjection[$index]['discretionary_balance_display'] = (int) round($displayDiscretionary);
+        }
+
+        $coverageNow = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, 0);
+
         return [
             'range' => [
                 'start_date' => $rangeStart->toDateString(),
@@ -2647,6 +3292,9 @@ class DashboardController extends Controller
                 'purchase_targets_total' => count($purchaseGoals),
                 'purchase_targets_reachable' => $reachablePurchaseTargets,
                 'purchase_targets_ready_now' => $readyNowPurchaseTargets,
+                'coverage_status_now' => (bool) ($coverageNow['is_covered'] ?? false),
+                'coverage_first_failure_date' => $coverageNow['first_failure_date'] ?? null,
+                'coverage_minimum_balance_after_purchase' => (int) ($coverageNow['minimum_balance_after_purchase'] ?? 0),
                 'calculation_mode' => $ledgerReady ? 'hybrid_actual_forecast' : 'forecast_only',
             ],
             'forecast_context' => [
@@ -2674,6 +3322,10 @@ class DashboardController extends Controller
                     if ($target->end_date) {
                         $monthlyDay = (int) Carbon::parse($target->end_date)->day;
                     } else {
+                        Log::warning('dashboard.financial_projection.missing_monthly_day_metadata', [
+                            'target_id' => (int) ($target->id ?? 0),
+                            'target_name' => (string) ($target->name ?? ''),
+                        ]);
                         continue;
                     }
                 }
@@ -4971,6 +5623,9 @@ class DashboardController extends Controller
         $mandatoryRows = is_array($projection['mandatory_expense_projection'] ?? null)
             ? $projection['mandatory_expense_projection']
             : [];
+        $dailyRows = is_array($projection['daily_projection'] ?? null)
+            ? $projection['daily_projection']
+            : [];
         $purchaseRows = is_array($projection['purchase_goals'] ?? null)
             ? $projection['purchase_goals']
             : [];
@@ -4989,10 +5644,19 @@ class DashboardController extends Controller
         $purchaseReadyNow = (int) ($summary['purchase_targets_ready_now'] ?? 0);
         $purchaseTotal = (int) ($summary['purchase_targets_total'] ?? 0);
         $confirmedMandatory = (int) ($summary['mandatory_confirmed_events'] ?? 0);
+        $coverageStatusNow = (bool) ($summary['coverage_status_now'] ?? true);
+        $coverageFirstFailureDate = $summary['coverage_first_failure_date'] ?? null;
+        $coverageMinimumBalance = (float) ($summary['coverage_minimum_balance_after_purchase'] ?? 0);
         $operationalBudget = (float) ($summary['operational_spending_budget'] ?? 0);
         $recommendedOperationalBudget = (float) ($summary['recommended_operational_spending_budget'] ?? 0);
         $operationalBudgetAsOfDate = (string) ($summary['operational_budget_as_of_date'] ?? '');
         $blockedPurchaseCount = collect($purchaseRows)->where('blocked_by_mandatory', true)->count();
+
+        $asOfRow = collect($dailyRows)->first(function (array $row) use ($operationalBudgetAsOfDate) {
+            return (string) ($row['date'] ?? '') === $operationalBudgetAsOfDate;
+        }) ?? (count($dailyRows) > 0 ? $dailyRows[0] : []);
+        $pendingMandatoryReserveNow = (float) ($asOfRow['pending_mandatory_unconfirmed_total'] ?? 0);
+        $confirmedMonthlyAllocationNow = (float) ($asOfRow['confirmed_monthly_allocation_daily'] ?? 0);
 
         $score = 100.0;
         $score -= max(0, 100 - $coverageAmountRate) * 0.45;
@@ -5014,6 +5678,9 @@ class DashboardController extends Controller
         if ($volatilityIndex > 60) {
             $score -= min(12, ($volatilityIndex - 60) * 0.25);
         }
+        if (!$coverageStatusNow) {
+            $score -= 25;
+        }
 
         $score = (int) round($this->clamp($score, 0, 100));
 
@@ -5027,7 +5694,9 @@ class DashboardController extends Controller
         }
 
         $headline = 'Proyeksi bulanan sehat dan siap dieksekusi.';
-        if ($riskLevel === 'sedang') {
+        if (!$coverageStatusNow) {
+            $headline = 'Coverage kas belum aman: ada potensi gagal memenuhi kewajiban wajib.';
+        } elseif ($riskLevel === 'sedang') {
             $headline = 'Proyeksi cukup stabil, namun masih perlu pengawalan kas.';
         } elseif ($riskLevel === 'tinggi') {
             $headline = 'Risiko kas tinggi: prioritaskan kewajiban sebelum belanja target.';
@@ -5037,7 +5706,10 @@ class DashboardController extends Controller
 
         $keyFindings = [];
         $keyFindings[] = 'Coverage kewajiban: ' . number_format($coverageRate, 1) . '% event dan ' . number_format($coverageAmountRate, 1) . '% nominal.';
+        $keyFindings[] = 'Status coverage kas saat ini: ' . ($coverageStatusNow ? 'aman' : 'tidak aman') . ($coverageFirstFailureDate ? ' (estimasi gagal pertama: ' . $coverageFirstFailureDate . ')' : '') . '.';
         $keyFindings[] = 'Saldo aktual per ' . $actualBalanceTodayDate . ' (sumber: ' . $actualBalanceTodaySource . '): Rp ' . number_format((int) round($actualBalanceToday), 0, ',', '.');
+        $keyFindings[] = 'Policy Saldo Bebas: 90% dari total saldo dikurangi reserve wajib pending dan alokasi bulanan terkonfirmasi berjalan.';
+        $keyFindings[] = 'Reserve wajib pending saat ini: Rp ' . number_format((int) round($pendingMandatoryReserveNow), 0, ',', '.') . '; alokasi bulanan harian: Rp ' . number_format((int) round($confirmedMonthlyAllocationNow), 0, ',', '.');
         $keyFindings[] = 'Sisa setelah kewajiban: Rp ' . number_format((int) round($netAfterMandatory), 0, ',', '.') . ', estimasi saldo akhir periode: Rp ' . number_format((int) round($endingBalance), 0, ',', '.');
         $keyFindings[] = 'Budget operasional aman mulai ' . ($operationalBudgetAsOfDate !== '' ? $operationalBudgetAsOfDate : 'hari ini') . ': Rp ' . number_format((int) round($operationalBudget), 0, ',', '.') . ' (saran pakai: Rp ' . number_format((int) round($recommendedOperationalBudget), 0, ',', '.') . ').';
         $keyFindings[] = 'Akurasi model pendapatan saat ini pada confidence rata-rata ' . number_format($averageConfidence, 0) . '% dengan volatilitas ' . number_format($volatilityIndex, 1) . '%.';
@@ -5055,6 +5727,14 @@ class DashboardController extends Controller
                 'priority' => 'tinggi',
                 'title' => 'Tutup shortfall kewajiban terlebih dahulu',
                 'detail' => 'Kekurangan kewajiban wajib masih Rp ' . number_format((int) round($shortfallTotal), 0, ',', '.') . '. Alokasikan kas atau jadwalkan ulang beban wajib sebelum belanja target.',
+            ];
+        }
+
+        if (!$coverageStatusNow) {
+            $recommendedActions[] = [
+                'priority' => 'tinggi',
+                'title' => 'Amankan coverage kewajiban sebelum belanja tambahan',
+                'detail' => 'Simulasi kas menunjukkan risiko gagal pada ' . ($coverageFirstFailureDate ?? 'periode berjalan') . '. Minimum kas setelah skenario berjalan: Rp ' . number_format((int) round($coverageMinimumBalance), 0, ',', '.') . '.',
             ];
         }
 
@@ -5119,6 +5799,7 @@ class DashboardController extends Controller
             'Target pembelian dihitung dari saldo bebas setelah menyisihkan kewajiban wajib yang masih tersisa.',
             'Target wajib bulanan selamanya mengikuti bulan mulai target agar tidak mundur ke periode sebelum target dibuat.',
             'Saldo aktual hari ini dipisahkan dari saldo akhir proyeksi agar keputusan operasional tidak bias terhadap transaksi masa depan.',
+            'Saldo Bebas display = max((90% x total saldo) - reserve wajib pending - akumulasi alokasi wajib bulanan terkonfirmasi, 0).',
         ];
 
         return [

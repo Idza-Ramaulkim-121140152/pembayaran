@@ -37,3 +37,8 @@ Schedule::command('dashboard:prediction-train')
     ->dailyAt('01:10')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('dashboard:prediction-health --max-age-minutes=120 --quiet-ok')
+    ->everyThirtyMinutes()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();

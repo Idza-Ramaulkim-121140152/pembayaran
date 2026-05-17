@@ -31,6 +31,7 @@ import MasterWilayahPage from './pages/Settings/MasterWilayahPage';
 import MasterMikrotikPage from './pages/Settings/MasterMikrotikPage';
 import MasterDataPage from './pages/Settings/MasterDataPage';
 import AccessPolicyPage from './pages/Settings/AccessPolicyPage';
+import CustomerPackageManagementPage from './pages/Settings/CustomerPackageManagementPage';
 import NetworkStatusPage from './pages/NetworkStatusPage';
 import Monitoring from './pages/Monitoring';
 import IsolirPage from './pages/Isolir/IsolirPage';
@@ -48,6 +49,8 @@ const ROUTE_FALLBACK_ROLES = {
     'billing.invoice.view': ['superadmin', 'admin', 'finance'],
     'customer.view': ['superadmin', 'admin', 'teknisi'],
     'customer.verification': ['superadmin', 'admin', 'teknisi'],
+    'customer.package_audit.view': ['superadmin', 'admin', 'teknisi', 'finance'],
+    'customer.package_audit.manage': ['superadmin', 'admin'],
     'odp.view': ['superadmin', 'admin', 'teknisi'],
     'odp.mapping.view': ['superadmin', 'admin', 'teknisi'],
     'finance.expense.manage': ['superadmin', 'admin', 'finance'],
@@ -179,6 +182,7 @@ function App() {
                     <Route path="/settings/master-mikrotik" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterMikrotikPage />} />} />
                     <Route path="/settings/master-data" element={<GuardedRoute permissionKey="masterdata.view" element={<MasterDataPage />} />} />
                     <Route path="/settings/access-policy" element={<GuardedRoute permissionKey="access_policy.manage" element={<AccessPolicyPage />} />} />
+                    <Route path="/settings/customer-package-management" element={<GuardedRoute permissionKey="customer.package_audit.view" element={<CustomerPackageManagementPage />} />} />
                     
                     {/* Complaints (Admin) */}
                     <Route path="/complaints" element={<GuardedRoute permissionKey="complaint.view" element={<ComplaintsPage />} />} />
