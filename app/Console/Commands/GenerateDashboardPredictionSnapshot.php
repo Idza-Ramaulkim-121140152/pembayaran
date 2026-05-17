@@ -62,6 +62,12 @@ class GenerateDashboardPredictionSnapshot extends Command
                     'projection' => $baseBundle['financial_projection']['summary'] ?? [],
                     'isp' => $baseBundle['isp_intelligence']['summary'] ?? [],
                 ],
+                'existing_sections' => [
+                    'management_kpis' => $baseBundle['management_kpis'] ?? [],
+                    'revenue_forecast' => $baseBundle['revenue_forecast'] ?? [],
+                    'financial_projection' => $baseBundle['financial_projection'] ?? [],
+                    'isp_intelligence' => $baseBundle['isp_intelligence'] ?? [],
+                ],
             ];
 
             $pythonResult = $this->pythonWorker->snapshot($pythonPayload);
@@ -70,6 +76,10 @@ class GenerateDashboardPredictionSnapshot extends Command
                 'model_version' => 'xgboost-hourly-v2.1',
                 'worker_status' => $pythonResult['ok'] ? 'ok' : 'failed_fallback',
             ];
+            $sectionKeys = ['management_kpis', 'revenue_forecast', 'financial_projection', 'isp_intelligence'];
+            $sectionSources = [];
+            $bundleWarnings = [];
+            $resolvedSections = [];
 
             if ($pythonResult['ok']) {
                 $workerData = (array) ($pythonResult['data'] ?? []);
@@ -83,10 +93,40 @@ class GenerateDashboardPredictionSnapshot extends Command
                     'monthly_total_revenue_forecast' => $workerData['monthly_total_revenue_forecast'] ?? [],
                 ];
                 $modelMeta = array_merge($modelMeta, (array) ($workerData['model_meta'] ?? []));
+
+                foreach ($sectionKeys as $sectionKey) {
+                    [$resolvedSection, $sectionSource, $warning] = $this->resolveSectionPayload(
+                        $workerData,
+                        $baseBundle,
+                        $sectionKey,
+                        $now
+                    );
+                    $resolvedSections[$sectionKey] = $resolvedSection;
+                    $sectionSources[$sectionKey] = $sectionSource;
+                    if ($warning !== null) {
+                        $bundleWarnings[] = [
+                            'section' => $sectionKey,
+                            'reason' => $warning,
+                        ];
+                    }
+                }
             } else {
                 $this->warn('Python worker gagal, memakai fallback lokal: ' . ($pythonResult['error'] ?? 'unknown_error'));
                 $innovations = $this->buildFallbackInnovations($baseBundle);
                 $modelMeta['worker_error'] = $pythonResult['error'] ?? 'unknown_error';
+                foreach ($sectionKeys as $sectionKey) {
+                    $resolvedSections[$sectionKey] = $this->normalizeSectionWithMeta(
+                        (array) ($baseBundle[$sectionKey] ?? []),
+                        'fallback',
+                        $now,
+                        'worker_failed'
+                    );
+                    $sectionSources[$sectionKey] = 'fallback';
+                    $bundleWarnings[] = [
+                        'section' => $sectionKey,
+                        'reason' => 'worker_failed',
+                    ];
+                }
             }
 
             $bundle = $controller->buildPredictionBundleData($ranges, $innovations, [
@@ -94,7 +134,16 @@ class GenerateDashboardPredictionSnapshot extends Command
                 'is_stale' => false,
                 'model_version' => (string) ($modelMeta['model_version'] ?? 'xgboost-hourly-v2.1'),
                 'data_granularity' => 'hourly',
+                'section_sources' => $sectionSources,
+                'model_bundle_version' => (string) ($modelMeta['model_bundle_version'] ?? 'prediction-bundle-v2.2'),
+                'bundle_warnings' => $bundleWarnings,
             ]);
+
+            foreach ($sectionKeys as $sectionKey) {
+                if (isset($resolvedSections[$sectionKey])) {
+                    $bundle[$sectionKey] = $resolvedSections[$sectionKey];
+                }
+            }
 
             $snapshot = $this->snapshotService->saveReady(
                 $scope,
@@ -410,5 +459,61 @@ class GenerateDashboardPredictionSnapshot extends Command
                 'months' => [],
             ],
         ];
+    }
+
+    private function resolveSectionPayload(array $workerData, array $baseBundle, string $sectionKey, Carbon $generatedAt): array
+    {
+        $candidate = $workerData[$sectionKey] ?? null;
+        if ($this->isValidPredictionSection($sectionKey, $candidate)) {
+            return [
+                $this->normalizeSectionWithMeta((array) $candidate, 'model', $generatedAt),
+                'model',
+                null,
+            ];
+        }
+
+        return [
+            $this->normalizeSectionWithMeta(
+                (array) ($baseBundle[$sectionKey] ?? []),
+                'fallback',
+                $generatedAt,
+                $candidate === null ? 'missing_model_section' : 'invalid_model_section'
+            ),
+            'fallback',
+            $candidate === null ? 'missing_model_section' : 'invalid_model_section',
+        ];
+    }
+
+    private function isValidPredictionSection(string $sectionKey, mixed $section): bool
+    {
+        if (!is_array($section)) {
+            return false;
+        }
+
+        return match ($sectionKey) {
+            'management_kpis' => isset($section['summary']) && is_array($section['summary']),
+            'revenue_forecast' => isset($section['summary']) && is_array($section['summary']) && array_key_exists('daily_forecast', $section) && is_array($section['daily_forecast']),
+            'financial_projection' => isset($section['summary']) && is_array($section['summary']) && array_key_exists('daily_projection', $section) && is_array($section['daily_projection']),
+            'isp_intelligence' => isset($section['summary']) && is_array($section['summary']) && array_key_exists('risk_matrix', $section) && is_array($section['risk_matrix']),
+            default => !empty($section),
+        };
+    }
+
+    private function normalizeSectionWithMeta(array $section, string $source, Carbon $generatedAt, ?string $warning = null): array
+    {
+        $meta = isset($section['meta']) && is_array($section['meta']) ? $section['meta'] : [];
+        $quality = isset($meta['quality']) && is_array($meta['quality']) ? $meta['quality'] : [];
+
+        if ($warning !== null && !isset($quality['warning'])) {
+            $quality['warning'] = $warning;
+        }
+
+        $section['meta'] = array_merge($meta, [
+            'source' => $source,
+            'generated_at' => $meta['generated_at'] ?? $generatedAt->toIso8601String(),
+            'quality' => $quality,
+        ]);
+
+        return $section;
     }
 }

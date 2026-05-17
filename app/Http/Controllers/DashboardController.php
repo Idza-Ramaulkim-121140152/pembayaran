@@ -77,6 +77,9 @@ class DashboardController extends Controller
                 'is_stale' => false,
                 'model_version' => null,
                 'data_granularity' => null,
+                'section_sources' => [],
+                'model_bundle_version' => null,
+                'bundle_warnings' => [],
             ], $meta),
         ];
     }

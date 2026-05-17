@@ -596,6 +596,30 @@ def run_snapshot(payload: Dict[str, Any], model_path: str) -> Dict[str, Any]:
 
     monthly_outputs = build_monthly_forecasts(monthly_sources)
     backtest_report = compute_backtest_report(model, x, y, timestamps)
+    section_generated_at = datetime.utcnow().isoformat() + "Z"
+
+    existing_sections = payload.get("existing_sections", {}) or {}
+
+    def build_quality(extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        quality = {
+            "sample_size": len(x),
+            "history_hours": len(rows),
+            "coverage": "full" if len(x) >= 48 else ("partial" if len(x) > 0 else "low"),
+            "warning": None if len(x) >= 48 else "sample_size_low",
+        }
+        if extra:
+            quality.update(extra)
+        return quality
+
+    def model_section(section_key: str, default_payload: Optional[Dict[str, Any]] = None, quality_extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        raw_section = existing_sections.get(section_key, default_payload or {}) or {}
+        section = dict(raw_section) if isinstance(raw_section, dict) else {}
+        section["meta"] = {
+            "source": "model",
+            "generated_at": section_generated_at,
+            "quality": build_quality(quality_extra),
+        }
+        return section
 
     history_coverage = {
         "sample_hours": len(rows),
@@ -606,6 +630,26 @@ def run_snapshot(payload: Dict[str, Any], model_path: str) -> Dict[str, Any]:
 
     return {
         "ok": True,
+        "management_kpis": model_section(
+            "management_kpis",
+            {"summary": {}, "variance": {}, "customer_health": {}},
+            {"domain": "management_kpis", "customer_signals": len(customer_signals)},
+        ),
+        "revenue_forecast": model_section(
+            "revenue_forecast",
+            {"summary": {}, "daily_forecast": [], "historical_context": {}},
+            {"domain": "revenue_forecast", "horizon_days": 7},
+        ),
+        "financial_projection": model_section(
+            "financial_projection",
+            {"summary": {}, "daily_projection": [], "mandatory_expense_projection": [], "purchase_goals": []},
+            {"domain": "financial_projection", "months_observed": len(monthly_sources)},
+        ),
+        "isp_intelligence": model_section(
+            "isp_intelligence",
+            {"summary": {}, "risk_matrix": [], "recommendations": []},
+            {"domain": "isp_intelligence"},
+        ),
         "hourly_forecast_24h": hourly_forecast,
         "backtest_report": backtest_report,
         "risk_alarm_24h": build_risk_alarm(invoice_signals, predicted_24h_total),
@@ -615,6 +659,7 @@ def run_snapshot(payload: Dict[str, Any], model_path: str) -> Dict[str, Any]:
         "monthly_total_revenue_forecast": monthly_outputs["monthly_total_revenue_forecast"],
         "model_meta": {
             "model_version": model_version,
+            "model_bundle_version": "prediction-bundle-v2.2",
             "metrics": metrics,
             "predicted_revenue_24h_total": round(predicted_24h_total, 2),
             "generated_at": datetime.utcnow().isoformat() + "Z",

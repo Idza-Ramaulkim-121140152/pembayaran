@@ -165,6 +165,18 @@ function getChartBalanceSourceMeta(source) {
     return { label: 'Tidak diketahui', className: 'bg-gray-200 text-gray-700' };
 }
 
+function getSectionSourceMeta(source) {
+    if (source === 'model') {
+        return { label: 'Model', className: 'bg-emerald-100 text-emerald-700 border border-emerald-200' };
+    }
+
+    if (source === 'fallback') {
+        return { label: 'Fallback Laravel', className: 'bg-amber-100 text-amber-700 border border-amber-200' };
+    }
+
+    return { label: 'Tidak diketahui', className: 'bg-gray-100 text-gray-600 border border-gray-200' };
+}
+
 function DashboardPredictionPage() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
@@ -372,6 +384,37 @@ function DashboardPredictionPage() {
     const ispServiceForecast = ispIntelligenceData?.service_forecast || null;
     const ispFinancialForecast = ispIntelligenceData?.financial_forecast || null;
     const ispRecommendations = ispIntelligenceData?.recommendations || [];
+    const sectionSources = bundleMeta?.section_sources || {};
+    const bundleWarnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
+
+    const sectionWarningMap = useMemo(() => {
+        const map = {};
+        bundleWarnings.forEach((warning) => {
+            const key = String(warning?.section || '').trim();
+            if (!key) {
+                return;
+            }
+            map[key] = String(warning?.reason || 'fallback_active');
+        });
+        return map;
+    }, [bundleWarnings]);
+
+    const resolveSectionSource = (sectionKey, sectionData) => (
+        sectionData?.meta?.source || sectionSources?.[sectionKey] || 'fallback'
+    );
+
+    const resolveSectionWarning = (sectionKey, sectionData) => (
+        sectionData?.meta?.quality?.warning || sectionWarningMap?.[sectionKey] || null
+    );
+
+    const managementSectionSource = resolveSectionSource('management_kpis', kpiData);
+    const managementSectionWarning = resolveSectionWarning('management_kpis', kpiData);
+    const forecastSectionSource = resolveSectionSource('revenue_forecast', forecastData);
+    const forecastSectionWarning = resolveSectionWarning('revenue_forecast', forecastData);
+    const projectionSectionSource = resolveSectionSource('financial_projection', financialProjectionData);
+    const projectionSectionWarning = resolveSectionWarning('financial_projection', financialProjectionData);
+    const ispSectionSource = resolveSectionSource('isp_intelligence', ispIntelligenceData);
+    const ispSectionWarning = resolveSectionWarning('isp_intelligence', ispIntelligenceData);
 
     const mandatoryProjectionCounters = useMemo(() => {
         const total = mandatoryProjectionRows.length;
@@ -1378,6 +1421,16 @@ function DashboardPredictionPage() {
                             Intelijen Operasional ISP
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">Analisis gabungan data pelanggan, invoice, aduan, gangguan, transaksi, dan API MikroTik untuk kebutuhan operasional ISP.</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(ispSectionSource).className}`}>
+                                Sumber: {getSectionSourceMeta(ispSectionSource).label}
+                            </span>
+                            {ispSectionWarning && (
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Warning: {ispSectionWarning}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <span className="text-xs text-gray-500">
                         Periode analisis: {kpiRange.start_date} s.d. {kpiRange.end_date}
@@ -1498,6 +1551,16 @@ function DashboardPredictionPage() {
                             Prediksi Pendapatan Harian
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">Model ensemble seasonal + momentum + smoothing dengan kalibrasi otomatis.</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(forecastSectionSource).className}`}>
+                                Sumber: {getSectionSourceMeta(forecastSectionSource).label}
+                            </span>
+                            {forecastSectionWarning && (
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Warning: {forecastSectionWarning}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="flex flex-wrap items-end gap-2">
                         <div>
@@ -1648,6 +1711,16 @@ function DashboardPredictionPage() {
                             Proyeksi Keuangan Bulanan
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">Prediksi pendapatan vs kewajiban wajib, termasuk peluang eksekusi target pembelian.</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(projectionSectionSource).className}`}>
+                                Sumber: {getSectionSourceMeta(projectionSectionSource).label}
+                            </span>
+                            {projectionSectionWarning && (
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Warning: {projectionSectionWarning}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <div className="flex flex-wrap items-end gap-2">
                         <div>
@@ -2053,6 +2126,16 @@ function DashboardPredictionPage() {
                                 KPI Manajemen Prediktif
                             </h2>
                             <p className="text-sm text-gray-500 mt-1">Collection, churn, ARPU, aging, dan akurasi backtest forecast.</p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(managementSectionSource).className}`}>
+                                    Sumber: {getSectionSourceMeta(managementSectionSource).label}
+                                </span>
+                                {managementSectionWarning && (
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                        Warning: {managementSectionWarning}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                         <div className="flex flex-wrap items-end gap-2">
                             <div>
