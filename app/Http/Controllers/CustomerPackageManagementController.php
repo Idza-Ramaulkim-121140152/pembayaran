@@ -9,6 +9,7 @@ use App\Services\CustomerPackageAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class CustomerPackageManagementController extends Controller
 {
@@ -21,14 +22,14 @@ class CustomerPackageManagementController extends Controller
     public function summary(Request $request)
     {
         $validated = $request->validate([
-            'active_only' => 'nullable|boolean',
-            'include_ignored' => 'nullable|boolean',
             'search' => 'nullable|string|max:100',
         ]);
+        $activeOnly = $this->parseBooleanQuery($request, 'active_only', true);
+        $includeIgnored = $this->parseBooleanQuery($request, 'include_ignored', false);
 
         $rows = $this->auditService->buildRows([
-            'active_only' => (bool) ($validated['active_only'] ?? true),
-            'include_ignored' => (bool) ($validated['include_ignored'] ?? false),
+            'active_only' => $activeOnly,
+            'include_ignored' => $includeIgnored,
             'search' => (string) ($validated['search'] ?? ''),
         ]);
 
@@ -40,8 +41,6 @@ class CustomerPackageManagementController extends Controller
     public function customers(Request $request)
     {
         $validated = $request->validate([
-            'active_only' => 'nullable|boolean',
-            'include_ignored' => 'nullable|boolean',
             'search' => 'nullable|string|max:100',
             'status' => [
                 'nullable',
@@ -51,10 +50,12 @@ class CustomerPackageManagementController extends Controller
             'per_page' => 'nullable|integer|min:1|max:500',
             'page' => 'nullable|integer|min:1',
         ]);
+        $activeOnly = $this->parseBooleanQuery($request, 'active_only', true);
+        $includeIgnored = $this->parseBooleanQuery($request, 'include_ignored', false);
 
         $rows = $this->auditService->buildRows([
-            'active_only' => (bool) ($validated['active_only'] ?? true),
-            'include_ignored' => (bool) ($validated['include_ignored'] ?? false),
+            'active_only' => $activeOnly,
+            'include_ignored' => $includeIgnored,
             'search' => (string) ($validated['search'] ?? ''),
             'status' => (string) ($validated['status'] ?? ''),
         ]);
@@ -213,5 +214,42 @@ class CustomerPackageManagementController extends Controller
             ],
         ];
     }
-}
 
+    private function parseBooleanQuery(Request $request, string $key, bool $default): bool
+    {
+        $value = $request->query($key);
+
+        if ($value === null || $value === '') {
+            return $default;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value)) {
+            if ($value === 1) {
+                return true;
+            }
+
+            if ($value === 0) {
+                return false;
+            }
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+            if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                return true;
+            }
+
+            if (in_array($normalized, ['0', 'false', 'no', 'off'], true)) {
+                return false;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            $key => ["The {$key} field must be true or false."],
+        ]);
+    }
+}

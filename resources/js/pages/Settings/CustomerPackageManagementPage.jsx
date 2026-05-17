@@ -85,13 +85,13 @@ export default function CustomerPackageManagementPage() {
             setError(null);
             const [summaryRes, rowsRes] = await Promise.all([
                 customerPackageManagementService.summary({
-                    active_only: true,
-                    include_ignored: includeIgnored,
+                    active_only: 1,
+                    include_ignored: includeIgnored ? 1 : 0,
                     search,
                 }),
                 customerPackageManagementService.customers({
-                    active_only: true,
-                    include_ignored: includeIgnored,
+                    active_only: 1,
+                    include_ignored: includeIgnored ? 1 : 0,
                     search,
                     per_page: 500,
                     page: 1,
@@ -101,7 +101,15 @@ export default function CustomerPackageManagementPage() {
             setSummary(summaryRes.data?.data || null);
             setRows(Array.isArray(rowsRes.data?.data) ? rowsRes.data.data : []);
         } catch (err) {
-            setError(err?.response?.data?.message || 'Gagal memuat data audit manajemen paket.');
+            const serverErrors = err?.response?.data?.errors;
+            if (serverErrors) {
+                const allMessages = Object.values(serverErrors)
+                    .flat()
+                    .filter(Boolean);
+                setError(allMessages.join(' ') || 'Gagal memuat data audit manajemen paket.');
+            } else {
+                setError(err?.response?.data?.message || 'Gagal memuat data audit manajemen paket.');
+            }
         } finally {
             setLoading(false);
         }
@@ -169,8 +177,10 @@ export default function CustomerPackageManagementPage() {
         } catch (err) {
             const serverErrors = err?.response?.data?.errors;
             if (serverErrors) {
-                const firstKey = Object.keys(serverErrors)[0];
-                setError(serverErrors[firstKey]?.[0] || 'Permintaan tidak valid.');
+                const allMessages = Object.values(serverErrors)
+                    .flat()
+                    .filter(Boolean);
+                setError(allMessages.join(' ') || 'Permintaan tidak valid.');
                 return;
             }
             setError(err?.response?.data?.message || err?.response?.data?.error || 'Aksi gagal diproses.');
@@ -618,4 +628,3 @@ function SimpleModal({ title, onClose, children }) {
 function UsersIcon(props) {
     return <Link2 {...props} />;
 }
-
