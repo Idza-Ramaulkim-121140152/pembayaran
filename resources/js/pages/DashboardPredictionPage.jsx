@@ -27,6 +27,7 @@ import {
     Filler,
 } from 'chart.js';
 import Alert from '../components/common/Alert';
+import Modal from '../components/common/Modal';
 import apiClient from '../services/api';
 
 ChartJS.register(
@@ -177,6 +178,12 @@ function getSectionSourceMeta(source) {
     return { label: 'Tidak diketahui', className: 'bg-gray-100 text-gray-600 border border-gray-200' };
 }
 
+function getRiskLevelBadgeClass(level) {
+    if (level === 'kritis') return 'bg-rose-100 text-rose-700';
+    if (level === 'waspada') return 'bg-amber-100 text-amber-700';
+    return 'bg-emerald-100 text-emerald-700';
+}
+
 function DashboardPredictionPage() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
@@ -218,6 +225,10 @@ function DashboardPredictionPage() {
     const [purchaseSimulationLoading, setPurchaseSimulationLoading] = useState(false);
     const [purchaseSimulationResult, setPurchaseSimulationResult] = useState(null);
     const [purchaseSimulationError, setPurchaseSimulationError] = useState(null);
+    const [purchaseRiskPreview, setPurchaseRiskPreview] = useState(null);
+    const [purchaseRiskModalOpen, setPurchaseRiskModalOpen] = useState(false);
+    const [purchaseRiskConfirmLoading, setPurchaseRiskConfirmLoading] = useState(false);
+    const [purchaseRiskModalError, setPurchaseRiskModalError] = useState(null);
     const projectionRequestSeqRef = useRef(0);
 
     const applyPredictionBundle = (bundle) => {
@@ -978,28 +989,56 @@ function DashboardPredictionPage() {
 
     const handleFulfillPurchaseGoal = async (row) => {
         if (!row || !row.id) return;
-        if (!window.confirm(`Tandai target pembelian "${row.name}" sebagai rencana terpenuhi? Target akan dinonaktifkan.`)) return;
 
         try {
             setPurchaseActionLoadingId(Number(row.id));
             setFinancialProjectionActionMessage(null);
+            setPurchaseRiskModalError(null);
+            setPurchaseRiskPreview(null);
 
-            await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
+            const previewResponse = await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
                 target_id: row.id,
+                preview_only: true,
             });
 
-            setFinancialProjectionActionMessage({
-                type: 'success',
-                text: `Target pembelian "${row.name}" berhasil ditandai terpenuhi dan dinonaktifkan.`,
-            });
-            await fetchFinancialProjection(financialProjectionRange);
+            setPurchaseRiskPreview(previewResponse.data?.data || null);
+            setPurchaseRiskModalOpen(true);
         } catch (err) {
             setFinancialProjectionActionMessage({
                 type: 'error',
-                text: err.response?.data?.message || 'Gagal menandai target pembelian sebagai terpenuhi.',
+                text: err.response?.data?.message || 'Gagal memuat preview risiko pembelian.',
             });
         } finally {
             setPurchaseActionLoadingId(null);
+        }
+    };
+
+    const handleConfirmFulfillPurchaseGoal = async () => {
+        const targetId = Number(purchaseRiskPreview?.target_id || 0);
+        const targetName = String(purchaseRiskPreview?.target_name || 'Target pembelian');
+        if (!targetId) return;
+
+        try {
+            setPurchaseRiskConfirmLoading(true);
+            setPurchaseRiskModalError(null);
+            setFinancialProjectionActionMessage(null);
+
+            await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
+                target_id: targetId,
+                preview_only: false,
+            });
+
+            setPurchaseRiskModalOpen(false);
+            setPurchaseRiskPreview(null);
+            setFinancialProjectionActionMessage({
+                type: 'success',
+                text: `Target pembelian "${targetName}" berhasil ditandai terpenuhi dan dinonaktifkan.`,
+            });
+            await fetchFinancialProjection(financialProjectionRange);
+        } catch (err) {
+            setPurchaseRiskModalError(err.response?.data?.message || 'Gagal mengeksekusi rencana pembelian.');
+        } finally {
+            setPurchaseRiskConfirmLoading(false);
         }
     };
 
@@ -1119,6 +1158,105 @@ function DashboardPredictionPage() {
                     onClose={() => setFinancialProjectionActionMessage(null)}
                 />
             )}
+
+            <Modal
+                isOpen={purchaseRiskModalOpen}
+                onClose={() => {
+                    if (purchaseRiskConfirmLoading) return;
+                    setPurchaseRiskModalOpen(false);
+                    setPurchaseRiskPreview(null);
+                    setPurchaseRiskModalError(null);
+                }}
+                title="Risiko Eksekusi Target Pembelian"
+                size="2xl"
+            >
+                <div className="space-y-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-sm text-slate-700">
+                            Target: <span className="font-semibold text-slate-900">{purchaseRiskPreview?.target_name || '-'}</span>
+                        </p>
+                        <p className="text-sm text-slate-700 mt-1">
+                            Nominal: <span className="font-semibold text-slate-900">{formatCurrency(purchaseRiskPreview?.target_amount || 0)}</span>
+                        </p>
+                        <p className="text-xs text-slate-600 mt-1">
+                            Horizon risiko: {purchaseRiskPreview?.horizon_start_date || '-'} s.d. {purchaseRiskPreview?.horizon_end_date || '-'}
+                        </p>
+                    </div>
+
+                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                        <table className="w-full text-sm min-w-[1180px]">
+                            <thead className="bg-gray-50 text-gray-600 text-left">
+                                <tr>
+                                    <th className="px-3 py-2">Tanggal Wajib</th>
+                                    <th className="px-3 py-2 text-right">Nominal Wajib</th>
+                                    <th className="px-3 py-2 text-center">Status Wajib</th>
+                                    <th className="px-3 py-2 text-right">Total Saldo Sebelum</th>
+                                    <th className="px-3 py-2 text-right">Total Saldo Setelah - Nominal</th>
+                                    <th className="px-3 py-2 text-right">Saldo Bebas Sebelum</th>
+                                    <th className="px-3 py-2 text-right">Saldo Bebas Setelah - Nominal</th>
+                                    <th className="px-3 py-2 text-center">Risiko</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(purchaseRiskPreview?.risk_rows || []).length === 0 ? (
+                                    <tr>
+                                        <td colSpan={8} className="px-3 py-4 text-center text-gray-500">Tidak ada data pengeluaran wajib pada horizon ini.</td>
+                                    </tr>
+                                ) : (purchaseRiskPreview?.risk_rows || []).map((row) => (
+                                    <tr key={`risk-row-${row.due_date}`} className="border-t border-gray-100">
+                                        <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
+                                        <td className="px-3 py-2 text-right text-gray-900 font-semibold">{formatCurrency(row.mandatory_amount || 0)}</td>
+                                        <td className="px-3 py-2 text-center text-gray-700">{row.status_label || '-'}</td>
+                                        <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.total_balance_before || 0)}</td>
+                                        <td className={`px-3 py-2 text-right font-semibold ${Number(row.total_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}`}>
+                                            {formatCurrency(row.total_balance_after_purchase || 0)}
+                                        </td>
+                                        <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.free_balance_before || 0)}</td>
+                                        <td className={`px-3 py-2 text-right font-semibold ${Number(row.free_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}`}>
+                                            {formatCurrency(row.free_balance_after_purchase || 0)}
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskLevelBadgeClass(row.risk_level)}`}>
+                                                {row.risk_level || 'aman'}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {purchaseRiskModalError && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {purchaseRiskModalError}
+                        </div>
+                    )}
+
+                    <div className="flex items-center justify-end gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (purchaseRiskConfirmLoading) return;
+                                setPurchaseRiskModalOpen(false);
+                                setPurchaseRiskPreview(null);
+                                setPurchaseRiskModalError(null);
+                            }}
+                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-60"
+                            disabled={purchaseRiskConfirmLoading}
+                        >
+                            Batal
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleConfirmFulfillPurchaseGoal}
+                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                            disabled={purchaseRiskConfirmLoading}
+                        >
+                            {purchaseRiskConfirmLoading ? 'Memproses...' : 'Tetap Jalankan'}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
 
             <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white shadow-lg">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
@@ -2062,14 +2200,19 @@ function DashboardPredictionPage() {
                                                 </span>
                                             </td>
                                             <td className="px-3 py-2 text-center">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleFulfillPurchaseGoal(row)}
-                                                    disabled={purchaseActionLoadingId === Number(row.id) || row.is_actionable === false}
-                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                                                >
-                                                    {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
-                                                </button>
+                                                <div className="flex flex-col items-center gap-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleFulfillPurchaseGoal(row)}
+                                                        disabled={purchaseActionLoadingId === Number(row.id)}
+                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                                                    >
+                                                        {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
+                                                    </button>
+                                                    {row.can_execute_now !== true && (
+                                                        <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

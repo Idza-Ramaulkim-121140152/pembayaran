@@ -1385,7 +1385,7 @@ class DashboardController extends Controller
         $dueDate = Carbon::parse($validated['due_date'])->toDateString();
         $actualDate = isset($validated['actual_date'])
             ? Carbon::parse($validated['actual_date'])->toDateString()
-            : Carbon::today()->toDateString();
+            : $dueDate;
 
         $amount = isset($validated['amount']) && (float) $validated['amount'] > 0
             ? (float) $validated['amount']
@@ -1539,6 +1539,7 @@ class DashboardController extends Controller
             'target_id' => 'required|integer|exists:financial_planning_targets,id',
             'fulfilled_date' => 'nullable|date',
             'notes' => 'nullable|string|max:500',
+            'preview_only' => 'nullable|boolean',
         ]);
 
         $target = FinancialPlanningTarget::query()->find((int) $validated['target_id']);
@@ -1555,6 +1556,20 @@ class DashboardController extends Controller
                     'target_id' => (int) $target->id,
                     'is_active' => false,
                 ],
+            ]);
+        }
+
+        $today = Carbon::today()->startOfDay();
+        $previewData = $this->buildPurchaseGoalRiskPreview(
+            $target,
+            $today->copy(),
+            $today->copy()->addDays(365)->endOfDay()
+        );
+        $previewOnly = (bool) ($validated['preview_only'] ?? false);
+        if ($previewOnly) {
+            return response()->json([
+                'message' => 'Preview risiko pembelian berhasil dihitung.',
+                'data' => $previewData,
             ]);
         }
 
@@ -1590,6 +1605,7 @@ class DashboardController extends Controller
                 'target_id' => (int) $target->id,
                 'fulfilled_date' => $fulfilledDate,
                 'is_active' => false,
+                'risk_preview' => $previewData,
             ],
         ]);
     }
@@ -2536,8 +2552,18 @@ class DashboardController extends Controller
                 }
 
                 $key = $targetId . '|' . $dueDate;
-                $anchorDate = $actualDate ?: $dueDate;
-                $anchorSource = $actualDate ? 'actual_date' : 'due_date_fallback';
+                $anchorDate = $dueDate;
+                $anchorSource = 'due_date_fallback';
+
+                if ($actualDate !== null) {
+                    if ($actualDate < $dueDate) {
+                        $anchorDate = $dueDate;
+                        $anchorSource = 'actual_date_clamped_to_due_date';
+                    } else {
+                        $anchorDate = $actualDate;
+                        $anchorSource = 'actual_date';
+                    }
+                }
 
                 $confirmationMap[$key] = [
                     'target_id' => $targetId,
@@ -2841,7 +2867,7 @@ class DashboardController extends Controller
         ];
     }
 
-    private function buildFinancialProjection(Carbon $startDate, Carbon $endDate): array
+    private function buildFinancialProjection(Carbon $startDate, Carbon $endDate, bool $evaluatePurchaseGoals = true): array
     {
         $rangeStart = $startDate->copy()->startOfDay();
         $rangeEnd = $endDate->copy()->endOfDay();
@@ -2895,6 +2921,13 @@ class DashboardController extends Controller
             $mandatoryTargets,
             $mandatoryContextStart->copy(),
             $mandatoryContextEnd->copy()
+        );
+        $openingBalance = $this->resolveFinancialProjectionOpeningBalance(
+            $rangeStart->copy(),
+            $today->copy(),
+            $ledgerReady,
+            $mandatoryEventsForTimeline,
+            $mandatoryConfirmations
         );
 
         $eventsByDate = [];
@@ -3086,72 +3119,10 @@ class DashboardController extends Controller
         $simulationAnchorDate = $budgetReferenceDate;
         $baselineCoverage = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, 0);
         $purchaseGoals = [];
-
-        foreach ($purchaseTargets as $target) {
-            $amount = (float) ($target->amount ?? 0);
-            $desiredDate = $target->target_date ? Carbon::parse($target->target_date)->toDateString() : null;
-            $simulationStart = $desiredDate && $desiredDate >= $simulationAnchorDate
-                ? $desiredDate
-                : $simulationAnchorDate;
-
-            $predictedBuyDate = null;
-            foreach ($budgetRows as $row) {
-                $candidateDate = (string) ($row['date'] ?? '');
-                if ($candidateDate === '') {
-                    continue;
-                }
-
-                $candidateCoverage = $this->computeCoverageSimulation($dailyProjection, $candidateDate, $amount);
-                if ($candidateCoverage['is_covered'] === true) {
-                    $predictedBuyDate = $candidateDate;
-                    break;
-                }
-            }
-
-            $desiredCoverage = null;
-            if ($desiredDate !== null) {
-                $desiredCoverage = $this->computeCoverageSimulation($dailyProjection, $desiredDate, $amount);
-            }
-
-            $nowCoverage = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, $amount);
-            $canExecuteNow = $nowCoverage['is_covered'] === true;
-            $canExecuteInRange = $predictedBuyDate !== null;
-            $canExecuteAtDesiredDate = $desiredCoverage ? ($desiredCoverage['is_covered'] === true) : null;
-            $blockedByMandatory = !$canExecuteNow && !$canExecuteInRange;
-
-            $indicator = 'belum_terjangkau';
-            if ($canExecuteNow) {
-                $indicator = 'siap';
-            } elseif ($canExecuteInRange) {
-                $indicator = 'menunggu';
-            } elseif ($desiredCoverage && $desiredCoverage['first_failure_date']) {
-                $indicator = 'tertahan_wajib';
-            }
-
-            $purchaseGoals[] = [
-                'id' => $target->id,
-                'name' => $target->name,
-                'description' => $target->description,
-                'amount' => (int) round($amount),
-                'desired_date' => $desiredDate,
-                'predicted_buy_date' => $predictedBuyDate,
-                'can_execute_now' => $canExecuteNow,
-                'can_execute_in_range' => $canExecuteInRange,
-                'can_execute_at_desired_date' => $canExecuteAtDesiredDate,
-                'blocked_by_mandatory' => $blockedByMandatory,
-                'desired_date_discretionary_balance' => null,
-                'indicator' => $indicator,
-                'coverage' => [
-                    'simulation_start' => $simulationStart,
-                    'is_covered' => $desiredCoverage['is_covered'] ?? $nowCoverage['is_covered'],
-                    'first_failure_date' => $desiredCoverage['first_failure_date'] ?? $nowCoverage['first_failure_date'],
-                    'minimum_balance_after_purchase' => $desiredCoverage['minimum_balance_after_purchase'] ?? $nowCoverage['minimum_balance_after_purchase'],
-                    'coverage_notes' => $desiredCoverage['coverage_notes'] ?? $nowCoverage['coverage_notes'],
-                ],
-                'is_actionable' => true,
-                'action_state' => 'active',
-                'is_active_target' => true,
-            ];
+        if ($evaluatePurchaseGoals && $purchaseTargets->count() > 0) {
+            $fixedStart = $today->copy()->startOfDay();
+            $fixedEnd = $today->copy()->addDays(365)->endOfDay();
+            $purchaseGoals = $this->buildFixedHorizonPurchaseGoals($purchaseTargets, $fixedStart, $fixedEnd);
         }
 
         $reachablePurchaseTargets = collect($purchaseGoals)->where('can_execute_in_range', true)->count();
@@ -3307,6 +3278,278 @@ class DashboardController extends Controller
             'mandatory_expense_projection' => $mandatoryExpenseProjection,
             'purchase_goals' => $purchaseGoals,
         ];
+    }
+
+    private function buildFixedHorizonPurchaseGoals($purchaseTargets, Carbon $fixedStart, Carbon $fixedEnd): array
+    {
+        if ($purchaseTargets->count() < 1) {
+            return [];
+        }
+
+        $fixedProjection = $this->buildFinancialProjection($fixedStart->copy(), $fixedEnd->copy(), false);
+        $dailyProjection = is_array($fixedProjection['daily_projection'] ?? null)
+            ? $fixedProjection['daily_projection']
+            : [];
+        $simulationAnchorDate = (string) ($fixedProjection['summary']['operational_budget_as_of_date'] ?? $fixedStart->toDateString());
+
+        return $this->evaluatePurchaseGoals($purchaseTargets, $dailyProjection, $simulationAnchorDate);
+    }
+
+    private function evaluatePurchaseGoals($purchaseTargets, array $dailyProjection, string $simulationAnchorDate): array
+    {
+        $budgetRows = collect($dailyProjection)->filter(function (array $row) use ($simulationAnchorDate) {
+            return isset($row['date']) && (string) $row['date'] >= $simulationAnchorDate;
+        })->values();
+
+        $purchaseGoals = [];
+        foreach ($purchaseTargets as $target) {
+            $amount = (float) ($target->amount ?? 0);
+            $desiredDate = $target->target_date ? Carbon::parse($target->target_date)->toDateString() : null;
+            $simulationStart = $desiredDate && $desiredDate >= $simulationAnchorDate
+                ? $desiredDate
+                : $simulationAnchorDate;
+
+            $predictedBuyDate = null;
+            foreach ($budgetRows as $row) {
+                $candidateDate = (string) ($row['date'] ?? '');
+                if ($candidateDate === '') {
+                    continue;
+                }
+
+                $candidateCoverage = $this->computeCoverageSimulation($dailyProjection, $candidateDate, $amount);
+                if ($candidateCoverage['is_covered'] === true) {
+                    $predictedBuyDate = $candidateDate;
+                    break;
+                }
+            }
+
+            $desiredCoverage = null;
+            if ($desiredDate !== null) {
+                $desiredCoverage = $this->computeCoverageSimulation($dailyProjection, $desiredDate, $amount);
+            }
+
+            $nowCoverage = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, $amount);
+            $canExecuteNow = $nowCoverage['is_covered'] === true;
+            $canExecuteInRange = $predictedBuyDate !== null;
+            $canExecuteAtDesiredDate = $desiredCoverage ? ($desiredCoverage['is_covered'] === true) : null;
+            $blockedByMandatory = !$canExecuteNow && !$canExecuteInRange;
+
+            $indicator = 'belum_terjangkau';
+            if ($canExecuteNow) {
+                $indicator = 'siap';
+            } elseif ($canExecuteInRange) {
+                $indicator = 'menunggu';
+            } elseif ($desiredCoverage && $desiredCoverage['first_failure_date']) {
+                $indicator = 'tertahan_wajib';
+            }
+
+            $purchaseGoals[] = [
+                'id' => $target->id,
+                'name' => $target->name,
+                'description' => $target->description,
+                'amount' => (int) round($amount),
+                'desired_date' => $desiredDate,
+                'predicted_buy_date' => $predictedBuyDate,
+                'can_execute_now' => $canExecuteNow,
+                'can_execute_in_range' => $canExecuteInRange,
+                'can_execute_at_desired_date' => $canExecuteAtDesiredDate,
+                'blocked_by_mandatory' => $blockedByMandatory,
+                'desired_date_discretionary_balance' => null,
+                'indicator' => $indicator,
+                'coverage' => [
+                    'simulation_start' => $simulationStart,
+                    'is_covered' => $desiredCoverage['is_covered'] ?? $nowCoverage['is_covered'],
+                    'first_failure_date' => $desiredCoverage['first_failure_date'] ?? $nowCoverage['first_failure_date'],
+                    'minimum_balance_after_purchase' => $desiredCoverage['minimum_balance_after_purchase'] ?? $nowCoverage['minimum_balance_after_purchase'],
+                    'coverage_notes' => $desiredCoverage['coverage_notes'] ?? $nowCoverage['coverage_notes'],
+                ],
+                'is_actionable' => true,
+                'action_state' => 'active',
+                'is_active_target' => true,
+            ];
+        }
+
+        return $purchaseGoals;
+    }
+
+    private function buildPurchaseGoalRiskPreview(
+        FinancialPlanningTarget $target,
+        Carbon $fixedStart,
+        Carbon $fixedEnd
+    ): array {
+        $fixedProjection = $this->buildFinancialProjection($fixedStart->copy(), $fixedEnd->copy(), false);
+        $dailyProjection = collect((array) ($fixedProjection['daily_projection'] ?? []))
+            ->filter(fn ($row) => is_array($row) && !empty($row['date']))
+            ->keyBy(function ($row) {
+                return (string) ($row['date'] ?? '');
+            });
+        $mandatoryRows = collect((array) ($fixedProjection['mandatory_expense_projection'] ?? []))
+            ->filter(fn ($row) => is_array($row) && !empty($row['due_date']))
+            ->values();
+
+        $targetAmount = (float) ($target->amount ?? 0);
+        $riskRows = [];
+
+        foreach ($mandatoryRows->groupBy(function ($row) {
+            return (string) ($row['due_date'] ?? '');
+        }) as $dueDate => $rows) {
+            $dueDateKey = (string) $dueDate;
+            if ($dueDateKey === '') {
+                continue;
+            }
+
+            $dailyRow = $dailyProjection->get($dueDateKey);
+            $totalBefore = (float) (($dailyRow['chart_balance'] ?? $dailyRow['projected_balance'] ?? 0));
+            $freeBefore = (float) ($dailyRow['discretionary_balance_display'] ?? 0);
+            $totalAfter = $totalBefore - $targetAmount;
+            $freeAfter = $freeBefore - $targetAmount;
+            $mandatoryAmount = (float) $rows->sum(function ($row) {
+                return (float) ($row['amount'] ?? 0);
+            });
+            $confirmedCount = (int) $rows->where('is_confirmed', true)->count();
+            $totalCount = (int) $rows->count();
+            $pendingCount = max(0, $totalCount - $confirmedCount);
+
+            $riskLevel = 'aman';
+            if ($freeAfter < 0 || $totalAfter < 0) {
+                $riskLevel = 'kritis';
+            } elseif ($freeAfter < 1000000) {
+                $riskLevel = 'waspada';
+            }
+
+            $statusLabel = $pendingCount > 0
+                ? 'Pending'
+                : 'Terkonfirmasi';
+
+            $riskRows[] = [
+                'due_date' => $dueDateKey,
+                'mandatory_amount' => (int) round($mandatoryAmount),
+                'status_label' => $statusLabel,
+                'confirmed_events' => $confirmedCount,
+                'pending_events' => $pendingCount,
+                'total_balance_before' => (int) round($totalBefore),
+                'total_balance_after_purchase' => (int) round($totalAfter),
+                'free_balance_before' => (int) round($freeBefore),
+                'free_balance_after_purchase' => (int) round($freeAfter),
+                'risk_level' => $riskLevel,
+            ];
+        }
+
+        usort($riskRows, function (array $a, array $b) {
+            return strcmp((string) ($a['due_date'] ?? ''), (string) ($b['due_date'] ?? ''));
+        });
+
+        $minTotalAfter = count($riskRows) > 0
+            ? min(array_map(fn ($row) => (int) ($row['total_balance_after_purchase'] ?? 0), $riskRows))
+            : 0;
+        $minFreeAfter = count($riskRows) > 0
+            ? min(array_map(fn ($row) => (int) ($row['free_balance_after_purchase'] ?? 0), $riskRows))
+            : 0;
+        $criticalCount = count(array_filter($riskRows, fn ($row) => ($row['risk_level'] ?? 'aman') === 'kritis'));
+        $warningCount = count(array_filter($riskRows, fn ($row) => ($row['risk_level'] ?? 'aman') === 'waspada'));
+
+        $readiness = $this->buildFixedHorizonPurchaseGoals(
+            collect([$target]),
+            $fixedStart->copy(),
+            $fixedEnd->copy()
+        );
+        $targetReadiness = collect($readiness)->firstWhere('id', (int) $target->id);
+
+        return [
+            'target_id' => (int) $target->id,
+            'target_name' => (string) ($target->name ?? ''),
+            'target_amount' => (int) round($targetAmount),
+            'horizon_start_date' => $fixedStart->toDateString(),
+            'horizon_end_date' => $fixedEnd->toDateString(),
+            'can_execute_now' => (bool) ($targetReadiness['can_execute_now'] ?? false),
+            'predicted_buy_date' => $targetReadiness['predicted_buy_date'] ?? null,
+            'indicator' => $targetReadiness['indicator'] ?? 'belum_terjangkau',
+            'risk_rows' => $riskRows,
+            'summary' => [
+                'rows_count' => count($riskRows),
+                'critical_count' => $criticalCount,
+                'warning_count' => $warningCount,
+                'minimum_total_balance_after_purchase' => $minTotalAfter,
+                'minimum_free_balance_after_purchase' => $minFreeAfter,
+            ],
+        ];
+    }
+
+    private function resolveFinancialProjectionOpeningBalance(
+        Carbon $rangeStart,
+        Carbon $today,
+        bool $ledgerReady,
+        array $mandatoryEventsForTimeline,
+        array $mandatoryConfirmations
+    ): float {
+        if (!$ledgerReady) {
+            return 0.0;
+        }
+
+        if ($rangeStart->lte($today)) {
+            return $this->getLedgerBalanceBefore($rangeStart->copy());
+        }
+
+        $bridgeStart = $today->copy()->startOfDay();
+        $bridgeEnd = $rangeStart->copy()->subDay()->startOfDay();
+
+        if ($bridgeEnd->lt($bridgeStart)) {
+            return $this->getLedgerBalanceBefore($rangeStart->copy());
+        }
+
+        $forecast = $this->buildRevenueForecast($bridgeStart->copy(), $bridgeEnd->copy()->endOfDay());
+        $dailyForecastIncomeMap = [];
+        foreach (($forecast['daily_forecast'] ?? []) as $item) {
+            $date = (string) ($item['date'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+
+            $dailyForecastIncomeMap[$date] = (float) ($item['predicted_revenue'] ?? 0);
+        }
+
+        $bridgeLedgerMaps = $this->buildDailyLedgerCashflowMaps($bridgeStart->copy(), $bridgeEnd->copy());
+        $bridgeNetMap = (array) ($bridgeLedgerMaps['net'] ?? []);
+        $bridgeIncomeMap = (array) ($bridgeLedgerMaps['income'] ?? []);
+
+        $bridgeEventsByDate = [];
+        foreach ($mandatoryEventsForTimeline as $event) {
+            $dueDate = (string) ($event['due_date'] ?? '');
+            if ($dueDate === '') {
+                continue;
+            }
+
+            $dueDateCarbon = Carbon::parse($dueDate)->startOfDay();
+            if ($dueDateCarbon->lt($bridgeStart) || $dueDateCarbon->gt($bridgeEnd)) {
+                continue;
+            }
+
+            $bridgeEventsByDate[$dueDate][] = $event;
+        }
+
+        $cash = $this->getLedgerBalanceBefore($bridgeStart->copy());
+
+        for ($cursor = $bridgeStart->copy(); $cursor->lte($bridgeEnd); $cursor->addDay()) {
+            $dateKey = $cursor->toDateString();
+            $forecastIncome = (float) ($dailyForecastIncomeMap[$dateKey] ?? 0);
+            $actualNetCashflow = (float) ($bridgeNetMap[$dateKey] ?? 0);
+            $hasActualLedgerData = array_key_exists($dateKey, $bridgeNetMap) || array_key_exists($dateKey, $bridgeIncomeMap);
+            $useActuals = $cursor->equalTo($today) && $hasActualLedgerData;
+
+            $cash += $useActuals ? $actualNetCashflow : $forecastIncome;
+
+            foreach (($bridgeEventsByDate[$dateKey] ?? []) as $event) {
+                $amount = (float) ($event['amount'] ?? 0);
+                $eventKey = ((int) ($event['target_id'] ?? 0)) . '|' . ((string) ($event['due_date'] ?? $dateKey));
+                $isConfirmed = ($mandatoryConfirmations[$eventKey] ?? null) !== null;
+
+                if (!$isConfirmed) {
+                    $cash -= $amount;
+                }
+            }
+        }
+
+        return $cash;
     }
 
     private function expandMandatoryExpenseEvents($mandatoryTargets, Carbon $startDate, Carbon $endDate): array
