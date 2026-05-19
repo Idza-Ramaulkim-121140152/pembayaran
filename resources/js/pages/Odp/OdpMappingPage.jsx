@@ -3,6 +3,7 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MapPicker from '../../components/common/MapPicker';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import masterWilayahService from '../../services/masterWilayahService';
 import odpMappingService from '../../services/odpMappingService';
 
@@ -240,6 +241,34 @@ function OdpMappingPage() {
             }
         }
     };
+
+    const customerColumns = [
+        {
+            key: 'select',
+            label: 'Pilih',
+            render: (row) => (
+                <input
+                    type="checkbox"
+                    checked={selectedSet.has(row.id)}
+                    onChange={() => toggleSelect(row.id)}
+                />
+            ),
+        },
+        { key: 'name', label: 'Nama', cellClassName: 'px-4 py-3 font-medium text-gray-900' },
+        { key: 'pppoe_username', label: 'PPPoE', render: (row) => row.pppoe_username || '-' },
+        { key: 'phone', label: 'Telepon', render: (row) => row.phone || '-' },
+        { key: 'odp', label: 'ODP (legacy)', render: (row) => row.odp || '-' },
+        { key: 'odp_master_name', label: 'ODP (master)', render: (row) => row.odp_master_name || '-' },
+        {
+            key: 'coordinate',
+            label: 'Koordinat',
+            render: (row) => (
+                (row.latitude !== null && row.latitude !== undefined && row.longitude !== null && row.longitude !== undefined)
+                    ? `${row.latitude}, ${row.longitude}`
+                    : '-'
+            ),
+        },
+    ];
 
     const tryAssign = async (forceReassign = false) => {
         return odpMappingService.assign({
@@ -609,49 +638,14 @@ function OdpMappingPage() {
                         <LoadingSpinner text="Memuat pelanggan..." />
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full text-sm">
-                            <thead className="bg-gray-50 text-gray-600">
-                                <tr>
-                                    <th className="px-4 py-3 text-left">Pilih</th>
-                                    <th className="px-4 py-3 text-left">Nama</th>
-                                    <th className="px-4 py-3 text-left">PPPoE</th>
-                                    <th className="px-4 py-3 text-left">Telepon</th>
-                                    <th className="px-4 py-3 text-left">ODP (legacy)</th>
-                                    <th className="px-4 py-3 text-left">ODP (master)</th>
-                                    <th className="px-4 py-3 text-left">Koordinat</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {displayRows.map((row) => (
-                                    <tr key={row.id} className={selectedSet.has(row.id) ? 'bg-blue-50' : ''}>
-                                        <td className="px-4 py-3">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedSet.has(row.id)}
-                                                onChange={() => toggleSelect(row.id)}
-                                            />
-                                        </td>
-                                        <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
-                                        <td className="px-4 py-3">{row.pppoe_username || '-'}</td>
-                                        <td className="px-4 py-3">{row.phone || '-'}</td>
-                                        <td className="px-4 py-3">{row.odp || '-'}</td>
-                                        <td className="px-4 py-3">{row.odp_master_name || '-'}</td>
-                                        <td className="px-4 py-3">
-                                            {(row.latitude !== null && row.latitude !== undefined && row.longitude !== null && row.longitude !== undefined)
-                                                ? `${row.latitude}, ${row.longitude}`
-                                                : '-'}
-                                        </td>
-                                    </tr>
-                                ))}
-                                {displayRows.length === 0 && (
-                                    <tr>
-                                        <td className="px-4 py-8 text-center text-gray-500" colSpan={7}>Tidak ada data pelanggan.</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                    <ResponsiveDataView
+                        rows={displayRows}
+                        columns={customerColumns}
+                        keyField="id"
+                        priorityFields={['name', 'pppoe_username', 'phone', 'odp_master_name']}
+                        emptyMessage="Tidak ada data pelanggan."
+                        rowClassName={(row) => selectedSet.has(row.id) ? 'bg-blue-50' : ''}
+                    />
                 )}
             </div>
         </div>

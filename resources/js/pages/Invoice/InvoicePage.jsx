@@ -467,7 +467,7 @@ function InvoicePage() {
     const timeRemaining = getTimeRemaining(invoice?.due_date);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 py-8 px-4">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 py-6 sm:py-8 px-3 sm:px-4 overflow-x-clip">
             <div className="max-w-lg mx-auto">
                 {/* Header Card */}
                 <div className="bg-white rounded-t-3xl pt-8 px-6 pb-6 relative overflow-hidden">
@@ -552,7 +552,7 @@ function InvoicePage() {
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-500">Pelanggan</p>
-                                    <p className="font-semibold text-gray-900 text-sm">{invoice?.customer?.name}</p>
+                                    <p className="font-semibold text-gray-900 text-sm break-words">{invoice?.customer?.name}</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
@@ -765,21 +765,21 @@ function InvoicePage() {
                         </a>
                     </div>
                     <p className="text-center text-xs text-gray-400 mt-4">
-                        © {new Date().getFullYear()} Rumah Kita Net. All rights reserved.
+                        (c) {new Date().getFullYear()} Rumah Kita Net. All rights reserved.
                     </p>
                 </div>
             </div>
 
             {/* Confirmation Modal */}
             {showConfirmModal && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
                         <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-5 text-white">
                             <h2 className="text-xl font-bold">Konfirmasi Pembayaran</h2>
                             <p className="text-sm text-white/80 mt-1">Kirim bukti pembayaran Anda</p>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     Nominal yang Dibayarkan

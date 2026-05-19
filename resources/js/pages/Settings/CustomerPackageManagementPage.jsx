@@ -10,6 +10,7 @@ import {
     UserX2,
     WifiOff,
 } from 'lucide-react';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import apiClient from '../../services/api';
 import customerPackageManagementService from '../../services/customerPackageManagementService';
 
@@ -194,6 +195,39 @@ export default function CustomerPackageManagementPage() {
         setIgnoreReason('');
     };
 
+    const packageAuditColumns = [
+        {
+            key: 'customer_name',
+            label: 'Pelanggan',
+            render: (row) => (
+                <div>
+                    <p className="font-medium text-gray-900">{row.customer_name}</p>
+                    <p className="text-xs text-gray-500">{row.phone || '-'}</p>
+                </div>
+            ),
+        },
+        { key: 'pppoe_username', label: 'Username PPPoE', render: (row) => row.pppoe_username || '-' },
+        { key: 'system_package', label: 'Paket Sistem', render: (row) => row.system_package || '-' },
+        { key: 'mikrotik_profile', label: 'Profile PPPoE', render: (row) => row.mikrotik_profile || '-' },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (row) => (
+                <div>
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_BADGE[row.status] || 'bg-slate-100 text-slate-700'}`}>
+                        {row.status}
+                    </span>
+                    {row.ignored && (
+                        <span className="ml-2 inline-flex px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">
+                            Diabaikan
+                        </span>
+                    )}
+                </div>
+            ),
+        },
+        { key: 'last_update_at', label: 'Last Update', render: (row) => formatDateTime(row.last_update_at) },
+    ];
+
     return (
         <div className="space-y-6 min-w-0">
             <div className="app-section-header flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -268,150 +302,113 @@ export default function CustomerPackageManagementPage() {
                                 <span className="text-sm text-gray-500">{rowsByStatus[status]?.length || 0} pelanggan</span>
                             </div>
                         </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full min-w-[980px] text-sm">
-                                <thead className="bg-white text-gray-600">
-                                    <tr>
-                                        <th className="px-3 py-2 text-left">Pelanggan</th>
-                                        <th className="px-3 py-2 text-left">Username PPPoE</th>
-                                        <th className="px-3 py-2 text-left">Paket Sistem</th>
-                                        <th className="px-3 py-2 text-left">Profile PPPoE</th>
-                                        <th className="px-3 py-2 text-left">Status</th>
-                                        <th className="px-3 py-2 text-left">Last Update</th>
-                                        <th className="px-3 py-2 text-right">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {(rowsByStatus[status] || []).length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-gray-500 text-center" colSpan={7}>
-                                                Tidak ada data pada section ini.
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        (rowsByStatus[status] || []).map((row) => (
-                                            <tr key={`${row.customer_id}-${status}`} className="border-t border-gray-100">
-                                                <td className="px-3 py-2">
-                                                    <p className="font-medium text-gray-900">{row.customer_name}</p>
-                                                    <p className="text-xs text-gray-500">{row.phone || '-'}</p>
-                                                </td>
-                                                <td className="px-3 py-2 text-gray-700">{row.pppoe_username || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-700">{row.system_package || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-700">{row.mikrotik_profile || '-'}</td>
-                                                <td className="px-3 py-2">
-                                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_BADGE[status]}`}>
-                                                        {row.status}
-                                                    </span>
-                                                    {row.ignored && (
-                                                        <span className="ml-2 inline-flex px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-700">
-                                                            Diabaikan
-                                                        </span>
-                                                    )}
-                                                </td>
-                                                <td className="px-3 py-2 text-gray-500">{formatDateTime(row.last_update_at)}</td>
-                                                <td className="px-3 py-2 text-right">
-                                                    <div className="inline-flex flex-wrap justify-end gap-1">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setDetailRow(row)}
-                                                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium"
-                                                        >
-                                                            Lihat Detail
-                                                        </button>
-                                                        {canManage && status === 'TIDAK_SESUAI' && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setResolveRow(row)}
-                                                                className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium"
-                                                            >
-                                                                Sesuaikan Paket
-                                                            </button>
-                                                        )}
-                                                        {canManage && status === 'PPPOE_TIDAK_DITEMUKAN' && (
-                                                            <>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => runAction(() => customerPackageManagementService.createPppoe(row.customer_id))}
-                                                                    disabled={actionLoading}
-                                                                    className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-60"
-                                                                >
-                                                                    Buat PPPoE
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setLinkRow(row);
-                                                                        setLinkSelected('');
-                                                                        setLinkSearch('');
-                                                                    }}
-                                                                    className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium"
-                                                                >
-                                                                    Hubungkan PPPoE
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleIgnore(row)}
-                                                                    className="px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium"
-                                                                >
-                                                                    Abaikan
-                                                                </button>
-                                                            </>
-                                                        )}
-                                                        {canManage && status === 'BELUM_ADA_PAKET' && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    setAssignRow(row);
-                                                                    setSelectedPackageId('');
-                                                                }}
-                                                                className="px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium"
-                                                            >
-                                                                Pilih Paket
-                                                            </button>
-                                                        )}
-                                                        {canManage && status === 'BELUM_ADA_USERNAME' && (
-                                                            <>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => runAction(() => customerPackageManagementService.createPppoe(row.customer_id))}
-                                                                    disabled={actionLoading}
-                                                                    className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-60"
-                                                                >
-                                                                    Buat PPPoE
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setLinkRow(row);
-                                                                        setLinkSelected('');
-                                                                        setLinkSearch('');
-                                                                    }}
-                                                                    className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium"
-                                                                >
-                                                                    Hubungkan PPPoE
-                                                                </button>
-                                                            </>
-                                                        )}
-                                                        {canManage && row.ignored && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() =>
-                                                                    runAction(() =>
-                                                                        customerPackageManagementService.unignore(row.customer_id, { status_code: row.status })
-                                                                    )
-                                                                }
-                                                                className="px-2 py-1 rounded bg-slate-700 hover:bg-slate-800 text-white text-xs font-medium"
-                                                            >
-                                                                Buka Abaikan
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
+                        <div className="p-4 md:p-0">
+                            <ResponsiveDataView
+                                rows={rowsByStatus[status] || []}
+                                columns={packageAuditColumns}
+                                keyField="customer_id"
+                                priorityFields={['customer_name', 'status', 'pppoe_username']}
+                                emptyMessage="Tidak ada data pada section ini."
+                                tableClassName="w-full md:min-w-[980px] text-sm"
+                                actions={(row) => (
+                                    <div className="inline-flex flex-wrap gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => setDetailRow(row)}
+                                            className="w-full sm:w-auto px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium"
+                                        >
+                                            Lihat Detail
+                                        </button>
+                                        {canManage && status === 'TIDAK_SESUAI' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setResolveRow(row)}
+                                                className="w-full sm:w-auto px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium"
+                                            >
+                                                Sesuaikan Paket
+                                            </button>
+                                        )}
+                                        {canManage && status === 'PPPOE_TIDAK_DITEMUKAN' && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => runAction(() => customerPackageManagementService.createPppoe(row.customer_id))}
+                                                    disabled={actionLoading}
+                                                    className="w-full sm:w-auto px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-60"
+                                                >
+                                                    Buat PPPoE
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setLinkRow(row);
+                                                        setLinkSelected('');
+                                                        setLinkSearch('');
+                                                    }}
+                                                    className="w-full sm:w-auto px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium"
+                                                >
+                                                    Hubungkan PPPoE
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleIgnore(row)}
+                                                    className="w-full sm:w-auto px-2 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs font-medium"
+                                                >
+                                                    Abaikan
+                                                </button>
+                                            </>
+                                        )}
+                                        {canManage && status === 'BELUM_ADA_PAKET' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAssignRow(row);
+                                                    setSelectedPackageId('');
+                                                }}
+                                                className="w-full sm:w-auto px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium"
+                                            >
+                                                Pilih Paket
+                                            </button>
+                                        )}
+                                        {canManage && status === 'BELUM_ADA_USERNAME' && (
+                                            <>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => runAction(() => customerPackageManagementService.createPppoe(row.customer_id))}
+                                                    disabled={actionLoading}
+                                                    className="w-full sm:w-auto px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium disabled:opacity-60"
+                                                >
+                                                    Buat PPPoE
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setLinkRow(row);
+                                                        setLinkSelected('');
+                                                        setLinkSearch('');
+                                                    }}
+                                                    className="w-full sm:w-auto px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium"
+                                                >
+                                                    Hubungkan PPPoE
+                                                </button>
+                                            </>
+                                        )}
+                                        {canManage && row.ignored && (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    runAction(() =>
+                                                        customerPackageManagementService.unignore(row.customer_id, { status_code: row.status })
+                                                    )
+                                                }
+                                                className="w-full sm:w-auto px-2 py-1 rounded bg-slate-700 hover:bg-slate-800 text-white text-xs font-medium"
+                                            >
+                                                Buka Abaikan
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                            />
                         </div>
                     </section>
                 ))
@@ -607,10 +604,10 @@ function RowDetail({ label, value }) {
 
 function SimpleModal({ title, onClose, children }) {
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-2 sm:p-4">
             <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <div className="relative w-full max-w-lg bg-white rounded-xl shadow-2xl p-5">
-                <div className="flex items-center justify-between mb-4">
+            <div className="relative w-full max-w-lg bg-white rounded-t-2xl sm:rounded-xl shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="flex items-center justify-between mb-4 p-5 pb-3 border-b border-gray-100">
                     <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
                         <Settings2 size={18} className="text-blue-600" />
                         {title}
@@ -619,7 +616,9 @@ function SimpleModal({ title, onClose, children }) {
                         Tutup
                     </button>
                 </div>
-                {children}
+                <div className="px-5 pb-5 overflow-y-auto">
+                    {children}
+                </div>
             </div>
         </div>
     );

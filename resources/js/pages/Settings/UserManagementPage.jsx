@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Users, Plus, Edit2, Trash2, Shield, X, Eye, EyeOff } from 'lucide-react';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 
 const ROLE_LABELS = {
     superadmin: { label: 'Super Admin', color: 'bg-red-100 text-red-800', desc: 'Akses penuh + kelola akun' },
@@ -190,6 +191,70 @@ function UserManagementPage() {
     };
 
     const availableRoles = currentUserRole === 'superadmin' ? ROLES : ROLES.filter(r => r !== 'superadmin');
+    const userColumns = [
+        {
+            key: 'name',
+            label: 'Nama',
+            render: (user) => {
+                const isSelf = user.email === window.appUserEmail;
+                return (
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
+                            {user.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <p className="font-medium text-gray-900">{user.name}</p>
+                            {isSelf && <span className="text-xs text-blue-500">(Anda)</span>}
+                        </div>
+                    </div>
+                );
+            },
+        },
+        {
+            key: 'email',
+            label: 'Email',
+            render: (user) => <span className="text-sm text-gray-600 break-all">{user.email}</span>,
+        },
+        {
+            key: 'role',
+            label: 'Role',
+            render: (user) => {
+                const roleInfo = ROLE_LABELS[user.role] || { label: user.role, color: 'bg-gray-100 text-gray-800' };
+                return (
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${roleInfo.color}`}>
+                        {roleInfo.label}
+                    </span>
+                );
+            },
+        },
+        {
+            key: 'is_employee',
+            label: 'As Karyawan',
+            render: (user) => (
+                <div className="text-sm text-gray-600">
+                    {user.is_employee ? (
+                        <div>
+                            <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                                Ya
+                            </span>
+                            <p className="text-xs text-gray-500 mt-1">{user.payroll_member_name || '-'}</p>
+                        </div>
+                    ) : (
+                        <span className="text-gray-400">Tidak</span>
+                    )}
+                </div>
+            ),
+        },
+        {
+            key: 'created_at',
+            label: 'Dibuat',
+            render: (user) => (
+                <span className="text-sm text-gray-500">
+                    {new Date(user.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </span>
+            ),
+        },
+    ];
 
     if (loading) {
         return (
@@ -212,7 +277,7 @@ function UserManagementPage() {
                 </div>
                 <button
                     onClick={openAddModal}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                 >
                     <Plus size={18} />
                     Tambah Akun
@@ -248,95 +313,45 @@ function UserManagementPage() {
 
             {/* Users Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="bg-gray-50 border-b border-gray-200">
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Nama</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Email</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Role</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">As Karyawan</th>
-                                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Dibuat</th>
-                                <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {users.map(user => {
-                                const roleInfo = ROLE_LABELS[user.role] || { label: user.role, color: 'bg-gray-100 text-gray-800' };
-                                const isSelf = user.email === window.appUserEmail;
-                                return (
-                                    <tr key={user.id} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-                                                    {user.name.charAt(0).toUpperCase()}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium text-gray-900">{user.name}</p>
-                                                    {isSelf && <span className="text-xs text-blue-500">(Anda)</span>}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${roleInfo.color}`}>
-                                                {roleInfo.label}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-600">
-                                            {user.is_employee ? (
-                                                <div>
-                                                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
-                                                        Ya
-                                                    </span>
-                                                    <p className="text-xs text-gray-500 mt-1">{user.payroll_member_name || '-'}</p>
-                                                </div>
-                                            ) : (
-                                                <span className="text-gray-400">Tidak</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-500">
-                                            {new Date(user.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => openEditModal(user)}
-                                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                                                    title="Edit"
-                                                >
-                                                    <Edit2 size={16} />
-                                                </button>
-                                                {!isSelf && (
-                                                    <button
-                                                        onClick={() => setDeleteConfirm(user)}
-                                                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                                                        title="Hapus"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                            {users.length === 0 && (
-                                <tr>
-                                    <td colSpan="6" className="px-6 py-12 text-center text-gray-400">
-                                        Belum ada data pengguna.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
+                <div className="p-4 md:p-0">
+                    <ResponsiveDataView
+                        rows={users}
+                        columns={userColumns}
+                        keyField="id"
+                        priorityFields={['name', 'role', 'email']}
+                        emptyMessage="Belum ada data pengguna."
+                        tableClassName="w-full"
+                        actions={(user) => {
+                            const isSelf = user.email === window.appUserEmail;
+                            return (
+                                <div className="flex flex-wrap items-center justify-start md:justify-end gap-2">
+                                    <button
+                                        onClick={() => openEditModal(user)}
+                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                        title="Edit"
+                                    >
+                                        <Edit2 size={16} />
+                                    </button>
+                                    {!isSelf && (
+                                        <button
+                                            onClick={() => setDeleteConfirm(user)}
+                                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                                            title="Hapus"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    )}
+                                </div>
+                            );
+                        }}
+                    />
                 </div>
             </div>
 
             {/* Add/Edit Modal */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
                         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                             <h2 className="text-lg font-bold text-gray-900">
                                 {editingUser ? 'Edit Akun' : 'Tambah Akun Baru'}
@@ -345,7 +360,7 @@ function UserManagementPage() {
                                 <X size={20} />
                             </button>
                         </div>
-                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
                             {error && showModal && (
                                 <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm">
                                     {error}
@@ -403,7 +418,7 @@ function UserManagementPage() {
                                 >
                                     {availableRoles.map(role => (
                                         <option key={role} value={role}>
-                                            {ROLE_LABELS[role]?.label || role} — {ROLE_LABELS[role]?.desc || ''}
+                                            {ROLE_LABELS[role]?.label || role} - {ROLE_LABELS[role]?.desc || ''}
                                         </option>
                                     ))}
                                 </select>

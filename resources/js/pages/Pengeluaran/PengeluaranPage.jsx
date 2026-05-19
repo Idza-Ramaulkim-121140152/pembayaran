@@ -4,6 +4,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import pengeluaranService from '../../services/pengeluaranService';
 
 const KATEGORI_OPTIONS = [
@@ -238,6 +239,50 @@ function PengeluaranPage() {
         .filter(item => item.tanggal.startsWith(new Date().toISOString().slice(0, 7)))
         .reduce((sum, item) => sum + Number(item.jumlah), 0);
 
+    const pengeluaranColumns = [
+        {
+            key: 'row_number',
+            label: 'No',
+            render: (_, index) => index + 1,
+        },
+        {
+            key: 'tanggal',
+            label: 'Tanggal',
+            render: (row) => formatDate(row.tanggal),
+        },
+        {
+            key: 'kategori',
+            label: 'Kategori',
+            render: (row) => (
+                <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                    {row.kategori}
+                </span>
+            ),
+        },
+        {
+            key: 'detail',
+            label: 'Detail',
+            render: (row) => row.detail || '-',
+            cellClassName: 'px-4 py-3 text-sm text-gray-600 max-w-xs truncate',
+        },
+        {
+            key: 'jumlah',
+            label: 'Jumlah',
+            render: (row) => (
+                <span className="font-semibold text-red-600">
+                    {formatCurrency(row.jumlah)}
+                </span>
+            ),
+        },
+        {
+            key: 'user.name',
+            label: 'Dicatat Oleh',
+            render: (row) => row.user?.name || '-',
+            mobileHidden: true,
+            cellClassName: 'px-4 py-3 text-sm text-gray-600',
+        },
+    ];
+
     if (loading) {
         return (
             <div className="flex justify-center items-center min-h-[60vh]">
@@ -340,69 +385,31 @@ function PengeluaranPage() {
 
             {/* Table */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead className="bg-gray-50 border-b border-gray-100">
-                            <tr>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">No</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tanggal</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kategori</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell">Detail</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jumlah</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">Dicatat Oleh</th>
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {filteredPengeluarans.length === 0 ? (
-                                <tr>
-                                    <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
-                                        Tidak ada data pengeluaran
-                                    </td>
-                                </tr>
-                            ) : (
-                                filteredPengeluarans.map((item, index) => (
-                                    <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                                        <td className="px-4 py-3 text-sm text-gray-600">{index + 1}</td>
-                                        <td className="px-4 py-3 text-sm text-gray-900">{formatDate(item.tanggal)}</td>
-                                        <td className="px-4 py-3">
-                                            <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
-                                                {item.kategori}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-gray-600 hidden sm:table-cell max-w-xs truncate">
-                                            {item.detail || '-'}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm font-semibold text-red-600">
-                                            {formatCurrency(item.jumlah)}
-                                        </td>
-                                        <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">
-                                            {item.user?.name || '-'}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex gap-1">
-                                                <Button 
-                                                    size="sm" 
-                                                    variant="secondary"
-                                                    onClick={() => openEditModal(item)}
-                                                >
-                                                    <Edit2 size={14} />
-                                                </Button>
-                                                <Button 
-                                                    size="sm" 
-                                                    variant="danger"
-                                                    onClick={() => setDeleteModal({ open: true, item })}
-                                                >
-                                                    <Trash2 size={14} />
-                                                </Button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                <ResponsiveDataView
+                    rows={filteredPengeluarans}
+                    columns={pengeluaranColumns}
+                    keyField="id"
+                    priorityFields={['tanggal', 'kategori', 'jumlah']}
+                    emptyMessage="Tidak ada data pengeluaran"
+                    actions={(row) => (
+                        <div className="flex gap-1">
+                            <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => openEditModal(row)}
+                            >
+                                <Edit2 size={14} />
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => setDeleteModal({ open: true, item: row })}
+                            >
+                                <Trash2 size={14} />
+                            </Button>
+                        </div>
+                    )}
+                />
             </div>
 
             {/* Create Modal */}

@@ -5,6 +5,7 @@ import {
     MessageSquare, CheckCircle, XCircle, Clock, Filter, AlertCircle,
     TestTube, History
 } from 'lucide-react';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 
 const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
@@ -313,6 +314,33 @@ function SendNotificationPage() {
             setLogsLoading(false);
         }
     };
+    const logColumns = [
+        {
+            key: 'created_at',
+            label: 'Waktu',
+            render: (log) => new Date(log.created_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        },
+        { key: 'customer.nama', label: 'Pelanggan', render: (log) => log.customer?.nama || '-' },
+        { key: 'phone', label: 'Nomor', render: (log) => log.phone || '-' },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (log) => (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    log.status === 'sent' ? 'bg-green-100 text-green-700' :
+                    log.status === 'failed' ? 'bg-red-100 text-red-700' :
+                    'bg-yellow-100 text-yellow-700'
+                }`}>
+                    {log.status === 'sent' ? 'Terkirim' : log.status === 'failed' ? 'Gagal' : 'Dilewati'}
+                </span>
+            ),
+        },
+        {
+            key: 'error',
+            label: 'Error',
+            render: (log) => <span className="text-red-500 text-xs whitespace-normal break-words">{log.error || '-'}</span>,
+        },
+    ];
 
     const selectAllFiltered = () => {
         const filteredIds = filteredCustomers.map(c => c.id);
@@ -345,17 +373,17 @@ function SendNotificationPage() {
                     <h1 className="text-2xl font-bold text-gray-900">Kirim Informasi Gangguan</h1>
                     <p className="text-gray-600">Kirim notifikasi gangguan ke pelanggan via WhatsApp</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
                     <button
                         onClick={() => { setShowTestModal(true); setTestResult(null); }}
-                        className="flex items-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition"
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition"
                     >
                         <TestTube size={16} />
                         Test Pesan
                     </button>
                     <button
                         onClick={() => { setShowLogsModal(true); fetchLogs(); }}
-                        className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 transition"
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-3 py-2 text-sm bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 border border-gray-200 transition"
                     >
                         <History size={16} />
                         Log Pengiriman
@@ -761,7 +789,7 @@ function SendNotificationPage() {
             {/* Confirmation Modal */}
             {showConfirmModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
                         {/* Backdrop */}
                         <div 
                             className="fixed inset-0 bg-black/50 transition-opacity" 
@@ -769,7 +797,7 @@ function SendNotificationPage() {
                         ></div>
                         
                         {/* Modal */}
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all">
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all max-h-[90vh] overflow-y-auto">
                             {/* Icon */}
                             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-orange-100 mb-4">
                                 <Send className="h-8 w-8 text-orange-600" />
@@ -840,12 +868,12 @@ function SendNotificationPage() {
             {/* Alert Modal */}
             {showAlertModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
                         <div 
                             className="fixed inset-0 bg-black/50 transition-opacity" 
                             onClick={() => setShowAlertModal(false)}
                         ></div>
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 transform transition-all">
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-sm p-6 transform transition-all max-h-[90vh] overflow-y-auto">
                             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-yellow-100 mb-4">
                                 <AlertCircle className="h-7 w-7 text-yellow-600" />
                             </div>
@@ -867,9 +895,9 @@ function SendNotificationPage() {
             {/* QR Code Modal */}
             {showQRModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
                         <div className="fixed inset-0 bg-black/50" onClick={() => setShowQRModal(false)}></div>
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-lg font-semibold text-gray-900">QR Code WhatsApp</h3>
                                 <button onClick={() => setShowQRModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
@@ -911,9 +939,9 @@ function SendNotificationPage() {
             {/* Test Message Modal */}
             {showTestModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
                         <div className="fixed inset-0 bg-black/50" onClick={() => setShowTestModal(false)}></div>
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-lg font-semibold text-gray-900">Test Kirim Pesan</h3>
                                 <button onClick={() => setShowTestModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
@@ -978,9 +1006,9 @@ function SendNotificationPage() {
             {/* Logs Modal */}
             {showLogsModal && (
                 <div className="fixed inset-0 z-50 overflow-y-auto">
-                    <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
                         <div className="fixed inset-0 bg-black/50" onClick={() => setShowLogsModal(false)}></div>
-                        <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
                             <div className="shrink-0 px-4 sm:px-6 py-4 border-b border-gray-100 bg-white">
                                 <div className="flex items-center justify-between">
                                 <h3 className="text-lg font-semibold text-gray-900">Log Pengiriman Notifikasi</h3>
@@ -996,39 +1024,14 @@ function SendNotificationPage() {
                             ) : logs.length === 0 ? (
                                 <p className="text-center text-gray-500 py-8 px-4 sm:px-6 flex-1 overflow-y-auto">Belum ada log pengiriman</p>
                             ) : (
-                                <div className="px-4 sm:px-6 py-3 overflow-y-auto overflow-x-auto flex-1">
-                                    <table className="w-full min-w-[680px] text-sm">
-                                        <thead className="bg-gray-50 sticky top-0">
-                                            <tr>
-                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Waktu</th>
-                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Pelanggan</th>
-                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Nomor</th>
-                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Status</th>
-                                                <th className="text-left px-3 py-2 font-medium text-gray-600">Error</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y">
-                                            {logs.map(log => (
-                                                <tr key={log.id} className="hover:bg-gray-50">
-                                                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
-                                                        {new Date(log.created_at).toLocaleString('id-ID', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                                                    </td>
-                                                    <td className="px-3 py-2">{log.customer?.nama || '-'}</td>
-                                                    <td className="px-3 py-2 text-gray-500">{log.phone}</td>
-                                                    <td className="px-3 py-2">
-                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                            log.status === 'sent' ? 'bg-green-100 text-green-700' :
-                                                            log.status === 'failed' ? 'bg-red-100 text-red-700' :
-                                                            'bg-yellow-100 text-yellow-700'
-                                                        }`}>
-                                                            {log.status === 'sent' ? 'Terkirim' : log.status === 'failed' ? 'Gagal' : 'Dilewati'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-red-500 text-xs min-w-[180px] max-w-[280px] whitespace-normal break-words">{log.error || '-'}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
+                                <div className="px-4 sm:px-6 py-3 overflow-y-auto flex-1">
+                                    <ResponsiveDataView
+                                        rows={logs}
+                                        columns={logColumns}
+                                        keyField="id"
+                                        priorityFields={['created_at', 'status', 'customer.nama']}
+                                        tableClassName="w-full text-sm md:min-w-[680px]"
+                                    />
                                 </div>
                             )}
                             <div className="shrink-0 px-4 sm:px-6 py-3 border-t border-gray-100 bg-white flex justify-end">

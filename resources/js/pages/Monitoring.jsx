@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { FaServer, FaUsers, FaCheckCircle, FaTimesCircle, FaSpinner, FaSyncAlt, FaNetworkWired, FaExclamationTriangle, FaSearch } from 'react-icons/fa';
+import ResponsiveDataView from '../components/common/ResponsiveDataView';
 
 export default function Monitoring() {
     const [loading, setLoading] = useState(true);
@@ -11,14 +12,13 @@ export default function Monitoring() {
         customers: [],
         summary: null,
     });
-    const [filter, setFilter] = useState('all'); // all, online, offline
+    const [filter, setFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [showAreaModal, setShowAreaModal] = useState(false);
     const [selectedArea, setSelectedArea] = useState(null);
 
     useEffect(() => {
         fetchData();
-        // Auto refresh setiap 30 detik
         const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, []);
@@ -47,15 +47,13 @@ export default function Monitoring() {
 
     const getFilteredCustomers = () => {
         let filtered = data.customers;
-        
-        // Apply status filter
+
         if (filter === 'online') filtered = filtered.filter(c => c.is_online);
         else if (filter === 'offline') filtered = filtered.filter(c => !c.is_online);
-        
-        // Apply search filter
+
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(c => 
+            filtered = filtered.filter(c =>
                 c.pppoe_username?.toLowerCase().includes(term) ||
                 c.customer_name?.toLowerCase().includes(term) ||
                 c.ip_address?.toLowerCase().includes(term) ||
@@ -65,14 +63,11 @@ export default function Monitoring() {
                 c.package_type?.toLowerCase().includes(term)
             );
         }
-        
+
         return filtered;
     };
 
-    const getStatusColor = (customer) => {
-        if (customer.is_online) return 'text-green-600';
-        return 'text-red-600';
-    };
+    const getStatusColor = (customer) => (customer.is_online ? 'text-green-600' : 'text-red-600');
 
     const getStatusBadge = (customer) => {
         if (customer.is_online) {
@@ -83,21 +78,20 @@ export default function Monitoring() {
 
     const getAreaSummary = () => {
         const areas = {};
-        
+
         data.customers.forEach(customer => {
             const areaCode = customer.pppoe_username?.substring(0, 3).toUpperCase() || 'N/A';
-            
+
             if (!areas[areaCode]) {
                 areas[areaCode] = { total: 0, online: 0 };
             }
-            
+
             areas[areaCode].total++;
             if (customer.is_online) {
                 areas[areaCode].online++;
             }
         });
-        
-        // Convert to array and sort by area code
+
         return Object.entries(areas)
             .sort((a, b) => a[0].localeCompare(b[0]))
             .map(([code, stats]) => ({ code, ...stats }));
@@ -115,6 +109,25 @@ export default function Monitoring() {
         setShowAreaModal(true);
     };
 
+    const filteredCustomersList = useMemo(() => getFilteredCustomers(), [data.customers, filter, searchTerm]);
+
+    const customerColumns = [
+        {
+            key: 'pppoe_username',
+            label: 'Username PPPoE',
+            render: (customer) => (
+                <span className={`font-medium ${getStatusColor(customer)}`}>
+                    {customer.pppoe_username || '-'}
+                </span>
+            ),
+        },
+        { key: 'status', label: 'Status', render: (customer) => getStatusBadge(customer) },
+        { key: 'customer_name', label: 'Nama', render: (customer) => customer.customer_name || '-' },
+        { key: 'package_type', label: 'Paket', render: (customer) => customer.package_type || '-' },
+        { key: 'ip_address', label: 'IP Address', render: (customer) => customer.ip_address || '-' },
+        { key: 'customer_phone', label: 'Telepon', render: (customer) => customer.customer_phone || '-' },
+    ];
+
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
@@ -126,12 +139,12 @@ export default function Monitoring() {
     return (
         <div className="container px-4 py-8 mx-auto">
             <div className="mb-6">
-                <div className="flex items-center justify-between">
-                    <h1 className="text-3xl font-bold text-gray-800">Monitoring Server & Client</h1>
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Monitoring Server & Client</h1>
                     <button
                         onClick={handleRefresh}
                         disabled={refreshing}
-                        className="flex items-center px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                        className="w-full sm:w-auto flex items-center justify-center px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
                     >
                         <FaSyncAlt className={`mr-2 ${refreshing ? 'animate-spin' : ''}`} />
                         {refreshing ? 'Memuat...' : 'Refresh'}
@@ -147,15 +160,15 @@ export default function Monitoring() {
                         <span className="font-semibold">Error Koneksi ke MikroTik:</span>
                     </div>
                     <p className="mt-1">{error}</p>
-                    <p className="mt-2 text-sm">
-                        Pastikan:
+                    <div className="mt-2 text-sm">
+                        <p>Pastikan:</p>
                         <ul className="mt-1 ml-4 list-disc">
                             <li>Server MikroTik (103.195.65.216:8728) dapat diakses</li>
                             <li>Username dan password benar (admin / rumahkita69)</li>
                             <li>API Service aktif di MikroTik</li>
                             <li>Port 8728 tidak diblock firewall</li>
                         </ul>
-                    </p>
+                    </div>
                 </div>
             )}
 
@@ -169,7 +182,6 @@ export default function Monitoring() {
                 </div>
             )}
 
-            {/* Area Summary */}
             {data.customers.length > 0 && (
                 <div className="mb-6 bg-white rounded-lg shadow-md">
                     <div className="p-6 border-b border-gray-200">
@@ -181,8 +193,8 @@ export default function Monitoring() {
                     <div className="p-6">
                         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
                             {getAreaSummary().map((area) => (
-                                <div 
-                                    key={area.code} 
+                                <div
+                                    key={area.code}
                                     onClick={() => handleAreaClick(area)}
                                     className="p-3 border border-gray-200 rounded-lg hover:shadow-md transition-shadow cursor-pointer hover:border-blue-500"
                                 >
@@ -194,7 +206,7 @@ export default function Monitoring() {
                                         <span className="text-gray-400 text-sm">/{area.total}</span>
                                     </p>
                                     <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
-                                        <div 
+                                        <div
                                             className={`h-1.5 rounded-full ${area.online === area.total ? 'bg-green-600' : area.online === 0 ? 'bg-red-600' : 'bg-yellow-600'}`}
                                             style={{ width: `${(area.online / area.total) * 100}%` }}
                                         ></div>
@@ -206,7 +218,6 @@ export default function Monitoring() {
                 </div>
             )}
 
-            {/* Server Info */}
             {data.serverInfo && (
                 <div className="p-6 mb-6 bg-white rounded-lg shadow-md">
                     <h2 className="flex items-center mb-4 text-xl font-semibold text-gray-800">
@@ -235,10 +246,7 @@ export default function Monitoring() {
                             <p className="text-lg font-semibold text-gray-800">{data.serverInfo.cpu}</p>
                             <div className="mt-2">
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
-                                        className="bg-blue-600 h-2 rounded-full" 
-                                        style={{ width: `${data.serverInfo.cpu_load}%` }}
-                                    ></div>
+                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${data.serverInfo.cpu_load}%` }}></div>
                                 </div>
                                 <p className="mt-1 text-xs text-gray-600">Load: {data.serverInfo.cpu_load}%</p>
                             </div>
@@ -248,7 +256,7 @@ export default function Monitoring() {
                             <p className="text-lg font-semibold text-gray-800">{data.serverInfo.used_memory} / {data.serverInfo.total_memory}</p>
                             <div className="mt-2">
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
+                                    <div
                                         className={`h-2 rounded-full ${data.serverInfo.memory_percentage > 80 ? 'bg-red-600' : 'bg-green-600'}`}
                                         style={{ width: `${data.serverInfo.memory_percentage}%` }}
                                     ></div>
@@ -261,7 +269,7 @@ export default function Monitoring() {
                             <p className="text-lg font-semibold text-gray-800">{data.serverInfo.used_hdd} / {data.serverInfo.total_hdd}</p>
                             <div className="mt-2">
                                 <div className="w-full bg-gray-200 rounded-full h-2">
-                                    <div 
+                                    <div
                                         className={`h-2 rounded-full ${data.serverInfo.hdd_percentage > 80 ? 'bg-red-600' : 'bg-green-600'}`}
                                         style={{ width: `${data.serverInfo.hdd_percentage}%` }}
                                     ></div>
@@ -273,7 +281,6 @@ export default function Monitoring() {
                 </div>
             )}
 
-            {/* Summary Statistics */}
             {data.summary && (
                 <div className="grid grid-cols-1 gap-4 mb-6 md:grid-cols-2 lg:grid-cols-5">
                     <div className="p-6 bg-white rounded-lg shadow-md">
@@ -286,7 +293,7 @@ export default function Monitoring() {
                             <FaUsers className="w-12 h-12 text-blue-600 opacity-20" />
                         </div>
                     </div>
-                    
+
                     <div className="p-6 bg-white rounded-lg shadow-md">
                         <div className="flex items-center justify-between">
                             <div>
@@ -297,7 +304,7 @@ export default function Monitoring() {
                             <FaCheckCircle className="w-12 h-12 text-green-600 opacity-20" />
                         </div>
                     </div>
-                    
+
                     <div className="p-6 bg-white rounded-lg shadow-md">
                         <div className="flex items-center justify-between">
                             <div>
@@ -308,7 +315,7 @@ export default function Monitoring() {
                             <FaTimesCircle className="w-12 h-12 text-red-600 opacity-20" />
                         </div>
                     </div>
-                    
+
                     <div className="p-6 bg-white rounded-lg shadow-md">
                         <div className="flex items-center justify-between">
                             <div>
@@ -319,7 +326,7 @@ export default function Monitoring() {
                             <FaNetworkWired className="w-12 h-12 text-purple-600 opacity-20" />
                         </div>
                     </div>
-                    
+
                     <div className="p-6 bg-white rounded-lg shadow-md">
                         <div className="flex items-center justify-between">
                             <div>
@@ -333,15 +340,13 @@ export default function Monitoring() {
                 </div>
             )}
 
-            {/* Active Connections Table */}
             <div className="bg-white rounded-lg shadow-md">
                 <div className="p-6 border-b border-gray-200">
                     <h2 className="flex items-center mb-4 text-xl font-semibold text-gray-800">
                         <FaNetworkWired className="mr-2" />
                         Koneksi PPPoE Aktif
                     </h2>
-                    
-                    {/* Search Box */}
+
                     <div className="mb-4">
                         <div className="relative">
                             <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -357,99 +362,58 @@ export default function Monitoring() {
                                     onClick={() => setSearchTerm('')}
                                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
                                 >
-                                    ✕
+                                    X
                                 </button>
                             )}
                         </div>
                         {searchTerm && (
                             <p className="mt-2 text-sm text-gray-600">
-                                Ditemukan <span className="font-semibold">{getFilteredCustomers().length}</span> hasil dari {data.customers.length} customer
+                                Ditemukan <span className="font-semibold">{filteredCustomersList.length}</span> hasil dari {data.customers.length} customer
                             </p>
                         )}
                     </div>
-                    
-                    {/* Filter */}
-                    <div className="flex flex-wrap gap-2">
+
+                    <div className="flex flex-col sm:flex-row flex-wrap gap-2">
                         <button
                             onClick={() => setFilter('all')}
-                            className={`px-4 py-2 rounded-lg ${filter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                            className={`w-full sm:w-auto px-4 py-2 rounded-lg ${filter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                         >
                             Semua ({data.customers.length})
                         </button>
                         <button
                             onClick={() => setFilter('online')}
-                            className={`px-4 py-2 rounded-lg ${filter === 'online' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                            className={`w-full sm:w-auto px-4 py-2 rounded-lg ${filter === 'online' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                         >
                             Online ({data.summary?.online_customers || 0})
                         </button>
                         <button
                             onClick={() => setFilter('offline')}
-                            className={`px-4 py-2 rounded-lg ${filter === 'offline' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                            className={`w-full sm:w-auto px-4 py-2 rounded-lg ${filter === 'offline' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-700'}`}
                         >
                             Offline ({data.summary?.offline_customers || 0})
                         </button>
                     </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Username PPPoE</th>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Status</th>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Nama</th>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Paket</th>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">IP Address</th>
-                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Telepon</th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {getFilteredCustomers().map((customer, index) => (
-                                <tr key={index} className="hover:bg-gray-50">
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex items-center">
-                                            <span className={`font-medium ${getStatusColor(customer)}`}>
-                                                {customer.pppoe_username}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        {getStatusBadge(customer)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">{customer.customer_name}</div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">{customer.package_type}</div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">{customer.ip_address}</div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">{customer.customer_phone}</div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div className="p-4 md:p-0">
+                    <ResponsiveDataView
+                        rows={filteredCustomersList}
+                        columns={customerColumns}
+                        keyField="id"
+                        priorityFields={['pppoe_username', 'status', 'customer_name']}
+                        emptyMessage="Tidak ada data customer"
+                        tableClassName="w-full md:min-w-[980px]"
+                    />
                 </div>
-
-                {getFilteredCustomers().length === 0 && (
-                    <div className="py-12 text-center">
-                        <p className="text-gray-500">Tidak ada data customer</p>
-                    </div>
-                )}
             </div>
 
-            {/* Modal Area Detail */}
             {showAreaModal && selectedArea && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setShowAreaModal(false)}>
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                        {/* Modal Header */}
-                        <div className="p-6 border-b border-gray-200">
+                <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black bg-opacity-50 p-2 sm:p-4" onClick={() => setShowAreaModal(false)}>
+                    <div className="bg-white rounded-t-2xl sm:rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+                        <div className="p-4 sm:p-6 border-b border-gray-200">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <h3 className="text-2xl font-bold text-gray-800">Daerah {selectedArea.code}</h3>
+                                    <h3 className="text-xl sm:text-2xl font-bold text-gray-800">Daerah {selectedArea.code}</h3>
                                     <p className="mt-1 text-sm text-gray-600">
                                         <span className={selectedArea.online === selectedArea.total ? 'text-green-600 font-semibold' : selectedArea.online === 0 ? 'text-red-600 font-semibold' : 'text-yellow-600 font-semibold'}>
                                             {selectedArea.online} Online
@@ -468,65 +432,21 @@ export default function Monitoring() {
                             </div>
                         </div>
 
-                        {/* Modal Body */}
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-                            <div className="overflow-x-auto">
-                                <table className="w-full">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Username</th>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Status</th>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Nama</th>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Paket</th>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">IP</th>
-                                            <th className="px-4 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase">Telepon</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {getCustomersByArea(selectedArea.code).map((customer, index) => (
-                                            <tr key={index} className={customer.is_online ? 'hover:bg-green-50' : 'hover:bg-red-50'}>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <span className={`font-medium ${customer.is_online ? 'text-green-600' : 'text-red-600'}`}>
-                                                        {customer.pppoe_username}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    {customer.is_online ? (
-                                                        <span className="px-2 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full">Online</span>
-                                                    ) : (
-                                                        <span className="px-2 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full">Offline</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-4 py-3">
-                                                    <div className="text-sm text-gray-900">{customer.customer_name || '-'}</div>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <div className="text-sm text-gray-900">{customer.package_type || '-'}</div>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <div className="text-sm font-mono text-gray-900">{customer.ip_address || '-'}</div>
-                                                </td>
-                                                <td className="px-4 py-3 whitespace-nowrap">
-                                                    <div className="text-sm text-gray-900">{customer.customer_phone || '-'}</div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-
-                            {getCustomersByArea(selectedArea.code).length === 0 && (
-                                <div className="py-12 text-center">
-                                    <p className="text-gray-500">Tidak ada customer di daerah ini</p>
-                                </div>
-                            )}
+                        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                            <ResponsiveDataView
+                                rows={getCustomersByArea(selectedArea.code)}
+                                columns={customerColumns}
+                                keyField="id"
+                                priorityFields={['pppoe_username', 'status', 'customer_name']}
+                                emptyMessage="Tidak ada customer di daerah ini"
+                                tableClassName="w-full md:min-w-[920px]"
+                            />
                         </div>
 
-                        {/* Modal Footer */}
-                        <div className="p-6 border-t border-gray-200 bg-gray-50">
+                        <div className="p-4 sm:p-6 border-t border-gray-200 bg-gray-50 flex justify-end">
                             <button
                                 onClick={() => setShowAreaModal(false)}
-                                className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                                className="w-full sm:w-auto px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
                             >
                                 Tutup
                             </button>

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, ExternalLink, FileText, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ExternalLink, FileText, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import billingService from '../../services/billingService';
 
 const STATUS_OPTIONS = [
@@ -220,6 +221,62 @@ function InvoiceManagementPage() {
             setSubmitting(false);
         }
     };
+    const invoiceColumns = [
+        {
+            key: 'id',
+            label: 'ID',
+            render: (invoice) => <span className="text-sm font-semibold text-gray-900">#{invoice.id}</span>,
+        },
+        {
+            key: 'customer',
+            label: 'Pelanggan',
+            render: (invoice) => (
+                <div className="text-sm text-gray-700">
+                    <div className="font-medium text-gray-900">{invoice.customer?.name || '-'}</div>
+                    <div className="text-xs text-gray-500">PPPoE: {invoice.customer?.pppoe_username || '-'}</div>
+                </div>
+            ),
+        },
+        {
+            key: 'invoice_date',
+            label: 'Tanggal',
+            render: (invoice) => (
+                <div className="text-sm text-gray-700">
+                    <div>Invoice: {formatDate(invoice.invoice_date)}</div>
+                    <div className="text-xs text-gray-500">Tempo: {formatDate(invoice.due_date)}</div>
+                </div>
+            ),
+        },
+        {
+            key: 'amount',
+            label: 'Nominal',
+            render: (invoice) => <span className="text-sm font-medium text-gray-900">{formatCurrency(invoice.amount)}</span>,
+        },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (invoice) => (
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_BADGE_STYLES[invoice.status] || 'bg-gray-100 text-gray-700'}`}>
+                    {invoice.status}
+                </span>
+            ),
+        },
+        {
+            key: 'invoice_link',
+            label: 'Link',
+            render: (invoice) => (
+                <a
+                    href={getInvoiceUrl(invoice)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+                >
+                    Lihat
+                    <ExternalLink size={14} />
+                </a>
+            ),
+        },
+    ];
 
     const startItem = pagination.total === 0
         ? 0
@@ -248,7 +305,7 @@ function InvoiceManagementPage() {
                     variant="secondary"
                     onClick={handleRefresh}
                     disabled={loading || submitting}
-                    className="inline-flex items-center gap-2"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2"
                 >
                     <RefreshCw size={16} />
                     Refresh
@@ -306,88 +363,42 @@ function InvoiceManagementPage() {
                 ) : invoices.length === 0 ? (
                     <div className="p-10 text-center text-gray-500">Tidak ada invoice yang sesuai filter.</div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full min-w-[980px]">
-                            <thead className="bg-gray-50 border-b border-gray-100">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Pelanggan</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tanggal</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nominal</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Link</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {invoices.map((invoice) => {
-                                    const canDelete = String(invoice.status).toLowerCase() === 'unpaid';
-
-                                    return (
-                                        <tr key={invoice.id} className="hover:bg-gray-50">
-                                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">#{invoice.id}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-700">
-                                                <div className="font-medium text-gray-900">{invoice.customer?.name || '-'}</div>
-                                                <div className="text-xs text-gray-500">PPPoE: {invoice.customer?.pppoe_username || '-'}</div>
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700">
-                                                <div className="flex items-center gap-2">
-                                                    <CalendarDays size={14} className="text-gray-400" />
-                                                    <div>
-                                                        <div>Invoice: {formatDate(invoice.invoice_date)}</div>
-                                                        <div className="text-xs text-gray-500">Tempo: {formatDate(invoice.due_date)}</div>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{formatCurrency(invoice.amount)}</td>
-                                            <td className="px-4 py-3 text-sm">
-                                                <span
-                                                    className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_BADGE_STYLES[invoice.status] || 'bg-gray-100 text-gray-700'}`}
-                                                >
-                                                    {invoice.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-gray-700">
-                                                <a
-                                                    href={getInvoiceUrl(invoice)}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
-                                                >
-                                                    Lihat
-                                                    <ExternalLink size={14} />
-                                                </a>
-                                            </td>
-                                            <td className="px-4 py-3 text-sm">
-                                                <div className="flex items-center gap-2">
-                                                    <Button
-                                                        size="sm"
-                                                        variant="secondary"
-                                                        onClick={() => openEditModal(invoice)}
-                                                        className="inline-flex items-center gap-1"
-                                                        disabled={submitting}
-                                                    >
-                                                        <Pencil size={14} />
-                                                        Edit
-                                                    </Button>
-                                                    <Button
-                                                        size="sm"
-                                                        variant="danger"
-                                                        onClick={() => handleDeleteInvoice(invoice)}
-                                                        disabled={!canDelete || submitting}
-                                                        className="inline-flex items-center gap-1"
-                                                        title={canDelete ? 'Hapus invoice' : 'Hanya invoice status unpaid yang bisa dihapus'}
-                                                    >
-                                                        <Trash2 size={14} />
-                                                        Hapus
-                                                    </Button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
+                    <div className="p-4 md:p-0">
+                        <ResponsiveDataView
+                            rows={invoices}
+                            columns={invoiceColumns}
+                            keyField="id"
+                            priorityFields={['id', 'customer', 'status', 'amount']}
+                            tableClassName="w-full md:min-w-[980px]"
+                            actions={(invoice) => {
+                                const canDelete = String(invoice.status).toLowerCase() === 'unpaid';
+                                return (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => openEditModal(invoice)}
+                                            className="inline-flex items-center gap-1 w-full sm:w-auto"
+                                            disabled={submitting}
+                                        >
+                                            <Pencil size={14} />
+                                            Edit
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            variant="danger"
+                                            onClick={() => handleDeleteInvoice(invoice)}
+                                            disabled={!canDelete || submitting}
+                                            className="inline-flex items-center gap-1 w-full sm:w-auto"
+                                            title={canDelete ? 'Hapus invoice' : 'Hanya invoice status unpaid yang bisa dihapus'}
+                                        >
+                                            <Trash2 size={14} />
+                                            Hapus
+                                        </Button>
+                                    </div>
+                                );
+                            }}
+                        />
                     </div>
                 )}
             </div>

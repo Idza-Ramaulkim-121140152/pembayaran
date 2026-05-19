@@ -681,11 +681,11 @@ function CustomersPage() {
                     </div>
 
                     {/* Sort Buttons */}
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-wrap">
                         <span className="text-sm text-gray-500">Urutkan:</span>
                         <button
                             onClick={() => handleSort('name')}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                            className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
                                 sortBy === 'name' 
                                     ? 'bg-blue-100 text-blue-700 border border-blue-300' 
                                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-transparent'
@@ -696,7 +696,7 @@ function CustomersPage() {
                         </button>
                         <button
                             onClick={() => handleSort('due_date')}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                            className={`w-full sm:w-auto flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition ${
                                 sortBy === 'due_date' 
                                     ? 'bg-blue-100 text-blue-700 border border-blue-300' 
                                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 border border-transparent'
@@ -782,7 +782,7 @@ function CustomersPage() {
                                         </button>
 
                                         {openActionMenuId === customer.id && (
-                                            <div className="absolute right-0 bottom-12 z-[70] w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg py-2">
+                                            <div className="absolute left-0 sm:left-auto sm:right-0 bottom-12 z-[70] w-[min(20rem,calc(100vw-2rem))] max-h-[70vh] overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-lg py-2">
                                                 <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                                                     Aksi Cepat
                                                 </p>
@@ -900,7 +900,7 @@ function CustomersPage() {
 
             {/* Detail Modal */}
             {showDetail && selectedCustomer && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
                     <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl">
                         {/* Modal Header */}
                         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-5 text-white">
@@ -1058,7 +1058,7 @@ function CustomersPage() {
 
             {/* Payment History Modal */}
             {showHistory && selectedCustomer && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
                     <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl">
                         {/* Modal Header */}
                         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-5 text-white">
@@ -1165,8 +1165,8 @@ function CustomersPage() {
 
             {/* Secret Info Modal */}
             {showSecretModal && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
                         {/* Modal Header */}
                         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                             <div className="flex items-center gap-3">
@@ -1264,7 +1264,7 @@ function CustomersPage() {
 
             {/* Compensation Modal */}
             {showCompensationModal && compensationCustomer && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
                         {/* Modal Header */}
                         <div className="flex items-center justify-between p-6 border-b border-gray-200">
@@ -1370,8 +1370,8 @@ function CustomersPage() {
 
             {/* Change Service Package Modal */}
             {servicePackageModal.open && servicePackageModal.customer && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
                         <div className="flex items-center justify-between p-6 border-b border-gray-200">
                             <div>
                                 <h2 className="text-xl font-bold text-gray-900">Ubah Paket Layanan</h2>
@@ -1443,8 +1443,8 @@ function CustomersPage() {
 
             {/* Change Service Package Result Modal */}
             {servicePackageResultModal.open && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-[60] p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <h2 className={`text-xl font-bold ${servicePackageResultModal.type === 'success' ? 'text-green-700' : 'text-red-700'}`}>
                                 {servicePackageResultModal.title}

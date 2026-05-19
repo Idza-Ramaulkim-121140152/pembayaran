@@ -3,6 +3,7 @@ import { CheckCircle2, Network, Pencil, Plus, Power, Trash2 } from 'lucide-react
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import masterMikrotikService from '../../services/masterMikrotikService';
 
 const INITIAL_FORM = {
@@ -147,6 +148,35 @@ function MasterMikrotikPage() {
             setSaving(false);
         }
     };
+    const mikrotikColumns = [
+        {
+            key: 'name',
+            label: 'Nama',
+            render: (row) => (
+                <div>
+                    <p className="font-medium text-gray-900">{row.name}</p>
+                    <p className="text-xs text-gray-500">{row.host}:{row.port}</p>
+                </div>
+            ),
+        },
+        { key: 'host', label: 'Host', render: (row) => `${row.host}:${row.port}` },
+        { key: 'username', label: 'User' },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (row) => (
+                <div className="space-y-1">
+                    {row.is_active && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                            <CheckCircle2 size={12} /> Aktif
+                        </span>
+                    )}
+                    <p className="text-xs text-gray-500">last: {row.last_status || 'unknown'}</p>
+                </div>
+            ),
+        },
+        { key: 'alert_recipients', label: 'Recipients', render: (row) => <span className="text-xs text-gray-600 break-all">{row.alert_recipients || '-'}</span> },
+    ];
 
     if (loading) {
         return <LoadingSpinner text="Memuat master MikroTik..." />;
@@ -169,7 +199,7 @@ function MasterMikrotikPage() {
                         {isEdit ? 'Edit Router MikroTik' : 'Tambah Router MikroTik'}
                     </h2>
                     {isEdit && (
-                        <Button type="button" variant="secondary" onClick={resetForm}>
+                        <Button type="button" variant="secondary" onClick={resetForm} className="w-full sm:w-auto">
                             Batal Edit
                         </Button>
                     )}
@@ -241,66 +271,32 @@ function MasterMikrotikPage() {
 
             <div className="rounded-xl bg-white p-4 shadow-sm border border-gray-100">
                 <h2 className="font-semibold text-gray-900 mb-3">Daftar Router</h2>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50 text-gray-600">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Nama</th>
-                                <th className="px-3 py-2 text-left">Host</th>
-                                <th className="px-3 py-2 text-left">User</th>
-                                <th className="px-3 py-2 text-left">Status</th>
-                                <th className="px-3 py-2 text-left">Recipients</th>
-                                <th className="px-3 py-2 text-left">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {rows.length === 0 && (
-                                <tr>
-                                    <td colSpan="6" className="px-3 py-8 text-center text-gray-500">Belum ada data router.</td>
-                                </tr>
+                <ResponsiveDataView
+                    rows={rows}
+                    columns={mikrotikColumns}
+                    keyField="id"
+                    priorityFields={['name', 'status', 'host']}
+                    emptyMessage="Belum ada data router."
+                    tableClassName="w-full text-sm md:min-w-[920px]"
+                    actions={(row) => (
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Button type="button" size="sm" variant="secondary" onClick={() => startEdit(row)}>
+                                <Pencil size={14} />
+                            </Button>
+                            <Button type="button" size="sm" variant="secondary" onClick={() => handleTest(row)}>
+                                Test
+                            </Button>
+                            {!row.is_active && (
+                                <Button type="button" size="sm" variant="primary" onClick={() => handleActivate(row)}>
+                                    <Power size={14} />
+                                </Button>
                             )}
-                            {rows.map((row) => (
-                                <tr key={row.id}>
-                                    <td className="px-3 py-2">
-                                        <p className="font-medium text-gray-900">{row.name}</p>
-                                        <p className="text-xs text-gray-500">{row.host}:{row.port}</p>
-                                    </td>
-                                    <td className="px-3 py-2">{row.host}:{row.port}</td>
-                                    <td className="px-3 py-2">{row.username}</td>
-                                    <td className="px-3 py-2">
-                                        <div className="space-y-1">
-                                            {row.is_active && (
-                                                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                                                    <CheckCircle2 size={12} /> Aktif
-                                                </span>
-                                            )}
-                                            <p className="text-xs text-gray-500">last: {row.last_status || 'unknown'}</p>
-                                        </div>
-                                    </td>
-                                    <td className="px-3 py-2 text-xs text-gray-600">{row.alert_recipients || '-'}</td>
-                                    <td className="px-3 py-2">
-                                        <div className="flex items-center gap-2">
-                                            <Button type="button" size="sm" variant="secondary" onClick={() => startEdit(row)}>
-                                                <Pencil size={14} />
-                                            </Button>
-                                            <Button type="button" size="sm" variant="secondary" onClick={() => handleTest(row)}>
-                                                Test
-                                            </Button>
-                                            {!row.is_active && (
-                                                <Button type="button" size="sm" variant="primary" onClick={() => handleActivate(row)}>
-                                                    <Power size={14} />
-                                                </Button>
-                                            )}
-                                            <Button type="button" size="sm" variant="danger" onClick={() => handleDelete(row)}>
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                            <Button type="button" size="sm" variant="danger" onClick={() => handleDelete(row)}>
+                                <Trash2 size={14} />
+                            </Button>
+                        </div>
+                    )}
+                />
             </div>
         </div>
     );

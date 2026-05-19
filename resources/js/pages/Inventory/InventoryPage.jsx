@@ -15,6 +15,7 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import inventoryService from '../../services/inventoryService';
 
 const TAB_ITEMS = [
@@ -465,6 +466,117 @@ function InventoryPage() {
         return sum + qty * unitPrice;
     }, 0);
 
+    const debtColumns = [
+        {
+            key: 'select',
+            label: 'Pilih',
+            render: (debt) => {
+                const isSelectable = debt.status !== 'paid';
+                return (
+                    <input
+                        type="checkbox"
+                        checked={selectedDebtIds.includes(debt.id)}
+                        onChange={() => toggleDebtSelection(debt.id)}
+                        disabled={!isSelectable}
+                    />
+                );
+            },
+        },
+        {
+            key: 'item',
+            label: 'Barang',
+            render: (debt) => (
+                <div>
+                    <p className="font-medium text-gray-800">{debt.item?.name || '-'}</p>
+                    <p className="text-xs text-gray-500">{debt.item?.type?.name || 'Tanpa jenis'}</p>
+                </div>
+            ),
+        },
+        { key: 'quantity', label: 'Qty', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (debt) => formatNumber(debt.quantity) },
+        { key: 'original_amount', label: 'Total Hutang', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (debt) => debt.original_amount === null ? '-' : formatCurrency(debt.original_amount) },
+        { key: 'paid_amount', label: 'Terbayar', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (debt) => formatCurrency(debt.paid_amount) },
+        { key: 'remaining_amount', label: 'Sisa', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (debt) => debt.remaining_amount === null ? 'Belum ditetapkan' : formatCurrency(debt.remaining_amount) },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (debt) => (
+                <span
+                    className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        debt.status === 'paid'
+                            ? 'bg-green-100 text-green-700'
+                            : debt.status === 'partial'
+                                ? 'bg-orange-100 text-orange-700'
+                                : 'bg-red-100 text-red-700'
+                    }`}
+                >
+                    {debt.status}
+                </span>
+            ),
+        },
+    ];
+
+    const movementColumns = [
+        { key: 'transaction_date', label: 'Tanggal' },
+        {
+            key: 'item',
+            label: 'Barang',
+            render: (row) => (
+                <div>
+                    <p className="font-medium text-gray-800">{row.item?.name || '-'}</p>
+                    <p className="text-xs text-gray-500">{row.item?.type?.name || '-'}</p>
+                </div>
+            ),
+        },
+        {
+            key: 'movement_type',
+            label: 'Jenis',
+            render: (row) => (
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${row.movement_type === 'in' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {row.movement_type === 'in' ? 'Masuk' : 'Keluar'}
+                </span>
+            ),
+        },
+        { key: 'source', label: 'Sumber' },
+        { key: 'quantity', label: 'Qty', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (row) => `${formatNumber(row.quantity)} ${row.item?.unit || ''}` },
+        { key: 'total_amount', label: 'Nilai', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right', render: (row) => row.total_amount === null ? '-' : formatCurrency(row.total_amount) },
+        { key: 'creator_name', label: 'Penanggung Jawab', render: (row) => row.creator?.name || 'Sistem' },
+        { key: 'notes', label: 'Catatan', render: (row) => row.notes || '-' },
+    ];
+
+    const stockColumns = [
+        {
+            key: 'name',
+            label: 'Barang',
+            render: (item) => (
+                <div>
+                    <p className="font-medium text-gray-800">{item.name}</p>
+                    {!item.is_active && <p className="text-xs text-red-500">Nonaktif</p>}
+                </div>
+            ),
+        },
+        { key: 'type_name', label: 'Jenis', render: (item) => item.type?.name || '-' },
+        { key: 'unit', label: 'Satuan' },
+        {
+            key: 'current_stock',
+            label: 'Stok',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right font-semibold',
+            render: (item) => {
+                const isLow = Number(item.current_stock || 0) <= 0;
+                return (
+                    <span className={isLow ? 'text-red-600' : 'text-gray-800'}>
+                        {formatNumber(item.current_stock)}
+                        {isLow && (
+                            <span className="inline-flex items-center gap-1 ml-2 text-xs font-normal text-red-500">
+                                <AlertCircle size={12} /> Habis
+                            </span>
+                        )}
+                    </span>
+                );
+            },
+        },
+    ];
+
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-[60vh]">
@@ -795,77 +907,24 @@ function InventoryPage() {
                                 </div>
                             </form>
 
-                            <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                                <table className="w-full min-w-[860px] text-sm">
-                                    <thead className="bg-gray-50 text-gray-600">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left">Pilih</th>
-                                            <th className="px-3 py-2 text-left">Barang</th>
-                                            <th className="px-3 py-2 text-right">Qty</th>
-                                            <th className="px-3 py-2 text-right">Total Hutang</th>
-                                            <th className="px-3 py-2 text-right">Terbayar</th>
-                                            <th className="px-3 py-2 text-right">Sisa</th>
-                                            <th className="px-3 py-2 text-left">Status</th>
-                                            <th className="px-3 py-2 text-left">Aksi</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {debtRows.length === 0 && (
-                                            <tr>
-                                                <td colSpan="8" className="px-3 py-8 text-center text-gray-500">Belum ada data hutang barang.</td>
-                                            </tr>
-                                        )}
-                                        {debtRows.map((debt) => {
-                                            const isSelectable = debt.status !== 'paid';
-                                            return (
-                                                <tr key={debt.id}>
-                                                    <td className="px-3 py-2">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={selectedDebtIds.includes(debt.id)}
-                                                            onChange={() => toggleDebtSelection(debt.id)}
-                                                            disabled={!isSelectable}
-                                                        />
-                                                    </td>
-                                                    <td className="px-3 py-2">
-                                                        <p className="font-medium text-gray-800">{debt.item?.name || '-'}</p>
-                                                        <p className="text-xs text-gray-500">{debt.item?.type?.name || 'Tanpa jenis'}</p>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-right">{formatNumber(debt.quantity)}</td>
-                                                    <td className="px-3 py-2 text-right">{debt.original_amount === null ? '-' : formatCurrency(debt.original_amount)}</td>
-                                                    <td className="px-3 py-2 text-right">{formatCurrency(debt.paid_amount)}</td>
-                                                    <td className="px-3 py-2 text-right">
-                                                        {debt.remaining_amount === null ? 'Belum ditetapkan' : formatCurrency(debt.remaining_amount)}
-                                                    </td>
-                                                    <td className="px-3 py-2">
-                                                        <span
-                                                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                                                debt.status === 'paid'
-                                                                    ? 'bg-green-100 text-green-700'
-                                                                    : debt.status === 'partial'
-                                                                        ? 'bg-orange-100 text-orange-700'
-                                                                        : 'bg-red-100 text-red-700'
-                                                            }`}
-                                                        >
-                                                            {debt.status}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-3 py-2">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="secondary"
-                                                            onClick={() => openPayDebtModal(debt)}
-                                                        >
-                                                            Bayar
-                                                        </Button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <ResponsiveDataView
+                                rows={debtRows}
+                                columns={debtColumns}
+                                keyField="id"
+                                priorityFields={['item', 'remaining_amount', 'status', 'quantity']}
+                                emptyMessage="Belum ada data hutang barang."
+                                tableClassName="w-full md:min-w-[860px] text-sm"
+                                actions={(debt) => (
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => openPayDebtModal(debt)}
+                                    >
+                                        Bayar
+                                    </Button>
+                                )}
+                            />
                         </div>
                     )}
 
@@ -919,75 +978,34 @@ function InventoryPage() {
                                 </div>
                             </div>
 
-                            <div className="overflow-x-auto border border-gray-100 rounded-xl">
-                                <table className="w-full min-w-[860px] text-sm">
-                                    <thead className="bg-gray-50 text-gray-600">
-                                        <tr>
-                                            <th className="px-3 py-2 text-left">Tanggal</th>
-                                            <th className="px-3 py-2 text-left">Barang</th>
-                                            <th className="px-3 py-2 text-left">Jenis</th>
-                                            <th className="px-3 py-2 text-left">Sumber</th>
-                                            <th className="px-3 py-2 text-right">Qty</th>
-                                            <th className="px-3 py-2 text-right">Nilai</th>
-                                            <th className="px-3 py-2 text-left">Penanggung Jawab</th>
-                                            <th className="px-3 py-2 text-left">Catatan</th>
-                                            <th className="px-3 py-2 text-left">Aksi</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-100">
-                                        {movementRows.length === 0 && (
-                                            <tr>
-                                                <td colSpan="9" className="px-3 py-8 text-center text-gray-500">Belum ada histori inventori.</td>
-                                            </tr>
-                                        )}
-                                        {movementRows.map((row) => (
-                                            <tr key={row.id}>
-                                                <td className="px-3 py-2">{row.transaction_date}</td>
-                                                <td className="px-3 py-2">
-                                                    <p className="font-medium text-gray-800">{row.item?.name || '-'}</p>
-                                                    <p className="text-xs text-gray-500">{row.item?.type?.name || '-'}</p>
-                                                </td>
-                                                <td className="px-3 py-2">
-                                                    <span
-                                                        className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                                            row.movement_type === 'in' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                                        }`}
-                                                    >
-                                                        {row.movement_type === 'in' ? 'Masuk' : 'Keluar'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-3 py-2">{row.source}</td>
-                                                <td className="px-3 py-2 text-right">{formatNumber(row.quantity)} {row.item?.unit || ''}</td>
-                                                <td className="px-3 py-2 text-right">{row.total_amount === null ? '-' : formatCurrency(row.total_amount)}</td>
-                                                <td className="px-3 py-2">{row.creator?.name || 'Sistem'}</td>
-                                                <td className="px-3 py-2 max-w-xs">
-                                                    <p className="truncate" title={row.notes || ''}>{row.notes || '-'}</p>
-                                                </td>
-                                                <td className="px-3 py-2">
-                                                    <div className="flex items-center gap-2">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="secondary"
-                                                            onClick={() => openEditMovementModal(row)}
-                                                        >
-                                                            <Pencil size={14} />
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="danger"
-                                                            onClick={() => handleDeleteMovement(row)}
-                                                        >
-                                                            <Trash2 size={14} />
-                                                        </Button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <ResponsiveDataView
+                                rows={movementRows}
+                                columns={movementColumns}
+                                keyField="id"
+                                priorityFields={['transaction_date', 'item', 'movement_type', 'quantity', 'total_amount']}
+                                emptyMessage="Belum ada histori inventori."
+                                tableClassName="w-full md:min-w-[860px] text-sm"
+                                actions={(row) => (
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => openEditMovementModal(row)}
+                                        >
+                                            <Pencil size={14} />
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="danger"
+                                            onClick={() => handleDeleteMovement(row)}
+                                        >
+                                            <Trash2 size={14} />
+                                        </Button>
+                                    </div>
+                                )}
+                            />
                         </div>
                     )}
                 </div>
@@ -997,46 +1015,14 @@ function InventoryPage() {
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 text-gray-800 font-semibold">
                     <Package size={18} /> Stok Saat Ini
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full min-w-[900px] text-sm">
-                        <thead className="bg-gray-50 text-gray-600">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Barang</th>
-                                <th className="px-3 py-2 text-left">Jenis</th>
-                                <th className="px-3 py-2 text-left">Satuan</th>
-                                <th className="px-3 py-2 text-right">Stok</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {stockItems.length === 0 && (
-                                <tr>
-                                    <td colSpan="4" className="px-3 py-8 text-center text-gray-500">Belum ada master barang inventori.</td>
-                                </tr>
-                            )}
-                            {stockItems.map((item) => {
-                                const isLow = Number(item.current_stock || 0) <= 0;
-                                return (
-                                    <tr key={item.id}>
-                                        <td className="px-3 py-2">
-                                            <p className="font-medium text-gray-800">{item.name}</p>
-                                            {!item.is_active && <p className="text-xs text-red-500">Nonaktif</p>}
-                                        </td>
-                                        <td className="px-3 py-2">{item.type?.name || '-'}</td>
-                                        <td className="px-3 py-2">{item.unit}</td>
-                                        <td className={`px-3 py-2 text-right font-semibold ${isLow ? 'text-red-600' : 'text-gray-800'}`}>
-                                            {formatNumber(item.current_stock)}
-                                            {isLow && (
-                                                <span className="inline-flex items-center gap-1 ml-2 text-xs font-normal text-red-500">
-                                                    <AlertCircle size={12} /> Habis
-                                                </span>
-                                            )}
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
+                <ResponsiveDataView
+                    rows={stockItems}
+                    columns={stockColumns}
+                    keyField="id"
+                    priorityFields={['name', 'current_stock', 'unit', 'type_name']}
+                    emptyMessage="Belum ada master barang inventori."
+                    tableClassName="w-full md:min-w-[900px] text-sm"
+                />
             </div>
 
             <Modal

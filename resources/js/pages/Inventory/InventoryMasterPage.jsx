@@ -4,6 +4,7 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import inventoryService from '../../services/inventoryService';
 
 const DEFAULT_TYPE_FORM = {
@@ -243,6 +244,41 @@ function InventoryMasterPage() {
             setSavingPricing(false);
         }
     };
+    const typeColumns = [
+        { key: 'name', label: 'Nama Jenis', render: (row) => <span className="font-medium text-gray-800">{row.name}</span> },
+        { key: 'description', label: 'Deskripsi', render: (row) => row.description || '-' },
+        {
+            key: 'items_count',
+            label: 'Jumlah Barang',
+            render: (row) => formatNumber(row.items_count),
+            cellClassName: 'px-4 py-3 text-sm text-gray-800 text-left md:text-right',
+        },
+    ];
+    const itemColumns = [
+        { key: 'name', label: 'Nama Barang', render: (row) => <span className="font-medium text-gray-800">{row.name}</span> },
+        { key: 'type.name', label: 'Jenis', render: (row) => row.type?.name || '-' },
+        { key: 'unit', label: 'Satuan' },
+        {
+            key: 'default_length',
+            label: 'Panjang Default',
+            render: (row) => (row.default_length ? `${formatNumber(row.default_length)} ${row.length_unit || ''}` : '-'),
+        },
+        {
+            key: 'current_stock',
+            label: 'Stok',
+            render: (row) => <span className="font-semibold text-gray-800">{formatNumber(row.current_stock)}</span>,
+            cellClassName: 'px-4 py-3 text-sm text-gray-800 text-left md:text-right',
+        },
+        {
+            key: 'is_active',
+            label: 'Status',
+            render: (row) => (
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${row.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {row.is_active ? 'Aktif' : 'Nonaktif'}
+                </span>
+            ),
+        },
+    ];
 
     if (loading) {
         return (
@@ -264,7 +300,7 @@ function InventoryMasterPage() {
                     variant="secondary"
                     onClick={() => loadData(false)}
                     disabled={refreshing}
-                    className="inline-flex items-center gap-2"
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2"
                 >
                     <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} /> Refresh
                 </Button>
@@ -321,45 +357,29 @@ function InventoryMasterPage() {
                     <h2 className="font-semibold text-gray-800 inline-flex items-center gap-2">
                         <Tags size={18} /> Jenis Barang
                     </h2>
-                    <Button type="button" variant="primary" size="sm" onClick={openCreateType} className="inline-flex items-center gap-2">
+                    <Button type="button" variant="primary" size="sm" onClick={openCreateType} className="w-full sm:w-auto inline-flex items-center justify-center gap-2">
                         <Plus size={14} /> Tambah Jenis
                     </Button>
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50 text-gray-600">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Nama Jenis</th>
-                                <th className="px-3 py-2 text-left">Deskripsi</th>
-                                <th className="px-3 py-2 text-right">Jumlah Barang</th>
-                                <th className="px-3 py-2 text-right">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {types.length === 0 && (
-                                <tr>
-                                    <td colSpan="4" className="px-3 py-8 text-center text-gray-500">Belum ada jenis barang.</td>
-                                </tr>
-                            )}
-                            {types.map((type) => (
-                                <tr key={type.id}>
-                                    <td className="px-3 py-2 font-medium text-gray-800">{type.name}</td>
-                                    <td className="px-3 py-2 text-gray-600">{type.description || '-'}</td>
-                                    <td className="px-3 py-2 text-right">{formatNumber(type.items_count)}</td>
-                                    <td className="px-3 py-2">
-                                        <div className="flex justify-end gap-2">
-                                            <Button type="button" variant="secondary" size="sm" onClick={() => openEditType(type)}>
-                                                <Edit2 size={14} />
-                                            </Button>
-                                            <Button type="button" variant="danger" size="sm" onClick={() => removeType(type)} disabled={saving}>
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div className="p-4 md:p-0">
+                    <ResponsiveDataView
+                        rows={types}
+                        columns={typeColumns}
+                        keyField="id"
+                        priorityFields={['name', 'items_count']}
+                        emptyMessage="Belum ada jenis barang."
+                        tableClassName="w-full text-sm md:min-w-[840px]"
+                        actions={(type) => (
+                            <div className="flex flex-wrap justify-start md:justify-end gap-2">
+                                <Button type="button" variant="secondary" size="sm" onClick={() => openEditType(type)}>
+                                    <Edit2 size={14} />
+                                </Button>
+                                <Button type="button" variant="danger" size="sm" onClick={() => removeType(type)} disabled={saving}>
+                                    <Trash2 size={14} />
+                                </Button>
+                            </div>
+                        )}
+                    />
                 </div>
             </div>
 
@@ -368,61 +388,29 @@ function InventoryMasterPage() {
                     <h2 className="font-semibold text-gray-800 inline-flex items-center gap-2">
                         <Package size={18} /> Master Barang
                     </h2>
-                    <Button type="button" variant="primary" size="sm" onClick={openCreateItem} className="inline-flex items-center gap-2">
+                    <Button type="button" variant="primary" size="sm" onClick={openCreateItem} className="w-full sm:w-auto inline-flex items-center justify-center gap-2">
                         <Plus size={14} /> Tambah Barang
                     </Button>
                 </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50 text-gray-600">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Nama Barang</th>
-                                <th className="px-3 py-2 text-left">Jenis</th>
-                                <th className="px-3 py-2 text-left">Satuan</th>
-                                <th className="px-3 py-2 text-left">Panjang Default</th>
-                                <th className="px-3 py-2 text-right">Stok</th>
-                                <th className="px-3 py-2 text-left">Status</th>
-                                <th className="px-3 py-2 text-right">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {items.length === 0 && (
-                                <tr>
-                                    <td colSpan="7" className="px-3 py-8 text-center text-gray-500">Belum ada master barang inventori.</td>
-                                </tr>
-                            )}
-                            {items.map((item) => (
-                                <tr key={item.id}>
-                                    <td className="px-3 py-2 font-medium text-gray-800">{item.name}</td>
-                                    <td className="px-3 py-2 text-gray-700">{item.type?.name || '-'}</td>
-                                    <td className="px-3 py-2 text-gray-700">{item.unit}</td>
-                                    <td className="px-3 py-2 text-gray-700">
-                                        {item.default_length ? `${formatNumber(item.default_length)} ${item.length_unit || ''}` : '-'}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-semibold text-gray-800">{formatNumber(item.current_stock)}</td>
-                                    <td className="px-3 py-2">
-                                        <span
-                                            className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                                item.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                                            }`}
-                                        >
-                                            {item.is_active ? 'Aktif' : 'Nonaktif'}
-                                        </span>
-                                    </td>
-                                    <td className="px-3 py-2">
-                                        <div className="flex justify-end gap-2">
-                                            <Button type="button" variant="secondary" size="sm" onClick={() => openEditItem(item)}>
-                                                <Edit2 size={14} />
-                                            </Button>
-                                            <Button type="button" variant="danger" size="sm" onClick={() => removeItem(item)} disabled={saving}>
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div className="p-4 md:p-0">
+                    <ResponsiveDataView
+                        rows={items}
+                        columns={itemColumns}
+                        keyField="id"
+                        priorityFields={['name', 'type.name', 'current_stock']}
+                        emptyMessage="Belum ada master barang inventori."
+                        tableClassName="w-full text-sm md:min-w-[980px]"
+                        actions={(item) => (
+                            <div className="flex flex-wrap justify-start md:justify-end gap-2">
+                                <Button type="button" variant="secondary" size="sm" onClick={() => openEditItem(item)}>
+                                    <Edit2 size={14} />
+                                </Button>
+                                <Button type="button" variant="danger" size="sm" onClick={() => removeItem(item)} disabled={saving}>
+                                    <Trash2 size={14} />
+                                </Button>
+                            </div>
+                        )}
+                    />
                 </div>
             </div>
 

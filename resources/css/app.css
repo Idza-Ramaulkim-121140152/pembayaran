@@ -34,6 +34,12 @@
         overflow-x: hidden;
     }
 
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+    }
+
     body {
         font-family: 'Plus Jakarta Sans', sans-serif;
         color: var(--app-text);
@@ -82,6 +88,10 @@
 
     .app-content :where(input, select, textarea) {
         border-radius: 12px;
+    }
+
+    .app-content :where(button, a[role='button'], input[type='button'], input[type='submit']) {
+        min-height: 40px;
     }
 
     .app-content :where(.bg-white.rounded-lg, .bg-white.rounded-xl, .bg-white.rounded-2xl, .bg-white.rounded-3xl) {
@@ -183,6 +193,19 @@
         background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent);
         animation: shimmer 1.4s infinite;
     }
+
+    .mobile-stack {
+        @apply flex flex-col gap-3;
+    }
+
+    .mobile-section {
+        @apply rounded-2xl border border-slate-200 bg-white p-3 sm:p-4;
+        box-shadow: var(--app-shadow-soft);
+    }
+
+    .mobile-action-bar {
+        @apply sticky bottom-0 z-10 mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 pt-3 backdrop-blur;
+    }
 }
 
 @keyframes shimmer {
@@ -205,4 +228,106 @@
 
 .app-page-enter {
     animation: fadeIn .24s ease-out;
+}
+
+@media (max-width: 767px) {
+    .app-content {
+        overflow-x: clip;
+    }
+
+    .app-content .mobile-table-wrapper {
+        overflow: visible !important;
+    }
+
+    .app-content .mobile-table-auto {
+        min-width: 0 !important;
+        width: 100% !important;
+        border-collapse: separate !important;
+        border-spacing: 0 !important;
+    }
+
+    .app-content .mobile-table-auto thead {
+        display: none !important;
+    }
+
+    .app-content .mobile-table-auto tbody,
+    .app-content .mobile-table-auto tr,
+    .app-content .mobile-table-auto td {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .app-content .mobile-table-auto tbody {
+        display: grid !important;
+        gap: 10px;
+    }
+
+    .app-content .mobile-table-auto tr {
+        border: 1px solid var(--app-border);
+        border-radius: 14px;
+        background: #fff;
+        padding: 10px 12px;
+        box-shadow: var(--app-shadow-soft);
+    }
+
+    .app-content .mobile-table-auto td {
+        border: 0 !important;
+        border-bottom: 1px dashed #e2e8f0 !important;
+        padding: 8px 0 !important;
+        display: grid !important;
+        grid-template-columns: minmax(92px, 38%) minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+    }
+
+    .app-content .mobile-table-auto td:last-child {
+        border-bottom: 0 !important;
+        padding-bottom: 2px !important;
+    }
+
+    .app-content .mobile-table-auto td::before {
+        content: attr(data-label);
+        font-size: 11px;
+        line-height: 1.4;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: .02em;
+    }
+
+    .app-content .mobile-table-auto td.mobile-action-cell {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        border-bottom: 0 !important;
+    }
+
+    .app-content .mobile-table-auto td.mobile-action-cell::before {
+        content: attr(data-label);
+    }
+
+    .app-content .mobile-table-auto td.mobile-action-cell > * {
+        width: 100%;
+    }
+
+    .app-content .mobile-table-auto td.mobile-action-cell .flex {
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .app-content .mobile-table-auto td.mobile-action-cell button,
+    .app-content .mobile-table-auto td.mobile-action-cell a {
+        flex: 1 1 120px;
+    }
+
+    .app-content .mobile-table-auto td.mobile-empty-row {
+        grid-template-columns: 1fr;
+        text-align: center;
+        color: #64748b;
+        border: 0 !important;
+    }
+
+    .app-content .mobile-table-auto td.mobile-empty-row::before {
+        content: none;
+    }
 }

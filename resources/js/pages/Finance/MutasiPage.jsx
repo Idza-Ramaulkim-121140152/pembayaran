@@ -5,6 +5,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Modal from '../../components/common/Modal';
 import Button from '../../components/common/Button';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 
 function MutasiPage() {
     const now = new Date();
@@ -128,6 +129,45 @@ function MutasiPage() {
             minimumFractionDigits: 0,
         }).format(Number(amount || 0));
     };
+
+    const mutationColumns = [
+        { key: 'transaction_date', label: 'Tanggal' },
+        {
+            key: 'type',
+            label: 'Jenis',
+            render: (row) => (
+                <span className={`px-2 py-1 rounded-full text-xs ${row.type === 'income' ? 'bg-green-100 text-green-700' : row.type === 'expense' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {row.type}
+                </span>
+            ),
+        },
+        { key: 'source', label: 'Sumber' },
+        { key: 'description', label: 'Deskripsi', render: (row) => row.description || '-' },
+        { key: 'received_via', label: 'Penerimaan Via', render: (row) => getReceivedViaName(row) },
+        { key: 'creator_name', label: 'Penanggung Jawab', render: (row) => row.creator?.name || 'Sistem' },
+        {
+            key: 'income',
+            label: 'Pemasukan',
+            headerClassName: 'px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-4 py-3 text-right font-semibold text-green-700',
+            render: (row) => {
+                const amount = Number(row.amount || 0);
+                const isIncome = row.type === 'income' || (row.type === 'adjustment' && amount > 0);
+                return isIncome ? formatCurrency(Math.abs(amount)) : '-';
+            },
+        },
+        {
+            key: 'expense',
+            label: 'Pengeluaran',
+            headerClassName: 'px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-4 py-3 text-right font-semibold text-red-600',
+            render: (row) => {
+                const amount = Number(row.amount || 0);
+                const isExpense = row.type === 'expense' || (row.type === 'adjustment' && amount < 0);
+                return isExpense ? formatCurrency(Math.abs(amount)) : '-';
+            },
+        },
+    ];
 
     const handleCreate = async (e) => {
         e.preventDefault();
@@ -334,82 +374,43 @@ function MutasiPage() {
             </form>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-gray-50 text-gray-600">
-                            <tr>
-                                <th className="px-4 py-3 text-left">Tanggal</th>
-                                <th className="px-4 py-3 text-left">Jenis</th>
-                                <th className="px-4 py-3 text-left">Sumber</th>
-                                <th className="px-4 py-3 text-left">Deskripsi</th>
-                                <th className="px-4 py-3 text-left">Penerimaan Via</th>
-                                <th className="px-4 py-3 text-left">Penanggung Jawab</th>
-                                <th className="px-4 py-3 text-right">Pemasukan</th>
-                                <th className="px-4 py-3 text-right">Pengeluaran</th>
-                                {canEditMutations && <th className="px-4 py-3 text-right">Aksi</th>}
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                            {visibleItems.length === 0 && (
-                                <tr>
-                                    <td colSpan={canEditMutations ? 9 : 8} className="px-4 py-10 text-center text-gray-500">
-                                        Belum ada mutasi.
-                                    </td>
-                                </tr>
-                            )}
-                            {visibleItems.map((item) => {
-                                const amount = Number(item.amount || 0);
-                                const isIncome = item.type === 'income' || (item.type === 'adjustment' && amount > 0);
-                                const isExpense = item.type === 'expense' || (item.type === 'adjustment' && amount < 0);
-                                return (
-                                    <tr key={item.id}>
-                                        <td className="px-4 py-3">{item.transaction_date}</td>
-                                        <td className="px-4 py-3">
-                                            <span className={`px-2 py-1 rounded-full text-xs ${item.type === 'income' ? 'bg-green-100 text-green-700' : item.type === 'expense' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                                                {item.type}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3">{item.source}</td>
-                                        <td className="px-4 py-3">{item.description || '-'}</td>
-                                        <td className="px-4 py-3">{getReceivedViaName(item)}</td>
-                                        <td className="px-4 py-3">{item.creator?.name || 'Sistem'}</td>
-                                        <td className="px-4 py-3 text-right font-semibold text-green-700">
-                                            {isIncome ? formatCurrency(Math.abs(amount)) : '-'}
-                                        </td>
-                                        <td className="px-4 py-3 text-right font-semibold text-red-600">
-                                            {isExpense ? formatCurrency(Math.abs(amount)) : '-'}
-                                        </td>
-                                        {canEditMutations && (
-                                            <td className="px-4 py-3">
-                                                <div className="flex justify-end gap-2">
-                                                    <button type="button" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" onClick={() => openEditModal(item)}>
-                                                        <Edit2 size={14} />
-                                                    </button>
-                                                    <button type="button" className="p-1.5 text-red-600 hover:bg-red-50 rounded" onClick={() => handleDelete(item)}>
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        )}
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                        <tfoot className="bg-gray-50 border-t border-gray-200">
-                            <tr>
-                                <td colSpan={6} className="px-4 py-3 text-sm font-semibold text-gray-700">
-                                    Total Halaman Ini
-                                </td>
-                                <td className="px-4 py-3 text-right text-sm font-bold text-green-700">
-                                    {formatCurrency(pageTotals.income)}
-                                </td>
-                                <td className="px-4 py-3 text-right text-sm font-bold text-red-600">
-                                    {formatCurrency(pageTotals.expense)}
-                                </td>
-                                {canEditMutations && <td className="px-4 py-3" />}
-                            </tr>
-                        </tfoot>
-                    </table>
+                <div className="p-3 md:hidden border-b border-gray-100 bg-slate-50">
+                    <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Total Halaman Ini</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2">
+                            <p className="text-[11px] text-emerald-700">Pemasukan</p>
+                            <p className="text-sm font-bold text-emerald-700">{formatCurrency(pageTotals.income)}</p>
+                        </div>
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 p-2">
+                            <p className="text-[11px] text-rose-700">Pengeluaran</p>
+                            <p className="text-sm font-bold text-rose-700">{formatCurrency(pageTotals.expense)}</p>
+                        </div>
+                    </div>
+                </div>
+                <ResponsiveDataView
+                    rows={visibleItems}
+                    columns={mutationColumns}
+                    keyField="id"
+                    priorityFields={['transaction_date', 'type', 'source', 'income', 'expense']}
+                    emptyMessage="Belum ada mutasi."
+                    actions={canEditMutations ? ((row) => (
+                        <div className="flex justify-end gap-2">
+                            <button type="button" className="p-1.5 text-blue-600 hover:bg-blue-50 rounded" onClick={() => openEditModal(row)}>
+                                <Edit2 size={14} />
+                            </button>
+                            <button type="button" className="p-1.5 text-red-600 hover:bg-red-50 rounded" onClick={() => handleDelete(row)}>
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+                    )) : null}
+                />
+                <div className="hidden md:block border-t border-gray-200 bg-gray-50 px-4 py-3">
+                    <div className={`grid ${canEditMutations ? 'grid-cols-9' : 'grid-cols-8'} gap-2 items-center text-sm`}>
+                        <div className="col-span-6 font-semibold text-gray-700">Total Halaman Ini</div>
+                        <div className="text-right font-bold text-green-700">{formatCurrency(pageTotals.income)}</div>
+                        <div className="text-right font-bold text-red-600">{formatCurrency(pageTotals.expense)}</div>
+                        {canEditMutations ? <div /> : null}
+                    </div>
                 </div>
             </div>
 

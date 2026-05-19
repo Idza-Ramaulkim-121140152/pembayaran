@@ -3,6 +3,7 @@ import { Edit2, Plus, RefreshCw, Shield, Target, Trash2 } from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import financialTargetService from '../../services/financialTargetService';
 
 const TYPE_MANDATORY = 'mandatory_expense';
@@ -313,80 +314,90 @@ function FinancialTargetsPage() {
         }
     };
 
-    const renderTargetTable = (rows, type) => (
-        <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[980px]">
-                <thead className="bg-gray-50 text-gray-600">
-                    <tr>
-                        <th className="px-3 py-2 text-left">Nama</th>
-                        <th className="px-3 py-2 text-right">Nominal</th>
-                        <th className="px-3 py-2 text-center">Prioritas</th>
-                        <th className="px-3 py-2 text-left">Konfigurasi Waktu</th>
-                        <th className="px-3 py-2 text-center">Status</th>
-                        <th className="px-3 py-2 text-right">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                    {rows.length === 0 && (
-                        <tr>
-                            <td colSpan="6" className="px-3 py-8 text-center text-gray-500">
-                                {type === TYPE_MANDATORY
-                                    ? 'Belum ada target pengeluaran wajib.'
-                                    : 'Belum ada target pembelian.'}
-                            </td>
-                        </tr>
+    const renderTargetTable = (rows, type) => {
+        const targetColumns = [
+            {
+                key: 'name',
+                label: 'Nama',
+                render: (item) => (
+                    <div>
+                        <p className="font-medium text-gray-900">{item.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{item.description || '-'}</p>
+                    </div>
+                ),
+            },
+            {
+                key: 'amount',
+                label: 'Nominal',
+                render: (item) => <span className="font-semibold text-gray-900">{formatCurrency(item.amount)}</span>,
+                cellClassName: 'px-4 py-3 text-sm text-gray-800 text-left md:text-right',
+            },
+            {
+                key: 'priority',
+                label: 'Prioritas',
+                render: (item) => <span>{item.priority}</span>,
+                cellClassName: 'px-4 py-3 text-sm text-gray-800 text-left md:text-center',
+            },
+            {
+                key: 'time_config',
+                label: 'Konfigurasi Waktu',
+                render: (item) => {
+                    if (item.type === TYPE_PURCHASE) return <span>Target: {item.target_date || '-'}</span>;
+                    if (item.is_recurring_monthly) {
+                        return item.recurrence_forever
+                            ? `Bulanan selamanya (tgl ${item?.meta?.monthly_day || '-'})`
+                            : `Bulanan hingga ${item.recurrence_until || '-'}`;
+                    }
+                    return <span>{item.start_date || '-'} s.d. {item.end_date || '-'}</span>;
+                },
+            },
+            {
+                key: 'is_active',
+                label: 'Status',
+                render: (item) => (
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                        item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-700'
+                    }`}>
+                        {item.is_active ? 'Aktif' : 'Nonaktif'}
+                    </span>
+                ),
+                cellClassName: 'px-4 py-3 text-sm text-gray-800 text-left md:text-center',
+            },
+        ];
+
+        return (
+            <div className="p-4 md:p-0">
+                <ResponsiveDataView
+                    rows={rows}
+                    columns={targetColumns}
+                    keyField="id"
+                    priorityFields={['name', 'amount', 'is_active']}
+                    emptyMessage={type === TYPE_MANDATORY ? 'Belum ada target pengeluaran wajib.' : 'Belum ada target pembelian.'}
+                    tableClassName="w-full text-sm md:min-w-[980px]"
+                    actions={(item) => (
+                        <div className="flex flex-wrap items-center justify-start md:justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => toggleTargetActive(item)}
+                                disabled={saving}
+                                className="w-full sm:w-auto"
+                            >
+                                {item.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                            </Button>
+                            <Button type="button" variant="secondary" size="sm" onClick={() => openEdit(item)} disabled={saving}>
+                                <Edit2 size={14} />
+                            </Button>
+                            <Button type="button" variant="danger" size="sm" onClick={() => removeTarget(item)} disabled={saving}>
+                                <Trash2 size={14} />
+                            </Button>
+                        </div>
                     )}
-                    {rows.map((item) => (
-                        <tr key={item.id}>
-                            <td className="px-3 py-2">
-                                <p className="font-medium text-gray-900">{item.name}</p>
-                                <p className="text-xs text-gray-500 mt-0.5">{item.description || '-'}</p>
-                            </td>
-                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(item.amount)}</td>
-                            <td className="px-3 py-2 text-center">{item.priority}</td>
-                            <td className="px-3 py-2 text-gray-700">
-                                {item.type === TYPE_PURCHASE ? (
-                                    <span>Target: {item.target_date || '-'}</span>
-                                ) : item.is_recurring_monthly ? (
-                                    item.recurrence_forever
-                                        ? `Bulanan selamanya (tgl ${item?.meta?.monthly_day || '-'})`
-                                        : `Bulanan hingga ${item.recurrence_until || '-'}`
-                                ) : (
-                                    <span>{item.start_date || '-'} s.d. {item.end_date || '-'}</span>
-                                )}
-                            </td>
-                            <td className="px-3 py-2 text-center">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                    item.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-700'
-                                }`}>
-                                    {item.is_active ? 'Aktif' : 'Nonaktif'}
-                                </span>
-                            </td>
-                            <td className="px-3 py-2">
-                                <div className="flex items-center justify-end gap-2">
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        size="sm"
-                                        onClick={() => toggleTargetActive(item)}
-                                        disabled={saving}
-                                    >
-                                        {item.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                                    </Button>
-                                    <Button type="button" variant="secondary" size="sm" onClick={() => openEdit(item)} disabled={saving}>
-                                        <Edit2 size={14} />
-                                    </Button>
-                                    <Button type="button" variant="danger" size="sm" onClick={() => removeTarget(item)} disabled={saving}>
-                                        <Trash2 size={14} />
-                                    </Button>
-                                </div>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    );
+                />
+            </div>
+        );
+    };
 
     if (!isSuperAdmin) {
         return (
@@ -406,18 +417,18 @@ function FinancialTargetsPage() {
                     </h1>
                     <p className="text-gray-500 mt-1">Khusus superadmin: kelola target pengeluaran wajib dan target pembelian.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                     <Button
                         type="button"
                         variant="secondary"
                         onClick={() => loadTargets(false)}
                         disabled={refreshing}
-                        className="inline-flex items-center gap-2"
+                        className="w-full sm:w-auto inline-flex items-center justify-center gap-2"
                     >
                         <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
                         Refresh
                     </Button>
-                    <Button type="button" onClick={openCreate} className="inline-flex items-center gap-2">
+                    <Button type="button" onClick={openCreate} className="w-full sm:w-auto inline-flex items-center justify-center gap-2">
                         <Plus size={16} />
                         Tambah Target
                     </Button>

@@ -28,6 +28,7 @@ import {
 import Alert from '../components/common/Alert';
 import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
+import ResponsiveDataView from '../components/common/ResponsiveDataView';
 import apiClient from '../services/api';
 
 ChartJS.register(
@@ -509,6 +510,67 @@ function Dashboard() {
         return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
     };
 
+    const employeePayrollColumns = [
+        { key: 'tanggal', label: 'Tanggal', render: (row) => formatShortDate(row.tanggal), cellClassName: 'px-3 py-2 text-gray-700' },
+        {
+            key: 'project',
+            label: 'Proyek',
+            render: (row) => (
+                <div>
+                    <p className="font-medium text-gray-900">#{row.project_id}</p>
+                    <p className="text-xs text-gray-500">{row.catatan || '-'}</p>
+                </div>
+            ),
+            cellClassName: 'px-3 py-2 text-gray-700',
+        },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (row) => (
+                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {row.status === 'paid' ? 'Dibayar' : 'Belum Dibayar'}
+                </span>
+            ),
+            cellClassName: 'px-3 py-2',
+        },
+        {
+            key: 'bagian',
+            label: 'Bagian Anda',
+            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right font-semibold text-blue-700',
+            render: (row) => formatCurrency(row.bagian || 0),
+        },
+        {
+            key: 'project_total',
+            label: 'Total Proyek',
+            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right text-gray-700',
+            render: (row) => formatCurrency(row.project_total || 0),
+        },
+    ];
+
+    const dashboardTransactionColumns = [
+        { key: 'transaction_date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-600' },
+        { key: 'type', label: 'Jenis', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.type || '-' },
+        { key: 'source', label: 'Sumber', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.source || '-' },
+        { key: 'description', label: 'Deskripsi', cellClassName: 'px-3 py-2 text-gray-800', render: (row) => row.description || '-' },
+        {
+            key: 'amount',
+            label: 'Nominal',
+            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right font-semibold',
+            render: (row) => {
+                const amount = Number(row.amount || 0);
+                const isIncome = row.type === 'income';
+                return (
+                    <span className={isIncome ? 'text-emerald-700' : 'text-red-700'}>
+                        {isIncome ? '+' : '-'}{formatCurrency(amount)}
+                    </span>
+                );
+            },
+        },
+    ];
+
     return (
         <div className="space-y-6 min-w-0">
             <div className="app-section-header flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -651,37 +713,16 @@ function Dashboard() {
                         {visibleEmployeePayrollHistory.length === 0 ? (
                             <p className="text-sm text-gray-500">Belum ada riwayat proyek payroll.</p>
                         ) : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm min-w-[720px]">
-                                    <thead className="bg-gray-50 text-gray-600">
-                                        <tr>
-                                            <th className="text-left px-3 py-2">Tanggal</th>
-                                            <th className="text-left px-3 py-2">Proyek</th>
-                                            <th className="text-left px-3 py-2">Status</th>
-                                            <th className="text-right px-3 py-2">Bagian Anda</th>
-                                            <th className="text-right px-3 py-2">Total Proyek</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {visibleEmployeePayrollHistory.map((item) => (
-                                            <tr key={`employee-payroll-${item.project_id}-${item.tanggal}`} className="border-t border-gray-100">
-                                                <td className="px-3 py-2 text-gray-700">{formatShortDate(item.tanggal)}</td>
-                                                <td className="px-3 py-2 text-gray-700">
-                                                    <p className="font-medium text-gray-900">#{item.project_id}</p>
-                                                    <p className="text-xs text-gray-500">{item.catatan || '-'}</p>
-                                                </td>
-                                                <td className="px-3 py-2">
-                                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${item.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                                                        {item.status === 'paid' ? 'Dibayar' : 'Belum Dibayar'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-3 py-2 text-right font-semibold text-blue-700">{formatCurrency(item.bagian || 0)}</td>
-                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(item.project_total || 0)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <ResponsiveDataView
+                                rows={visibleEmployeePayrollHistory.map((item, index) => ({
+                                    ...item,
+                                    __rowKey: `${item.project_id}-${item.tanggal}-${index}`,
+                                }))}
+                                columns={employeePayrollColumns}
+                                keyField="__rowKey"
+                                priorityFields={['tanggal', 'project', 'status', 'bagian']}
+                                tableClassName="w-full text-sm md:min-w-[720px]"
+                            />
                         )}
                     </div>
                 </div>
@@ -976,36 +1017,13 @@ function Dashboard() {
                     ) : transactions.length === 0 ? (
                         <p className="text-sm text-gray-500">Belum ada transaksi.</p>
                     ) : (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm min-w-[800px]">
-                                <thead className="bg-gray-50 text-gray-600">
-                                    <tr>
-                                        <th className="text-left px-3 py-2">Tanggal</th>
-                                        <th className="text-left px-3 py-2">Jenis</th>
-                                        <th className="text-left px-3 py-2">Sumber</th>
-                                        <th className="text-left px-3 py-2">Deskripsi</th>
-                                        <th className="text-right px-3 py-2">Nominal</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {transactions.slice(0, 5).map((item) => {
-                                        const amount = Number(item.amount || 0);
-                                        const isIncome = item.type === 'income';
-                                        return (
-                                            <tr key={item.id} className="border-t border-gray-100">
-                                                <td className="px-3 py-2 text-gray-600">{item.transaction_date || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-700">{item.type || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-700">{item.source || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-800">{item.description || '-'}</td>
-                                                <td className={`px-3 py-2 text-right font-semibold ${isIncome ? 'text-emerald-700' : 'text-red-700'}`}>
-                                                    {isIncome ? '+' : '-'}{formatCurrency(amount)}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
+                        <ResponsiveDataView
+                            rows={transactions.slice(0, 5)}
+                            columns={dashboardTransactionColumns}
+                            keyField="id"
+                            priorityFields={['transaction_date', 'type', 'amount', 'source']}
+                            tableClassName="w-full text-sm md:min-w-[800px]"
+                        />
                     )}
                 </div>
             )}

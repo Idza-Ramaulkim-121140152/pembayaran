@@ -4,6 +4,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import billingService from '../../services/billingService';
 
 function BillingPage() {
@@ -807,10 +808,124 @@ Tim Layanan Pelanggan Rumah Kita Net`;
     const almostLateFiltered = (customers.almostLate || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
     const othersFiltered = (customers.others || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
 
+    const invalidServiceColumns = [
+        {
+            key: 'customer',
+            label: 'Pelanggan',
+            render: (row) => (
+                <div>
+                    <p className="font-medium text-gray-900">{row.customer_name}</p>
+                    <p className="text-xs text-gray-500">{row.pppoe_username || '-'}</p>
+                </div>
+            ),
+        },
+        { key: 'service_label', label: 'Layanan Saat Ini', render: (row) => row.service_label || '-' },
+    ];
+
+    const autoResultColumns = [
+        { key: 'customer_id', label: 'Customer ID' },
+        { key: 'status', label: 'Status' },
+        { key: 'reason', label: 'Reason', render: (row) => row.reason || '-' },
+        { key: 'wa_status', label: 'WA', render: (row) => row.wa_status || '-' },
+    ];
+
     const CustomerTable = ({ title, data, icon: Icon, iconColor, segment, defaultCollapsed = false }) => {
         const sectionKey = title.toLowerCase().replace(/[^a-z]/g, '');
         const isCollapsed = collapsed[sectionKey] ?? defaultCollapsed;
         const canRunAutoInvoice = segment === 'late' || segment === 'almostLate';
+        const isLateCustomer = segment === 'late';
+        const isAlmostLateCustomer = segment === 'almostLate';
+
+        const buildRowMeta = (item) => {
+            const customer = item?.customer;
+            const latestInvoice = item?.invoice || null;
+            const activeInvoice = item?.active_invoice || null;
+            const invoiceToUse = activeInvoice || null;
+            const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
+            const normalizedInvoiceStatus = (invoiceToUse?.status || '').toString().trim().toLowerCase();
+            const canCreateInvoice = !!item?.can_create_invoice;
+            const paidMonthLabel = formatPaidMonth(latestInvoice?.paid_at || latestInvoice?.updated_at || latestInvoice?.created_at);
+            const statusInfo = isolationStatus[customer?.id];
+
+            const statusBadge = (() => {
+                if (invoiceToUse) {
+                    if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
+                        return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
+                    }
+                    if (normalizedInvoiceStatus === 'paid') {
+                        return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
+                    }
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
+                }
+
+                if (isLateCustomer) {
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan Aktif</span>;
+                }
+
+                if (latestInvoiceStatus === 'paid' || item?.has_paid_this_month) {
+                    if (isAlmostLateCustomer && paidMonthLabel) {
+                        return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar bulan {paidMonthLabel}</span>;
+                    }
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
+                }
+
+                if (isAlmostLateCustomer) {
+                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan</span>;
+                }
+
+                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">Belum Ada Tagihan</span>;
+            })();
+
+            const isolirBadge = (() => {
+                if (!isLateCustomer) return null;
+
+                if (loadingIsolationStatus && !statusInfo) {
+                    return (
+                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
+                            Cek status...
+                        </span>
+                    );
+                }
+
+                if (statusInfo?.isolated) {
+                    return (
+                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1">
+                            <ShieldAlert size={12} />
+                            Sedang Isolir
+                        </span>
+                    );
+                }
+
+                return (
+                    <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => handleIsolateCustomer(customer.id)}
+                        disabled={submitting}
+                    >
+                        <ShieldAlert size={14} className="mr-1" />
+                        Lakukan Isolir
+                    </Button>
+                );
+            })();
+
+            return {
+                customer,
+                invoiceToUse,
+                normalizedInvoiceStatus,
+                canCreateInvoice,
+                statusBadge,
+                isolirBadge,
+            };
+        };
+
+        const mobileColumns = [
+            { key: 'name', label: 'Nama', render: (item) => buildRowMeta(item).customer?.name || '-' },
+            { key: 'pppoe', label: 'PPPoE', render: (item) => buildRowMeta(item).customer?.pppoe_username || '-' },
+            { key: 'due', label: 'Jatuh Tempo', render: (item) => formatDate(buildRowMeta(item).customer?.due_date) },
+            { key: 'status', label: 'Status', render: (item) => buildRowMeta(item).statusBadge },
+            { key: 'isolir', label: 'Isolir', render: (item) => buildRowMeta(item).isolirBadge },
+        ];
         
         return (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -846,7 +961,97 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 </div>
                 
                 {!isCollapsed && (
-                    <div className="overflow-x-auto">
+                    <>
+                    <ResponsiveDataView
+                        rows={data}
+                        columns={mobileColumns}
+                        keyField="customer.id"
+                        priorityFields={['name', 'status', 'due']}
+                        emptyMessage="Tidak ada data"
+                        actions={(item) => {
+                            const meta = buildRowMeta(item);
+                            const customer = meta.customer;
+                            const invoiceToUse = meta.invoiceToUse;
+                            const normalizedInvoiceStatus = meta.normalizedInvoiceStatus;
+                            const canCreateInvoice = meta.canCreateInvoice;
+
+                            return (
+                                <div className="flex flex-wrap gap-1">
+                                    {canCreateInvoice && (
+                                        <Button
+                                            size="sm"
+                                            variant="primary"
+                                            onClick={() => handleOpenCreateInvoice(customer)}
+                                        >
+                                            <FileText size={14} className="mr-1" />
+                                            <span>Buat</span>
+                                        </Button>
+                                    )}
+                                    {invoiceToUse && (
+                                        <>
+                                            {normalizedInvoiceStatus !== 'paid' && (
+                                                <>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="success"
+                                                        onClick={() => setLinkModal({ open: true, invoice: invoiceToUse, customer })}
+                                                    >
+                                                        <Send size={14} className="mr-1" />
+                                                        <span>Kirim</span>
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="warning"
+                                                        onClick={() => openConfirmModal(invoiceToUse, customer)}
+                                                    >
+                                                        <Check size={14} className="mr-1" />
+                                                        <span>Konfirmasi</span>
+                                                    </Button>
+                                                </>
+                                            )}
+                                            <Button
+                                                size="sm"
+                                                variant="secondary"
+                                                onClick={() => {
+                                                    const invoiceUrl = resolveInvoiceUrl(invoiceToUse);
+                                                    if (invoiceUrl) {
+                                                        window.open(invoiceUrl, '_blank');
+                                                    }
+                                                }}
+                                            >
+                                                <Eye size={14} className="mr-1" />
+                                                <span>Lihat</span>
+                                            </Button>
+                                            {canEditInvoiceAmount && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    onClick={() => {
+                                                        setEditAmountModal({ open: true, invoice: invoiceToUse, customer });
+                                                        const amount = parseFloat(invoiceToUse.amount);
+                                                        setNewInvoiceAmount(isNaN(amount) ? '' : Math.round(amount).toString());
+                                                    }}
+                                                >
+                                                    <FileText size={14} className="mr-1" />
+                                                    <span>Nominal</span>
+                                                </Button>
+                                            )}
+                                            {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoiceToUse.bukti_pembayaran && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="danger"
+                                                    onClick={() => setRejectModal({ open: true, invoice: invoiceToUse })}
+                                                >
+                                                    <X size={14} />
+                                                </Button>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            );
+                        }}
+                    />
+                    <div className="hidden md:block overflow-x-auto">
                         <table className="w-full min-w-[980px]">
                             <thead className="bg-gray-50 border-t border-gray-100">
                                 <tr>
@@ -883,6 +1088,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             </tbody>
                         </table>
                     </div>
+                    </>
                 )}
             </div>
         );
@@ -1211,42 +1417,25 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             Set layanan terlebih dahulu lalu jalankan ulang.
                         </p>
                     </div>
-                    <div className="max-h-80 overflow-y-auto overflow-x-auto border border-gray-100 rounded-lg">
-                        <table className="w-full min-w-[680px] text-sm">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Pelanggan</th>
-                                    <th className="px-3 py-2 text-left">Layanan Saat Ini</th>
-                                    <th className="px-3 py-2 text-left">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {invalidServiceModal.rows.map((row) => (
-                                    <tr key={row.customer_id}>
-                                        <td className="px-3 py-2">
-                                            <p className="font-medium text-gray-900">{row.customer_name}</p>
-                                            <p className="text-xs text-gray-500">{row.pppoe_username || '-'}</p>
-                                        </td>
-                                        <td className="px-3 py-2">{row.service_label || '-'}</td>
-                                        <td className="px-3 py-2">
-                                            <Button
-                                                type="button"
-                                                size="sm"
-                                                variant="primary"
-                                                onClick={() => openServicePackageModalFromInvalid(row)}
-                                            >
-                                                Set Layanan
-                                            </Button>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {invalidServiceModal.rows.length === 0 && (
-                                    <tr>
-                                        <td colSpan="3" className="px-3 py-6 text-center text-gray-500">Tidak ada data.</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
+                    <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={invalidServiceModal.rows}
+                            columns={invalidServiceColumns}
+                            keyField="customer_id"
+                            priorityFields={['customer', 'service_label']}
+                            emptyMessage="Tidak ada data."
+                            tableClassName="w-full md:min-w-[680px] text-sm"
+                            actions={(row) => (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="primary"
+                                    onClick={() => openServicePackageModalFromInvalid(row)}
+                                >
+                                    Set Layanan
+                                </Button>
+                            )}
+                        />
                     </div>
                     <div className="flex justify-end">
                         <Button
@@ -1282,32 +1471,15 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></div>
                     </div>
-                    <div className="max-h-72 overflow-y-auto overflow-x-auto border border-gray-100 rounded-lg">
-                        <table className="w-full min-w-[760px] text-sm">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-3 py-2 text-left">Customer ID</th>
-                                    <th className="px-3 py-2 text-left">Status</th>
-                                    <th className="px-3 py-2 text-left">Reason</th>
-                                    <th className="px-3 py-2 text-left">WA</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {(autoResultModal.results || []).map((row, idx) => (
-                                    <tr key={`${row.customer_id}-${idx}`}>
-                                        <td className="px-3 py-2">{row.customer_id}</td>
-                                        <td className="px-3 py-2">{row.status}</td>
-                                        <td className="px-3 py-2">{row.reason || '-'}</td>
-                                        <td className="px-3 py-2">{row.wa_status || '-'}</td>
-                                    </tr>
-                                ))}
-                                {(autoResultModal.results || []).length === 0 && (
-                                    <tr>
-                                        <td colSpan="4" className="px-3 py-6 text-center text-gray-500">Tidak ada detail hasil.</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
+                    <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={(autoResultModal.results || []).map((row, idx) => ({ ...row, __rowKey: `${row.customer_id}-${idx}` }))}
+                            columns={autoResultColumns}
+                            keyField="__rowKey"
+                            priorityFields={['customer_id', 'status', 'wa_status']}
+                            emptyMessage="Tidak ada detail hasil."
+                            tableClassName="w-full md:min-w-[760px] text-sm"
+                        />
                     </div>
                 </div>
             </Modal>

@@ -28,6 +28,7 @@ import {
 } from 'chart.js';
 import Alert from '../components/common/Alert';
 import Modal from '../components/common/Modal';
+import ResponsiveDataView from '../components/common/ResponsiveDataView';
 import apiClient from '../services/api';
 
 ChartJS.register(
@@ -1183,47 +1184,24 @@ function DashboardPredictionPage() {
                         </p>
                     </div>
 
-                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                        <table className="w-full text-sm min-w-[1180px]">
-                            <thead className="bg-gray-50 text-gray-600 text-left">
-                                <tr>
-                                    <th className="px-3 py-2">Tanggal Wajib</th>
-                                    <th className="px-3 py-2 text-right">Nominal Wajib</th>
-                                    <th className="px-3 py-2 text-center">Status Wajib</th>
-                                    <th className="px-3 py-2 text-right">Total Saldo Sebelum</th>
-                                    <th className="px-3 py-2 text-right">Total Saldo Setelah - Nominal</th>
-                                    <th className="px-3 py-2 text-right">Saldo Bebas Sebelum</th>
-                                    <th className="px-3 py-2 text-right">Saldo Bebas Setelah - Nominal</th>
-                                    <th className="px-3 py-2 text-center">Risiko</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(purchaseRiskPreview?.risk_rows || []).length === 0 ? (
-                                    <tr>
-                                        <td colSpan={8} className="px-3 py-4 text-center text-gray-500">Tidak ada data pengeluaran wajib pada horizon ini.</td>
-                                    </tr>
-                                ) : (purchaseRiskPreview?.risk_rows || []).map((row) => (
-                                    <tr key={`risk-row-${row.due_date}`} className="border-t border-gray-100">
-                                        <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
-                                        <td className="px-3 py-2 text-right text-gray-900 font-semibold">{formatCurrency(row.mandatory_amount || 0)}</td>
-                                        <td className="px-3 py-2 text-center text-gray-700">{row.status_label || '-'}</td>
-                                        <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.total_balance_before || 0)}</td>
-                                        <td className={`px-3 py-2 text-right font-semibold ${Number(row.total_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}`}>
-                                            {formatCurrency(row.total_balance_after_purchase || 0)}
-                                        </td>
-                                        <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.free_balance_before || 0)}</td>
-                                        <td className={`px-3 py-2 text-right font-semibold ${Number(row.free_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}`}>
-                                            {formatCurrency(row.free_balance_after_purchase || 0)}
-                                        </td>
-                                        <td className="px-3 py-2 text-center">
-                                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskLevelBadgeClass(row.risk_level)}`}>
-                                                {row.risk_level || 'aman'}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={purchaseRiskPreview?.risk_rows || []}
+                            keyField="due_date"
+                            priorityFields={['due_date', 'risk_level', 'mandatory_amount', 'free_balance_after_purchase']}
+                            emptyMessage="Tidak ada data pengeluaran wajib pada horizon ini."
+                            tableClassName="w-full text-sm md:min-w-[1180px]"
+                            columns={[
+                                { key: 'due_date', label: 'Tanggal Wajib', cellClassName: 'px-3 py-2 text-gray-700' },
+                                { key: 'mandatory_amount', label: 'Nominal Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-900 font-semibold', render: (row) => formatCurrency(row.mandatory_amount || 0) },
+                                { key: 'status_label', label: 'Status Wajib', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.status_label || '-' },
+                                { key: 'total_balance_before', label: 'Total Saldo Sebelum', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.total_balance_before || 0) },
+                                { key: 'total_balance_after_purchase', label: 'Total Saldo Setelah - Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.total_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}>{formatCurrency(row.total_balance_after_purchase || 0)}</span> },
+                                { key: 'free_balance_before', label: 'Saldo Bebas Sebelum', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.free_balance_before || 0) },
+                                { key: 'free_balance_after_purchase', label: 'Saldo Bebas Setelah - Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.free_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}>{formatCurrency(row.free_balance_after_purchase || 0)}</span> },
+                                { key: 'risk_level', label: 'Risiko', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskLevelBadgeClass(row.risk_level)}`}>{row.risk_level || 'aman'}</span> },
+                            ]}
+                        />
                     </div>
 
                     {purchaseRiskModalError && (
@@ -1418,43 +1396,36 @@ function DashboardPredictionPage() {
                         <Users size={16} className="text-blue-600" />
                         Collection Probability per Pelanggan
                     </h3>
-                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                        <table className="w-full text-sm min-w-[620px]">
-                            <thead className="bg-gray-50 text-gray-600 text-left">
-                                <tr>
-                                    <th className="px-3 py-2">Pelanggan</th>
-                                    <th className="px-3 py-2 text-right">Probabilitas</th>
-                                    <th className="px-3 py-2 text-right">Open Amount</th>
-                                    <th className="px-3 py-2 text-right">Overdue (hari)</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {collectionProbability.length === 0 ? (
-                                    <tr>
-                                        <td colSpan={4} className="px-3 py-4 text-center text-gray-500">Data collection probability belum tersedia.</td>
-                                    </tr>
-                                ) : (
-                                    collectionProbability.slice(0, 10).map((row) => (
-                                        <tr key={`cp-${row.customer_id}`} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 text-gray-900 font-medium">{row.name}</td>
-                                            <td className="px-3 py-2 text-right">
-                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                                    Number(row.collection_probability_pct || 0) < 45
-                                                        ? 'bg-rose-100 text-rose-700'
-                                                        : Number(row.collection_probability_pct || 0) < 70
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : 'bg-emerald-100 text-emerald-700'
-                                                }`}>
-                                                    {Number(row.collection_probability_pct || 0).toFixed(1)}%
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.open_invoice_amount || 0)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{row.days_overdue || 0}</td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
+                    <div className="border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={collectionProbability.slice(0, 10)}
+                            keyField="customer_id"
+                            priorityFields={['name', 'collection_probability_pct', 'open_invoice_amount']}
+                            emptyMessage="Data collection probability belum tersedia."
+                            tableClassName="w-full text-sm md:min-w-[620px]"
+                            columns={[
+                                { key: 'name', label: 'Pelanggan', cellClassName: 'px-3 py-2 text-gray-900 font-medium' },
+                                {
+                                    key: 'collection_probability_pct',
+                                    label: 'Probabilitas',
+                                    headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                                    cellClassName: 'px-3 py-2 text-right',
+                                    render: (row) => (
+                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                            Number(row.collection_probability_pct || 0) < 45
+                                                ? 'bg-rose-100 text-rose-700'
+                                                : Number(row.collection_probability_pct || 0) < 70
+                                                    ? 'bg-amber-100 text-amber-700'
+                                                    : 'bg-emerald-100 text-emerald-700'
+                                        }`}>
+                                            {Number(row.collection_probability_pct || 0).toFixed(1)}%
+                                        </span>
+                                    ),
+                                },
+                                { key: 'open_invoice_amount', label: 'Open Amount', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.open_invoice_amount || 0) },
+                                { key: 'days_overdue', label: 'Overdue (hari)', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => row.days_overdue || 0 },
+                            ]}
+                        />
                     </div>
                 </div>
 
@@ -1463,42 +1434,22 @@ function DashboardPredictionPage() {
                         <Wallet size={16} className="text-violet-600" />
                         Forecast Bulanan (Pelanggan + Pendapatan)
                     </h3>
-                    <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                        <table className="w-full text-sm min-w-[740px]">
-                            <thead className="bg-gray-50 text-gray-600 text-left">
-                                <tr>
-                                    <th className="px-3 py-2">Bulan</th>
-                                    <th className="px-3 py-2 text-right">Total Pelanggan</th>
-                                    <th className="px-3 py-2 text-right">Billing</th>
-                                    <th className="px-3 py-2 text-right">Pemasangan</th>
-                                    <th className="px-3 py-2 text-right">Pendapatan Lain</th>
-                                    <th className="px-3 py-2 text-right">Total Netto</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {((monthlyTotalRevenueForecast?.months || []).length === 0) ? (
-                                    <tr>
-                                        <td colSpan={6} className="px-3 py-4 text-center text-gray-500">Forecast bulanan belum tersedia.</td>
-                                    </tr>
-                                ) : (
-                                    (monthlyTotalRevenueForecast?.months || []).map((row) => {
-                                        const growthRow = (customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month);
-                                        return (
-                                            <tr key={`month-forecast-${row.month}`} className="border-t border-gray-100">
-                                                <td className="px-3 py-2 font-medium text-gray-900">{row.month}</td>
-                                                <td className="px-3 py-2 text-right text-gray-700">{growthRow?.predicted_total_customers ?? '-'}</td>
-                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.billing_recurring || 0)}</td>
-                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.installation || 0)}</td>
-                                                <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.other_financial_income || 0)}</td>
-                                                <td className={`px-3 py-2 text-right font-semibold ${(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                                    {formatCurrency(row.net_total || 0)}
-                                                </td>
-                                            </tr>
-                                        );
-                                    })
-                                )}
-                            </tbody>
-                        </table>
+                    <div className="border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={monthlyTotalRevenueForecast?.months || []}
+                            keyField="month"
+                            priorityFields={['month', 'net_total', 'billing_recurring']}
+                            emptyMessage="Forecast bulanan belum tersedia."
+                            tableClassName="w-full text-sm md:min-w-[740px]"
+                            columns={[
+                                { key: 'month', label: 'Bulan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                { key: 'predicted_total_customers', label: 'Total Pelanggan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => ((customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month)?.predicted_total_customers ?? '-') },
+                                { key: 'billing_recurring', label: 'Billing', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.billing_recurring || 0) },
+                                { key: 'installation', label: 'Pemasangan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.installation || 0) },
+                                { key: 'other_financial_income', label: 'Pendapatan Lain', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.other_financial_income || 0) },
+                                { key: 'net_total', label: 'Total Netto', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(row.net_total || 0)}</span> },
+                            ]}
+                        />
                     </div>
                 </div>
             </div>
@@ -1597,37 +1548,20 @@ function DashboardPredictionPage() {
                             </div>
                         </div>
 
-                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                            <table className="w-full text-sm min-w-[700px]">
-                                <thead className="bg-gray-50 text-gray-600 text-left">
-                                    <tr>
-                                        <th className="px-3 py-2">Aspek</th>
-                                        <th className="px-3 py-2">Skor</th>
-                                        <th className="px-3 py-2">Status</th>
-                                        <th className="px-3 py-2">Alasan</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {ispRiskMatrix.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={4}>
-                                                Data matriks risiko belum tersedia.
-                                            </td>
-                                        </tr>
-                                    ) : ispRiskMatrix.map((row) => (
-                                        <tr key={`isp-risk-${row.key}`} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 font-medium text-gray-900">{row.label}</td>
-                                            <td className="px-3 py-2 text-gray-700">{row.score}</td>
-                                            <td className="px-3 py-2">
-                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>
-                                                    {row.status}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2 text-gray-700">{row.reason}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            <ResponsiveDataView
+                                rows={ispRiskMatrix}
+                                keyField="key"
+                                priorityFields={['label', 'status', 'score']}
+                                emptyMessage="Data matriks risiko belum tersedia."
+                                tableClassName="w-full text-sm md:min-w-[700px]"
+                                columns={[
+                                    { key: 'label', label: 'Aspek', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                    { key: 'score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
+                                    { key: 'status', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>{row.status}</span> },
+                                    { key: 'reason', label: 'Alasan', cellClassName: 'px-3 py-2 text-gray-700' },
+                                ]}
+                            />
                         </div>
                     </>
                 )}
@@ -1757,37 +1691,21 @@ function DashboardPredictionPage() {
                             </div>
                         </div>
 
-                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                            <table className="w-full text-sm min-w-[760px]">
-                                <thead className="bg-gray-50 text-gray-600 text-left">
-                                    <tr>
-                                        <th className="px-3 py-2">Tanggal</th>
-                                        <th className="px-3 py-2">Hari</th>
-                                        <th className="px-3 py-2 text-right">Prediksi</th>
-                                        <th className="px-3 py-2 text-right">Confidence</th>
-                                        <th className="px-3 py-2 text-right">Spread Model</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {forecastDailyRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
-                                                Tidak ada data prediksi harian.
-                                            </td>
-                                        </tr>
-                                    ) : forecastDailyRows.slice(0, 15).map((row) => (
-                                        <tr key={row.date} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 text-gray-700">{row.date}</td>
-                                            <td className="px-3 py-2 text-gray-700">{row.day_name || '-'}</td>
-                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.predicted_revenue)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.confidence || 0, 1)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">
-                                                {formatPercent(row?.components?.model_spread_ratio || 0, 2)}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            <ResponsiveDataView
+                                rows={forecastDailyRows.slice(0, 15)}
+                                keyField="date"
+                                priorityFields={['date', 'predicted_revenue', 'confidence']}
+                                emptyMessage="Tidak ada data prediksi harian."
+                                tableClassName="w-full text-sm md:min-w-[760px]"
+                                columns={[
+                                    { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
+                                    { key: 'day_name', label: 'Hari', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.day_name || '-' },
+                                    { key: 'predicted_revenue', label: 'Prediksi', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.predicted_revenue) },
+                                    { key: 'confidence', label: 'Confidence', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.confidence || 0, 1) },
+                                    { key: 'spread', label: 'Spread Model', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row?.components?.model_spread_ratio || 0, 2) },
+                                ]}
+                            />
                         </div>
                     </>
                 )}
@@ -1965,63 +1883,47 @@ function DashboardPredictionPage() {
                             </div>
                             <p className="text-xs text-gray-500">Pemilih bulan ini sinkron dengan filter Proyeksi Keuangan Bulanan.</p>
                             <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                <table className="w-full text-sm min-w-[980px]">
-                                    <thead className="bg-gray-50 text-gray-600 text-left">
-                                        <tr>
-                                            <th className="px-3 py-2">Tanggal</th>
-                                            <th className="px-3 py-2 text-right">Total Saldo</th>
-                                            <th className="px-3 py-2 text-center">Sumber</th>
-                                            <th className="px-3 py-2 text-right">Prediksi Pemasukan</th>
-                                            <th className="px-3 py-2 text-right">Pengeluaran Wajib</th>
-                                            <th className="px-3 py-2 text-right">
-                                                <span title="Saldo Bebas = max((90% x Total Saldo) - Wajib Pending - Akumulasi Alokasi Wajib Bulanan Terkonfirmasi, 0)">Saldo Bebas</span>
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {financialProjectionLoading && projectionDailyRows.length === 0 ? (
-                                            <tr>
-                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                    Memuat riwayat saldo...
-                                                </td>
-                                            </tr>
-                                        ) : financialProjectionError ? (
-                                            <tr>
-                                                <td className="px-3 py-4 text-center text-red-700" colSpan={6}>
-                                                    {financialProjectionError}
-                                                </td>
-                                            </tr>
-                                        ) : projectionDailyRows.length === 0 ? (
-                                            <tr>
-                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                    Belum ada data riwayat saldo di bulan {formatMonthLabel(financialProjectionMonth)}.
-                                                </td>
-                                            </tr>
-                                        ) : projectionDailyRows.map((row) => {
-                                            const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
-                                            const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
-
-                                            return (
-                                                <tr key={`balance-history-${row.date}`} className="border-t border-gray-100">
-                                                    <td className="px-3 py-2 text-gray-700">{row.date}</td>
-                                                    <td className={`px-3 py-2 text-right font-semibold ${totalSaldo >= 0 ? 'text-gray-900' : 'text-red-700'}`}>
-                                                        {formatCurrency(totalSaldo)}
-                                                    </td>
-                                                    <td className="px-3 py-2 text-center">
+                                {financialProjectionLoading && projectionDailyRows.length === 0 ? (
+                                    <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat riwayat saldo...</div>
+                                ) : financialProjectionError ? (
+                                    <div className="px-3 py-4 text-center text-red-700 text-sm">{financialProjectionError}</div>
+                                ) : (
+                                    <ResponsiveDataView
+                                        rows={projectionDailyRows}
+                                        keyField="date"
+                                        priorityFields={['date', 'chart_balance', 'chart_balance_source', 'discretionary_balance_display']}
+                                        emptyMessage={`Belum ada data riwayat saldo di bulan ${formatMonthLabel(financialProjectionMonth)}.`}
+                                        tableClassName="w-full text-sm md:min-w-[980px]"
+                                        columns={[
+                                            { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
+                                            {
+                                                key: 'chart_balance',
+                                                label: 'Total Saldo',
+                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                                                cellClassName: 'px-3 py-2 text-right font-semibold',
+                                                render: (row) => {
+                                                    const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
+                                                    return <span className={totalSaldo >= 0 ? 'text-gray-900' : 'text-red-700'}>{formatCurrency(totalSaldo)}</span>;
+                                                },
+                                            },
+                                            {
+                                                key: 'chart_balance_source',
+                                                label: 'Sumber',
+                                                render: (row) => {
+                                                    const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
+                                                    return (
                                                         <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sourceMeta.className}`}>
                                                             {sourceMeta.label}
                                                         </span>
-                                                    </td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.predicted_income || 0)}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(row.mandatory_expense || 0)}</td>
-                                                    <td className="px-3 py-2 text-right text-gray-700">{formatCurrency(Math.max(0, Number(
-                                                        row.discretionary_balance_display ?? 0
-                                                    )))}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+                                                    );
+                                                },
+                                            },
+                                            { key: 'predicted_income', label: 'Prediksi Pemasukan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.predicted_income || 0) },
+                                            { key: 'mandatory_expense', label: 'Pengeluaran Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.mandatory_expense || 0) },
+                                            { key: 'discretionary_balance_display', label: 'Saldo Bebas', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(Math.max(0, Number(row.discretionary_balance_display ?? 0))) },
+                                        ]}
+                                    />
+                                )}
                             </div>
                         </div>
 
@@ -2068,125 +1970,85 @@ function DashboardPredictionPage() {
                                 </button>
                             </div>
                         </div>
-                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                            <table className="w-full text-sm min-w-[860px]">
-                                <thead className="bg-gray-50 text-gray-600 text-left">
-                                    <tr>
-                                        <th className="px-3 py-2">Target</th>
-                                        <th className="px-3 py-2">Jatuh Tempo</th>
-                                        <th className="px-3 py-2 text-right">Nominal</th>
-                                        <th className="px-3 py-2 text-right">Coverage</th>
-                                        <th className="px-3 py-2 text-right">Shortfall</th>
-                                        <th className="px-3 py-2 text-center">Status</th>
-                                        <th className="px-3 py-2 text-center">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
-                                                Memuat proyeksi pengeluaran wajib...
-                                            </td>
-                                        </tr>
-                                    ) : mandatoryProjectionRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
-                                                Tidak ada kejadian pengeluaran wajib pada periode ini.
-                                            </td>
-                                        </tr>
-                                    ) : filteredMandatoryRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={7}>
-                                                Tidak ada data untuk filter yang dipilih.
-                                            </td>
-                                        </tr>
-                                    ) : filteredMandatoryRows.map((row) => (
-                                        <tr key={row.event_id} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
-                                            <td className="px-3 py-2 text-gray-700">{row.due_date}</td>
-                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
-                                            <td className="px-3 py-2 text-right text-gray-700">{formatPercent(row.coverage_ratio || 0, 1)}</td>
-                                            <td className={`px-3 py-2 text-right font-semibold ${Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-                                                {formatCurrency(row.shortfall || 0)}
-                                            </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>
-                                                    {row.indicator || '-'}
-                                                </span>
-                                            </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <div className="flex flex-col items-center gap-1">
-                                                    {row.is_confirmed ? (
-                                                        <>
-                                                            <button
-                                                                type="button"
-                                                                disabled
-                                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
-                                                            >
-                                                                Sudah Terlaksana
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleRevokeMandatoryExecution(row)}
-                                                                disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
-                                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                                                            >
-                                                                {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
-                                                            </button>
-                                                        </>
-                                                    ) : (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleConfirmMandatoryExecution(row)}
-                                                            disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
-                                                            className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-                                                        >
-                                                            {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi pengeluaran wajib...</div>
+                            ) : mandatoryProjectionRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada kejadian pengeluaran wajib pada periode ini.</div>
+                            ) : filteredMandatoryRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada data untuk filter yang dipilih.</div>
+                            ) : (
+                                <ResponsiveDataView
+                                    rows={filteredMandatoryRows}
+                                    keyField="event_id"
+                                    priorityFields={['name', 'due_date', 'amount', 'indicator', 'shortfall']}
+                                    tableClassName="w-full text-sm md:min-w-[860px]"
+                                    columns={[
+                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                        { key: 'due_date', label: 'Jatuh Tempo', cellClassName: 'px-3 py-2 text-gray-700' },
+                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
+                                        { key: 'coverage_ratio', label: 'Coverage', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.coverage_ratio || 0, 1) },
+                                        { key: 'shortfall', label: 'Shortfall', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}>{formatCurrency(row.shortfall || 0)}</span> },
+                                        { key: 'indicator', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>{row.indicator || '-'}</span> },
+                                    ]}
+                                    actions={(row) => (
+                                        <div className="flex flex-col items-center gap-1">
+                                            {row.is_confirmed ? (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        disabled
+                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
+                                                    >
+                                                        Sudah Terlaksana
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRevokeMandatoryExecution(row)}
+                                                        disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
+                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                                    >
+                                                        {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleConfirmMandatoryExecution(row)}
+                                                    disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
+                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                                                >
+                                                    {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                />
+                            )}
                         </div>
                     </div>
 
                     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
                         <p className="text-sm font-semibold text-gray-900">Prediksi Kesiapan Target Pembelian</p>
-                        <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                            <table className="w-full text-sm min-w-[700px]">
-                                <thead className="bg-gray-50 text-gray-600 text-left">
-                                    <tr>
-                                        <th className="px-3 py-2">Target</th>
-                                        <th className="px-3 py-2 text-right">Nominal</th>
-                                        <th className="px-3 py-2">Target Tanggal</th>
-                                        <th className="px-3 py-2">Prediksi Bisa Dibeli</th>
-                                        <th className="px-3 py-2 text-center">Status</th>
-                                        <th className="px-3 py-2 text-center">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                Memuat proyeksi target pembelian...
-                                            </td>
-                                        </tr>
-                                    ) : purchaseGoalRows.length === 0 ? (
-                                        <tr>
-                                            <td className="px-3 py-4 text-center text-gray-500" colSpan={6}>
-                                                Belum ada target pembelian aktif.
-                                            </td>
-                                        </tr>
-                                    ) : purchaseGoalRows.map((row) => (
-                                        <tr key={row.id} className="border-t border-gray-100">
-                                            <td className="px-3 py-2 font-medium text-gray-900">{row.name}</td>
-                                            <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatCurrency(row.amount)}</td>
-                                            <td className="px-3 py-2 text-gray-700">{row.desired_date || '-'}</td>
-                                            <td className="px-3 py-2 text-gray-700">{row.predicted_buy_date || 'Belum tercapai di rentang'}</td>
-                                            <td className="px-3 py-2 text-center">
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi target pembelian...</div>
+                            ) : (
+                                <ResponsiveDataView
+                                    rows={purchaseGoalRows}
+                                    keyField="id"
+                                    priorityFields={['name', 'amount', 'predicted_buy_date', 'indicator']}
+                                    emptyMessage="Belum ada target pembelian aktif."
+                                    tableClassName="w-full text-sm md:min-w-[700px]"
+                                    columns={[
+                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
+                                        { key: 'desired_date', label: 'Target Tanggal', render: (row) => row.desired_date || '-' },
+                                        { key: 'predicted_buy_date', label: 'Prediksi Bisa Dibeli', render: (row) => row.predicted_buy_date || 'Belum tercapai di rentang' },
+                                        {
+                                            key: 'indicator',
+                                            label: 'Status',
+                                            render: (row) => (
                                                 <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
                                                     row.indicator === 'siap'
                                                         ? 'bg-emerald-100 text-emerald-700'
@@ -2198,26 +2060,26 @@ function DashboardPredictionPage() {
                                                 }`}>
                                                     {row.indicator || '-'}
                                                 </span>
-                                            </td>
-                                            <td className="px-3 py-2 text-center">
-                                                <div className="flex flex-col items-center gap-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleFulfillPurchaseGoal(row)}
-                                                        disabled={purchaseActionLoadingId === Number(row.id)}
-                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                                                    >
-                                                        {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
-                                                    </button>
-                                                    {row.can_execute_now !== true && (
-                                                        <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                                            ),
+                                        },
+                                    ]}
+                                    actions={(row) => (
+                                        <div className="flex flex-col items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleFulfillPurchaseGoal(row)}
+                                                disabled={purchaseActionLoadingId === Number(row.id)}
+                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                                            >
+                                                {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
+                                            </button>
+                                            {row.can_execute_now !== true && (
+                                                <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
+                                            )}
+                                        </div>
+                                    )}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2460,39 +2322,21 @@ function DashboardPredictionPage() {
                                 <Doughnut data={healthDistributionChartData} options={healthDistributionOptions} />
                             </div>
 
-                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                <table className="w-full text-sm min-w-[780px]">
-                                    <thead className="bg-gray-50 text-gray-600 text-left">
-                                        <tr>
-                                            <th className="px-3 py-2">Pelanggan</th>
-                                            <th className="px-3 py-2">Skor</th>
-                                            <th className="px-3 py-2">Level Risiko</th>
-                                            <th className="px-3 py-2">Faktor Dominan</th>
-                                            <th className="px-3 py-2">Aksi Disarankan</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {kpiHealthTopRiskCustomers.length === 0 ? (
-                                            <tr>
-                                                <td className="px-3 py-4 text-center text-gray-500" colSpan={5}>
-                                                    Tidak ada data pelanggan risiko.
-                                                </td>
-                                            </tr>
-                                        ) : kpiHealthTopRiskCustomers.slice(0, 8).map((row) => (
-                                            <tr key={`risk-customer-${row.customer_id}`} className="border-t border-gray-100">
-                                                <td className="px-3 py-2 font-medium text-gray-900">{row.customer_name}</td>
-                                                <td className="px-3 py-2 text-gray-700">{row.health_score}</td>
-                                                <td className="px-3 py-2">
-                                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.risk_level)}`}>
-                                                        {row.risk_level}
-                                                    </span>
-                                                </td>
-                                                <td className="px-3 py-2 text-gray-700">{row?.dominant_factor?.label || '-'}</td>
-                                                <td className="px-3 py-2 text-gray-700">{row.recommended_action || '-'}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                            <div className="border border-gray-100 rounded-lg p-2">
+                                <ResponsiveDataView
+                                    rows={kpiHealthTopRiskCustomers.slice(0, 8)}
+                                    keyField="customer_id"
+                                    priorityFields={['customer_name', 'risk_level', 'health_score']}
+                                    emptyMessage="Tidak ada data pelanggan risiko."
+                                    tableClassName="w-full text-sm md:min-w-[780px]"
+                                    columns={[
+                                        { key: 'customer_name', label: 'Pelanggan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                        { key: 'health_score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
+                                        { key: 'risk_level', label: 'Level Risiko', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.risk_level)}`}>{row.risk_level}</span> },
+                                        { key: 'dominant_factor', label: 'Faktor Dominan', render: (row) => row?.dominant_factor?.label || '-' },
+                                        { key: 'recommended_action', label: 'Aksi Disarankan', render: (row) => row.recommended_action || '-' },
+                                    ]}
+                                />
                             </div>
 
                             <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">

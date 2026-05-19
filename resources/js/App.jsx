@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/layouts/Navbar';
 import Dashboard from './pages/Dashboard';
@@ -42,6 +43,7 @@ import DistributionRoutePage from './pages/DistributionRoute/DistributionRoutePa
 import InventoryPage from './pages/Inventory/InventoryPage';
 import InventoryMasterPage from './pages/Inventory/InventoryMasterPage';
 import InstallationPage from './pages/Installation/InstallationPage';
+import { enhanceMobileTables, setupMobileTableObserver } from './utils/mobileTableEnhancer';
 
 const ROUTE_FALLBACK_ROLES = {
     'dashboard.view': ['superadmin', 'admin', 'teknisi', 'finance'],
@@ -102,22 +104,50 @@ function GuardedRoute({ permissionKey, element }) {
 // Layout wrapper that conditionally shows navbar
 function AppLayout({ children }) {
     const location = useLocation();
+    const appContentRef = useRef(null);
     const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan'];
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute;
+
+    useEffect(() => {
+        const root = appContentRef.current;
+        if (!root) {
+            return undefined;
+        }
+
+        const cleanupObserver = setupMobileTableObserver(root);
+        enhanceMobileTables(root);
+
+        return () => {
+            cleanupObserver?.();
+        };
+    }, []);
+
+    useEffect(() => {
+        const root = appContentRef.current;
+        if (!root) {
+            return;
+        }
+
+        const tick = window.requestAnimationFrame(() => {
+            enhanceMobileTables(root);
+        });
+
+        return () => window.cancelAnimationFrame(tick);
+    }, [location.pathname]);
     
     return (
         <div className="min-h-screen w-full max-w-full overflow-x-hidden">
             {showNavbar && <Navbar />}
             {showNavbar ? (
-                <main className="app-content max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
+                <main ref={appContentRef} className="app-content max-w-[1400px] mx-auto px-3 sm:px-4 md:px-6 py-4 sm:py-6 md:py-8 min-w-0 break-words overflow-x-clip">
                     <div className="app-page-enter min-w-0">
                         {children}
                     </div>
                 </main>
             ) : (
-                <div className="app-content min-w-0">{children}</div>
+                <div ref={appContentRef} className="app-content min-w-0 break-words overflow-x-clip">{children}</div>
             )}
         </div>
     );
