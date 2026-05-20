@@ -50,6 +50,12 @@ Langkah verifikasi cepat di server:
 2. `php artisan dashboard:prediction-train`
 3. `php artisan dashboard:prediction-snapshot`
 
+## Catatan APP_URL & Bukti Pembayaran
+
+- Endpoint bukti pembayaran billing (`/billing/invoice/{id}/payment-proof`) sekarang dikirim sebagai **relative URL** dari backend.
+- Frontend akan menempelkan relative URL tersebut ke origin aktif (mis. `http://localhost:8000`), jadi tidak bergantung pada port di `APP_URL` untuk fitur ini.
+- Tetap set `APP_URL` sesuai domain final environment karena route/fitur lain masih bisa menggunakan absolute URL dari konfigurasi tersebut.
+
 ## Learning Laravel
 
 Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.

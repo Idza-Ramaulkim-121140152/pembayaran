@@ -274,6 +274,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/billing', [BillingController::class, 'apiIndex'])->name('api.billing.index');
         Route::get('/api/billing/auto-invoice/{jobId}', [BillingController::class, 'autoInvoiceStatus'])->name('api.billing.auto-invoice.status');
         Route::get('/billing/invoice/{invoice}/payment-proof', [BillingController::class, 'paymentProof'])->name('billing.invoice.payment-proof');
+        Route::get('/api/billing/invoice/{invoice}/payment-proof/blob', [BillingController::class, 'paymentProofBlob'])->name('api.billing.invoice.payment-proof-blob');
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
         Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');
         Route::get('/api/invoices/{invoice}', [InvoiceItemController::class, 'show'])->name('api.invoices.show');

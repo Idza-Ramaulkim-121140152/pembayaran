@@ -65,6 +65,11 @@ class BillingController extends Controller
             return null;
         }
 
+        $invalidMarkers = ['0', '1', 'false', 'null'];
+        if (in_array(strtolower($path), $invalidMarkers, true)) {
+            return null;
+        }
+
         $path = str_replace('\\', '/', $path);
         $path = ltrim($path, '/');
 
@@ -77,16 +82,80 @@ class BillingController extends Controller
         }
 
         $path = ltrim((string) $path, '/');
-        return $path !== '' ? $path : null;
+        if ($path === '' || in_array(strtolower($path), $invalidMarkers, true)) {
+            return null;
+        }
+
+        if ($path === '.' || $path === '..') {
+            return null;
+        }
+
+        return $path;
     }
 
     private function buildPaymentProofUrl(?Invoice $invoice): ?string
     {
-        if (!$invoice || empty($invoice->bukti_pembayaran)) {
+        if (!$invoice) {
             return null;
         }
 
-        return route('billing.invoice.payment-proof', ['invoice' => $invoice->id]);
+        $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
+        if ($normalizedPath === null) {
+            return null;
+        }
+
+        return route('billing.invoice.payment-proof', ['invoice' => $invoice->id], false);
+    }
+
+    private function appendPaymentProofAttributes(?Invoice $invoice): void
+    {
+        if (!$invoice) {
+            return;
+        }
+
+        $hasProof = $this->normalizePaymentProofPath($invoice->bukti_pembayaran) !== null;
+        $proofUrl = $hasProof ? $this->buildPaymentProofUrl($invoice) : null;
+
+        $invoice->setAttribute('has_payment_proof', $hasProof);
+        $invoice->setAttribute('payment_proof_url', $proofUrl);
+        // Backward compatibility untuk frontend lama.
+        $invoice->setAttribute('bukti_pembayaran_url', $proofUrl);
+    }
+
+    private function warnIfPaymentProofPayloadInvalid(Request $request, Invoice $invoice): void
+    {
+        if (!$request->has('bukti_pembayaran') || $request->hasFile('bukti_pembayaran')) {
+            return;
+        }
+
+        $rawValue = $request->input('bukti_pembayaran');
+        if (is_array($rawValue) || is_object($rawValue)) {
+            Log::warning('Unexpected non-file bukti_pembayaran payload received', [
+                'invoice_id' => $invoice->id,
+                'user_id' => Auth::id(),
+                'is_authenticated' => Auth::check(),
+                'content_type' => $request->header('Content-Type'),
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'payload_type' => gettype($rawValue),
+            ]);
+            return;
+        }
+
+        $payloadValue = trim((string) $rawValue);
+        if ($payloadValue === '') {
+            return;
+        }
+
+        Log::warning('Unexpected non-file bukti_pembayaran payload received', [
+            'invoice_id' => $invoice->id,
+            'user_id' => Auth::id(),
+            'is_authenticated' => Auth::check(),
+            'content_type' => $request->header('Content-Type'),
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'payload_preview' => substr($payloadValue, 0, 120),
+        ]);
     }
 
     private function warnIfPublicStorageLinkMissing(): void
@@ -104,17 +173,19 @@ class BillingController extends Controller
         }
     }
 
-    public function confirmPayment($invoiceId)
+    public function confirmPayment(Request $request, $invoiceId)
     {
         $invoice = Invoice::findOrFail($invoiceId);
-        $paidAmount = request()->input('paid_amount');
+        $paidAmount = $request->input('paid_amount');
         if ($paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
         }
 
+        $this->warnIfPaymentProofPayloadInvalid($request, $invoice);
+
         // Handle upload bukti pembayaran (opsional)
-        if (request()->hasFile('bukti_pembayaran')) {
-            $file = request()->file('bukti_pembayaran');
+        if ($request->hasFile('bukti_pembayaran')) {
+            $file = $request->file('bukti_pembayaran');
             $path = $file->store('bukti_pembayaran', 'public');
             $invoice->bukti_pembayaran = $path;
             $invoice->tolak_info = null; // reset info tolak jika ada upload baru
@@ -439,12 +510,8 @@ class BillingController extends Controller
             $latestInvoice = $customer->latestInvoice;
             $activeInvoice = $activeInvoiceMap[(int) $customer->id] ?? null;
 
-            if ($latestInvoice) {
-                $latestInvoice->setAttribute('bukti_pembayaran_url', $this->buildPaymentProofUrl($latestInvoice));
-            }
-            if ($activeInvoice) {
-                $activeInvoice->setAttribute('bukti_pembayaran_url', $this->buildPaymentProofUrl($activeInvoice));
-            }
+            $this->appendPaymentProofAttributes($latestInvoice);
+            $this->appendPaymentProofAttributes($activeInvoice);
 
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
@@ -499,10 +566,6 @@ class BillingController extends Controller
     {
         $this->warnIfPublicStorageLinkMissing();
 
-        if (empty($invoice->bukti_pembayaran)) {
-            abort(404, 'Bukti pembayaran tidak tersedia.');
-        }
-
         $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
         if ($normalizedPath === null) {
             abort(404, 'Path bukti pembayaran tidak valid.');
@@ -517,6 +580,31 @@ class BillingController extends Controller
         $fileName = basename($normalizedPath);
 
         return response()->file($absolutePath, [
+            'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="' . $fileName . '"',
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, max-age=60',
+        ]);
+    }
+
+    public function paymentProofBlob(Invoice $invoice)
+    {
+        $this->warnIfPublicStorageLinkMissing();
+
+        $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
+        if ($normalizedPath === null) {
+            abort(404, 'Path bukti pembayaran tidak valid.');
+        }
+
+        if (!Storage::disk('public')->exists($normalizedPath)) {
+            abort(404, 'File bukti pembayaran tidak ditemukan di penyimpanan.');
+        }
+
+        $mimeType = Storage::disk('public')->mimeType($normalizedPath) ?: 'application/octet-stream';
+        $fileName = basename($normalizedPath);
+        $content = Storage::disk('public')->get($normalizedPath);
+
+        return response($content, 200, [
             'Content-Type' => $mimeType,
             'Content-Disposition' => 'inline; filename="' . $fileName . '"',
             'X-Content-Type-Options' => 'nosniff',

@@ -39,6 +39,12 @@ export const billingService = {
     updateInvoiceAmount: (invoiceId, amount) =>
         apiClient.put(`/billing/invoice/${invoiceId}/amount`, { amount }),
 
+    // Fetch payment proof as blob for stable in-app preview
+    getPaymentProofBlob: (invoiceId) =>
+        apiClient.get(`/billing/invoice/${invoiceId}/payment-proof/blob`, {
+            responseType: 'blob',
+        }),
+
     // Superadmin invoice management
     getInvoiceManagement: (params = {}) =>
         apiClient.get('/billing/invoice-management', { params }),

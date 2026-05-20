@@ -30,6 +30,16 @@ function BillingPage() {
     const [createModal, setCreateModal] = useState({ open: false, customer: null, suggestedPackage: null });
     const [servicePackageModal, setServicePackageModal] = useState({ open: false, customer: null, selectedPackageId: '' });
     const [confirmModal, setConfirmModal] = useState({ open: false, invoice: null, customer: null });
+    const [proofPreviewModal, setProofPreviewModal] = useState({
+        open: false,
+        url: '',
+        externalUrl: '',
+        type: null, // 'image' | 'pdf' | 'other'
+        contentType: '',
+        loading: false,
+        error: '',
+    });
+    const proofObjectUrlRef = useRef(null);
     const [permissionModal, setPermissionModal] = useState({ open: false, message: '' });
     const [rejectModal, setRejectModal] = useState({ open: false, invoice: null });
     const [linkModal, setLinkModal] = useState({ open: false, invoice: null, customer: null });
@@ -93,6 +103,10 @@ function BillingPage() {
                 clearTimeout(autoPollingTimerRef.current);
                 autoPollingTimerRef.current = null;
             }
+            if (proofObjectUrlRef.current) {
+                URL.revokeObjectURL(proofObjectUrlRef.current);
+                proofObjectUrlRef.current = null;
+            }
         };
     }, []);
 
@@ -147,6 +161,23 @@ function BillingPage() {
         setConfirmModal({ open: false, invoice: null, customer: null });
         setPaidAmount('');
         setPaymentReceiptOptionId('');
+    };
+
+    const closeProofPreviewModal = () => {
+        if (proofObjectUrlRef.current) {
+            URL.revokeObjectURL(proofObjectUrlRef.current);
+            proofObjectUrlRef.current = null;
+        }
+
+        setProofPreviewModal({
+            open: false,
+            url: '',
+            externalUrl: '',
+            type: null,
+            contentType: '',
+            loading: false,
+            error: '',
+        });
     };
 
     const openConfirmModal = (invoice, customer) => {
@@ -743,6 +774,13 @@ function BillingPage() {
     const resolvePaymentProofUrl = (invoice) => {
         if (!invoice) return '';
 
+        const primaryProofUrl = (invoice.payment_proof_url || '').toString().trim();
+        if (primaryProofUrl) {
+            if (/^https?:\/\//i.test(primaryProofUrl)) return primaryProofUrl;
+            if (primaryProofUrl.startsWith('/')) return `${window.location.origin}${primaryProofUrl}`;
+            return `${window.location.origin}/${primaryProofUrl}`;
+        }
+
         const proofUrl = (invoice.bukti_pembayaran_url || '').toString().trim();
         if (proofUrl) {
             if (/^https?:\/\//i.test(proofUrl)) return proofUrl;
@@ -751,10 +789,125 @@ function BillingPage() {
         }
 
         const rawProofPath = (invoice.bukti_pembayaran || '').toString().trim();
+        const invoiceId = invoice.id;
+
+        if (invoiceId && rawProofPath) {
+            return `${window.location.origin}/billing/invoice/${invoiceId}/payment-proof`;
+        }
+
         if (!rawProofPath) return '';
 
-        const normalized = rawProofPath.replace(/^\/+/, '').replace(/^storage\//i, '');
-        return `${window.location.origin}/storage/${normalized}`;
+        if (/^https?:\/\//i.test(rawProofPath)) {
+            return rawProofPath;
+        }
+
+        let normalizedPath = rawProofPath.replace(/\\/g, '/').replace(/^\/+/, '');
+        if (!normalizedPath) return '';
+
+        if (normalizedPath.startsWith('storage/')) {
+            return `${window.location.origin}/${normalizedPath}`;
+        }
+
+        if (normalizedPath.startsWith('public/')) {
+            normalizedPath = normalizedPath.slice('public/'.length);
+        }
+
+        if (!normalizedPath) return '';
+
+        return `${window.location.origin}/storage/${normalizedPath}`;
+    };
+
+    const inferPreviewType = (contentType = '', url = '') => {
+        const normalizedType = contentType.toLowerCase();
+        if (normalizedType.startsWith('image/')) return 'image';
+        if (normalizedType.includes('application/pdf')) return 'pdf';
+
+        const cleanUrl = url.split('?')[0].toLowerCase();
+        if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(cleanUrl)) return 'image';
+        if (/\.pdf$/i.test(cleanUrl)) return 'pdf';
+
+        return 'other';
+    };
+
+    const openProofPreview = async (invoice) => {
+        const fallbackUrl = resolvePaymentProofUrl(invoice);
+        if (!fallbackUrl) {
+            setProofPreviewModal({
+                open: true,
+                url: '',
+                externalUrl: '',
+                type: null,
+                contentType: '',
+                loading: false,
+                error: 'URL bukti pembayaran tidak valid.',
+            });
+            return;
+        }
+
+        setProofPreviewModal({
+            open: true,
+            url: '',
+            externalUrl: fallbackUrl,
+            type: null,
+            contentType: '',
+            loading: true,
+            error: '',
+        });
+
+        try {
+            if (!invoice?.id) {
+                setProofPreviewModal((prev) => ({
+                    ...prev,
+                    loading: false,
+                    error: 'ID invoice tidak valid untuk memuat preview bukti pembayaran.',
+                }));
+                return;
+            }
+
+            const response = await billingService.getPaymentProofBlob(invoice.id);
+            const blob = response?.data;
+            const contentType = (response?.headers?.['content-type'] || blob?.type || '').toString().trim();
+            const previewType = inferPreviewType(contentType, fallbackUrl);
+            const blobUrl = blob instanceof Blob ? URL.createObjectURL(blob) : '';
+
+            if (!blobUrl) {
+                setProofPreviewModal((prev) => ({
+                    ...prev,
+                    loading: false,
+                    error: 'Gagal menyiapkan file bukti pembayaran untuk preview.',
+                }));
+                return;
+            }
+
+            if (proofObjectUrlRef.current) {
+                URL.revokeObjectURL(proofObjectUrlRef.current);
+            }
+            proofObjectUrlRef.current = blobUrl;
+
+            setProofPreviewModal((prev) => ({
+                ...prev,
+                url: blobUrl,
+                loading: false,
+                type: previewType,
+                contentType,
+                error: previewType === 'other'
+                    ? 'Format file tidak bisa dipreview di modal. Gunakan "Buka di tab baru".'
+                    : '',
+            }));
+        } catch (err) {
+            const status = err?.response?.status;
+            setProofPreviewModal((prev) => ({
+                ...prev,
+                loading: false,
+                error: status === 403
+                    ? 'Akses ditolak. Akun Anda tidak memiliki izin melihat bukti pembayaran.'
+                    : status === 404
+                        ? 'File bukti pembayaran tidak ditemukan.'
+                        : status
+                            ? `Gagal memuat bukti pembayaran (HTTP ${status}).`
+                            : 'Terjadi kesalahan jaringan saat memuat bukti pembayaran.',
+            }));
+        }
     };
 
     const generateTemplate = (customer, invoiceOrLink) => {
@@ -1639,18 +1792,27 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             >
                 {confirmModal.invoice && (
                     <form onSubmit={handleConfirmPayment} className="space-y-4">
-                        {(confirmModal.invoice.bukti_pembayaran || confirmModal.invoice.bukti_pembayaran_url) && (
+                        {(confirmModal.invoice.has_payment_proof || confirmModal.invoice.bukti_pembayaran || confirmModal.invoice.payment_proof_url || confirmModal.invoice.bukti_pembayaran_url) && (
                             <div className="bg-blue-50 rounded-lg p-4">
                                 <p className="text-sm text-blue-700 mb-2">Pelanggan telah mengupload bukti pembayaran</p>
                                 {resolvePaymentProofUrl(confirmModal.invoice) ? (
-                                    <a
-                                        href={resolvePaymentProofUrl(confirmModal.invoice)}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-blue-600 hover:underline text-sm flex items-center gap-1"
-                                    >
-                                        <Eye size={14} /> Lihat Bukti Pembayaran
-                                    </a>
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => openProofPreview(confirmModal.invoice)}
+                                            className="text-blue-600 hover:underline text-sm flex items-center gap-1"
+                                        >
+                                            <Eye size={14} /> Lihat Bukti Pembayaran
+                                        </button>
+                                        <a
+                                            href={resolvePaymentProofUrl(confirmModal.invoice)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-xs text-gray-600 hover:underline"
+                                        >
+                                            Buka di tab baru
+                                        </a>
+                                    </div>
                                 ) : (
                                     <p className="text-xs text-gray-600">Bukti tidak tersedia.</p>
                                 )}
@@ -1704,6 +1866,72 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         </div>
                     </form>
                 )}
+            </Modal>
+
+            {/* Proof Preview Modal */}
+            <Modal
+                isOpen={proofPreviewModal.open}
+                onClose={closeProofPreviewModal}
+                title="Preview Bukti Pembayaran"
+            >
+                <div className="space-y-3">
+                    {proofPreviewModal.loading && (
+                        <div className="py-8">
+                            <LoadingSpinner text="Memuat bukti pembayaran..." />
+                        </div>
+                    )}
+
+                    {!proofPreviewModal.loading && proofPreviewModal.error && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                            {proofPreviewModal.error}
+                        </div>
+                    )}
+
+                    {!proofPreviewModal.loading && !proofPreviewModal.error && proofPreviewModal.type === 'image' && (
+                        <div className="max-h-[70vh] overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                            <img
+                                src={proofPreviewModal.url}
+                                alt="Bukti pembayaran"
+                                className="w-full h-auto object-contain rounded"
+                                onError={() => {
+                                    setProofPreviewModal((prev) => ({
+                                        ...prev,
+                                        error: 'Gagal memuat gambar bukti pembayaran.',
+                                    }));
+                                }}
+                            />
+                        </div>
+                    )}
+
+                    {!proofPreviewModal.loading && !proofPreviewModal.error && proofPreviewModal.type === 'pdf' && (
+                        <div className="h-[70vh] rounded-lg border border-gray-200 overflow-hidden">
+                            <iframe
+                                src={proofPreviewModal.url}
+                                title="Preview Bukti Pembayaran PDF"
+                                className="w-full h-full"
+                            />
+                        </div>
+                    )}
+
+                    {!proofPreviewModal.loading && proofPreviewModal.type === 'other' && (
+                        <div className="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-3 py-2">
+                            Format file tidak bisa dipreview di modal.
+                        </div>
+                    )}
+
+                    {proofPreviewModal.externalUrl && (
+                        <div className="flex justify-end">
+                            <a
+                                href={proofPreviewModal.externalUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                            >
+                                Buka di tab baru
+                            </a>
+                        </div>
+                    )}
+                </div>
             </Modal>
 
             {/* Unauthorized Confirm Payment Modal */}
