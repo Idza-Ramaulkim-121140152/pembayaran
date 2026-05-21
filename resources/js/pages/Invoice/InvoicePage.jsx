@@ -175,6 +175,7 @@ function InvoicePage() {
             setError(null);
             const formData = new FormData();
             formData.append('paid_amount', paidAmount);
+            formData.append('without_proof', noProofIntent ? '1' : '0');
             if (file) {
                 formData.append('bukti_pembayaran', file);
             }

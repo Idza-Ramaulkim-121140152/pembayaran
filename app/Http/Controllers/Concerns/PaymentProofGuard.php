@@ -207,6 +207,17 @@ trait PaymentProofGuard
             return;
         }
 
+        Log::warning('Rejected non-file bukti_pembayaran payload.', [
+            'payload_preview' => substr((string) $rawValue, 0, 120),
+            'content_type' => $request->header('Content-Type'),
+            'request_uri' => $request->getRequestUri(),
+            'route_name' => optional($request->route())->getName(),
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'is_authenticated' => Auth::check(),
+            'user_id' => Auth::id(),
+        ]);
+
         throw ValidationException::withMessages([
             'bukti_pembayaran' => [$this->paymentProofErrorMessage()],
         ]);

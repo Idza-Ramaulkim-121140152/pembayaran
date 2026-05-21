@@ -145,6 +145,8 @@ class BillingDunningService
             'scheduled_date' => $today->toDateString(),
         ]);
 
+        $log->customer_id = $invoice->customer_id;
+
         if ($log->exists && $log->status === 'sent') {
             return 'duplicate_sent';
         }

@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class BillingController extends Controller
 {
@@ -87,7 +88,15 @@ class BillingController extends Controller
         $validated = $request->validate([
             'paid_amount' => 'nullable|numeric|min:1',
             'bukti_pembayaran' => 'nullable|file|mimes:' . $this->paymentProofMimeList() . '|max:2048',
+            'without_proof' => 'nullable|boolean',
         ]);
+
+        $withoutProof = $request->boolean('without_proof');
+        if (!$withoutProof && !$request->hasFile('bukti_pembayaran')) {
+            throw ValidationException::withMessages([
+                'bukti_pembayaran' => ['Bukti pembayaran wajib diupload, atau centang "Saya kirim tanpa bukti pembayaran".'],
+            ]);
+        }
 
         $paidAmount = $validated['paid_amount'] ?? null;
         if ($paidAmount && $paidAmount > 0) {
@@ -97,9 +106,46 @@ class BillingController extends Controller
         // Handle upload bukti pembayaran (opsional)
         if ($request->hasFile('bukti_pembayaran')) {
             $file = $request->file('bukti_pembayaran');
-            $path = $file->store('bukti_pembayaran', 'public');
-            $invoice->bukti_pembayaran = $path;
-            $invoice->tolak_info = null; // reset info tolak jika ada upload baru
+            try {
+                $path = $file->store('bukti_pembayaran', 'public');
+
+                if (!$path || !Storage::disk('public')->exists($path)) {
+                    Log::error('Gagal menyimpan bukti pembayaran ke disk public.', [
+                        'invoice_id' => $invoice->id,
+                        'customer_id' => $invoice->customer_id,
+                        'user_id' => Auth::id(),
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_size' => $file->getSize(),
+                        'file_mime' => $file->getMimeType(),
+                        'disk_root' => Storage::disk('public')->path(''),
+                    ]);
+
+                    throw ValidationException::withMessages([
+                        'bukti_pembayaran' => ['Bukti pembayaran gagal disimpan di server. Silakan coba lagi.'],
+                    ]);
+                }
+
+                $invoice->bukti_pembayaran = $path;
+                $invoice->tolak_info = null; // reset info tolak jika ada upload baru
+            } catch (ValidationException $e) {
+                throw $e;
+            } catch (\Throwable $e) {
+                Log::error('Exception saat menyimpan bukti pembayaran ke disk public.', [
+                    'invoice_id' => $invoice->id,
+                    'customer_id' => $invoice->customer_id,
+                    'user_id' => Auth::id(),
+                    'file_name' => $file->getClientOriginalName(),
+                    'file_size' => $file->getSize(),
+                    'file_mime' => $file->getMimeType(),
+                    'disk_root' => Storage::disk('public')->path(''),
+                    'exception_class' => get_class($e),
+                    'exception_message' => $e->getMessage(),
+                ]);
+
+                throw ValidationException::withMessages([
+                    'bukti_pembayaran' => ['Bukti pembayaran gagal disimpan di server. Silakan coba lagi.'],
+                ]);
+            }
         }
 
 
