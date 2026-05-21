@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\PaymentProofGuard;
 use App\Jobs\ProcessBillingAutoInvoiceJob;
 use App\Models\BillingAutoInvoiceJob;
 use App\Models\Customer;
@@ -26,6 +27,8 @@ use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
+    use PaymentProofGuard;
+
     private const ALMOST_LATE_DAYS = 5;
 
     private const INVOICE_MANAGEMENT_STATUSES = [
@@ -58,106 +61,6 @@ class BillingController extends Controller
         }
     }
 
-    private function normalizePaymentProofPath(?string $rawPath): ?string
-    {
-        $path = trim((string) $rawPath);
-        if ($path === '') {
-            return null;
-        }
-
-        $invalidMarkers = ['0', '1', 'false', 'null'];
-        if (in_array(strtolower($path), $invalidMarkers, true)) {
-            return null;
-        }
-
-        $path = str_replace('\\', '/', $path);
-        $path = ltrim($path, '/');
-
-        if (str_starts_with($path, 'storage/')) {
-            $path = substr($path, strlen('storage/'));
-        }
-
-        if (str_starts_with($path, 'public/')) {
-            $path = substr($path, strlen('public/'));
-        }
-
-        $path = ltrim((string) $path, '/');
-        if ($path === '' || in_array(strtolower($path), $invalidMarkers, true)) {
-            return null;
-        }
-
-        if ($path === '.' || $path === '..') {
-            return null;
-        }
-
-        return $path;
-    }
-
-    private function buildPaymentProofUrl(?Invoice $invoice): ?string
-    {
-        if (!$invoice) {
-            return null;
-        }
-
-        $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
-        if ($normalizedPath === null) {
-            return null;
-        }
-
-        return route('billing.invoice.payment-proof', ['invoice' => $invoice->id], false);
-    }
-
-    private function appendPaymentProofAttributes(?Invoice $invoice): void
-    {
-        if (!$invoice) {
-            return;
-        }
-
-        $hasProof = $this->normalizePaymentProofPath($invoice->bukti_pembayaran) !== null;
-        $proofUrl = $hasProof ? $this->buildPaymentProofUrl($invoice) : null;
-
-        $invoice->setAttribute('has_payment_proof', $hasProof);
-        $invoice->setAttribute('payment_proof_url', $proofUrl);
-        // Backward compatibility untuk frontend lama.
-        $invoice->setAttribute('bukti_pembayaran_url', $proofUrl);
-    }
-
-    private function warnIfPaymentProofPayloadInvalid(Request $request, Invoice $invoice): void
-    {
-        if (!$request->has('bukti_pembayaran') || $request->hasFile('bukti_pembayaran')) {
-            return;
-        }
-
-        $rawValue = $request->input('bukti_pembayaran');
-        if (is_array($rawValue) || is_object($rawValue)) {
-            Log::warning('Unexpected non-file bukti_pembayaran payload received', [
-                'invoice_id' => $invoice->id,
-                'user_id' => Auth::id(),
-                'is_authenticated' => Auth::check(),
-                'content_type' => $request->header('Content-Type'),
-                'ip' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-                'payload_type' => gettype($rawValue),
-            ]);
-            return;
-        }
-
-        $payloadValue = trim((string) $rawValue);
-        if ($payloadValue === '') {
-            return;
-        }
-
-        Log::warning('Unexpected non-file bukti_pembayaran payload received', [
-            'invoice_id' => $invoice->id,
-            'user_id' => Auth::id(),
-            'is_authenticated' => Auth::check(),
-            'content_type' => $request->header('Content-Type'),
-            'ip' => $request->ip(),
-            'user_agent' => $request->userAgent(),
-            'payload_preview' => substr($payloadValue, 0, 120),
-        ]);
-    }
-
     private function warnIfPublicStorageLinkMissing(): void
     {
         $publicStoragePath = public_path('storage');
@@ -176,12 +79,20 @@ class BillingController extends Controller
     public function confirmPayment(Request $request, $invoiceId)
     {
         $invoice = Invoice::findOrFail($invoiceId);
-        $paidAmount = $request->input('paid_amount');
+        $this->ensurePaymentProofUploadWithinPostLimit($request);
+        $this->warnIfPaymentProofPayloadInvalid($request, $invoice, 'public');
+        $this->ensurePaymentProofUploadIsValid($request);
+        $this->ensureNonFilePaymentProofPayloadRejected($request);
+
+        $validated = $request->validate([
+            'paid_amount' => 'nullable|numeric|min:1',
+            'bukti_pembayaran' => 'nullable|file|mimes:' . $this->paymentProofMimeList() . '|max:2048',
+        ]);
+
+        $paidAmount = $validated['paid_amount'] ?? null;
         if ($paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
         }
-
-        $this->warnIfPaymentProofPayloadInvalid($request, $invoice);
 
         // Handle upload bukti pembayaran (opsional)
         if ($request->hasFile('bukti_pembayaran')) {
@@ -258,6 +169,14 @@ class BillingController extends Controller
 
         $invoice->save();
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+        $this->appendPaymentProofAttributes($invoice);
+
+        if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
+            return response()->json([
+                'message' => 'Konfirmasi pembayaran berhasil dikirim.',
+                'data' => $invoice,
+            ]);
+        }
 
         // Redirect sesuai asal request
         if ($this->canCurrentUserConfirmPayments()) {
@@ -989,6 +908,8 @@ class BillingController extends Controller
     public function showInvoiceApi($invoice_link)
     {
         $invoice = \App\Models\Invoice::where('invoice_link', $invoice_link)->with(['customer', 'items'])->firstOrFail();
+        $this->appendPaymentProofAttributes($invoice);
+
         return response()->json([
             'data' => $invoice,
             'breakdown' => [

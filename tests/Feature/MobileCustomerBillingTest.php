@@ -155,6 +155,8 @@ class MobileCustomerBillingTest extends TestCase
             'data' => [
                 'id' => $invoice->id,
                 'status' => 'menunggu konfirmasi',
+                'has_payment_proof' => false,
+                'payment_proof_url' => null,
             ],
         ]);
     }
@@ -192,12 +194,49 @@ class MobileCustomerBillingTest extends TestCase
             'data' => [
                 'id' => $invoice->id,
                 'status' => 'menunggu konfirmasi',
+                'has_payment_proof' => true,
             ],
         ]);
+
+        $response->assertJsonPath('data.payment_proof_url', '/billing/invoice/' . $invoice->id . '/payment-proof');
 
         $invoice->refresh();
         $this->assertNotNull($invoice->bukti_pembayaran);
         Storage::disk('public')->assertExists($invoice->bukti_pembayaran);
+    }
+
+    public function test_mobile_customer_rejects_non_file_payment_proof_payload(): void
+    {
+        $customer = Customer::create([
+            'name' => 'Customer Non File Proof',
+            'phone' => '087888888888',
+            'pppoe_username' => 'NONFILE-USER-01',
+            'is_active' => true,
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_date' => '2026-05-01',
+            'due_date' => '2026-05-10',
+            'amount' => 265000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-nonfile-1',
+        ]);
+
+        $response = $this->postJson('/api/mobile/customer/payments/confirm', [
+            'invoice_id' => $invoice->id,
+            'paid_amount' => 265000,
+            'bukti_pembayaran' => '0',
+        ], [
+            'Authorization' => 'Bearer '.$this->issueTokenForCustomer($customer),
+            'Accept' => 'application/json',
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['bukti_pembayaran']);
+
+        $invoice->refresh();
+        $this->assertNull($invoice->bukti_pembayaran);
     }
 
     private function issueTokenForCustomer(Customer $customer): string

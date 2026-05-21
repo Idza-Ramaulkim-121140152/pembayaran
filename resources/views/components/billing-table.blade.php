@@ -1,4 +1,47 @@
 @props(['customers', 'invoicesThisMonth' => []])
+@php
+    $normalizePaymentProofPath = function ($rawPath): ?string {
+        $path = trim((string) $rawPath);
+        if ($path === '') {
+            return null;
+        }
+
+        if (in_array(strtolower($path), ['0', '1', 'false', 'null'], true)) {
+            return null;
+        }
+
+        $path = str_replace('\\', '/', $path);
+        $path = ltrim($path, '/');
+
+        if (str_starts_with($path, 'storage/')) {
+            $path = substr($path, strlen('storage/'));
+        }
+
+        if (str_starts_with($path, 'public/')) {
+            $path = substr($path, strlen('public/'));
+        }
+
+        $path = ltrim($path, '/');
+        if ($path === '' || $path === '.' || $path === '..') {
+            return null;
+        }
+
+        return $path;
+    };
+
+    $resolvePaymentProofUrl = function ($invoice) use ($normalizePaymentProofPath): ?string {
+        if (!$invoice) {
+            return null;
+        }
+
+        $normalized = $normalizePaymentProofPath($invoice->bukti_pembayaran ?? null);
+        if ($normalized === null) {
+            return null;
+        }
+
+        return route('billing.invoice.payment-proof', ['invoice' => $invoice->id]);
+    };
+@endphp
 <div class="w-full overflow-x-auto">
 <table class="min-w-full divide-y divide-gray-200 mb-4 text-xs sm:text-sm">
     <thead class="bg-gray-50">
@@ -50,7 +93,11 @@
     </thead>
     <tbody class="bg-white divide-y divide-gray-200">
         @forelse($customers as $i => $customer)
-            @php $invoice = $invoicesThisMonth[$customer->id] ?? null; @endphp
+            @php
+                $invoice = $invoicesThisMonth[$customer->id] ?? null;
+                $paymentProofUrl = $resolvePaymentProofUrl($invoice);
+                $hasPaymentProof = $paymentProofUrl !== null;
+            @endphp
             @if($invoice && $invoice->status === 'paid')
                 @continue
             @endif
@@ -131,8 +178,8 @@ Tim Layanan Pelanggan Rumah Kita Net
                                     </div>
                                 </div>
                             </div>
-                            @if($invoice->status === 'menunggu konfirmasi' && $invoice->bukti_pembayaran)
-                                <a href="{{ asset('storage/'.$invoice->bukti_pembayaran) }}" target="_blank" class="text-blue-600 underline text-xs mb-1">Lihat Bukti Pembayaran</a>
+                            @if($invoice->status === 'menunggu konfirmasi' && $hasPaymentProof)
+                                <a href="{{ $paymentProofUrl }}" target="_blank" class="text-blue-600 underline text-xs mb-1">Lihat Bukti Pembayaran</a>
                             @endif
                             <button type="button" onclick="document.getElementById('modal-{{ $invoice->id }}').classList.remove('hidden')" class="bg-yellow-500 hover:bg-yellow-700 text-white font-bold py-1 px-3 rounded">
                                 Konfirmasi Pembayaran
@@ -141,10 +188,10 @@ Tim Layanan Pelanggan Rumah Kita Net
                             <div id="modal-{{ $invoice->id }}" class="fixed z-50 inset-0 flex justify-center items-center bg-black bg-opacity-40 px-2 hidden">
                                 <div class="bg-white rounded-lg shadow-lg p-4 sm:p-6 w-full max-w-sm">
                                     <h3 class="text-lg font-bold mb-2">Konfirmasi Pembayaran</h3>
-                                    @if($invoice->status === 'menunggu konfirmasi' && $invoice->bukti_pembayaran)
+                                    @if($invoice->status === 'menunggu konfirmasi' && $hasPaymentProof)
                                         <div class="mb-3">
                                             <label class="block text-xs font-medium mb-1">Bukti Pembayaran:</label>
-                                            <a href="{{ asset('storage/'.$invoice->bukti_pembayaran) }}" target="_blank" class="text-blue-600 underline text-xs">Lihat File</a>
+                                            <a href="{{ $paymentProofUrl }}" target="_blank" class="text-blue-600 underline text-xs">Lihat File</a>
                                         </div>
                                     @endif
                                     <form method="POST" action="{{ route('billing.confirm-payment', $invoice->id) }}" class="space-y-4">
@@ -159,7 +206,7 @@ Tim Layanan Pelanggan Rumah Kita Net
                                             <button type="submit" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-700">Konfirmasi</button>
                                         </div>
                                     </form>
-                                    @if($invoice->status === 'menunggu konfirmasi' && $invoice->bukti_pembayaran)
+                                    @if($invoice->status === 'menunggu konfirmasi')
                                     <button type="button" onclick="document.getElementById('modal-tolak-{{ $invoice->id }}').classList.remove('hidden')" class="w-full bg-red-500 hover:bg-red-700 text-white rounded px-4 py-2 mt-1">Tolak Pembayaran</button>
                                     <!-- Modal Tolak Pembayaran -->
                                     <div id="modal-tolak-{{ $invoice->id }}" class="fixed z-50 inset-0 flex justify-center items-center bg-black bg-opacity-40 px-2 hidden">
@@ -335,7 +382,10 @@ document.addEventListener('DOMContentLoaded', function(){
         </thead>
     <tbody class="bg-white divide-y divide-gray-200">
             @foreach($paidCustomers as $i => $customer)
-                @php $invoice = $invoicesThisMonth[$customer->id] ?? null; @endphp
+                @php
+                    $invoice = $invoicesThisMonth[$customer->id] ?? null;
+                    $paidInvoiceProofUrl = $resolvePaymentProofUrl($invoice);
+                @endphp
                 <tr>
                     <td class="px-4 py-2">{{ $i+1 }}</td>
                     <td class="px-4 py-2">{{ $customer->name }}</td>
@@ -348,8 +398,8 @@ document.addEventListener('DOMContentLoaded', function(){
                         <a href="{{ url('/invoice/'.$invoice->invoice_link) }}" target="_blank" class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-1 px-3 rounded text-center mb-1 block">
                             Lihat Invoice
                         </a>
-                        @if($invoice->bukti_pembayaran)
-                            <a href="{{ asset('storage/'.$invoice->bukti_pembayaran) }}" target="_blank" class="bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-center block mt-1">Bukti Konfirmasi</a>
+                        @if($paidInvoiceProofUrl)
+                            <a href="{{ $paidInvoiceProofUrl }}" target="_blank" class="bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-3 rounded text-center block mt-1">Bukti Konfirmasi</a>
                         @endif
                     </td>
                 </tr>

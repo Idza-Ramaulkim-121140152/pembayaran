@@ -2,19 +2,27 @@
 
 namespace App\Http\Controllers\Mobile\Customer;
 
+use App\Http\Controllers\Concerns\PaymentProofGuard;
 use App\Models\Invoice;
 use Illuminate\Http\Request;
 
 class PaymentConfirmationController extends BaseMobileCustomerController
 {
+    use PaymentProofGuard;
+
     public function store(Request $request)
     {
         $customer = $this->customer($request);
 
+        $this->ensurePaymentProofUploadWithinPostLimit($request);
+        $this->warnIfPaymentProofPayloadInvalid($request, null, 'mobile');
+        $this->ensurePaymentProofUploadIsValid($request);
+        $this->ensureNonFilePaymentProofPayloadRejected($request);
+
         $validated = $request->validate([
             'invoice_id' => 'required|integer|exists:invoices,id',
             'paid_amount' => 'nullable|numeric|min:1',
-            'bukti_pembayaran' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            'bukti_pembayaran' => 'nullable|file|mimes:' . $this->paymentProofMimeList() . '|max:2048',
         ]);
 
         $invoice = Invoice::query()
@@ -56,6 +64,7 @@ class PaymentConfirmationController extends BaseMobileCustomerController
         }
 
         $invoice->save();
+        $this->appendPaymentProofAttributes($invoice);
 
         return response()->json([
             'message' => 'Konfirmasi pembayaran berhasil dikirim.',

@@ -26,6 +26,33 @@ class Invoice extends Model
         'paid_at' => 'datetime',
         'amount' => 'decimal:0',
     ];
+
+    public function setBuktiPembayaranAttribute($value): void
+    {
+        if ($value === null) {
+            $this->attributes['bukti_pembayaran'] = null;
+            return;
+        }
+
+        if (is_array($value) || is_object($value)) {
+            $this->attributes['bukti_pembayaran'] = null;
+            return;
+        }
+
+        $normalized = trim((string) $value);
+        if ($normalized === '') {
+            $this->attributes['bukti_pembayaran'] = null;
+            return;
+        }
+
+        $invalidMarkers = ['0', '1', 'false', 'null'];
+        if (in_array(strtolower($normalized), $invalidMarkers, true)) {
+            $this->attributes['bukti_pembayaran'] = null;
+            return;
+        }
+
+        $this->attributes['bukti_pembayaran'] = $normalized;
+    }
     public function customer()
     {
         return $this->belongsTo(\App\Models\Customer::class);

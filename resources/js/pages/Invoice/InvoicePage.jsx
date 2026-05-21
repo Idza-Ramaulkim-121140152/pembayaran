@@ -23,10 +23,66 @@ function InvoicePage() {
     const [filePreview, setFilePreview] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [noProofIntent, setNoProofIntent] = useState(false);
+    const [fieldErrors, setFieldErrors] = useState({});
+    const [formError, setFormError] = useState('');
+    const [fileInfo, setFileInfo] = useState(null);
 
     useEffect(() => {
         fetchData();
     }, [invoiceLink]);
+
+    const MAX_PROOF_SIZE = 2 * 1024 * 1024;
+    const ALLOWED_PROOF_MIME_TYPES = new Set([
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/heic',
+        'image/heif',
+        'application/pdf',
+    ]);
+    const ALLOWED_PROOF_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'pdf', 'webp', 'heic', 'heif']);
+
+    const formatFileSize = (bytes) => {
+        if (!bytes && bytes !== 0) return '-';
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
+
+    const getFileExtension = (name) => {
+        if (!name) return '';
+        const parts = name.split('.');
+        if (parts.length < 2) return '';
+        return parts[parts.length - 1].toLowerCase();
+    };
+
+    const validateProofFile = (selectedFile) => {
+        if (!selectedFile) return { valid: false, message: 'File bukti pembayaran tidak ditemukan.' };
+
+        if (selectedFile.size > MAX_PROOF_SIZE) {
+            return { valid: false, message: 'Ukuran file melebihi 2MB. Gunakan file yang lebih kecil.' };
+        }
+
+        const extension = getFileExtension(selectedFile.name);
+        const hasAllowedExtension = extension && ALLOWED_PROOF_EXTENSIONS.has(extension);
+        const hasAllowedMime = selectedFile.type && ALLOWED_PROOF_MIME_TYPES.has(selectedFile.type);
+
+        if (!hasAllowedMime && !hasAllowedExtension) {
+            return { valid: false, message: 'Format file tidak didukung. Gunakan JPG, PNG, PDF, WEBP, HEIC, atau HEIF.' };
+        }
+
+        return { valid: true, message: '' };
+    };
+
+    const resetFileSelection = () => {
+        if (filePreview) {
+            URL.revokeObjectURL(filePreview);
+        }
+        setFile(null);
+        setFilePreview(null);
+        setFileInfo(null);
+    };
 
     const fetchData = async () => {
         try {
@@ -58,20 +114,65 @@ function InvoicePage() {
 
     const handleFileChange = (e) => {
         const selectedFile = e.target.files[0];
-        if (selectedFile) {
-            setFile(selectedFile);
-            if (selectedFile.type.startsWith('image/')) {
-                setFilePreview(URL.createObjectURL(selectedFile));
-            } else {
-                setFilePreview(null);
-            }
+        if (!selectedFile) {
+            return;
         }
+
+        const validation = validateProofFile(selectedFile);
+        if (!validation.valid) {
+            resetFileSelection();
+            setFieldErrors((prev) => ({ ...prev, bukti_pembayaran: validation.message }));
+            e.target.value = '';
+            return;
+        }
+
+        setFieldErrors((prev) => ({ ...prev, bukti_pembayaran: '' }));
+        setNoProofIntent(false);
+        setFile(selectedFile);
+        setFileInfo({
+            name: selectedFile.name,
+            size: selectedFile.size,
+            type: selectedFile.type || getFileExtension(selectedFile.name),
+        });
+
+        if (filePreview) {
+            URL.revokeObjectURL(filePreview);
+        }
+
+        const isHeicType = (selectedFile.type || '').toLowerCase().includes('image/heic')
+            || (selectedFile.type || '').toLowerCase().includes('image/heif');
+
+        if (selectedFile.type.startsWith('image/') && !isHeicType) {
+            setFilePreview(URL.createObjectURL(selectedFile));
+        } else {
+            setFilePreview(null);
+        }
+    };
+
+    const closeConfirmModal = () => {
+        setShowConfirmModal(false);
+        setFormError('');
+        setFieldErrors({});
+        resetFileSelection();
+        setNoProofIntent(false);
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        setFormError('');
+        setFieldErrors({});
+
+        if (!file && !noProofIntent) {
+            setFieldErrors({
+                bukti_pembayaran: 'Centang "Saya kirim tanpa bukti" jika Anda ingin melanjutkan tanpa file.',
+            });
+            return;
+        }
+
         try {
             setSubmitting(true);
+            setError(null);
             const formData = new FormData();
             formData.append('paid_amount', paidAmount);
             if (file) {
@@ -82,17 +183,51 @@ function InvoicePage() {
                 method: 'POST',
                 headers: {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json',
                 },
                 body: formData,
             });
 
-            if (!response.ok) throw new Error('Gagal mengirim konfirmasi');
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            const isJson = contentType.includes('application/json');
+            const payload = isJson ? await response.json() : null;
+
+            if (!response.ok) {
+                if (response.status === 422 && payload?.errors) {
+                    const normalizedErrors = Object.entries(payload.errors)
+                        .reduce((acc, [key, messages]) => {
+                            acc[key] = Array.isArray(messages) ? messages[0] : messages;
+                            return acc;
+                        }, {});
+                    setFieldErrors(normalizedErrors);
+                    setFormError(payload?.message || 'Data konfirmasi pembayaran tidak valid.');
+                    return;
+                }
+
+                if (response.status === 419) {
+                    setFormError('Sesi formulir sudah kedaluwarsa. Silakan muat ulang halaman lalu coba lagi.');
+                    return;
+                }
+
+                if (response.status === 403) {
+                    setFormError('Akses ditolak. Anda tidak diizinkan mengirim konfirmasi pembayaran.');
+                    return;
+                }
+
+                setFormError(payload?.message || 'Gagal mengirim konfirmasi pembayaran.');
+                return;
+            }
             
-            setShowConfirmModal(false);
-            setSuccess('Konfirmasi pembayaran berhasil dikirim. Silakan tunggu konfirmasi dari admin.');
-            fetchData();
+            closeConfirmModal();
+            await fetchData();
+            const hasProof = payload?.data?.has_payment_proof === true;
+            const successMessage = hasProof
+                ? 'Status menunggu konfirmasi. Bukti pembayaran berhasil tersimpan.'
+                : 'Status menunggu konfirmasi. Bukti pembayaran tidak tersedia (sesuai pilihan Anda).';
+            setSuccess(successMessage);
         } catch (err) {
-            setError(err.message || 'Gagal mengirim konfirmasi pembayaran');
+            setFormError(err.message || 'Gagal mengirim konfirmasi pembayaran');
         } finally {
             setSubmitting(false);
         }
@@ -465,6 +600,7 @@ function InvoicePage() {
     const isWaiting = invoice?.status === 'menunggu konfirmasi';
     const isRejected = invoice?.tolak_info;
     const timeRemaining = getTimeRemaining(invoice?.due_date);
+    const canSubmit = !submitting && (file || noProofIntent);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 py-6 sm:py-8 px-3 sm:px-4 overflow-x-clip">
@@ -740,7 +876,11 @@ function InvoicePage() {
                 {!isPaid && !isCancelled && selectedMethod && (invoice?.status === 'unpaid' || isRejected) && (
                     <div className="bg-white px-6 pb-6">
                         <button
-                            onClick={() => setShowConfirmModal(true)}
+                            onClick={() => {
+                                setFormError('');
+                                setFieldErrors({});
+                                setShowConfirmModal(true);
+                            }}
                             className="w-full flex items-center justify-center gap-2 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-2xl shadow-lg shadow-indigo-500/30 hover:shadow-xl transition-all"
                         >
                             <Upload size={20} />
@@ -795,6 +935,9 @@ function InvoicePage() {
                                         className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg font-semibold"
                                     />
                                 </div>
+                                {fieldErrors?.paid_amount && (
+                                    <p className="text-xs text-red-600 mt-2">{fieldErrors.paid_amount}</p>
+                                )}
                             </div>
 
                             <div>
@@ -805,9 +948,14 @@ function InvoicePage() {
                                     {filePreview ? (
                                         <div className="space-y-3">
                                             <img src={filePreview} alt="Preview" className="max-h-40 mx-auto rounded-lg" />
+                                            {fileInfo && (
+                                                <p className="text-xs text-gray-500">
+                                                    File terpilih: {fileInfo.name} • {formatFileSize(fileInfo.size)}
+                                                </p>
+                                            )}
                                             <button
                                                 type="button"
-                                                onClick={() => { setFile(null); setFilePreview(null); }}
+                                                onClick={resetFileSelection}
                                                 className="text-sm text-red-600 hover:underline"
                                             >
                                                 Hapus gambar
@@ -816,10 +964,11 @@ function InvoicePage() {
                                     ) : file ? (
                                         <div className="space-y-2">
                                             <FileText className="mx-auto text-gray-400" size={32} />
-                                            <p className="text-sm text-gray-600">{file.name}</p>
+                                            <p className="text-sm text-gray-600">{fileInfo?.name || file.name}</p>
+                                            <p className="text-xs text-gray-500">{formatFileSize(fileInfo?.size || file.size)}</p>
                                             <button
                                                 type="button"
-                                                onClick={() => setFile(null)}
+                                                onClick={resetFileSelection}
                                                 className="text-sm text-red-600 hover:underline"
                                             >
                                                 Hapus file
@@ -829,29 +978,53 @@ function InvoicePage() {
                                         <label className="cursor-pointer">
                                             <Upload className="mx-auto text-gray-400 mb-2" size={32} />
                                             <p className="text-sm text-gray-600">Klik untuk upload bukti pembayaran</p>
-                                            <p className="text-xs text-gray-400 mt-1">JPG, PNG, PDF (max 2MB)</p>
+                                            <p className="text-xs text-gray-400 mt-1">JPG, PNG, PDF, WEBP, HEIC, HEIF (max 2MB)</p>
                                             <input
                                                 type="file"
-                                                accept="image/*,application/pdf"
+                                                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.webp,.heic,.heif"
                                                 onChange={handleFileChange}
                                                 className="hidden"
                                             />
                                         </label>
                                     )}
                                 </div>
+                                {fieldErrors?.bukti_pembayaran && (
+                                    <p className="text-xs text-red-600 mt-2">{fieldErrors.bukti_pembayaran}</p>
+                                )}
+                                <div className="mt-3 space-y-1">
+                                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                                        <input
+                                            type="checkbox"
+                                            checked={noProofIntent}
+                                            disabled={!!file}
+                                            onChange={(e) => setNoProofIntent(e.target.checked)}
+                                            className="mt-1"
+                                        />
+                                        <span>Saya kirim tanpa bukti pembayaran</span>
+                                    </label>
+                                    {file && (
+                                        <p className="text-xs text-gray-500">Hapus file jika ingin mengirim tanpa bukti.</p>
+                                    )}
+                                </div>
                             </div>
+
+                            {formError && (
+                                <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+                                    {formError}
+                                </div>
+                            )}
 
                             <div className="flex gap-3 pt-2">
                                 <button
                                     type="button"
-                                    onClick={() => setShowConfirmModal(false)}
+                                    onClick={closeConfirmModal}
                                     className="flex-1 py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition"
                                 >
                                     Batal
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={submitting}
+                                    disabled={!canSubmit}
                                     className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-xl shadow-lg shadow-indigo-500/30 hover:shadow-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
                                 >
                                     {submitting ? (

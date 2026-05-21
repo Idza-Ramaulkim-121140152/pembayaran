@@ -771,6 +771,16 @@ function BillingPage() {
         return `${window.location.origin}/invoice/${link}`;
     };
 
+    const normalizePaymentProofPath = (rawPath) => {
+        const value = (rawPath || '').toString().trim();
+        if (!value) return '';
+
+        const lowered = value.toLowerCase();
+        if (['0', '1', 'false', 'null'].includes(lowered)) return '';
+
+        return value;
+    };
+
     const resolvePaymentProofUrl = (invoice) => {
         if (!invoice) return '';
 
@@ -788,7 +798,7 @@ function BillingPage() {
             return `${window.location.origin}/${proofUrl}`;
         }
 
-        const rawProofPath = (invoice.bukti_pembayaran || '').toString().trim();
+        const rawProofPath = normalizePaymentProofPath(invoice.bukti_pembayaran);
         const invoiceId = invoice.id;
 
         if (invoiceId && rawProofPath) {
@@ -817,12 +827,21 @@ function BillingPage() {
         return `${window.location.origin}/storage/${normalizedPath}`;
     };
 
+    const hasValidPaymentProof = (invoice) => {
+        if (!invoice) return false;
+        if (invoice.has_payment_proof !== true) return false;
+
+        return resolvePaymentProofUrl(invoice) !== '';
+    };
+
     const inferPreviewType = (contentType = '', url = '') => {
         const normalizedType = contentType.toLowerCase();
+        if (normalizedType.includes('image/heic') || normalizedType.includes('image/heif')) return 'other';
         if (normalizedType.startsWith('image/')) return 'image';
         if (normalizedType.includes('application/pdf')) return 'pdf';
 
         const cleanUrl = url.split('?')[0].toLowerCase();
+        if (/\.(heic|heif)$/i.test(cleanUrl)) return 'other';
         if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(cleanUrl)) return 'image';
         if (/\.pdf$/i.test(cleanUrl)) return 'pdf';
 
@@ -982,6 +1001,20 @@ Tim Layanan Pelanggan Rumah Kita Net`;
         { key: 'wa_status', label: 'WA', render: (row) => row.wa_status || '-' },
     ];
 
+    const resolveInvoiceActionState = (invoice) => {
+        const normalizedInvoiceStatus = (invoice?.status || '').toString().trim().toLowerCase();
+        const canReject = normalizedInvoiceStatus === 'menunggu konfirmasi';
+        const canPreviewProof = canReject && hasValidPaymentProof(invoice);
+        const missingProofReason = canReject && !canPreviewProof ? 'Bukti tidak tersedia' : '';
+
+        return {
+            normalizedInvoiceStatus,
+            canReject,
+            canPreviewProof,
+            missingProofReason,
+        };
+    };
+
     const CustomerTable = ({ title, data, icon: Icon, iconColor, segment, defaultCollapsed = false }) => {
         const sectionKey = title.toLowerCase().replace(/[^a-z]/g, '');
         const isCollapsed = collapsed[sectionKey] ?? defaultCollapsed;
@@ -995,17 +1028,17 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             const activeInvoice = item?.active_invoice || null;
             const invoiceToUse = activeInvoice || null;
             const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
-            const normalizedInvoiceStatus = (invoiceToUse?.status || '').toString().trim().toLowerCase();
             const canCreateInvoice = !!item?.can_create_invoice;
             const paidMonthLabel = formatPaidMonth(latestInvoice?.paid_at || latestInvoice?.updated_at || latestInvoice?.created_at);
             const statusInfo = isolationStatus[customer?.id];
+            const actionState = resolveInvoiceActionState(invoiceToUse);
 
             const statusBadge = (() => {
                 if (invoiceToUse) {
-                    if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
+                    if (actionState.normalizedInvoiceStatus === 'menunggu konfirmasi') {
                         return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
                     }
-                    if (normalizedInvoiceStatus === 'paid') {
+                    if (actionState.normalizedInvoiceStatus === 'paid') {
                         return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
                     }
                     return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
@@ -1065,21 +1098,48 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             return {
                 customer,
                 invoiceToUse,
-                normalizedInvoiceStatus,
                 canCreateInvoice,
                 statusBadge,
                 isolirBadge,
+                actionState,
             };
         };
 
-        const mobileColumns = [
-            { key: 'name', label: 'Nama', render: (item) => buildRowMeta(item).customer?.name || '-' },
-            { key: 'pppoe', label: 'PPPoE', render: (item) => buildRowMeta(item).customer?.pppoe_username || '-' },
-            { key: 'due', label: 'Jatuh Tempo', render: (item) => formatDate(buildRowMeta(item).customer?.due_date) },
-            { key: 'status', label: 'Status', render: (item) => buildRowMeta(item).statusBadge },
-            { key: 'isolir', label: 'Isolir', render: (item) => buildRowMeta(item).isolirBadge },
+        const tableColumns = [
+            {
+                key: 'no',
+                label: 'No',
+                render: (_, index) => index + 1,
+                headerClassName: 'px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                cellClassName: 'px-4 py-3 text-sm text-gray-600',
+            },
+            {
+                key: 'name',
+                label: 'Nama',
+                render: (item) => buildRowMeta(item).customer?.name || '-',
+            },
+            {
+                key: 'pppoe',
+                label: 'PPPoE',
+                render: (item) => buildRowMeta(item).customer?.pppoe_username || '-',
+            },
+            {
+                key: 'due',
+                label: 'Jatuh Tempo',
+                render: (item) => formatDate(buildRowMeta(item).customer?.due_date),
+            },
+            {
+                key: 'status',
+                label: 'Status',
+                render: (item) => buildRowMeta(item).statusBadge,
+            },
+            {
+                key: 'isolir',
+                label: 'Isolir',
+                render: (item) => buildRowMeta(item).isolirBadge,
+            },
         ];
-        
+
         return (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="w-full flex items-center justify-between p-4">
@@ -1112,21 +1172,21 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
                     </button>
                 </div>
-                
+
                 {!isCollapsed && (
-                    <>
                     <ResponsiveDataView
                         rows={data}
-                        columns={mobileColumns}
+                        columns={tableColumns}
                         keyField="customer.id"
                         priorityFields={['name', 'status', 'due']}
                         emptyMessage="Tidak ada data"
+                        tableClassName="w-full min-w-[980px] text-sm"
                         actions={(item) => {
                             const meta = buildRowMeta(item);
                             const customer = meta.customer;
                             const invoiceToUse = meta.invoiceToUse;
-                            const normalizedInvoiceStatus = meta.normalizedInvoiceStatus;
                             const canCreateInvoice = meta.canCreateInvoice;
+                            const actionState = meta.actionState;
 
                             return (
                                 <div className="flex flex-wrap gap-1">
@@ -1142,7 +1202,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     )}
                                     {invoiceToUse && (
                                         <>
-                                            {normalizedInvoiceStatus !== 'paid' && (
+                                            {actionState.normalizedInvoiceStatus !== 'paid' && (
                                                 <>
                                                     <Button
                                                         size="sm"
@@ -1175,6 +1235,16 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                 <Eye size={14} className="mr-1" />
                                                 <span>Lihat</span>
                                             </Button>
+                                            {actionState.canPreviewProof && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    onClick={() => openProofPreview(invoiceToUse)}
+                                                >
+                                                    <Eye size={14} className="mr-1" />
+                                                    <span>Lihat Bukti</span>
+                                                </Button>
+                                            )}
                                             {canEditInvoiceAmount && (
                                                 <Button
                                                     size="sm"
@@ -1189,14 +1259,20 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                     <span>Nominal</span>
                                                 </Button>
                                             )}
-                                            {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoiceToUse.bukti_pembayaran && (
+                                            {actionState.canReject && (
                                                 <Button
                                                     size="sm"
                                                     variant="danger"
                                                     onClick={() => setRejectModal({ open: true, invoice: invoiceToUse })}
                                                 >
-                                                    <X size={14} />
+                                                    <X size={14} className="mr-1" />
+                                                    <span>Tolak</span>
                                                 </Button>
+                                            )}
+                                            {actionState.missingProofReason && (
+                                                <span className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-700">
+                                                    {actionState.missingProofReason}
+                                                </span>
                                             )}
                                         </>
                                     )}
@@ -1204,211 +1280,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             );
                         }}
                     />
-                    <div className="hidden md:block overflow-x-auto">
-                        <table className="w-full min-w-[980px]">
-                            <thead className="bg-gray-50 border-t border-gray-100">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">No</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden md:table-cell">PPPoE</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell">Isolir</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Jatuh Tempo</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
-                                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100">
-                                {data.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
-                                            Tidak ada data
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    data.map((item, index) => (
-                                        <CustomerRow 
-                                            key={item.customer.id} 
-                                            item={item} 
-                                            index={index}
-                                            onIsolate={handleIsolateCustomer}
-                                            isolationStatus={isolationStatus[item.customer.id]}
-                                            loadingIsolationStatus={loadingIsolationStatus}
-                                            isLateCustomer={title === "Pelanggan Telat"}
-                                            isAlmostLateCustomer={title === "Pelanggan Hampir Telat (H-5)"}
-                                        />
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                    </>
                 )}
             </div>
-        );
-    };
-
-    const CustomerRow = ({ item, index, onIsolate, isolationStatus, loadingIsolationStatus, isLateCustomer, isAlmostLateCustomer }) => {
-        const customer = item?.customer;
-        const latestInvoice = item?.invoice || null;
-        const activeInvoice = item?.active_invoice || null;
-        const invoiceToUse = activeInvoice || null;
-        const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
-        const normalizedInvoiceStatus = (invoiceToUse?.status || '').toString().trim().toLowerCase();
-        const canCreateInvoice = !!item?.can_create_invoice;
-        const paidMonthLabel = formatPaidMonth(latestInvoice?.paid_at || latestInvoice?.updated_at || latestInvoice?.created_at);
-        
-        const getStatusBadge = () => {
-            if (invoiceToUse) {
-                if (normalizedInvoiceStatus === 'menunggu konfirmasi') {
-                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-orange-100 text-orange-700">Menunggu Konfirmasi</span>;
-                }
-                if (normalizedInvoiceStatus === 'paid') {
-                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
-                }
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-yellow-100 text-yellow-700">Belum Bayar</span>;
-            }
-
-            if (isLateCustomer) {
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan Aktif</span>;
-            }
-
-            if (latestInvoiceStatus === 'paid' || item?.has_paid_this_month) {
-                if (isAlmostLateCustomer && paidMonthLabel) {
-                    return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar bulan {paidMonthLabel}</span>;
-                }
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-700">Sudah Bayar</span>;
-            }
-
-            if (isAlmostLateCustomer) {
-                return <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700">Belum Ada Tagihan</span>;
-            }
-
-            return <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700">Belum Ada Tagihan</span>;
-        };
-
-        const getIsolirButton = () => {
-            // Only show for late customers
-            if (!isLateCustomer) return null;
-
-            if (loadingIsolationStatus && !isolationStatus) {
-                return (
-                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-600">
-                        Cek status...
-                    </span>
-                );
-            }
-            
-            const isIsolated = isolationStatus?.isolated;
-            
-            if (isIsolated) {
-                return (
-                    <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-700 flex items-center gap-1">
-                        <ShieldAlert size={12} />
-                        Sedang Isolir
-                    </span>
-                );
-            }
-            
-            return (
-                <Button
-                    size="sm"
-                    variant="danger"
-                    onClick={() => onIsolate(customer.id)}
-                    disabled={submitting}
-                >
-                    <ShieldAlert size={14} className="mr-1" />
-                    Lakukan Isolir
-                </Button>
-            );
-        };
-
-        return (
-            <tr className="hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 text-sm text-gray-600">{index + 1}</td>
-                <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">{customer.name}</div>
-                    <div className="text-xs text-gray-500 md:hidden">{customer.pppoe_username}</div>
-                </td>
-                <td className="px-4 py-3 text-sm text-gray-600 hidden md:table-cell">{customer.pppoe_username || '-'}</td>
-                <td className="px-4 py-3 text-sm text-gray-600 hidden sm:table-cell">{getIsolirButton()}</td>
-                <td className="px-4 py-3 text-sm text-gray-600">{formatDate(customer.due_date)}</td>
-                <td className="px-4 py-3">{getStatusBadge()}</td>
-                <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                        {canCreateInvoice && (
-                            <Button
-                                size="sm"
-                                variant="primary"
-                                onClick={() => handleOpenCreateInvoice(customer)}
-                            >
-                                <FileText size={14} className="mr-1" />
-                                <span className="hidden sm:inline">Buat Tagihan</span>
-                                <span className="sm:hidden">Buat</span>
-                            </Button>
-                        )}
-                        {invoiceToUse && (
-                            <>
-                                {normalizedInvoiceStatus !== 'paid' && (
-                                    <>
-                                        <Button
-                                            size="sm"
-                                            variant="success"
-                                            onClick={() => setLinkModal({ open: true, invoice: invoiceToUse, customer })}
-                                        >
-                                            <Send size={14} className="mr-1" />
-                                            <span className="hidden sm:inline">Kirim</span>
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            variant="warning"
-                                            onClick={() => openConfirmModal(invoiceToUse, customer)}
-                                        >
-                                            <Check size={14} className="mr-1" />
-                                            <span className="hidden sm:inline">Konfirmasi</span>
-                                        </Button>
-                                    </>
-                                )}
-                                <Button
-                                    size="sm"
-                                    variant="secondary"
-                                    onClick={() => {
-                                        const invoiceUrl = resolveInvoiceUrl(invoiceToUse);
-                                        if (invoiceUrl) {
-                                            window.open(invoiceUrl, '_blank');
-                                        }
-                                    }}
-                                >
-                                    <Eye size={14} className="mr-1" />
-                                    <span className="hidden sm:inline">Lihat</span>
-                                </Button>
-                                {canEditInvoiceAmount && (
-                                    <Button
-                                        size="sm"
-                                        variant="secondary"
-                                        onClick={() => {
-                                            setEditAmountModal({ open: true, invoice: invoiceToUse, customer });
-                                            const amount = parseFloat(invoiceToUse.amount);
-                                            setNewInvoiceAmount(isNaN(amount) ? '' : Math.round(amount).toString());
-                                        }}
-                                    >
-                                        <FileText size={14} className="mr-1" />
-                                        <span className="hidden sm:inline">Nominal</span>
-                                    </Button>
-                                )}
-                                {normalizedInvoiceStatus === 'menunggu konfirmasi' && invoiceToUse.bukti_pembayaran && (
-                                    <Button
-                                        size="sm"
-                                        variant="danger"
-                                        onClick={() => setRejectModal({ open: true, invoice: invoiceToUse })}
-                                    >
-                                        <X size={14} />
-                                    </Button>
-                                )}
-                            </>
-                        )}
-                    </div>
-                </td>
-            </tr>
         );
     };
 
@@ -1792,32 +1665,47 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             >
                 {confirmModal.invoice && (
                     <form onSubmit={handleConfirmPayment} className="space-y-4">
-                        {(confirmModal.invoice.has_payment_proof || confirmModal.invoice.bukti_pembayaran || confirmModal.invoice.payment_proof_url || confirmModal.invoice.bukti_pembayaran_url) && (
-                            <div className="bg-blue-50 rounded-lg p-4">
-                                <p className="text-sm text-blue-700 mb-2">Pelanggan telah mengupload bukti pembayaran</p>
-                                {resolvePaymentProofUrl(confirmModal.invoice) ? (
-                                    <div className="flex flex-wrap items-center gap-3">
-                                        <button
-                                            type="button"
-                                            onClick={() => openProofPreview(confirmModal.invoice)}
-                                            className="text-blue-600 hover:underline text-sm flex items-center gap-1"
-                                        >
-                                            <Eye size={14} /> Lihat Bukti Pembayaran
-                                        </button>
-                                        <a
-                                            href={resolvePaymentProofUrl(confirmModal.invoice)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-xs text-gray-600 hover:underline"
-                                        >
-                                            Buka di tab baru
-                                        </a>
+                        {(() => {
+                            const actionState = resolveInvoiceActionState(confirmModal.invoice);
+                            const modalProofUrl = actionState.canPreviewProof ? resolvePaymentProofUrl(confirmModal.invoice) : '';
+
+                            if (actionState.canPreviewProof) {
+                                return (
+                                    <div className="bg-blue-50 rounded-lg p-4">
+                                        <p className="text-sm text-blue-700 mb-2">Pelanggan telah mengupload bukti pembayaran</p>
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => openProofPreview(confirmModal.invoice)}
+                                                className="text-blue-600 hover:underline text-sm flex items-center gap-1"
+                                            >
+                                                <Eye size={14} /> Lihat Bukti Pembayaran
+                                            </button>
+                                            <a
+                                                href={modalProofUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-xs text-gray-600 hover:underline"
+                                            >
+                                                Buka di tab baru
+                                            </a>
+                                        </div>
                                     </div>
-                                ) : (
-                                    <p className="text-xs text-gray-600">Bukti tidak tersedia.</p>
-                                )}
-                            </div>
-                        )}
+                                );
+                            }
+
+                            if (actionState.canReject) {
+                                return (
+                                    <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+                                        <p className="text-sm text-amber-700">
+                                            Status menunggu konfirmasi, tetapi file bukti pembayaran tidak tersedia atau tidak valid.
+                                        </p>
+                                    </div>
+                                );
+                            }
+
+                            return null;
+                        })()}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Dibayarkan</label>
                             <input

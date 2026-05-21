@@ -70,6 +70,7 @@ export const billingService = {
                 'Content-Type': 'multipart/form-data',
                 'X-CSRF-TOKEN': token ? token.getAttribute('content') : '',
                 'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json',
             },
             withCredentials: true,
         });

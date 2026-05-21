@@ -1,3 +1,3 @@
-2026/04/10-09:11:07.732 331f Reusing MANIFEST /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/MANIFEST-000427
-2026/04/10-09:11:07.734 331f Recovering log #431
-2026/04/10-09:11:07.735 331f Reusing old log /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/000431.log 
+2026/05/21-02:48:09.548 4de Reusing MANIFEST /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/MANIFEST-000238
+2026/05/21-02:48:09.550 4de Recovering log #250
+2026/05/21-02:48:09.553 4de Reusing old log /var/www/html/pembayaran/fastapi/wa-gateway/sessions/session/Default/Local Storage/leveldb/000250.log 
