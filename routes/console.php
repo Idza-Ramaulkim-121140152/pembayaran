@@ -29,16 +29,16 @@ Schedule::command('billing:dunning-run')
     ->withoutOverlapping();
 
 Schedule::command('dashboard:prediction-snapshot')
-    ->hourlyAt(5)
+    ->weeklyOn(1, '00:05')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
-Schedule::command('dashboard:prediction-train')
-    ->dailyAt('01:10')
+Schedule::command('dashboard:prediction-evaluate')
+    ->weeklyOn(1, '00:15')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
-Schedule::command('dashboard:prediction-health --max-age-minutes=120 --quiet-ok')
-    ->everyThirtyMinutes()
+Schedule::command('dashboard:prediction-health --max-age-minutes=11000 --quiet-ok')
+    ->dailyAt('06:00')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();

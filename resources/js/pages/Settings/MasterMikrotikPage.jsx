@@ -15,6 +15,7 @@ const INITIAL_FORM = {
     password: '',
     alert_recipients: '',
     is_active: false,
+    password_status: 'empty',
 };
 
 function MasterMikrotikPage() {
@@ -72,10 +73,18 @@ function MasterMikrotikPage() {
                 setError('Password wajib diisi saat tambah router baru.');
                 return;
             }
+            if (isEdit && form.password_status === 'invalid' && !payload.password) {
+                setError('Password tersimpan tidak valid. Simpan password baru untuk router ini.');
+                return;
+            }
 
             if (isEdit) {
                 await masterMikrotikService.update(form.id, payload);
-                setSuccess('Master MikroTik berhasil diperbarui.');
+                setSuccess(
+                    form.password_status === 'invalid' && payload.password
+                        ? 'Master MikroTik berhasil diperbarui. Password baru sudah disimpan.'
+                        : 'Master MikroTik berhasil diperbarui.'
+                );
             } else {
                 await masterMikrotikService.create(payload);
                 setSuccess('Master MikroTik berhasil ditambahkan.');
@@ -100,6 +109,7 @@ function MasterMikrotikPage() {
             password: '',
             alert_recipients: row.alert_recipients || '',
             is_active: !!row.is_active,
+            password_status: row.password_status || 'empty',
         });
     };
 
@@ -136,6 +146,11 @@ function MasterMikrotikPage() {
     };
 
     const handleTest = async (row) => {
+        if (row.password_status === 'invalid') {
+            setError('Password router tidak valid. Edit router ini lalu simpan password baru sebelum test koneksi.');
+            return;
+        }
+
         try {
             setSaving(true);
             setError(null);
@@ -169,6 +184,11 @@ function MasterMikrotikPage() {
                     {row.is_active && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
                             <CheckCircle2 size={12} /> Aktif
+                        </span>
+                    )}
+                    {row.password_status === 'invalid' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700">
+                            Password tidak valid
                         </span>
                     )}
                     <p className="text-xs text-gray-500">last: {row.last_status || 'unknown'}</p>
@@ -240,7 +260,7 @@ function MasterMikrotikPage() {
                     <input
                         type="password"
                         className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                        placeholder={isEdit ? 'Password baru (kosongkan jika tidak ganti)' : 'Password'}
+                        placeholder={isEdit ? (form.password_status === 'invalid' ? 'Wajib isi password baru' : 'Password baru (kosongkan jika tidak ganti)') : 'Password'}
                         value={form.password}
                         onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
                     />
@@ -251,6 +271,12 @@ function MasterMikrotikPage() {
                         onChange={(event) => setForm((prev) => ({ ...prev, alert_recipients: event.target.value }))}
                     />
                 </div>
+
+                {isEdit && form.password_status === 'invalid' && (
+                    <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        Password tersimpan tidak valid. Simpan password baru untuk router ini.
+                    </p>
+                )}
 
                 <label className="inline-flex items-center gap-2 text-sm text-gray-700">
                     <input

@@ -447,6 +447,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/api/billing/invoice-management', [BillingController::class, 'invoiceManagementIndex'])->name('api.billing.invoice-management.index');
         Route::put('/api/billing/invoice-management/{invoice}', [BillingController::class, 'updateInvoiceManagementApi'])->name('api.billing.invoice-management.update');
         Route::delete('/api/billing/invoice-management/{invoice}', [BillingController::class, 'deleteInvoiceManagementApi'])->name('api.billing.invoice-management.destroy');
+        Route::put('/api/billing/customers/{customer}/automation', [BillingController::class, 'updateCustomerAutomationApi'])->name('api.billing.customer.automation.update');
 
         Route::get('/api/dashboard/financial-targets', [DashboardController::class, 'financialTargets'])->name('api.dashboard.financial-targets.index');
         Route::post('/api/dashboard/financial-targets', [DashboardController::class, 'storeFinancialTarget'])->name('api.dashboard.financial-targets.store');

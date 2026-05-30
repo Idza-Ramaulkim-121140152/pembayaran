@@ -9,6 +9,7 @@ import billingService from '../../services/billingService';
 
 function BillingPage() {
     const userRole = window.appUserRole || 'admin';
+    const isSuperAdmin = userRole === 'superadmin';
     const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
 
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
@@ -66,6 +67,7 @@ function BillingPage() {
     const [submitting, setSubmitting] = useState(false);
     const [updatingCustomerService, setUpdatingCustomerService] = useState(false);
     const [autoSubmitting, setAutoSubmitting] = useState(false);
+    const [updatingCustomerAutomation, setUpdatingCustomerAutomation] = useState({});
     const autoPollingTimerRef = useRef(null);
 
     // Collapsed sections
@@ -568,6 +570,31 @@ function BillingPage() {
         }
     };
 
+    const handleCustomerAutomationToggle = async (customer, checked) => {
+        if (!isSuperAdmin || !customer?.id) return;
+
+        try {
+            setUpdatingCustomerAutomation((prev) => ({ ...prev, [customer.id]: true }));
+            setError(null);
+            setSuccess(null);
+
+            const response = await billingService.updateCustomerAutomation(customer.id, checked);
+
+            updateCustomerInLists({
+                ...customer,
+                billing_auto_disabled: checked,
+            });
+
+            setSuccess(response?.data?.message || (checked
+                ? 'Tindakan otomatis customer dinonaktifkan.'
+                : 'Tindakan otomatis customer diaktifkan kembali.'));
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memperbarui pengaturan tindakan otomatis customer.');
+        } finally {
+            setUpdatingCustomerAutomation((prev) => ({ ...prev, [customer.id]: false }));
+        }
+    };
+
     const openServicePackageModalFromInvalid = (invalidRow) => {
         const customer = [...customers.late, ...customers.almostLate, ...customers.others, ...customers.paid]
             .map((item) => item?.customer)
@@ -931,12 +958,17 @@ function BillingPage() {
 
     const generateTemplate = (customer, invoiceOrLink) => {
         const invoiceUrl = resolveInvoiceUrl(invoiceOrLink);
+        const amountValue = Number(invoiceOrLink?.amount || invoiceOrLink?.active_invoice?.amount || 0);
+        const amountLine = amountValue > 0
+            ? `\nNominal tagihan: ${new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amountValue)}\n`
+            : '\n';
 
         return `Yth. Bapak/Ibu ${customer.name.toUpperCase()}
 Username PPPoE: ${customer.pppoe_username || '-'}
 
 Terima kasih telah menjadi bagian dari pelanggan prioritas kami.
 Layanan internet anda aktif sampai ${formatDate(customer.due_date)}.
+${amountLine}
 
 > ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:
 ${invoiceUrl}
@@ -1102,6 +1134,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 statusBadge,
                 isolirBadge,
                 actionState,
+                isAutoDisabled: Boolean(customer?.billing_auto_disabled),
             };
         };
 
@@ -1132,6 +1165,31 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 key: 'status',
                 label: 'Status',
                 render: (item) => buildRowMeta(item).statusBadge,
+            },
+            {
+                key: 'automation',
+                label: 'Auto',
+                render: (item) => {
+                    const meta = buildRowMeta(item);
+                    if (!isSuperAdmin) {
+                        return meta.isAutoDisabled
+                            ? <span className="px-2 py-1 text-xs font-medium rounded-full bg-amber-100 text-amber-700">Auto Off</span>
+                            : <span className="px-2 py-1 text-xs font-medium rounded-full bg-emerald-100 text-emerald-700">Auto On</span>;
+                    }
+
+                    const customerId = meta.customer?.id;
+                    return (
+                        <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                            <input
+                                type="checkbox"
+                                checked={meta.isAutoDisabled}
+                                disabled={Boolean(updatingCustomerAutomation[customerId])}
+                                onChange={(event) => handleCustomerAutomationToggle(meta.customer, event.target.checked)}
+                            />
+                            <span>{meta.isAutoDisabled ? 'Auto Off' : 'Auto On'}</span>
+                        </label>
+                    );
+                },
             },
             {
                 key: 'isolir',
@@ -1292,6 +1350,9 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Menu Penagihan</h1>
                     <p className="text-gray-600 mt-1">Kelola tagihan dan pembayaran pelanggan</p>
+                    <p className="text-xs text-gray-500 mt-2">Auto invoice 08:00 WIB (3 hari sebelum jatuh tempo, WA valid saja)</p>
+                    <p className="text-xs text-gray-500">Auto isolir terlambat 3 hari (WA valid saja)</p>
+                    {isSuperAdmin && <p className="text-xs text-amber-700 mt-1">Checklist Auto Off tersedia per pelanggan pada kolom Auto.</p>}
                 </div>
             </div>
 
@@ -1336,7 +1397,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     iconColor="bg-red-500"
                 />
                 <CustomerTable
-                    title="Pelanggan Hampir Telat (H-5)"
+                    title="Pelanggan Kurang dari 5 Hari Menuju Jatuh Tempo"
                     data={almostLateFiltered}
                     segment="almostLate"
                     icon={Clock}
@@ -1383,7 +1444,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <div className="space-y-4">
                     <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
                         <p className="font-semibold">
-                            Section: {autoProcessModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Hampir Telat (H-5)'}
+                            Section: {autoProcessModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Kurang dari 5 Hari Menuju Jatuh Tempo'}
                         </p>
                         <p className="mt-1">Status: {autoProcessModal.state}</p>
                         <p>Fase: {phaseLabel(autoProcessModal.phase)}</p>
@@ -1397,6 +1458,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoProcessModal.summary?.wa_sent ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoProcessModal.summary?.wa_failed ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoProcessModal.summary?.skipped_no_phone ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip Auto Off: <strong>{autoProcessModal.summary?.skipped_auto_disabled ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoProcessModal.summary?.skipped_invalid_service ?? 0}</strong></div>
                     </div>
                     {autoProcessModal.errorMessage && (
@@ -1484,7 +1546,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             >
                 <div className="space-y-4">
                     <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
-                        Section: {autoResultModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Hampir Telat (H-5)'}
+                        Section: {autoResultModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Kurang dari 5 Hari Menuju Jatuh Tempo'}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                         <div className="rounded border border-gray-200 p-2">Total: <strong>{autoResultModal.summary?.total ?? 0}</strong></div>
@@ -1493,6 +1555,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                         <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoResultModal.summary?.wa_sent ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoResultModal.summary?.wa_failed ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoResultModal.summary?.skipped_no_phone ?? 0}</strong></div>
+                        <div className="rounded border border-gray-200 p-2">Skip Auto Off: <strong>{autoResultModal.summary?.skipped_auto_disabled ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Skip Invoice Aktif: <strong>{autoResultModal.summary?.skipped_existing_open_invoice ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></div>
                         <div className="rounded border border-gray-200 p-2">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></div>

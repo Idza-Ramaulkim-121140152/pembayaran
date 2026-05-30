@@ -8,6 +8,8 @@ use App\Models\FinancialTransaction;
 use App\Models\Invoice;
 use App\Models\NetworkIncident;
 use App\Models\Complaint;
+use App\Models\PredictionRun;
+use App\Models\PredictionRunItem;
 use App\Services\DashboardPredictionPythonWorker;
 use App\Services\DashboardPredictionSnapshotService;
 use Carbon\Carbon;
@@ -41,7 +43,7 @@ class GenerateDashboardPredictionSnapshot extends Command
             'kpi_start' => Carbon::today()->subDays(29)->startOfDay(),
             'kpi_end' => Carbon::today()->endOfDay(),
             'forecast_start' => Carbon::today()->startOfDay(),
-            'forecast_end' => Carbon::today()->addDays(6)->endOfDay(),
+            'forecast_end' => Carbon::today()->addDays(7)->endOfDay(),
             'projection_start' => $monthReference->copy()->startOfMonth()->startOfDay(),
             'projection_end' => $monthReference->copy()->endOfMonth()->endOfDay(),
         ];
@@ -153,6 +155,8 @@ class GenerateDashboardPredictionSnapshot extends Command
                 $modelMeta,
                 Carbon::now()->addHour()
             );
+
+            $this->createPredictionRunBaseline($snapshot->id, $bundle, $modelMeta);
 
             $this->info('Snapshot prediksi berhasil dibuat. ID: ' . $snapshot->id);
             return self::SUCCESS;
@@ -515,5 +519,71 @@ class GenerateDashboardPredictionSnapshot extends Command
         ]);
 
         return $section;
+    }
+
+    private function createPredictionRunBaseline(int $snapshotId, array $bundle, array $modelMeta): void
+    {
+        if (($modelMeta['worker_status'] ?? null) !== 'ok') {
+            return;
+        }
+
+        $sectionSources = (array) data_get($bundle, 'meta.section_sources', []);
+        if (($sectionSources['revenue_forecast'] ?? null) !== 'model') {
+            return;
+        }
+
+        $runDate = Carbon::today('Asia/Jakarta')->toDateString();
+        $dailyForecast = collect((array) data_get($bundle, 'revenue_forecast.daily_forecast', []));
+        if ($dailyForecast->count() === 0) {
+            return;
+        }
+
+        $run = PredictionRun::query()->firstOrCreate(
+            [
+                'run_date' => $runDate,
+                'horizon_days' => 7,
+            ],
+            [
+                'status' => 'ready',
+                'model_version' => (string) ($modelMeta['model_version'] ?? ''),
+                'model_trained_at' => !empty($modelMeta['trained_at']) ? Carbon::parse($modelMeta['trained_at']) : null,
+                'snapshot_id' => $snapshotId,
+            ]
+        );
+
+        if ($run->wasRecentlyCreated) {
+            $targets = $dailyForecast
+                ->filter(function ($item) use ($runDate) {
+                    $date = (string) ($item['date'] ?? '');
+                    return $date > $runDate;
+                })
+                ->take(7)
+                ->values();
+
+            foreach ($targets as $row) {
+                $targetDate = (string) ($row['date'] ?? '');
+                if ($targetDate === '') {
+                    continue;
+                }
+
+                PredictionRunItem::query()->updateOrCreate(
+                    [
+                        'prediction_run_id' => $run->id,
+                        'target_date' => $targetDate,
+                        'domain' => 'revenue_daily',
+                    ],
+                    [
+                        'predicted_value' => (float) ($row['predicted_revenue'] ?? 0),
+                    ]
+                );
+            }
+
+            \Log::info('dashboard.prediction.run_created', [
+                'prediction_run_id' => $run->id,
+                'run_date' => $runDate,
+                'snapshot_id' => $snapshotId,
+                'model_version' => $run->model_version,
+            ]);
+        }
     }
 }

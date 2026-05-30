@@ -4,11 +4,16 @@ namespace App\Services;
 
 use App\Models\BillingDunningConfig;
 use App\Models\BillingDunningLog;
+use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\Package;
 use App\Models\NotificationLog;
+use App\Services\MikroTikService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class BillingDunningService
 {
@@ -22,6 +27,7 @@ class BillingDunningService
 
     public function __construct(
         private AuditLogService $auditLogService,
+        private BillingMessageTemplateService $billingMessageTemplateService,
     ) {
     }
 
@@ -83,6 +89,16 @@ class BillingDunningService
             'no_wave' => 0,
             'retry_exhausted' => 0,
             'duplicate_sent' => 0,
+            'skipped_auto_disabled' => 0,
+            'auto_invoice_created' => 0,
+            'auto_invoice_skipped_no_wa' => 0,
+            'auto_invoice_skipped_auto_disabled' => 0,
+            'auto_isolated' => 0,
+            'auto_isolate_skipped_no_wa' => 0,
+            'auto_isolate_skipped_auto_disabled' => 0,
+            'auto_isolate_already_isolated' => 0,
+            'wa_sent' => 0,
+            'wa_failed' => 0,
         ];
 
         $rows = $this->queryTargetInvoices();
@@ -100,6 +116,9 @@ class BillingDunningService
                 $summary[$result]++;
             }
         }
+
+        $this->runAutoInvoiceHMinus3($today, $summary);
+        $this->runAutoIsolationHPlus3($today, $summary);
 
         $this->auditLogService->log('billing.dunning.run', null, [
             'force' => $force,
@@ -147,6 +166,17 @@ class BillingDunningService
 
         $log->customer_id = $invoice->customer_id;
 
+        if ((bool) ($invoice->customer?->billing_auto_disabled ?? false)) {
+            $log->status = 'skipped';
+            $log->last_error = 'auto_disabled_by_superadmin';
+            $log->message = $this->billingMessageTemplateService->appendAutoLabel('skip');
+            $log->meta = [
+                'reason' => 'auto_disabled_by_superadmin',
+            ];
+            $log->save();
+            return 'skipped_auto_disabled';
+        }
+
         if ($log->exists && $log->status === 'sent') {
             return 'duplicate_sent';
         }
@@ -158,7 +188,7 @@ class BillingDunningService
         }
 
         $phone = trim((string) ($invoice->customer?->phone ?? ''));
-        $message = $this->buildMessage($wave, $invoice, $config);
+        $message = $this->applyAutoLabel($this->buildMessage($wave, $invoice, $config));
         $log->message = $message;
         $log->meta = [
             'customer_phone' => $phone,
@@ -170,7 +200,7 @@ class BillingDunningService
             $log->status = 'skipped';
             $log->last_error = 'no_valid_whatsapp';
             $log->save();
-            $this->logNotification($invoice, $phone, $message, 'skipped', 'no_valid_whatsapp', $wave);
+            $this->logNotification($invoice, $phone, $message, 'skipped', 'no_valid_whatsapp', $wave, 'billing_dunning');
             return 'skipped';
         }
 
@@ -188,7 +218,8 @@ class BillingDunningService
             $message,
             $success ? 'sent' : 'failed',
             $error,
-            $wave
+            $wave,
+            'billing_dunning'
         );
 
         if ($success) {
@@ -205,7 +236,7 @@ class BillingDunningService
     private function queryTargetInvoices(): Collection
     {
         return Invoice::query()
-            ->with('customer:id,name,phone,pppoe_username')
+            ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled')
             ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
             ->whereNotNull('due_date')
             ->orderBy('due_date')
@@ -234,29 +265,38 @@ class BillingDunningService
         $customerName = trim((string) ($invoice->customer?->name ?? 'Pelanggan'));
         $invoiceUrl = url('/invoice/' . $invoice->invoice_link);
 
-        return str_replace(
-            ['{customer_name}', '{amount}', '{due_date}', '{invoice_url}', '{wave}'],
+        $message = str_replace(
+            ['{customer_name}', '{pppoe_username}', '{amount}', '{due_date}', '{invoice_url}', '{wave}'],
             [
                 $customerName,
+                trim((string) ($invoice->customer?->pppoe_username ?? '')) ?: '-',
                 'Rp ' . number_format((float) $invoice->amount, 0, ',', '.'),
                 Carbon::parse($invoice->due_date)->format('d/m/Y'),
                 $invoiceUrl,
-                strtoupper(str_replace('_', '-', $wave)),
+                $this->billingMessageTemplateService->waveToHumanLabel($wave),
             ],
             $template
         );
+
+        return $this->billingMessageTemplateService->normalizeLegacyRelativeDayTerms($message);
     }
 
     private function defaultTemplate(string $wave): string
     {
-        return "Yth. {customer_name}, pengingat tagihan internet Anda ({wave}).\n"
-            . "Nominal: {amount}\n"
-            . "Jatuh tempo: {due_date}\n"
-            . "Link invoice: {invoice_url}\n"
-            . "Terima kasih.";
+        return "Yth. Bapak/Ibu {customer_name}\n"
+            . "Username PPPoE: {pppoe_username}\n\n"
+            . "Terima kasih telah menjadi bagian dari pelanggan prioritas kami.\n"
+            . "Layanan internet anda aktif sampai {due_date}.\n\n"
+            . "Nominal tagihan: {amount}\n"
+            . "> ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:\n"
+            . "{invoice_url}\n\n"
+            . "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis.\n\n"
+            . "Layanan Call Center 085158025553\n\n"
+            . "Salam Hangat,\n"
+            . "Tim Layanan Pelanggan Rumah Kita Net";
     }
 
-    private function logNotification(Invoice $invoice, string $phone, string $message, string $status, ?string $error, string $wave): void
+    private function logNotification(Invoice $invoice, string $phone, string $message, string $status, ?string $error, string $wave, string $type = 'billing_dunning'): void
     {
         NotificationLog::query()->create([
             'customer_id' => $invoice->customer_id,
@@ -266,10 +306,12 @@ class BillingDunningService
             'error' => $error,
             'sent_at' => $status === 'sent' ? now() : null,
             'meta' => [
-                'type' => 'billing_dunning',
+                'type' => $type,
                 'wave' => $wave,
                 'invoice_id' => $invoice->id,
                 'invoice_link' => $invoice->invoice_link,
+                'is_auto' => true,
+                'channel' => 'whatsapp',
             ],
         ]);
     }
@@ -326,5 +368,219 @@ class BillingDunningService
             'meta' => null,
         ];
     }
-}
 
+    private function applyAutoLabel(string $message): string
+    {
+        return $this->billingMessageTemplateService->appendAutoLabel(
+            $this->billingMessageTemplateService->normalizeLegacyRelativeDayTerms($message)
+        );
+    }
+
+    private function runAutoInvoiceHMinus3(Carbon $today, array &$summary): void
+    {
+        $dueDate = $today->copy()->addDays(3)->toDateString();
+
+        $customers = Customer::query()
+            ->whereDate('due_date', $dueDate)
+            ->get(['id', 'name', 'phone', 'pppoe_username', 'due_date', 'package_type', 'custom_package', 'package_id', 'billing_auto_disabled']);
+
+        if ($customers->isEmpty()) {
+            return;
+        }
+
+        $packageById = Package::query()->where('is_active', true)->get(['id', 'name', 'price'])->keyBy('id');
+        $packageByName = [];
+        foreach ($packageById as $package) {
+            $name = strtolower(trim((string) $package->name));
+            if ($name !== '') {
+                $packageByName[$name] = $package;
+            }
+        }
+
+        foreach ($customers as $customer) {
+            if ((bool) ($customer->billing_auto_disabled ?? false)) {
+                $summary['auto_invoice_skipped_auto_disabled']++;
+                continue;
+            }
+
+            $phone = trim((string) $customer->phone);
+            if (!$this->isValidPhone($phone)) {
+                $summary['auto_invoice_skipped_no_wa']++;
+                continue;
+            }
+
+            $package = null;
+            if (!empty($customer->package_id) && isset($packageById[(int) $customer->package_id])) {
+                $package = $packageById[(int) $customer->package_id];
+            } else {
+                $serviceLabel = strtolower(trim((string) ($customer->package_type ?: $customer->custom_package)));
+                if ($serviceLabel !== '' && isset($packageByName[$serviceLabel])) {
+                    $package = $packageByName[$serviceLabel];
+                }
+            }
+
+            if (!$package || (float) $package->price <= 0) {
+                continue;
+            }
+
+            $invoice = null;
+            $created = false;
+            try {
+                DB::transaction(function () use ($customer, $package, &$invoice, &$created) {
+                    $openInvoice = Invoice::query()
+                        ->where('customer_id', $customer->id)
+                        ->whereNotIn('status', ['paid', 'cancelled'])
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($openInvoice) {
+                        $invoice = $openInvoice;
+                        return;
+                    }
+
+                    $invoice = Invoice::create([
+                        'customer_id' => $customer->id,
+                        'invoice_date' => now(),
+                        'due_date' => $customer->due_date ?? now()->addDays(3)->toDateString(),
+                        'amount' => (float) $package->price,
+                        'status' => 'unpaid',
+                        'invoice_link' => uniqid('inv_'),
+                    ]);
+                    $created = true;
+                });
+            } catch (\Throwable $e) {
+                Log::warning('Auto invoice 3 hari sebelum jatuh tempo failed', [
+                    'customer_id' => $customer->id,
+                    'error' => $e->getMessage(),
+                ]);
+                continue;
+            }
+
+            if (!$created || !$invoice) {
+                continue;
+            }
+
+            $summary['auto_invoice_created']++;
+            $message = $this->billingMessageTemplateService->buildBillingReminderMessage(
+                $customer,
+                url('/invoice/' . $invoice->invoice_link),
+                (float) $invoice->amount,
+                Carbon::parse((string) $customer->due_date)->format('d/m/Y'),
+                true
+            );
+
+            [$sent, $error] = $this->sendWhatsApp($phone, $message);
+            if ($sent) {
+                $summary['wa_sent']++;
+            } else {
+                $summary['wa_failed']++;
+            }
+
+            NotificationLog::query()->create([
+                'customer_id' => $customer->id,
+                'phone' => $phone,
+                'message' => mb_substr($message, 0, 2000),
+                'status' => $sent ? 'sent' : 'failed',
+                'error' => $error,
+                'sent_at' => $sent ? now() : null,
+                'meta' => [
+                    'type' => 'billing_auto_invoice',
+                    'invoice_id' => $invoice->id,
+                    'invoice_link' => $invoice->invoice_link,
+                    'wave' => 'h_minus_3',
+                    'is_auto' => true,
+                    'channel' => 'whatsapp',
+                ],
+            ]);
+        }
+    }
+
+    private function runAutoIsolationHPlus3(Carbon $today, array &$summary): void
+    {
+        $cutoffDate = $today->copy()->subDays(3)->toDateString();
+        $customers = Customer::query()
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<=', $cutoffDate)
+            ->whereNotNull('pppoe_username')
+            ->get(['id', 'name', 'phone', 'pppoe_username', 'due_date', 'billing_auto_disabled']);
+
+        if ($customers->isEmpty()) {
+            return;
+        }
+
+        $mikrotik = new MikroTikService();
+        foreach ($customers as $customer) {
+            if ((bool) ($customer->billing_auto_disabled ?? false)) {
+                $summary['auto_isolate_skipped_auto_disabled']++;
+                continue;
+            }
+
+            $phone = trim((string) $customer->phone);
+            if (!$this->isValidPhone($phone)) {
+                $summary['auto_isolate_skipped_no_wa']++;
+                continue;
+            }
+
+            $openInvoice = Invoice::query()
+                ->where('customer_id', $customer->id)
+                ->whereNotIn('status', ['paid', 'cancelled'])
+                ->orderByDesc('id')
+                ->first();
+
+            if (!$openInvoice) {
+                continue;
+            }
+
+            try {
+                $secret = $mikrotik->getPPPoESecret((string) $customer->pppoe_username);
+                if (!$secret) {
+                    continue;
+                }
+
+                $currentProfile = strtolower((string) ($secret['profile'] ?? ''));
+                if ($currentProfile === 'isolir') {
+                    $summary['auto_isolate_already_isolated']++;
+                    continue;
+                }
+
+                Customer::query()->whereKey($customer->id)->update([
+                    'mikrotik_profile' => (string) ($secret['profile'] ?? ''),
+                ]);
+
+                $mikrotik->isolateUser((string) $customer->pppoe_username);
+                $summary['auto_isolated']++;
+
+                $message = $this->billingMessageTemplateService->buildIsolationMessage(true);
+
+                [$sent, $error] = $this->sendWhatsApp($phone, $message);
+                if ($sent) {
+                    $summary['wa_sent']++;
+                } else {
+                    $summary['wa_failed']++;
+                }
+
+                NotificationLog::query()->create([
+                    'customer_id' => $customer->id,
+                    'phone' => $phone,
+                    'message' => mb_substr($message, 0, 2000),
+                    'status' => $sent ? 'sent' : 'failed',
+                    'error' => $error,
+                    'sent_at' => $sent ? now() : null,
+                    'meta' => [
+                        'type' => 'billing_auto_isolation',
+                        'wave' => 'h_plus_3',
+                        'pppoe_username' => $customer->pppoe_username,
+                        'is_auto' => true,
+                        'channel' => 'whatsapp',
+                    ],
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Auto isolation terlambat 3 hari failed', [
+                    'customer_id' => $customer->id,
+                    'username' => $customer->pppoe_username,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+}

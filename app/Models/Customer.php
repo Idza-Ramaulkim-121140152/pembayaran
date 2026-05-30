@@ -8,6 +8,7 @@ class Customer extends Model
 {
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
+        'billing_auto_disabled',
         'kecamatan_id', 'desa_id', 'dusun_id', 'enable_home_router', 'enable_installation_team',
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
         'pppoe_username', 'mikrotik_profile', 'home_router_type', 'home_router_host',
@@ -20,6 +21,7 @@ class Customer extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
+        'billing_auto_disabled' => 'boolean',
         'due_date' => 'date:Y-m-d',
         'activation_date' => 'date:Y-m-d',
         'installation_fee' => 'decimal:0',

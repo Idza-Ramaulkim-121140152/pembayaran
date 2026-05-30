@@ -16,6 +16,12 @@ export const billingService = {
     startAutoInvoice: (payload) =>
         apiClient.post('/billing/auto-invoice', payload),
 
+    // Billing automation per customer (superadmin only)
+    updateCustomerAutomation: (customerId, billingAutoDisabled) =>
+        apiClient.put(`/billing/customers/${customerId}/automation`, {
+            billing_auto_disabled: billingAutoDisabled,
+        }),
+
     // Poll auto-invoice async job status
     getAutoInvoiceStatus: (jobId) =>
         apiClient.get(`/billing/auto-invoice/${jobId}`),

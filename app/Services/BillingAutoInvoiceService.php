@@ -22,6 +22,7 @@ class BillingAutoInvoiceService
     public function __construct(
         private FeatureService $featureService,
         private BillingItemService $billingItemService,
+        private BillingMessageTemplateService $billingMessageTemplateService,
     ) {
     }
 
@@ -87,6 +88,29 @@ class BillingAutoInvoiceService
 
         foreach ($segmentCustomers as $customer) {
             $summary['processed']++;
+
+            if ((bool) ($customer->billing_auto_disabled ?? false)) {
+                $summary['skipped_auto_disabled']++;
+                $this->appendResult($results, $resultsByCustomer, [
+                    'customer_id' => $customer->id,
+                    'status' => 'skipped',
+                    'reason' => 'auto_disabled_by_superadmin',
+                ]);
+                $this->logBillingNotification(
+                    $customer->id,
+                    $customer->phone,
+                    'Auto invoice skipped karena customer dinonaktifkan dari tindakan otomatis oleh superadmin.',
+                    'skipped',
+                    'auto_disabled_by_superadmin',
+                    [
+                        'type' => 'billing_auto_invoice',
+                        'segment' => $segment,
+                        'reason' => 'auto_disabled_by_superadmin',
+                        'job_id' => $job->id,
+                    ]
+                );
+                continue;
+            }
 
             if (!$this->isValidPhone($customer->phone)) {
                 $summary['skipped_no_phone']++;
@@ -434,6 +458,7 @@ class BillingAutoInvoiceService
             'created' => 0,
             'wa_sent' => 0,
             'wa_failed' => 0,
+            'skipped_auto_disabled' => 0,
             'skipped_no_phone' => 0,
             'skipped_existing_open_invoice' => 0,
             'skipped_invalid_service' => 0,
@@ -495,15 +520,17 @@ class BillingAutoInvoiceService
 
     private function buildInvoiceMessage(Customer $customer, string $invoiceUrl, float $amount): string
     {
-        return "Yth. Bapak/Ibu " . strtoupper((string) $customer->name) . "\n" .
-            "Username PPPoE: " . ((string) $customer->pppoe_username ?: '-') . "\n\n" .
-            "Nominal tagihan: Rp " . number_format($amount, 0, ',', '.') . "\n" .
-            "> Informasi lengkap dan metode pembayaran tersedia pada link berikut:\n" .
-            $invoiceUrl . "\n\n" .
-            "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis.\n\n" .
-            "Layanan Call Center 085158025553\n\n" .
-            "Salam Hangat,\n" .
-            "Tim Layanan Pelanggan Rumah Kita Net";
+        $dueDate = $customer->due_date
+            ? Carbon::parse($customer->due_date)->format('d/m/Y')
+            : '-';
+
+        return $this->billingMessageTemplateService->buildBillingReminderMessage(
+            $customer,
+            $invoiceUrl,
+            $amount,
+            $dueDate,
+            true
+        );
     }
 
     /**
@@ -587,6 +614,11 @@ class BillingAutoInvoiceService
     private function logBillingNotification(?int $customerId, ?string $phone, string $message, string $status, ?string $error = null, array $meta = []): void
     {
         try {
+            $meta = array_merge([
+                'is_auto' => true,
+                'channel' => 'whatsapp',
+            ], $meta);
+
             NotificationLog::create([
                 'customer_id' => $customerId,
                 'phone' => $phone,

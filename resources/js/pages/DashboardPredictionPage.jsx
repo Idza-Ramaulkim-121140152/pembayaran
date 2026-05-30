@@ -172,8 +172,8 @@ function getSectionSourceMeta(source) {
         return { label: 'Model', className: 'bg-emerald-100 text-emerald-700 border border-emerald-200' };
     }
 
-    if (source === 'fallback') {
-        return { label: 'Fallback Laravel', className: 'bg-amber-100 text-amber-700 border border-amber-200' };
+    if (source === 'unavailable') {
+        return { label: 'Model Unavailable', className: 'bg-rose-100 text-rose-700 border border-rose-200' };
     }
 
     return { label: 'Tidak diketahui', className: 'bg-gray-100 text-gray-600 border border-gray-200' };
@@ -190,6 +190,7 @@ function DashboardPredictionPage() {
     const isTeknisi = userRole === 'teknisi';
 
     const [error, setError] = useState(null);
+    const [modelUnavailableMeta, setModelUnavailableMeta] = useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [bundleMeta, setBundleMeta] = useState(null);
 
@@ -247,11 +248,23 @@ function DashboardPredictionPage() {
     };
 
     const fetchPredictionBundle = async () => {
-        const response = await apiClient.get('/dashboard/prediction-bundle');
-        const bundle = response.data?.data || null;
-        if (!bundle) return false;
-        applyPredictionBundle(bundle);
-        return true;
+        try {
+            const response = await apiClient.get('/dashboard/prediction-bundle');
+            const bundle = response.data?.data || null;
+            if (!bundle) {
+                return false;
+            }
+            setModelUnavailableMeta(null);
+            applyPredictionBundle(bundle);
+            return true;
+        } catch (err) {
+            if (err?.response?.data?.code === 'model_unavailable') {
+                setModelUnavailableMeta(err.response.data || null);
+                setError(err.response?.data?.message || 'Model prediksi belum siap.');
+                return false;
+            }
+            throw err;
+        }
     };
 
     const fetchManagementKpis = async (range = kpiRange) => {
@@ -296,9 +309,58 @@ function DashboardPredictionPage() {
         }
     };
 
+    const normalizeLiveFinancialProjection = (projectionData) => {
+        if (!projectionData || typeof projectionData !== 'object') {
+            return projectionData;
+        }
+
+        const summary = projectionData.summary || {};
+        const dailyProjection = Array.isArray(projectionData.daily_projection)
+            ? projectionData.daily_projection
+            : [];
+        const actualBalanceTodayDate = String(summary.actual_balance_today_date || '').trim();
+        const actualBalanceToday = Number(summary.actual_balance_today);
+
+        if (!actualBalanceTodayDate || !Number.isFinite(actualBalanceToday) || dailyProjection.length === 0) {
+            return projectionData;
+        }
+
+        let hasTodayRow = false;
+        let changed = false;
+        const normalizedRows = dailyProjection.map((row) => {
+            if (String(row?.date || '') !== actualBalanceTodayDate) {
+                return row;
+            }
+
+            hasTodayRow = true;
+            const currentChartBalance = Number(row?.chart_balance);
+            const currentSource = String(row?.chart_balance_source || '');
+            if (currentChartBalance === actualBalanceToday && currentSource === 'actual_today') {
+                return row;
+            }
+
+            changed = true;
+            return {
+                ...row,
+                chart_balance: actualBalanceToday,
+                chart_balance_source: 'actual_today',
+            };
+        });
+
+        if (!hasTodayRow || !changed) {
+            return projectionData;
+        }
+
+        return {
+            ...projectionData,
+            daily_projection: normalizedRows,
+        };
+    };
+
     const fetchFinancialProjection = async (range = financialProjectionRange, options = {}) => {
         const requestSeq = ++projectionRequestSeqRef.current;
         const sourceMode = options?.sourceMode || 'live';
+        const suppressError = !!options?.suppressError;
         try {
             setFinancialProjectionLoading(true);
             setFinancialProjectionError(null);
@@ -314,14 +376,26 @@ function DashboardPredictionPage() {
                 return;
             }
 
-            setFinancialProjectionData(response.data?.data || null);
+            const liveNormalizedData = sourceMode === 'live'
+                ? normalizeLiveFinancialProjection(response.data?.data || null)
+                : (response.data?.data || null);
+
+            setFinancialProjectionData(liveNormalizedData);
             setFinancialProjectionSourceMode(sourceMode);
+            if (sourceMode === 'live') {
+                setFinancialProjectionActionMessage(null);
+            }
             if (response.data?.meta) setBundleMeta(response.data.meta);
+            return true;
         } catch (err) {
             if (requestSeq !== projectionRequestSeqRef.current) {
-                return;
+                return false;
             }
-            setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat proyeksi keuangan.');
+
+            if (!suppressError) {
+                setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat proyeksi keuangan.');
+            }
+            return false;
         } finally {
             if (requestSeq === projectionRequestSeqRef.current) {
                 setFinancialProjectionLoading(false);
@@ -356,22 +430,26 @@ function DashboardPredictionPage() {
                 setIsRefreshing(true);
             }
             setError(null);
-            let bundleLoaded = false;
-            try {
-                bundleLoaded = await fetchPredictionBundle();
-            } catch (_) {
-                bundleLoaded = false;
+            const bundleLoaded = await fetchPredictionBundle();
+            if (!bundleLoaded) {
+                setKpiData(null);
+                setForecastData(null);
+                setFinancialProjectionData(null);
+                setIspIntelligenceData(null);
+                return;
             }
 
-            if (!bundleLoaded) {
-                await Promise.allSettled([
-                    fetchManagementKpis(kpiRange),
-                    fetchRevenueForecast(forecastRange),
-                    fetchFinancialProjection(financialProjectionRange),
-                    fetchIspIntelligence(kpiRange),
-                ]);
-            } else {
-                await fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live' });
+            const liveProjectionLoaded = await fetchFinancialProjection(financialProjectionRange, {
+                sourceMode: 'live',
+                suppressError: true,
+            });
+
+            if (!liveProjectionLoaded) {
+                setFinancialProjectionSourceMode('snapshot');
+                setFinancialProjectionActionMessage({
+                    type: 'error',
+                    text: 'Saldo live belum bisa dimuat saat ini, data proyeksi sementara memakai snapshot terakhir.',
+                });
             }
         } catch (err) {
             setError('Terjadi kendala saat memuat semua data prediksi.');
@@ -416,6 +494,8 @@ function DashboardPredictionPage() {
     const ispRecommendations = ispIntelligenceData?.recommendations || [];
     const sectionSources = bundleMeta?.section_sources || {};
     const bundleWarnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
+    const latest7dAccuracy = bundleMeta?.latest_7d_accuracy || modelUnavailableMeta?.latest_7d_accuracy || null;
+    const latestModelMeta = modelUnavailableMeta?.last_model_meta || null;
 
     const sectionWarningMap = useMemo(() => {
         const map = {};
@@ -430,7 +510,7 @@ function DashboardPredictionPage() {
     }, [bundleWarnings]);
 
     const resolveSectionSource = (sectionKey, sectionData) => (
-        sectionData?.meta?.source || sectionSources?.[sectionKey] || 'fallback'
+        sectionData?.meta?.source || sectionSources?.[sectionKey] || 'unavailable'
     );
 
     const resolveSectionWarning = (sectionKey, sectionData) => (
@@ -588,22 +668,12 @@ function DashboardPredictionPage() {
             };
         }
 
-        if (status === 'ready_rehydrated') {
-            return {
-                label: 'Data direhydrate',
-                className: 'border-blue-200 bg-blue-50 text-blue-700',
-                detail: warnings.length > 0
-                    ? `Section dipulihkan: ${warnings.map((w) => w?.section).filter(Boolean).join(', ')}`
-                    : 'Sebagian section dipulihkan dari snapshot valid lain.',
-            };
-        }
-
         return {
-            label: 'Fallback aktif',
-            className: 'border-amber-200 bg-amber-50 text-amber-700',
+            label: 'Model belum siap',
+            className: 'border-rose-200 bg-rose-50 text-rose-700',
             detail: missing.length > 0
-                ? `Section belum penuh: ${missing.join(', ')}`
-                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Sumber data campuran fallback.'),
+                ? `Section model belum lengkap: ${missing.join(', ')}`
+                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Snapshot model tidak tersedia.'),
         };
     }, [bundleMeta]);
 
@@ -613,9 +683,9 @@ function DashboardPredictionPage() {
             {
                 label: 'Prediksi Pendapatan',
                 data: forecastDailyRows.map((item) => Number(item.predicted_revenue || 0)),
-                borderColor: '#2563eb',
-                backgroundColor: 'rgba(37, 99, 235, 0.16)',
-                borderWidth: 3,
+                borderColor: '#94a3b8',
+                backgroundColor: 'rgba(148, 163, 184, 0.18)',
+                borderWidth: 2,
                 fill: true,
                 tension: 0.3,
                 yAxisID: 'y',
@@ -709,10 +779,10 @@ function DashboardPredictionPage() {
                 data: projectionDailyRows.map((row) => Number(
                     row.chart_balance ?? row.projected_balance ?? 0
                 )),
-                borderColor: '#7c3aed',
-                backgroundColor: 'rgba(124, 58, 237, 0.15)',
+                borderColor: '#94a3b8',
+                backgroundColor: 'rgba(148, 163, 184, 0.15)',
                 fill: true,
-                borderWidth: 3,
+                borderWidth: 2,
                 tension: 0.3,
             },
             {
@@ -761,8 +831,8 @@ function DashboardPredictionPage() {
             {
                 label: 'Forecast',
                 data: (kpiVariance?.daily || []).map((item) => Number(item.predicted_revenue || 0)),
-                borderColor: '#1d4ed8',
-                backgroundColor: 'rgba(29, 78, 216, 0.14)',
+                borderColor: '#94a3b8',
+                backgroundColor: 'rgba(148, 163, 184, 0.12)',
                 borderWidth: 2,
                 fill: false,
                 tension: 0.25,
@@ -772,7 +842,7 @@ function DashboardPredictionPage() {
                 data: (kpiVariance?.daily || []).map((item) => Number(item.actual_revenue || 0)),
                 borderColor: '#16a34a',
                 backgroundColor: 'rgba(22, 163, 74, 0.12)',
-                borderWidth: 2,
+                borderWidth: 4,
                 fill: false,
                 tension: 0.25,
             },
@@ -841,30 +911,6 @@ function DashboardPredictionPage() {
     };
 
     const handleApplyKpiRange = async () => {
-        if (!kpiRange.start_date || !kpiRange.end_date) {
-            setKpiError('Tanggal KPI wajib diisi.');
-            return;
-        }
-
-        const start = new Date(`${kpiRange.start_date}T00:00:00`);
-        const end = new Date(`${kpiRange.end_date}T00:00:00`);
-
-        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-            setKpiError('Format tanggal KPI tidak valid.');
-            return;
-        }
-
-        if (start > end) {
-            setKpiError('Tanggal mulai KPI tidak boleh melebihi tanggal akhir.');
-            return;
-        }
-
-        const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
-        if (totalDays > 120) {
-            setKpiError('Rentang KPI maksimal 120 hari.');
-            return;
-        }
-
         await fetchManagementKpis(kpiRange);
     };
 
@@ -875,30 +921,6 @@ function DashboardPredictionPage() {
     };
 
     const handleApplyForecastRange = async () => {
-        if (!forecastRange.start_date || !forecastRange.end_date) {
-            setForecastError('Tanggal prediksi wajib diisi.');
-            return;
-        }
-
-        const start = new Date(`${forecastRange.start_date}T00:00:00`);
-        const end = new Date(`${forecastRange.end_date}T00:00:00`);
-
-        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-            setForecastError('Format tanggal prediksi tidak valid.');
-            return;
-        }
-
-        if (start > end) {
-            setForecastError('Tanggal mulai prediksi tidak boleh melebihi tanggal akhir.');
-            return;
-        }
-
-        const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
-        if (totalDays > 60) {
-            setForecastError('Rentang prediksi maksimal 60 hari.');
-            return;
-        }
-
         await fetchRevenueForecast(forecastRange);
     };
 
@@ -916,7 +938,7 @@ function DashboardPredictionPage() {
 
         const nextRange = getMonthRangeFromMonthValue(financialProjectionMonth);
         setFinancialProjectionRange(nextRange);
-        await fetchFinancialProjection(nextRange);
+        await fetchFinancialProjection(nextRange, { sourceMode: 'live' });
     };
 
     const handleResetFinancialProjectionRange = async () => {
@@ -924,7 +946,7 @@ function DashboardPredictionPage() {
         const defaultRange = getMonthRangeFromMonthValue(defaultMonth);
         setFinancialProjectionMonth(defaultMonth);
         setFinancialProjectionRange(defaultRange);
-        await fetchFinancialProjection(defaultRange);
+        await fetchFinancialProjection(defaultRange, { sourceMode: 'live' });
     };
 
     const handleConfirmMandatoryExecution = async (row) => {
@@ -946,7 +968,7 @@ function DashboardPredictionPage() {
                 type: 'success',
                 text: `Target wajib "${row.name}" berhasil ditandai terlaksana.`,
             });
-            await fetchFinancialProjection(financialProjectionRange);
+            await loadAllPredictionData();
         } catch (err) {
             setFinancialProjectionActionMessage({
                 type: 'error',
@@ -977,7 +999,7 @@ function DashboardPredictionPage() {
                 type: 'success',
                 text: `Status terlaksana untuk "${row.name}" berhasil dibatalkan.`,
             });
-            await fetchFinancialProjection(financialProjectionRange);
+            await loadAllPredictionData();
         } catch (err) {
             setFinancialProjectionActionMessage({
                 type: 'error',
@@ -1035,7 +1057,7 @@ function DashboardPredictionPage() {
                 type: 'success',
                 text: `Target pembelian "${targetName}" berhasil ditandai terpenuhi dan dinonaktifkan.`,
             });
-            await fetchFinancialProjection(financialProjectionRange);
+            await loadAllPredictionData();
         } catch (err) {
             setPurchaseRiskModalError(err.response?.data?.message || 'Gagal mengeksekusi rencana pembelian.');
         } finally {
@@ -1148,6 +1170,57 @@ function DashboardPredictionPage() {
                 <div className={`rounded-lg border px-4 py-3 text-sm ${predictionBundleStatus.className}`}>
                     <p className="font-semibold">{predictionBundleStatus.label}</p>
                     <p className="mt-1 text-xs opacity-90">{predictionBundleStatus.detail}</p>
+                </div>
+            )}
+
+            {(latest7dAccuracy || latestModelMeta) && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">Akurasi 7 Hari Terakhir</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-3 text-sm">
+                        <div>
+                            <p className="text-xs text-slate-500">MAPE 7 Hari</p>
+                            <p className="font-bold text-slate-900">
+                                {latest7dAccuracy?.mape != null ? `${Number(latest7dAccuracy.mape).toFixed(2)}%` : '-'}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500">Periode Evaluasi</p>
+                            <p className="font-bold text-slate-900">
+                                {latest7dAccuracy?.period_start && latest7dAccuracy?.period_end
+                                    ? `${latest7dAccuracy.period_start} s.d. ${latest7dAccuracy.period_end}`
+                                    : '-'}
+                            </p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500">Sample Size</p>
+                            <p className="font-bold text-slate-900">{latest7dAccuracy?.sample_size ?? '-'}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500">Status Retrain</p>
+                            <p className="font-bold text-slate-900">
+                                {latest7dAccuracy?.retrain_status || '-'}
+                            </p>
+                        </div>
+                    </div>
+                    {(latestModelMeta?.model_version || latest7dAccuracy?.latest_retrain_at) && (
+                        <p className="text-xs text-slate-500 mt-3">
+                            Model: {latestModelMeta?.model_version || latest7dAccuracy?.latest_model_version || '-'} | Retrain terakhir: {latest7dAccuracy?.latest_retrain_at ? new Date(latest7dAccuracy.latest_retrain_at).toLocaleString('id-ID') : '-'}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {modelUnavailableMeta && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    <p className="font-semibold">Model prediksi belum siap</p>
+                    <p className="mt-1">
+                        Snapshot/model belum lengkap. Coba lagi setelah scheduler snapshot mingguan berjalan.
+                    </p>
+                    {latestModelMeta && (
+                        <p className="mt-1 text-xs">
+                            Snapshot: {latestModelMeta.snapshot_generated_at || '-'} | Model: {latestModelMeta.model_version || '-'}
+                        </p>
+                    )}
                 </div>
             )}
 

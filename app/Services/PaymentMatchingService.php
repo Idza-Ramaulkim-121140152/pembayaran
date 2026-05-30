@@ -77,6 +77,7 @@ class PaymentMatchingService
             'approved' => 0,
             'needs_review' => 0,
             'unmatched' => 0,
+            'skipped_auto_disabled' => 0,
         ];
 
         foreach ($rows as $capture) {
@@ -86,6 +87,9 @@ class PaymentMatchingService
                 $summary['approved']++;
             } elseif ($matched->match_status === 'needs_review') {
                 $summary['needs_review']++;
+                if ($autoApply && (bool) (($matched->meta['auto_disabled_by_superadmin'] ?? false))) {
+                    $summary['skipped_auto_disabled']++;
+                }
             } elseif ($matched->match_status === 'unmatched') {
                 $summary['unmatched']++;
             }
@@ -202,6 +206,17 @@ class PaymentMatchingService
             }
 
             if ($autoApply && $candidates->count() === 1 && $topScore >= 95) {
+                $isAutoDisabled = (bool) ($top['invoice']->customer?->billing_auto_disabled ?? false);
+                if ($isAutoDisabled) {
+                    $capture->match_status = 'needs_review';
+                    $capture->match_confidence = $topScore;
+                    $capture->meta = array_merge((array) $capture->meta, [
+                        'auto_disabled_by_superadmin' => true,
+                    ]);
+                    $capture->save();
+                    return;
+                }
+
                 $this->applyCaptureToInvoice($capture, $top['invoice'], $topScore, true, $actorId);
                 $capture->matchReviews()->update(['status' => 'rejected']);
                 $capture->matchReviews()
@@ -232,7 +247,7 @@ class PaymentMatchingService
         $reference = strtolower(trim((string) $capture->reference_code));
 
         $query = Invoice::query()
-            ->with('customer:id,name,phone')
+            ->with('customer:id,name,phone,billing_auto_disabled')
             ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
             ->whereBetween('amount', [$amount - 0.01, $amount + 0.01]);
 
@@ -347,4 +362,3 @@ class PaymentMatchingService
         );
     }
 }
-

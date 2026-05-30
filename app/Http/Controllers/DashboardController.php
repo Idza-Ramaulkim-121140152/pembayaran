@@ -12,6 +12,7 @@ use App\Models\FinancialBalanceSnapshot;
 use App\Models\FinancialTransaction;
 use App\Models\NetworkNotice;
 use App\Models\PayrollMember;
+use App\Models\PredictionRunEvaluation;
 use App\Models\User;
 use App\Services\DashboardPredictionSnapshotService;
 use App\Services\FinancialLedgerService;
@@ -1144,8 +1145,14 @@ class DashboardController extends Controller
         $snapshotService = app(DashboardPredictionSnapshotService::class);
         $snapshot = $snapshotService->latestUsable();
         $snapshotBundle = $snapshotService->asBundleResponse($snapshot);
-        $warnings = [];
-        $lastRehydrateAt = null;
+        $latestModelMeta = [
+            'snapshot_id' => $snapshot?->id,
+            'snapshot_generated_at' => optional($snapshot?->generated_at)?->toIso8601String(),
+            'model_version' => data_get($snapshot?->model_meta_json, 'model_version'),
+            'trained_at' => data_get($snapshot?->model_meta_json, 'trained_at'),
+            'worker_status' => data_get($snapshot?->model_meta_json, 'worker_status'),
+        ];
+        $latestAccuracyMeta = $this->getLatestPredictionAccuracyMeta();
 
         if ($snapshotBundle) {
             $bundle = $snapshotBundle;
@@ -1158,141 +1165,51 @@ class DashboardController extends Controller
                     $sectionSources[$sectionKey] = 'model';
                 }
             }
+
             $coverage = $this->summarizePredictionSectionCompleteness($bundle);
+            data_set($bundle, 'meta.section_sources', $sectionSources);
+            data_set($bundle, 'meta.bundle_warnings', []);
+            data_set($bundle, 'meta.section_completeness', $coverage);
+            data_set($bundle, 'meta.snapshot_status', $coverage['percent'] >= 100 ? 'ready_complete' : 'model_unavailable');
+            data_set($bundle, 'meta.latest_7d_accuracy', $latestAccuracyMeta);
+            data_set($bundle, 'meta.latest_model_version', $latestModelMeta['model_version'] ?? null);
+            data_set($bundle, 'meta.latest_retrain_at', $latestAccuracyMeta['latest_retrain_at'] ?? null);
 
             if (($coverage['percent'] ?? 0) < 100) {
-                $candidates = $snapshotService->recentReadySnapshots(20);
-
-                foreach ($coverage['missing_sections'] as $sectionKey) {
-                    foreach ($candidates as $candidate) {
-                        if ($snapshot && (int) $candidate->id === (int) $snapshot->id) {
-                            continue;
-                        }
-
-                        $candidateBundle = $snapshotService->asBundleResponse($candidate);
-                        if (!$candidateBundle || !$this->hasPredictionSectionData($candidateBundle, $sectionKey)) {
-                            continue;
-                        }
-
-                        $this->injectPredictionSectionData(
-                            $bundle,
-                            $sectionKey,
-                            $this->extractPredictionSectionData($candidateBundle, $sectionKey)
-                        );
-
-                        $sectionSources[$sectionKey] = 'rehydrated';
-                        $warnings[] = [
-                            'section' => $sectionKey,
-                            'reason' => 'rehydrated_from_ready_snapshot',
-                            'from_snapshot_id' => (int) $candidate->id,
-                        ];
-                        $lastRehydrateAt = now()->toIso8601String();
-                        break;
-                    }
-                }
-
-                $coverage = $this->summarizePredictionSectionCompleteness($bundle);
-
-                if (($coverage['percent'] ?? 0) < 100) {
-                    $liveFallbackBundle = $this->buildPredictionBundleData([], [], [
-                        'snapshot_generated_at' => now()->toIso8601String(),
-                        'is_stale' => false,
-                        'model_version' => 'live-fallback',
-                        'fallback_live' => true,
-                    ]);
-
-                    foreach ($coverage['missing_sections'] as $sectionKey) {
-                        if (!$this->hasPredictionSectionData($liveFallbackBundle, $sectionKey)) {
-                            continue;
-                        }
-
-                        $this->injectPredictionSectionData(
-                            $bundle,
-                            $sectionKey,
-                            $this->extractPredictionSectionData($liveFallbackBundle, $sectionKey)
-                        );
-                        $sectionSources[$sectionKey] = 'fallback';
-                        $warnings[] = [
-                            'section' => $sectionKey,
-                            'reason' => 'fallback_live_section',
-                        ];
-                    }
-                }
+                return response()->json([
+                    'code' => 'model_unavailable',
+                    'message' => 'Model prediksi belum siap atau data model belum lengkap.',
+                    'last_model_meta' => $latestModelMeta,
+                    'latest_7d_accuracy' => $latestAccuracyMeta,
+                ], 503);
             }
-
-            $coverage = $this->summarizePredictionSectionCompleteness($bundle);
-            $existingWarnings = is_array(data_get($bundle, 'meta.bundle_warnings'))
-                ? (array) data_get($bundle, 'meta.bundle_warnings')
-                : [];
-
-            data_set($bundle, 'meta.section_sources', $sectionSources);
-            data_set($bundle, 'meta.bundle_warnings', array_values(array_merge($existingWarnings, $warnings)));
-            data_set($bundle, 'meta.section_completeness', $coverage);
-            data_set($bundle, 'meta.last_rehydrate_at', $lastRehydrateAt);
-            data_set(
-                $bundle,
-                'meta.snapshot_status',
-                $coverage['percent'] >= 100
-                    ? (($lastRehydrateAt !== null || count($warnings) > 0) ? 'ready_rehydrated' : 'ready_complete')
-                    : 'ready_partial_fallback'
-            );
-
-            Log::info('dashboard.prediction.bundle_resolved', [
-                'user_id' => $request->user()?->id,
-                'snapshot_id' => $snapshot?->id,
-                'snapshot_age_minutes' => $snapshot?->generated_at ? $snapshot->generated_at->diffInMinutes(now()) : null,
-                'section_completeness' => $coverage,
-                'warning_count' => count((array) data_get($bundle, 'meta.bundle_warnings', [])),
-                'worker_status' => data_get($snapshot?->model_meta_json, 'worker_status'),
-                'action' => $lastRehydrateAt !== null ? 'rehydrate_applied' : (count($warnings) > 0 ? 'fallback_applied' : 'none'),
-            ]);
 
             return response()->json([
                 'data' => $bundle,
             ]);
         }
 
-        $bundle = $this->buildPredictionBundleData([], [], [
-            'snapshot_generated_at' => now()->toIso8601String(),
-            'is_stale' => false,
-            'model_version' => 'live-fallback',
-            'fallback_live' => true,
-            'snapshot_status' => 'no_snapshot_fallback',
-        ]);
-        $fallbackSources = [];
-        foreach ($this->predictionCoverageSectionKeys() as $sectionKey) {
-            if ($this->hasPredictionSectionData($bundle, $sectionKey)) {
-                $fallbackSources[$sectionKey] = 'fallback';
-            }
-        }
-        data_set($bundle, 'meta.section_sources', $fallbackSources);
-        data_set($bundle, 'meta.section_completeness', $this->summarizePredictionSectionCompleteness($bundle));
-        data_set($bundle, 'meta.bundle_warnings', [[
-            'section' => 'bundle',
-            'reason' => 'no_snapshot_available',
-        ]]);
-
-        Log::warning('dashboard.prediction.bundle_resolved', [
-            'user_id' => $request->user()?->id,
-            'snapshot_id' => null,
-            'snapshot_age_minutes' => null,
-            'section_completeness' => data_get($bundle, 'meta.section_completeness'),
-            'warning_count' => 1,
-            'worker_status' => null,
-            'action' => 'fallback_applied',
-        ]);
-
         return response()->json([
-            'data' => $bundle,
-        ]);
+            'code' => 'model_unavailable',
+            'message' => 'Snapshot model prediksi belum tersedia.',
+            'last_model_meta' => $latestModelMeta,
+            'latest_7d_accuracy' => $latestAccuracyMeta,
+        ], 503);
     }
 
     private function predictionCoverageSectionKeys(): array
     {
         return [
+            'management_kpis',
+            'revenue_forecast',
+            'financial_projection',
+            'isp_intelligence',
+            'hourly_forecast_24h',
+            'backtest_report',
             'risk_alarm_24h',
             'what_if_simulator',
             'collection_probability',
+            'customer_growth_forecast_monthly',
             'monthly_total_revenue_forecast',
         ];
     }
@@ -1300,10 +1217,20 @@ class DashboardController extends Controller
     private function hasPredictionSectionData(array $bundle, string $sectionKey): bool
     {
         return match ($sectionKey) {
+            'management_kpis' => is_array(data_get($bundle, 'management_kpis.summary'))
+                && is_array(data_get($bundle, 'management_kpis.variance'))
+                && is_array(data_get($bundle, 'management_kpis.customer_health')),
+            'revenue_forecast' => is_array(data_get($bundle, 'revenue_forecast.summary'))
+                && count((array) data_get($bundle, 'revenue_forecast.daily_forecast', [])) > 0,
+            'financial_projection' => is_array(data_get($bundle, 'financial_projection.summary'))
+                && count((array) data_get($bundle, 'financial_projection.daily_projection', [])) > 0,
+            'isp_intelligence' => is_array(data_get($bundle, 'isp_intelligence.summary'))
+                && count((array) data_get($bundle, 'isp_intelligence.risk_matrix', [])) > 0,
             'hourly_forecast_24h' => count((array) data_get($bundle, 'hourly_forecast_24h', [])) > 0,
             'risk_alarm_24h' => is_array(data_get($bundle, 'risk_alarm_24h')) && count((array) data_get($bundle, 'risk_alarm_24h', [])) > 0,
             'what_if_simulator' => is_array(data_get($bundle, 'what_if_simulator')) && count((array) data_get($bundle, 'what_if_simulator.scenarios', [])) > 0,
             'collection_probability' => count((array) data_get($bundle, 'collection_probability', [])) > 0,
+            'customer_growth_forecast_monthly' => count((array) data_get($bundle, 'customer_growth_forecast_monthly.months', [])) > 0,
             'monthly_total_revenue_forecast' => count((array) data_get($bundle, 'monthly_total_revenue_forecast.months', [])) > 0,
             'backtest_report' => (
                 (int) data_get($bundle, 'backtest_report.window_7d.sample_size', 0) > 0
@@ -1311,6 +1238,33 @@ class DashboardController extends Controller
             ),
             default => false,
         };
+    }
+
+    private function getLatestPredictionAccuracyMeta(): ?array
+    {
+        if (!Schema::hasTable('prediction_run_evaluations')) {
+            return null;
+        }
+
+        $latest = PredictionRunEvaluation::query()
+            ->where('metric', 'mape_7d')
+            ->with('run')
+            ->latest('id')
+            ->first();
+
+        if (!$latest) {
+            return null;
+        }
+
+        return [
+            'mape' => $latest->metric_value,
+            'period_start' => optional($latest->period_start)->toDateString(),
+            'period_end' => optional($latest->period_end)->toDateString(),
+            'sample_size' => (int) ($latest->sample_size ?? 0),
+            'latest_retrain_at' => optional($latest->retrained_at)?->toIso8601String(),
+            'retrain_status' => $latest->retrain_status,
+            'latest_model_version' => $latest->run?->model_version,
+        ];
     }
 
     private function extractPredictionSectionData(array $bundle, string $sectionKey): mixed

@@ -111,9 +111,11 @@ class BillingAutomationController extends Controller
             'auto_apply' => 'nullable|boolean',
         ]);
 
+        $autoApply = (bool) ($validated['auto_apply'] ?? true);
+
         $summary = $this->paymentMatchingService->runMatching(
             isset($validated['capture_id']) ? (int) $validated['capture_id'] : null,
-            (bool) ($validated['auto_apply'] ?? true),
+            $autoApply,
             auth()->id()
         );
 

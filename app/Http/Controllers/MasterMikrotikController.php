@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\MasterMikrotik;
 use App\Services\MikroTikService;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class MasterMikrotikController extends Controller
 {
@@ -16,6 +18,8 @@ class MasterMikrotikController extends Controller
             ->orderBy('name')
             ->get()
             ->map(function (MasterMikrotik $item) {
+                $passwordMeta = $this->resolvePasswordMeta($item);
+
                 return [
                     'id' => $item->id,
                     'name' => $item->name,
@@ -27,8 +31,10 @@ class MasterMikrotikController extends Controller
                     'last_status' => $item->last_status,
                     'last_checked_at' => $item->last_checked_at,
                     'last_alerted_at' => $item->last_alerted_at,
-                    'has_password' => !empty($item->password_encrypted),
-                    'password_masked' => !empty($item->password_encrypted) ? '********' : null,
+                    'has_password' => $passwordMeta['has_password'],
+                    'password_status' => $passwordMeta['status'],
+                    'password_issue_message' => $passwordMeta['issue_message'],
+                    'password_masked' => $passwordMeta['has_password'] ? '********' : null,
                     'created_at' => $item->created_at,
                     'updated_at' => $item->updated_at,
                 ];
@@ -100,6 +106,16 @@ class MasterMikrotikController extends Controller
             'is_active' => 'nullable|boolean',
         ]);
 
+        $passwordMeta = $this->resolvePasswordMeta($masterMikrotik);
+        if (
+            $passwordMeta['status'] === 'invalid'
+            && empty(trim((string) ($validated['password'] ?? '')))
+        ) {
+            return response()->json([
+                'message' => 'Password lama router ini tidak valid. Simpan password baru untuk melanjutkan.',
+            ], 422);
+        }
+
         DB::beginTransaction();
 
         try {
@@ -115,15 +131,19 @@ class MasterMikrotikController extends Controller
                 'port' => (int) $validated['port'],
                 'username' => trim($validated['username']),
                 'alert_recipients' => $this->normalizeRecipients($validated['alert_recipients'] ?? null),
-                'is_active' => (bool) ($validated['is_active'] ?? $masterMikrotik->is_active),
+                'is_active' => (bool) ($validated['is_active'] ?? (bool) $masterMikrotik->getRawOriginal('is_active')),
                 'updated_by' => auth()->id(),
+                'updated_at' => now(),
             ];
 
             if (!empty($validated['password'])) {
+                // Let model cast "encrypted" handle encryption once.
                 $updatePayload['password_encrypted'] = $validated['password'];
             }
 
-            $masterMikrotik->update($updatePayload);
+            MasterMikrotik::query()
+                ->whereKey($masterMikrotik->id)
+                ->update($updatePayload);
 
             DB::commit();
 
@@ -215,5 +235,43 @@ class MasterMikrotikController extends Controller
             ->all();
 
         return count($clean) > 0 ? implode(',', $clean) : null;
+    }
+
+    private function resolvePasswordMeta(MasterMikrotik $item): array
+    {
+        $rawValue = $item->getRawOriginal('password_encrypted');
+        $hasPassword = !empty($rawValue);
+
+        if (!$hasPassword) {
+            return [
+                'has_password' => false,
+                'status' => 'empty',
+                'issue_message' => null,
+            ];
+        }
+
+        try {
+            // Trigger decrypt to verify payload integrity.
+            $item->password_encrypted;
+
+            return [
+                'has_password' => true,
+                'status' => 'valid',
+                'issue_message' => null,
+            ];
+        } catch (DecryptException $exception) {
+            Log::warning('Master MikroTik password decrypt failed', [
+                'master_mikrotik_id' => $item->id,
+                'host' => $item->host,
+                'username' => $item->username,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return [
+                'has_password' => true,
+                'status' => 'invalid',
+                'issue_message' => 'Password tersimpan tidak valid. Wajib reset password.',
+            ];
+        }
     }
 }

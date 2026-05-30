@@ -12,6 +12,7 @@ use App\Models\NotificationLog;
 use App\Models\Package;
 use App\Services\BillingAutoInvoiceService;
 use App\Services\BillingItemService;
+use App\Services\BillingMessageTemplateService;
 use App\Services\FeatureService;
 use App\Services\FinancialLedgerService;
 use Carbon\Carbon;
@@ -44,6 +45,7 @@ class BillingController extends Controller
         private FinancialLedgerService $ledgerService,
         private FeatureService $featureService,
         private BillingItemService $billingItemService,
+        private BillingMessageTemplateService $billingMessageTemplateService,
     )
     {
     }
@@ -216,6 +218,7 @@ class BillingController extends Controller
         $invoice->save();
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
         $this->appendPaymentProofAttributes($invoice);
+        $this->sendAutoPaymentConfirmationIfEligible($invoice);
 
         if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
             return response()->json([
@@ -310,15 +313,7 @@ class BillingController extends Controller
         if ($existingOpenInvoice) {
             if (request()->wantsJson()) {
                 $existingLink = url('/invoice/' . $existingOpenInvoice->invoice_link);
-                $template = "Yth. Bapak/Ibu " . strtoupper($customer->name) . "\n" .
-                            "Username PPPoE: " . $customer->pppoe_username . "\n\n" .
-                            "Nominal tagihan: Rp " . number_format($existingOpenInvoice->amount, 0, ',', '.') . "\n" .
-                            "> ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:" . "\n" .
-                            $existingLink . "\n\n" .
-                            "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis." . "\n\n" .
-                            "Layanan Call Center 085158025553" . "\n\n" .
-                            "Salam Hangat," . "\n" .
-                            "Tim Layanan Pelanggan Rumah Kita Net";
+                $template = $this->buildInvoiceMessage($customer, $existingLink, (float) $existingOpenInvoice->amount);
 
                 return response()->json([
                     'message' => 'Tagihan aktif sudah tersedia. Gunakan invoice yang sudah ada.',
@@ -364,15 +359,7 @@ class BillingController extends Controller
 
         if (request()->wantsJson()) {
             $link = url('/invoice/'.$invoice->invoice_link);
-            $template = "Yth. Bapak/Ibu " . strtoupper($customer->name) . "\n" .
-                        "Username PPPoE: " . $customer->pppoe_username . "\n\n" .
-                        "Nominal tagihan: Rp " . number_format($invoice->amount, 0, ',', '.') . "\n" .
-                        "> ⓘ Informasi lengkap dan metode pembayaran tersedia pada link berikut:" . "\n" .
-                        $link . "\n\n" .
-                        "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis." . "\n\n" .
-                        "Layanan Call Center 085158025553" . "\n\n" .
-                        "Salam Hangat," . "\n" .
-                        "Tim Layanan Pelanggan Rumah Kita Net";
+            $template = $this->buildInvoiceMessage($customer, $link, (float) $invoice->amount);
 
             return response()->json([
                 'data' => [
@@ -724,6 +711,26 @@ class BillingController extends Controller
         ]);
     }
 
+    public function updateCustomerAutomationApi(Request $request, Customer $customer)
+    {
+        $validated = $request->validate([
+            'billing_auto_disabled' => ['required', 'boolean'],
+        ]);
+
+        $customer->billing_auto_disabled = (bool) $validated['billing_auto_disabled'];
+        $customer->save();
+
+        return response()->json([
+            'message' => $customer->billing_auto_disabled
+                ? 'Tindakan otomatis penagihan dinonaktifkan untuk pelanggan ini.'
+                : 'Tindakan otomatis penagihan diaktifkan kembali untuk pelanggan ini.',
+            'data' => [
+                'customer_id' => $customer->id,
+                'billing_auto_disabled' => (bool) $customer->billing_auto_disabled,
+            ],
+        ]);
+    }
+
     private function normalizeServiceLabel(?string $value): string
     {
         return strtolower(trim((string) $value));
@@ -779,15 +786,17 @@ class BillingController extends Controller
 
     private function buildInvoiceMessage(Customer $customer, string $invoiceUrl, float $amount): string
     {
-        return "Yth. Bapak/Ibu " . strtoupper((string) $customer->name) . "\n" .
-            "Username PPPoE: " . ((string) $customer->pppoe_username ?: '-') . "\n\n" .
-            "Nominal tagihan: Rp " . number_format($amount, 0, ',', '.') . "\n" .
-            "> Informasi lengkap dan metode pembayaran tersedia pada link berikut:\n" .
-            $invoiceUrl . "\n\n" .
-            "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis.\n\n" .
-            "Layanan Call Center 085158025553\n\n" .
-            "Salam Hangat,\n" .
-            "Tim Layanan Pelanggan Rumah Kita Net";
+        $dueDate = $customer->due_date
+            ? Carbon::parse($customer->due_date)->format('d/m/Y')
+            : '-';
+
+        return $this->billingMessageTemplateService->buildBillingReminderMessage(
+            $customer,
+            $invoiceUrl,
+            $amount,
+            $dueDate,
+            false
+        );
     }
 
     /**
@@ -832,6 +841,10 @@ class BillingController extends Controller
     private function logBillingNotification(?int $customerId, ?string $phone, string $message, string $status, ?string $error = null, array $meta = []): void
     {
         try {
+            $meta = array_merge([
+                'channel' => 'whatsapp',
+            ], $meta);
+
             NotificationLog::create([
                 'customer_id' => $customerId,
                 'phone' => $phone,
@@ -849,6 +862,39 @@ class BillingController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function sendAutoPaymentConfirmationIfEligible(Invoice $invoice): void
+    {
+        if (strtolower((string) $invoice->status) !== 'paid') {
+            return;
+        }
+
+        $customer = $invoice->customer()->first();
+        if (!$customer || !$this->isValidPhone($customer->phone)) {
+            return;
+        }
+
+        if ((bool) ($customer->billing_auto_disabled ?? false)) {
+            return;
+        }
+
+        $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true);
+
+        [$success, $error] = $this->sendInvoiceViaWhatsAppGateway($customer, $message);
+        $this->logBillingNotification(
+            $customer->id,
+            $customer->phone,
+            $message,
+            $success ? 'sent' : 'failed',
+            $error,
+            [
+                'type' => 'billing_auto_payment_confirm',
+                'invoice_id' => $invoice->id,
+                'invoice_link' => $invoice->invoice_link,
+                'is_auto' => true,
+            ]
+        );
     }
 
     private function computeNextDueDateFromCustomer(Customer $customer): string
@@ -1069,6 +1115,7 @@ class BillingController extends Controller
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
         $invoice->loadMissing('receivedViaPaymentMethod');
         $invoice->loadMissing('receivedViaPaymentReceiptOption');
+        $this->sendAutoPaymentConfirmationIfEligible($invoice);
 
         return response()->json(['message' => 'Pembayaran berhasil dikonfirmasi', 'data' => $invoice]);
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\CustomerPackageHistory;
+use App\Models\MasterMikrotik;
 use App\Models\Odp;
 use App\Models\Package;
 use App\Services\AuditLogService;
@@ -63,7 +64,7 @@ class CustomerController extends Controller
                             if (!empty($customer->pppoe_username)) {
                                 $secret = $secrets[$customer->pppoe_username] ?? null;
                                 // Active = secret exists AND disabled=no
-                                $isActive = $secret && ($secret['disabled'] ?? 'false') !== 'true';
+                                $isActive = $secret && !$this->isMikrotikSecretDisabled($secret['disabled'] ?? null);
 
                                 if ($customer->is_active != $isActive) {
                                     $customer->is_active = $isActive;
@@ -79,7 +80,10 @@ class CustomerController extends Controller
                         }
                     }
                 } catch (\Exception $e) {
-                    \Log::warning('Could not sync is_active from MikroTik', ['error' => $e->getMessage()]);
+                    \Log::warning('Could not sync is_active from MikroTik', array_merge(
+                        ['error' => $e->getMessage()],
+                        $this->activeMikrotikContextForLog()
+                    ));
                     // Fall back to DB values silently
                 }
             }
@@ -165,7 +169,7 @@ class CustomerController extends Controller
                 $normalizedUsername = strtolower(trim((string) ($customer->pppoe_username ?? '')));
                 $secret = $normalizedUsername !== '' ? ($normalizedSecrets[$normalizedUsername] ?? null) : null;
 
-                $isActive = $secret && (($secret['disabled'] ?? 'false') !== 'true');
+                $isActive = $secret && !$this->isMikrotikSecretDisabled($secret['disabled'] ?? null);
                 $profile = strtolower(trim((string) ($secret['profile'] ?? '')));
                 $isIsolated = $normalizedUsername !== '' && $profile === 'isolir';
                 $isOverdue = $customer->due_date
@@ -192,7 +196,10 @@ class CustomerController extends Controller
                 'meta' => ['live' => true],
             ]);
         } catch (\Exception $e) {
-            \Log::warning('Could not load active status bulk from MikroTik', ['error' => $e->getMessage()]);
+            \Log::warning('Could not load active status bulk from MikroTik', array_merge(
+                ['error' => $e->getMessage()],
+                $this->activeMikrotikContextForLog()
+            ));
 
             foreach ($customers as $customer) {
                 $isOverdue = $customer->due_date
@@ -216,6 +223,41 @@ class CustomerController extends Controller
                     'error' => 'Gagal mengambil status realtime dari MikroTik.',
                 ],
             ]);
+        }
+    }
+
+    private function isMikrotikSecretDisabled($value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $normalized = strtolower(trim((string) ($value ?? '')));
+        return in_array($normalized, ['true', 'yes', '1', 'on'], true);
+    }
+
+    private function activeMikrotikContextForLog(): array
+    {
+        try {
+            $router = MasterMikrotik::query()
+                ->where('is_active', true)
+                ->first(['id', 'host', 'port']);
+
+            if (!$router) {
+                return ['router_active' => false];
+            }
+
+            return [
+                'router_active' => true,
+                'router_id' => (int) $router->id,
+                'router_host' => (string) $router->host,
+                'router_port' => (int) $router->port,
+            ];
+        } catch (\Throwable $exception) {
+            return [
+                'router_active' => null,
+                'router_context_error' => $exception->getMessage(),
+            ];
         }
     }
 
