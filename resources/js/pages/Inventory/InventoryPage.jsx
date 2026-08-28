@@ -12,11 +12,22 @@ import {
     AlertCircle,
 } from 'lucide-react';
 import Alert from '../../components/common/Alert';
+import {
+    AdminConsoleActionRow,
+    AdminConsoleField,
+    AdminConsoleNotice,
+    AdminConsoleSurface,
+    adminConsoleButtonClassNames,
+    adminConsoleCheckboxClassName,
+    adminConsoleInputClassName,
+    adminConsoleSelectClassName,
+} from '../../components/common/AdminConsoleUI';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
 import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import inventoryService from '../../services/inventoryService';
+import borrowerService from '../../services/borrowerService';
 
 const TAB_ITEMS = [
     { key: 'incoming', label: 'Pemasukan', icon: ArrowDownCircle },
@@ -85,8 +96,12 @@ function InventoryPage() {
         payment_type: 'cash',
         due_date: '',
         notes: '',
+        payment_source: 'company_cash',
+        borrower_id: '',
         items: [{ ...defaultIncomingItem }],
     });
+    const [borrowers, setBorrowers] = useState([]);
+    const isSuperAdmin = (window.appUserRole || '') === 'superadmin';
 
     const [outgoingForm, setOutgoingForm] = useState({
         transaction_date: today,
@@ -127,11 +142,12 @@ function InventoryPage() {
             }
 
             try {
-                const [summaryRes, optionsRes, movementsRes, debtsRes] = await Promise.all([
+                const [summaryRes, optionsRes, movementsRes, debtsRes, borrowerRes] = await Promise.all([
                     inventoryService.getSummary(),
                     inventoryService.getItemOptions(),
                     inventoryService.getMovements({ per_page: 100, ...movementFilter }),
                     inventoryService.getDebts({ per_page: 100 }),
+                    isSuperAdmin ? borrowerService.getAll() : Promise.resolve({ data: { data: [] } }),
                 ]);
 
                 setStockItems(summaryRes.data?.items || []);
@@ -147,6 +163,7 @@ function InventoryPage() {
                         paid_count: 0,
                     }
                 );
+                setBorrowers((borrowerRes.data?.data || []).filter((borrower) => borrower.is_active && Number(borrower.total_outstanding || 0) > 0));
             } catch (err) {
                 setError(normalizeErrorMessage(err, 'Gagal memuat data inventori'));
             } finally {
@@ -179,6 +196,8 @@ function InventoryPage() {
             payment_type: 'cash',
             due_date: '',
             notes: '',
+            payment_source: 'company_cash',
+            borrower_id: '',
             items: [{ ...defaultIncomingItem }],
         });
     };
@@ -270,6 +289,22 @@ function InventoryPage() {
             return;
         }
 
+        if (incomingForm.payment_type === 'cash' && incomingForm.payment_source === 'borrower_loan_repayment') {
+            if (!incomingForm.borrower_id) {
+                setError('Pilih borrower yang akan dipotong pinjamannya.');
+                return;
+            }
+
+            const selectedBorrower = borrowers.find((borrower) => String(borrower.id) === String(incomingForm.borrower_id));
+            if (selectedBorrower && incomingCashTotal > Number(selectedBorrower.total_outstanding || 0)) {
+                setError('Total pembelian melebihi sisa pinjaman borrower.');
+                return;
+            }
+
+            const ok = window.confirm(`Pembelian ${formatCurrency(incomingCashTotal)} akan memotong pinjaman ${selectedBorrower?.name || 'borrower terpilih'}. Lanjutkan?`);
+            if (!ok) return;
+        }
+
         try {
             setSaving(true);
             await inventoryService.storeIncoming({
@@ -277,6 +312,10 @@ function InventoryPage() {
                 payment_type: incomingForm.payment_type,
                 due_date: incomingForm.payment_type === 'debt' && incomingForm.due_date ? incomingForm.due_date : null,
                 notes: incomingForm.notes || null,
+                payment_source: incomingForm.payment_type === 'cash' ? incomingForm.payment_source : 'company_cash',
+                borrower_id: incomingForm.payment_type === 'cash' && incomingForm.payment_source === 'borrower_loan_repayment'
+                    ? incomingForm.borrower_id
+                    : null,
                 items: cleanedItems,
             });
             setSuccess('Pemasukan inventori berhasil dicatat.');
@@ -597,7 +636,7 @@ function InventoryPage() {
                     variant="secondary"
                     onClick={() => loadData(false)}
                     disabled={refreshing}
-                    className="inline-flex items-center gap-2"
+                    className={`inline-flex items-center gap-2 ${adminConsoleButtonClassNames.secondary}`}
                 >
                     <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
                     Refresh
@@ -663,7 +702,12 @@ function InventoryPage() {
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Jenis Pembelian</label>
                                     <select
                                         value={incomingForm.payment_type}
-                                        onChange={(e) => setIncomingForm((prev) => ({ ...prev, payment_type: e.target.value }))}
+                                        onChange={(e) => setIncomingForm((prev) => ({
+                                            ...prev,
+                                            payment_type: e.target.value,
+                                            payment_source: e.target.value === 'cash' ? prev.payment_source : 'company_cash',
+                                            borrower_id: e.target.value === 'cash' ? prev.borrower_id : '',
+                                        }))}
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                                     >
                                         <option value="cash">Tunai</option>
@@ -691,6 +735,53 @@ function InventoryPage() {
                                     />
                                 </div>
                             </div>
+
+                            {isSuperAdmin && incomingForm.payment_type === 'cash' && (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                                    <div className="flex rounded-xl bg-white p-1 border border-slate-200">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIncomingForm((prev) => ({ ...prev, payment_source: 'company_cash', borrower_id: '' }))}
+                                            className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                                                incomingForm.payment_source !== 'borrower_loan_repayment'
+                                                    ? 'bg-emerald-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            Uang Perusahaan
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIncomingForm((prev) => ({ ...prev, payment_source: 'borrower_loan_repayment' }))}
+                                            className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                                                incomingForm.payment_source === 'borrower_loan_repayment'
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'text-slate-600 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            Potong Pinjaman Borrower
+                                        </button>
+                                    </div>
+                                    <p className="text-xs text-slate-500">
+                                        Pilih borrower jika pembelian inventory dibayar oleh peminjam sebagai pengurang hutangnya ke perusahaan.
+                                    </p>
+                                    {incomingForm.payment_source === 'borrower_loan_repayment' && (
+                                        <select
+                                            value={incomingForm.borrower_id}
+                                            onChange={(e) => setIncomingForm((prev) => ({ ...prev, borrower_id: e.target.value }))}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                            required
+                                        >
+                                            <option value="">Pilih borrower aktif</option>
+                                            {borrowers.map((borrower) => (
+                                                <option key={borrower.id} value={borrower.id}>
+                                                    {borrower.name} - sisa {formatCurrency(borrower.total_outstanding)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+                            )}
 
                             <div className="space-y-3">
                                 {incomingForm.items.map((row, index) => (
@@ -1030,96 +1121,91 @@ function InventoryPage() {
                 onClose={() => setEditMovementModal({ open: false, movement: null })}
                 title="Edit Histori Inventori"
                 size="md"
+                theme="dashboard"
             >
                 {editMovementModal.movement && (
                     <form onSubmit={submitEditMovement} className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-sm text-gray-700 mb-1">Barang</label>
+                            <AdminConsoleField label="Barang">
                                 <select
                                     value={editMovementForm.inventory_item_id}
                                     onChange={(event) => setEditMovementForm((prev) => ({ ...prev, inventory_item_id: event.target.value }))}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    className={adminConsoleSelectClassName}
                                     required
                                 >
                                     <option value="">Pilih barang</option>
                                     {itemOptions.map((item) => (
                                         <option key={item.id} value={item.id}>
-                                            {resolveItemLabel(item.id)}
-                                        </option>
-                                    ))}
+                                        {resolveItemLabel(item.id)}
+                                    </option>
+                                ))}
                                 </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-700 mb-1">Jenis</label>
+                            </AdminConsoleField>
+                            <AdminConsoleField label="Jenis">
                                 <select
                                     value={editMovementForm.movement_type}
                                     onChange={(event) => setEditMovementForm((prev) => ({ ...prev, movement_type: event.target.value }))}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    className={adminConsoleSelectClassName}
                                 >
                                     <option value="in">Masuk</option>
                                     <option value="out">Keluar</option>
                                 </select>
-                            </div>
+                            </AdminConsoleField>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-sm text-gray-700 mb-1">Qty</label>
+                            <AdminConsoleField label="Qty">
                                 <input
                                     type="number"
                                     min="0.01"
                                     step="any"
                                     value={editMovementForm.quantity}
                                     onChange={(event) => setEditMovementForm((prev) => ({ ...prev, quantity: event.target.value }))}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    className={adminConsoleInputClassName}
                                     required
                                 />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-700 mb-1">Harga Satuan</label>
+                            </AdminConsoleField>
+                            <AdminConsoleField label="Harga Satuan">
                                 <input
                                     type="number"
                                     min="0"
                                     step="any"
                                     value={editMovementForm.unit_price}
                                     onChange={(event) => setEditMovementForm((prev) => ({ ...prev, unit_price: event.target.value }))}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                    className={adminConsoleInputClassName}
                                     placeholder="Opsional"
                                 />
-                            </div>
+                            </AdminConsoleField>
                         </div>
 
-                        <div>
-                            <label className="block text-sm text-gray-700 mb-1">Tanggal</label>
+                        <AdminConsoleField label="Tanggal">
                             <input
                                 type="date"
                                 value={editMovementForm.transaction_date}
                                 onChange={(event) => setEditMovementForm((prev) => ({ ...prev, transaction_date: event.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className={adminConsoleInputClassName}
                                 required
                             />
-                        </div>
+                        </AdminConsoleField>
 
-                        <div>
-                            <label className="block text-sm text-gray-700 mb-1">Catatan</label>
+                        <AdminConsoleField label="Catatan">
                             <input
                                 type="text"
                                 value={editMovementForm.notes}
                                 onChange={(event) => setEditMovementForm((prev) => ({ ...prev, notes: event.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className={adminConsoleInputClassName}
                                 placeholder="Opsional"
                             />
-                        </div>
+                        </AdminConsoleField>
 
-                        <div className="flex justify-end gap-2 pt-2">
-                            <Button type="button" variant="secondary" onClick={() => setEditMovementModal({ open: false, movement: null })}>
+                        <AdminConsoleActionRow>
+                            <Button type="button" variant="secondary" onClick={() => setEditMovementModal({ open: false, movement: null })} className={adminConsoleButtonClassNames.secondary}>
                                 Batal
                             </Button>
-                            <Button type="submit" variant="primary" disabled={saving}>
+                            <Button type="submit" variant="primary" disabled={saving} className={adminConsoleButtonClassNames.primary}>
                                 {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>
@@ -1129,10 +1215,11 @@ function InventoryPage() {
                 onClose={() => setPayDebtModal({ open: false, debt: null })}
                 title="Pembayaran Hutang Per Barang"
                 size="md"
+                theme="dashboard"
             >
                 {payDebtModal.debt && (
                     <form onSubmit={submitSingleDebtPayment} className="space-y-4">
-                        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-900">
+                        <AdminConsoleNotice tone="info" title="Ringkasan">
                             <p><strong>Barang:</strong> {payDebtModal.debt.item?.name || '-'}</p>
                             <p><strong>Status:</strong> {payDebtModal.debt.status}</p>
                             <p>
@@ -1141,58 +1228,56 @@ function InventoryPage() {
                                     ? 'Belum ditetapkan'
                                     : formatCurrency(payDebtModal.debt.remaining_amount)}
                             </p>
-                        </div>
+                        </AdminConsoleNotice>
 
-                        <div>
-                            <label className="block text-sm text-gray-700 mb-1">Nominal Bayar</label>
+                        <AdminConsoleField label="Nominal Bayar">
                             <input
                                 type="number"
                                 min="0"
                                 step="any"
                                 value={payDebtForm.amount}
                                 onChange={(e) => setPayDebtForm((prev) => ({ ...prev, amount: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className={adminConsoleInputClassName}
                                 required
                             />
-                        </div>
+                        </AdminConsoleField>
 
-                        <div>
-                            <label className="block text-sm text-gray-700 mb-1">Tanggal Bayar</label>
+                        <AdminConsoleField label="Tanggal Bayar">
                             <input
                                 type="date"
                                 value={payDebtForm.payment_date}
                                 onChange={(e) => setPayDebtForm((prev) => ({ ...prev, payment_date: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className={adminConsoleInputClassName}
                                 required
                             />
-                        </div>
+                        </AdminConsoleField>
 
-                        <div>
-                            <label className="block text-sm text-gray-700 mb-1">Catatan</label>
+                        <AdminConsoleField label="Catatan">
                             <input
                                 type="text"
                                 value={payDebtForm.notes}
                                 onChange={(e) => setPayDebtForm((prev) => ({ ...prev, notes: e.target.value }))}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                                className={adminConsoleInputClassName}
                                 placeholder="Opsional"
                             />
-                        </div>
+                        </AdminConsoleField>
 
                         {payDebtModal.debt.remaining_amount === null && (
-                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <label className="flex items-center gap-2 text-sm text-slate-200">
                                 <input
                                     type="checkbox"
                                     checked={payDebtForm.mark_as_paid}
                                     onChange={(e) => setPayDebtForm((prev) => ({ ...prev, mark_as_paid: e.target.checked }))}
+                                    className={adminConsoleCheckboxClassName}
                                 />
                                 Tandai lunas setelah pembayaran ini
                             </label>
                         )}
 
-                        <div className="flex justify-end gap-2 pt-2">
-                            <Button type="button" variant="secondary" onClick={() => setPayDebtModal({ open: false, debt: null })}>Batal</Button>
-                            <Button type="submit" variant="primary" disabled={saving}>{saving ? 'Menyimpan...' : 'Simpan Pembayaran'}</Button>
-                        </div>
+                        <AdminConsoleActionRow>
+                            <Button type="button" variant="secondary" onClick={() => setPayDebtModal({ open: false, debt: null })} className={adminConsoleButtonClassNames.secondary}>Batal</Button>
+                            <Button type="submit" variant="primary" disabled={saving} className={adminConsoleButtonClassNames.primary}>{saving ? 'Menyimpan...' : 'Simpan Pembayaran'}</Button>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>

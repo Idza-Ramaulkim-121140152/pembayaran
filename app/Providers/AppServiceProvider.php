@@ -31,6 +31,12 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(5)->by($username.'|'.$request->ip());
         });
 
+        RateLimiter::for('customer-portal-login', function (Request $request) {
+            $identifier = strtolower((string) $request->input('identifier', ''));
+
+            return Limit::perMinute(5)->by($identifier.'|'.$request->ip());
+        });
+
         RateLimiter::for('mobile-customer-reset', function (Request $request) {
             $userId = optional($request->user())->id ?: 'guest';
 

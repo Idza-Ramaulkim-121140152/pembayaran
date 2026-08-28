@@ -3,10 +3,15 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\Borrower;
+use App\Models\BorrowerLoan;
+use App\Models\BorrowerLoanPayment;
+use App\Models\DashboardPredictionSnapshot;
 use App\Models\FinancialBalanceSnapshot;
 use App\Models\FinancialPlanningTarget;
 use App\Models\FinancialTransaction;
 use App\Models\Invoice;
+use App\Models\MonthlyBudget;
 use App\Models\Package;
 use App\Models\User;
 use Carbon\Carbon;
@@ -56,6 +61,34 @@ class DashboardPredictionOptimizationTest extends TestCase
             'invoice_link' => 'inv_' . uniqid(),
             'paid_at' => $paidAtValue,
         ]);
+    }
+
+    private function createMonthlyBudget(string $month, array $overrides = []): MonthlyBudget
+    {
+        $budget = MonthlyBudget::query()->create([
+            'month' => "{$month}-01",
+            'notes' => 'Budget test prediksi',
+        ]);
+
+        $items = array_merge([
+            'invoice_income' => 200000,
+            'non_invoice_income' => 20000,
+            'mandatory_expense' => 40000,
+            'operational_expense' => 30000,
+            'payroll_expense' => 30000,
+            'purchase_investment' => 15000,
+            'loan_settlement' => 10000,
+            'minimum_cash_reserve' => 50000,
+        ], $overrides);
+
+        $budget->items()->createMany(collect($items)->map(function ($amount, $categoryKey) {
+            return [
+                'category_key' => $categoryKey,
+                'target_amount' => $amount,
+            ];
+        })->values()->all());
+
+        return $budget;
     }
 
     public function test_revenue_forecast_includes_due_health_adjustment_metadata_and_guardrails(): void
@@ -176,6 +209,134 @@ class DashboardPredictionOptimizationTest extends TestCase
         $this->assertSame('actual_today', (string) ($todayRow['chart_balance_source'] ?? ''));
         $this->assertSame(200, (int) ($todayRow['daily_total_expense'] ?? -1));
         $this->assertSame('ledger_actual', (string) ($todayRow['daily_total_expense_source'] ?? ''));
+    }
+
+    public function test_prediction_bundle_uses_live_fallback_when_snapshot_is_missing(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard/prediction-bundle');
+
+        $response->assertOk()
+            ->assertJsonPath('data.meta.source_mode', 'live_fallback')
+            ->assertJsonPath('data.meta.availability_status', 'fallback_live');
+
+        $this->assertIsArray($response->json('data.financial_projection.summary'));
+    }
+
+    public function test_prediction_bundle_marks_stale_snapshot_without_blocking_page(): void
+    {
+        $user = $this->createStaffUser('superadmin');
+        $bundle = app(\App\Http\Controllers\DashboardController::class)->buildPredictionBundleData();
+
+        DashboardPredictionSnapshot::query()->create([
+            'scope' => 'prediction_bundle',
+            'period_start' => now()->subDays(10),
+            'period_end' => now()->subDays(1),
+            'payload_json' => $bundle,
+            'model_meta_json' => [
+                'model_version' => 'test-model',
+                'worker_status' => 'ok',
+            ],
+            'generated_at' => now()->subDays(3),
+            'expires_at' => now()->subDays(2),
+            'status' => 'ready',
+            'error_message' => null,
+        ]);
+
+        $response = $this->actingAs($user)->getJson('/api/dashboard/prediction-bundle');
+
+        $response->assertOk()
+            ->assertJsonPath('data.meta.source_mode', 'stale_snapshot')
+            ->assertJsonPath('data.meta.availability_status', 'degraded');
+
+        $this->assertContains(
+            data_get($response->json(), 'data.meta.failure_reason'),
+            ['expired', 'incomplete_sections']
+        );
+    }
+
+    public function test_financial_projection_includes_daily_loan_outstanding_and_available_cash_fields(): void
+    {
+        $originalNow = Carbon::getTestNow();
+        Carbon::setTestNow(Carbon::parse('2026-07-10 09:00:00'));
+
+        try {
+            $user = $this->createStaffUser('superadmin');
+            $this->createMonthlyBudget('2026-07', [
+                'minimum_cash_reserve' => 50000,
+            ]);
+
+            FinancialTransaction::query()->create([
+                'type' => 'income',
+                'source' => 'manual_income',
+                'category' => 'manual',
+                'description' => 'Saldo awal Juli',
+                'amount' => 200000,
+                'transaction_date' => '2026-07-09',
+            ]);
+
+            $borrower = Borrower::query()->create([
+                'name' => 'Peminjam Prediksi',
+                'mapped_user_id' => $user->id,
+                'is_active' => true,
+            ]);
+
+            $loan = BorrowerLoan::query()->create([
+                'borrower_id' => $borrower->id,
+                'amount' => 100000,
+                'settled_amount' => 0,
+                'status' => BorrowerLoan::STATUS_OUTSTANDING,
+                'source' => 'manual_loan',
+                'occurred_at' => '2026-07-05 10:00:00',
+            ]);
+
+            BorrowerLoanPayment::query()->create([
+                'borrower_loan_id' => $loan->id,
+                'amount' => 30000,
+                'payment_date' => '2026-07-15',
+                'received_by_user_id' => $user->id,
+                'notes' => 'Pelunasan bertahap',
+            ]);
+
+            $response = $this->actingAs($user)->getJson('/api/dashboard/financial-projection?start_date=2026-07-01&end_date=2026-07-31');
+            $response->assertOk()
+                ->assertJsonPath('data.summary.projected_ending_balance_ledger', 200000)
+                ->assertJsonPath('data.summary.actual_balance_today', 200000)
+                ->assertJsonPath('data.summary.loan_outstanding_today', 100000)
+                ->assertJsonPath('data.summary.actual_balance_today_available_cash', 100000)
+                ->assertJsonPath('data.summary.minimum_cash_reserve_target', 50000)
+                ->assertJsonPath('data.summary.projected_ending_balance_available_cash', 130000);
+
+            $rows = collect($response->json('data.daily_projection'));
+            $todayRow = $rows->firstWhere('date', '2026-07-10');
+            $settlementRow = $rows->firstWhere('date', '2026-07-15');
+
+            $this->assertNotNull($todayRow);
+            $this->assertSame(100000, (int) ($todayRow['loan_outstanding'] ?? -1));
+            $this->assertSame(100000, (int) ($todayRow['available_cash'] ?? -1));
+            $this->assertSame(50000, (int) ($todayRow['available_cash_after_reserve'] ?? -1));
+            $this->assertSame(50000, (int) ($todayRow['discretionary_balance_available_cash'] ?? -1));
+
+            $this->assertNotNull($settlementRow);
+            $this->assertSame(70000, (int) ($settlementRow['loan_outstanding'] ?? -1));
+            $this->assertSame(130000, (int) ($settlementRow['available_cash'] ?? -1));
+            $this->assertSame(80000, (int) ($settlementRow['available_cash_after_reserve'] ?? -1));
+            $this->assertSame(30000, (int) ($settlementRow['projected_loan_change'] ?? -1));
+
+            $simulation = $this->actingAs($user)->postJson('/api/dashboard/financial-projection/simulate-purchase', [
+                'simulation_date' => '2026-07-10',
+                'amount' => 60000,
+                'start_date' => '2026-07-01',
+                'end_date' => '2026-07-31',
+            ]);
+
+            $simulation->assertOk()
+                ->assertJsonPath('data.is_covered', false)
+                ->assertJsonPath('data.first_failure_date', '2026-07-10');
+        } finally {
+            Carbon::setTestNow($originalNow);
+        }
     }
 
     public function test_snapshot_balance_command_captures_as_of_date_balance(): void

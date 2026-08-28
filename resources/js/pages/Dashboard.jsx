@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
     Activity,
+    ArrowRight,
     Calendar,
     DollarSign,
     FileText,
@@ -11,7 +12,7 @@ import {
     Wallet,
     Zap,
 } from 'lucide-react';
-import { Line, Bar, Doughnut } from 'react-chartjs-2';
+import { Bar, Doughnut } from 'react-chartjs-2';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -86,6 +87,8 @@ const DEFAULT_STATS = {
     active_package_distribution: [],
     finance_summary: { total_income: 0, total_expense: 0, adjustment_net: 0, balance: 0 },
     cashflow: { balance: 0, month_income: 0, month_expense: 0, month_net: 0, net_delta_pct: 0, runway_days: null, runway_status: 'normal' },
+    loan_summary: { total_outstanding: 0, pending_receipts: 0 },
+    borrower_debts: [],
     employee_payroll: {
         enabled: false,
         warning: null,
@@ -96,6 +99,121 @@ const DEFAULT_STATS = {
         project_history: [],
     },
 };
+
+function DashboardShell({ children }) {
+    return (
+        <div className="relative isolate -mx-3 -my-4 min-h-[calc(100vh-64px)] overflow-hidden bg-slate-50 text-slate-900 sm:-mx-4 sm:-my-6 md:-mx-6 md:-my-8">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_0%,rgba(251,146,60,0.16),transparent_28%),radial-gradient(circle_at_88%_8%,rgba(59,130,246,0.12),transparent_30%),linear-gradient(180deg,#fff7ed_0%,#f8fafc_34%,#ffffff_100%)]" />
+            <div className="absolute inset-x-0 top-0 h-64 bg-[linear-gradient(120deg,rgba(251,146,60,0.12),rgba(59,130,246,0.08)_48%,transparent)]" />
+            <div className="relative z-10 p-4 sm:p-5 md:p-7 xl:p-9">{children}</div>
+        </div>
+    );
+}
+
+function SectionFrame({ eyebrow, title, aside = null, children, className = '' }) {
+    return (
+        <section className={`pt-3 ${className}`}>
+            <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                    {eyebrow && <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-orange-500">{eyebrow}</p>}
+                    <h2 className="mt-2 text-xl font-semibold text-slate-900">{title}</h2>
+                </div>
+                {aside}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+function HeroMetric({ label, value, helper, tone = 'cyan' }) {
+    const toneMap = {
+        cyan: 'border-blue-100 bg-blue-50 text-blue-800',
+        emerald: 'border-emerald-100 bg-emerald-50 text-emerald-800',
+        violet: 'border-orange-100 bg-orange-50 text-orange-800',
+        amber: 'border-amber-100 bg-amber-50 text-amber-800',
+        rose: 'border-rose-100 bg-rose-50 text-rose-800',
+    };
+
+    return (
+        <div className={`group relative overflow-hidden rounded-2xl border p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md ${toneMap[tone] || toneMap.cyan}`}>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">{label}</p>
+            <p className="mt-3 text-3xl font-bold tracking-tight">{value}</p>
+            {helper && <p className="mt-2 text-sm opacity-75">{helper}</p>}
+        </div>
+    );
+}
+
+function DataTile({ icon: Icon, label, value, helper, accent = 'cyan' }) {
+    const accentMap = {
+        cyan: 'text-blue-600 bg-blue-50',
+        emerald: 'text-emerald-600 bg-emerald-50',
+        violet: 'text-orange-600 bg-orange-50',
+        amber: 'text-amber-600 bg-amber-50',
+        rose: 'text-rose-600 bg-rose-50',
+        slate: 'text-slate-600 bg-slate-100',
+    };
+
+    return (
+        <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:shadow-md">
+            <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+                    <p className="mt-3 break-words text-2xl font-bold tracking-tight text-slate-900">{value}</p>
+                    {helper && <p className="mt-2 text-sm text-slate-600">{helper}</p>}
+                </div>
+                <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${accentMap[accent] || accentMap.cyan}`}>
+                    <Icon size={18} />
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ActionTile({ href, icon: Icon, label }) {
+    return (
+        <a
+            href={href}
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 text-slate-900 shadow-sm transition duration-300 hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md"
+        >
+            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(251,146,60,0.08),transparent_45%)] opacity-70" />
+            <div className="relative flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+                        <Icon size={18} />
+                    </div>
+                    <p className="mt-4 font-semibold">{label}</p>
+                </div>
+                <ArrowRight size={18} className="mt-1 shrink-0 text-slate-400 transition group-hover:translate-x-1 group-hover:text-orange-500" />
+            </div>
+        </a>
+    );
+}
+
+function DashboardPanelSurface({ children, className = '' }) {
+    return (
+        <div className={`group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 text-slate-800 shadow-sm transition duration-300 hover:shadow-md ${className}`}>
+            {children}
+        </div>
+    );
+}
+
+function DashboardField({ label, hint, children }) {
+    return (
+        <label className="block space-y-2">
+            <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-slate-700">{label}</span>
+                {hint && <span className="text-xs text-slate-500">{hint}</span>}
+            </div>
+            {children}
+        </label>
+    );
+}
+
+const dashboardInputClassName =
+    'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-300 focus:ring-2 focus:ring-orange-100';
+
+const dashboardSelectClassName =
+    'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-100';
 
 function Dashboard() {
     const userRole = window.appUserRole || 'admin';
@@ -259,7 +377,10 @@ function Dashboard() {
     const financeSummary = stats?.finance_summary || DEFAULT_STATS.finance_summary;
     const monthlyFinance = stats?.monthly_finance || null;
     const cashflowSummary = stats?.cashflow || DEFAULT_STATS.cashflow;
+    const loanSummary = stats?.loan_summary || DEFAULT_STATS.loan_summary;
     const cashBalance = Number(cashflowSummary?.balance ?? financeSummary?.balance ?? 0);
+    const totalLoanOutstanding = Number(loanSummary?.total_outstanding ?? 0);
+    const pendingReceipts = Number(loanSummary?.pending_receipts ?? 0);
     const monthExpense = Number(cashflowSummary?.month_expense ?? monthlyFinance?.current_month?.expense ?? stats?.monthly_expense ?? 0);
     const monthIncome = Number(cashflowSummary?.month_income ?? monthlyFinance?.current_month?.income ?? stats?.monthly_revenue ?? 0);
     const monthNet = Number(cashflowSummary?.month_net ?? monthlyFinance?.current_month?.net ?? stats?.monthly_net ?? 0);
@@ -271,13 +392,14 @@ function Dashboard() {
     const runwayStatus = cashflowSummary?.runway_status
         || (runwayDays === null ? 'normal' : runwayDays < 15 ? 'critical' : runwayDays <= 45 ? 'warning' : 'normal');
     const runwayBadgeClass = runwayStatus === 'critical'
-        ? 'bg-rose-100 text-rose-700 border-rose-200'
+        ? 'bg-rose-100 text-rose-700'
         : runwayStatus === 'warning'
-            ? 'bg-amber-100 text-amber-700 border-amber-200'
-            : 'bg-emerald-100 text-emerald-700 border-emerald-200';
+            ? 'bg-amber-100 text-amber-700'
+            : 'bg-emerald-100 text-emerald-700';
     const isPositiveNetDelta = netDeltaPct >= 0;
     const packageDistribution = Array.isArray(stats?.package_distribution) ? stats.package_distribution : [];
     const activePackageDistribution = Array.isArray(stats?.active_package_distribution) ? stats.active_package_distribution : [];
+    const borrowerDebts = Array.isArray(stats?.borrower_debts) ? stats.borrower_debts : [];
     const packageDistributionTotal = packageDistribution.reduce((sum, item) => sum + Number(item?.count || 0), 0);
     const activePackageDistributionTotal = activePackageDistribution.reduce((sum, item) => sum + Number(item?.count || 0), 0);
     const defaultMonthlySeries = [0, 0, 0, 0, 0, 0];
@@ -342,8 +464,8 @@ function Dashboard() {
             {
                 data: [activeCustomerCount, inactiveCustomerCount],
                 backgroundColor: ['rgba(34, 197, 94, 0.9)', 'rgba(239, 68, 68, 0.9)'],
-                borderColor: ['#fff', '#fff'],
-                borderWidth: 4,
+                borderColor: ['transparent', 'transparent'],
+                borderWidth: 0,
                 hoverOffset: 10,
             },
         ],
@@ -355,8 +477,8 @@ function Dashboard() {
             {
                 data: packageDistribution.map((item) => Number(item.count || 0)),
                 backgroundColor: packageDistribution.map((_, index) => packagePalette[index % packagePalette.length]),
-                borderColor: '#fff',
-                borderWidth: 3,
+                borderColor: 'transparent',
+                borderWidth: 0,
                 hoverOffset: 10,
             },
         ],
@@ -368,8 +490,8 @@ function Dashboard() {
             {
                 data: activePackageDistribution.map((item) => Number(item.count || 0)),
                 backgroundColor: activePackageDistribution.map((_, index) => packagePalette[index % packagePalette.length]),
-                borderColor: '#fff',
-                borderWidth: 3,
+                borderColor: 'transparent',
+                borderWidth: 0,
                 hoverOffset: 10,
             },
         ],
@@ -381,7 +503,7 @@ function Dashboard() {
         plugins: {
             legend: { display: false },
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                backgroundColor: 'rgba(2, 6, 23, 0.96)',
                 titleColor: '#fff',
                 bodyColor: '#fff',
                 callbacks: {
@@ -390,12 +512,12 @@ function Dashboard() {
             },
         },
         scales: {
-            x: { grid: { display: false }, ticks: { color: '#9ca3af' } },
+            x: { grid: { display: false }, ticks: { color: '#cbd5e1' } },
             y: {
                 beginAtZero: true,
-                grid: { color: 'rgba(156, 163, 175, 0.1)', drawBorder: false },
+                grid: { color: 'rgba(148, 163, 184, 0.12)', drawBorder: false },
                 ticks: {
-                    color: '#9ca3af',
+                    color: '#cbd5e1',
                     callback: (value) => {
                         if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
                         if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
@@ -412,7 +534,7 @@ function Dashboard() {
         plugins: {
             legend: { display: false },
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                backgroundColor: 'rgba(2, 6, 23, 0.96)',
                 titleColor: '#fff',
                 bodyColor: '#fff',
                 callbacks: {
@@ -421,8 +543,8 @@ function Dashboard() {
             },
         },
         scales: {
-            x: { grid: { display: false }, ticks: { color: '#9ca3af' } },
-            y: { beginAtZero: true, grid: { color: 'rgba(156, 163, 175, 0.1)', drawBorder: false }, ticks: { color: '#9ca3af', stepSize: 1 } },
+            x: { grid: { display: false }, ticks: { color: '#cbd5e1' } },
+            y: { beginAtZero: true, grid: { color: 'rgba(148, 163, 184, 0.12)', drawBorder: false }, ticks: { color: '#cbd5e1', stepSize: 1 } },
         },
     };
 
@@ -433,7 +555,7 @@ function Dashboard() {
         plugins: {
             legend: { display: false },
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                backgroundColor: 'rgba(2, 6, 23, 0.96)',
                 titleColor: '#fff',
                 bodyColor: '#fff',
                 callbacks: {
@@ -448,7 +570,7 @@ function Dashboard() {
         plugins: {
             ...doughnutOptions.plugins,
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                backgroundColor: 'rgba(2, 6, 23, 0.96)',
                 titleColor: '#fff',
                 bodyColor: '#fff',
                 callbacks: {
@@ -466,7 +588,7 @@ function Dashboard() {
         plugins: {
             ...packageDoughnutOptions.plugins,
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                backgroundColor: 'rgba(2, 6, 23, 0.96)',
                 titleColor: '#fff',
                 bodyColor: '#fff',
                 callbacks: {
@@ -483,20 +605,100 @@ function Dashboard() {
         const actions = [];
 
         if (!isFinance) {
-            actions.push({ href: '/customers/create', label: 'Aktivasi Pelanggan', desc: 'Tambah pelanggan baru', icon: Plus, color: 'bg-blue-500' });
+            actions.push({
+                href: '/customers/create',
+                label: 'Aktivasi Pelanggan',
+                icon: Plus,
+            });
         }
 
         if (!isTeknisi) {
-            actions.push({ href: '/pengeluaran', label: 'Catat Pengeluaran', desc: 'Input pengeluaran baru', icon: FileText, color: 'bg-emerald-500' });
-            actions.push({ href: '/penagihan', label: 'Kelola Tagihan', desc: 'Lihat & kelola invoice', icon: DollarSign, color: 'bg-violet-500' });
+            actions.push({
+                href: '/pengeluaran',
+                label: 'Catat Pengeluaran',
+                icon: FileText,
+            });
+            actions.push({
+                href: '/penagihan',
+                label: 'Kelola Tagihan',
+                icon: DollarSign,
+            });
+            actions.push({
+                href: '/laporan',
+                label: 'Laporan Keuangan',
+                icon: FileText,
+            });
         }
 
         if (!isFinance) {
-            actions.push({ href: '/odp', label: 'Kelola ODP', desc: 'Pengaturan titik distribusi', icon: Settings, color: 'bg-orange-500' });
+            actions.push({
+                href: '/odp',
+                label: 'Kelola ODP',
+                icon: Settings,
+            });
         }
 
         return actions;
     }, [isFinance, isTeknisi]);
+
+    const headlineMetrics = [
+        !isFinance ? {
+            key: 'customers',
+            icon: Activity,
+            label: 'Total Pelanggan',
+            value: loading ? '...' : totalCustomerCount,
+            accent: 'cyan',
+        } : null,
+        !isFinance ? {
+            key: 'active-customers',
+            icon: Zap,
+            label: 'Pelanggan Aktif',
+            value: loading ? '...' : activeCustomerCount,
+            accent: 'emerald',
+        } : null,
+        !isTeknisi ? {
+            key: 'monthly-revenue',
+            icon: DollarSign,
+            label: 'Pendapatan Bulan Ini',
+            value: loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}`,
+            accent: 'violet',
+        } : null,
+        !isFinance ? {
+            key: 'monthly-installations',
+            icon: Plus,
+            label: 'Pemasangan Bulan Ini',
+            value: loading ? '...' : monthlyInstallations,
+            accent: 'cyan',
+        } : null,
+        !isTeknisi ? {
+            key: 'loan-outstanding',
+            icon: Wallet,
+            label: 'Total Pinjaman',
+            value: loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(totalLoanOutstanding || 0)}`,
+            accent: 'amber',
+        } : null,
+        !isTeknisi ? {
+            key: 'pending-receipts',
+            icon: FileText,
+            label: 'Mutasi Pending',
+            value: loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(pendingReceipts || 0)}`,
+            accent: 'cyan',
+        } : null,
+        !isTeknisi ? {
+            key: 'pending-invoices',
+            icon: FileText,
+            label: 'Invoice Tertunda',
+            value: loading ? '...' : (stats.pending_invoices || 0),
+            accent: 'amber',
+        } : null,
+        !isFinance ? {
+            key: 'active-complaints',
+            icon: Activity,
+            label: 'Aduan Aktif',
+            value: loading ? '...' : (stats.total_active_complaints || 0),
+            accent: 'rose',
+        } : null,
+    ].filter(Boolean);
 
     const employeePayroll = stats?.employee_payroll || DEFAULT_STATS.employee_payroll;
     const employeePayrollHistory = Array.isArray(employeePayroll?.project_history) ? employeePayroll.project_history : [];
@@ -511,23 +713,23 @@ function Dashboard() {
     };
 
     const employeePayrollColumns = [
-        { key: 'tanggal', label: 'Tanggal', render: (row) => formatShortDate(row.tanggal), cellClassName: 'px-3 py-2 text-gray-700' },
+        { key: 'tanggal', label: 'Tanggal', render: (row) => formatShortDate(row.tanggal), cellClassName: 'px-3 py-2 text-slate-600' },
         {
             key: 'project',
             label: 'Proyek',
             render: (row) => (
                 <div>
-                    <p className="font-medium text-gray-900">#{row.project_id}</p>
-                    <p className="text-xs text-gray-500">{row.catatan || '-'}</p>
+                    <p className="font-medium text-slate-900">#{row.project_id}</p>
+                    <p className="text-xs text-slate-500">{row.catatan || '-'}</p>
                 </div>
             ),
-            cellClassName: 'px-3 py-2 text-gray-700',
+            cellClassName: 'px-3 py-2 text-slate-600',
         },
         {
             key: 'status',
             label: 'Status',
             render: (row) => (
-                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${row.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${row.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                     {row.status === 'paid' ? 'Dibayar' : 'Belum Dibayar'}
                 </span>
             ),
@@ -536,34 +738,34 @@ function Dashboard() {
         {
             key: 'bagian',
             label: 'Bagian Anda',
-            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500',
             cellClassName: 'px-3 py-2 text-right font-semibold text-blue-700',
             render: (row) => formatCurrency(row.bagian || 0),
         },
         {
             key: 'project_total',
             label: 'Total Proyek',
-            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right text-gray-700',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500',
+            cellClassName: 'px-3 py-2 text-right text-slate-600',
             render: (row) => formatCurrency(row.project_total || 0),
         },
     ];
 
     const dashboardTransactionColumns = [
-        { key: 'transaction_date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-600' },
-        { key: 'type', label: 'Jenis', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.type || '-' },
-        { key: 'source', label: 'Sumber', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.source || '-' },
-        { key: 'description', label: 'Deskripsi', cellClassName: 'px-3 py-2 text-gray-800', render: (row) => row.description || '-' },
+        { key: 'transaction_date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-slate-600' },
+        { key: 'type', label: 'Jenis', cellClassName: 'px-3 py-2 text-slate-700', render: (row) => row.type || '-' },
+        { key: 'source', label: 'Sumber', cellClassName: 'px-3 py-2 text-slate-700', render: (row) => row.source || '-' },
+        { key: 'description', label: 'Deskripsi', cellClassName: 'px-3 py-2 text-slate-900', render: (row) => row.description || '-' },
         {
             key: 'amount',
             label: 'Nominal',
-            headerClassName: 'text-right px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold uppercase tracking-wider text-slate-500',
             cellClassName: 'px-3 py-2 text-right font-semibold',
             render: (row) => {
                 const amount = Number(row.amount || 0);
                 const isIncome = row.type === 'income';
                 return (
-                    <span className={isIncome ? 'text-emerald-700' : 'text-red-700'}>
+                    <span className={isIncome ? 'text-emerald-700' : 'text-rose-700'}>
                         {isIncome ? '+' : '-'}{formatCurrency(amount)}
                     </span>
                 );
@@ -572,506 +774,526 @@ function Dashboard() {
     ];
 
     return (
-        <div className="space-y-6 min-w-0">
-            <div className="app-section-header flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Dashboard</h1>
-                    <p className="text-gray-500 mt-1 flex items-center gap-2">
-                        <Calendar size={16} />
-                        {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                    </p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                    {!isFinance && (
-                        <a
-                            href="/customer-verification"
-                            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-blue-500/25"
-                        >
-                            <Plus size={18} />
-                            Aktivasi Baru
-                        </a>
-                    )}
-                    {canEditMutations && (
-                        <>
-                            <button
-                                type="button"
-                                onClick={() => setShowManualIncomeModal(true)}
-                                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-emerald-500/25"
-                            >
-                                <Plus size={18} />
-                                Pemasukan Manual
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setShowAdjustModal(true)}
-                                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-5 py-2.5 rounded-xl transition font-medium shadow-lg shadow-amber-500/25"
-                            >
-                                <Wallet size={18} />
-                                Penyesuaian Saldo
-                            </button>
-                        </>
-                    )}
-                </div>
-            </div>
-
-            {error && (
-                <Alert type="error" title="Error" message={error} onClose={() => setError(null)} />
-            )}
-
-            {loading && (
-                <Alert type="info" title="Memuat Dashboard" message="Ringkasan utama sedang diproses." />
-            )}
-
-            {canViewBalance && (
-                <section className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6 md:p-7 text-white shadow-xl shadow-slate-900/35 motion-safe:animate-[fadeIn_.35s_ease-out]">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+        <DashboardShell>
+            <div className="space-y-7 min-w-0">
+                <section className="px-1 py-2 md:px-0">
+                    <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                         <div className="min-w-0">
-                            <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
-                                <Wallet size={14} />
-                                Saldo Kas Saat Ini
-                            </div>
-                            <p className="mt-3 text-3xl md:text-5xl font-black tracking-tight">{loading ? 'Memuat...' : formatCurrency(cashBalance)}</p>
-                            <p className="mt-2 text-sm text-slate-200">
-                                {loading ? 'Menghitung ringkasan kas...' : `Masuk ${formatCurrency(monthIncome)} | Keluar ${formatCurrency(monthExpense)} | Net ${formatCurrency(monthNet)}`}
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-orange-500">
+                                Rumah Kita Net
                             </p>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0 lg:min-w-[360px]">
-                            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-                                <p className="text-xs text-slate-200">Cash Runway</p>
-                                <p className="mt-1 text-2xl font-bold" title="Estimasi hari kas bertahan berdasarkan rata-rata pengeluaran harian bulan berjalan.">
-                                    {runwayDays === null ? '-' : `${runwayDays} hari`}
-                                </p>
-                                <span className={`mt-2 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${runwayBadgeClass} ${runwayStatus === 'critical' ? 'animate-pulse' : ''}`}>
-                                    {runwayStatus}
+                            <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 md:text-3xl">
+                                Dashboard Operasional
+                            </h1>
+                            <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+                                <span className="inline-flex items-center gap-2 rounded-full border border-orange-100 bg-white px-3 py-1.5 shadow-sm">
+                                    <Calendar size={15} className="text-orange-500" />
+                                    {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                                </span>
+                                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-white px-3 py-1.5 shadow-sm">
+                                    <Wallet size={15} className="text-emerald-600" />
+                                    Kas {loading ? 'memuat...' : formatCurrency(cashBalance)}
                                 </span>
                             </div>
-                            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
-                                <p className="text-xs text-slate-200">Perubahan Net (MoM)</p>
-                                <p className={`mt-1 text-2xl font-bold inline-flex items-center gap-1 ${isPositiveNetDelta ? 'text-emerald-200' : 'text-rose-200'}`}>
-                                    {isPositiveNetDelta ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
-                                    {Math.abs(netDeltaPct).toFixed(1)}%
-                                </p>
-                                <p className="text-xs text-slate-300 mt-2 inline-flex items-center gap-1">
-                                    <Activity size={13} />
-                                    Dibanding bulan sebelumnya
-                                </p>
-                            </div>
                         </div>
-                    </div>
-                </section>
-            )}
 
-            {employeePayroll?.enabled && (
-                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                        <div>
-                            <h2 className="text-lg font-bold text-gray-900">Ringkasan Payroll Karyawan</h2>
-                            <p className="text-sm text-gray-500 mt-1">
-                                {employeePayroll?.member?.nama
-                                    ? `Akun terhubung ke teknisi: ${employeePayroll.member.nama}`
-                                    : 'Akun terhubung sebagai karyawan payroll.'}
-                            </p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs text-gray-500 uppercase tracking-wide">Total Gaji Payroll</p>
-                            <p className="text-2xl font-bold text-emerald-700">{formatCurrency(employeePayroll?.salary_total || 0)}</p>
-                        </div>
-                    </div>
-
-                    {employeePayroll?.warning && (
-                        <div className="mt-4">
-                            <Alert type="warning" title="Perhatian" message={employeePayroll.warning} />
-                        </div>
-                    )}
-
-                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-xs font-semibold text-gray-600">Sudah Dibayar</p>
-                            <p className="text-xl font-bold text-blue-700 mt-1">{formatCurrency(employeePayroll?.salary_paid || 0)}</p>
-                        </div>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-xs font-semibold text-gray-600">Sisa Gaji</p>
-                            <p className="text-xl font-bold text-orange-700 mt-1">{formatCurrency(employeePayroll?.salary_unpaid || 0)}</p>
+                        <div className="grid w-full max-w-xl gap-4 sm:grid-cols-2">
+                            {canViewBalance && (
+                                <HeroMetric
+                                    label="Saldo Kas Saat Ini"
+                                    value={loading ? 'Memuat...' : formatCurrency(cashBalance)}
+                                    helper={loading ? null : `Masuk ${formatCurrency(monthIncome)} | Keluar ${formatCurrency(monthExpense)} | Pending ${formatCurrency(pendingReceipts)} | Pinjaman ${formatCurrency(totalLoanOutstanding)}`}
+                                    tone="emerald"
+                                />
+                            )}
+                            {canViewBalance && (
+                                <HeroMetric
+                                    label="Total Pinjaman"
+                                    value={loading ? 'Memuat...' : formatCurrency(totalLoanOutstanding)}
+                                    helper="Outstanding hutang ke perusahaan"
+                                    tone="amber"
+                                />
+                            )}
+                            <HeroMetric
+                                label="Cash Runway"
+                                value={runwayDays === null ? '-' : `${runwayDays} hari`}
+                                helper={(
+                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${runwayBadgeClass}`}>
+                                        {runwayStatus}
+                                    </span>
+                                )}
+                                tone={runwayStatus === 'critical' ? 'rose' : runwayStatus === 'warning' ? 'amber' : 'cyan'}
+                            />
+                            <HeroMetric
+                                label="Perubahan Net (MoM)"
+                                value={`${Math.abs(netDeltaPct).toFixed(1)}%`}
+                                tone={isPositiveNetDelta ? 'emerald' : 'rose'}
+                            />
+                            <HeroMetric
+                                label="Aduan Aktif"
+                                value={loading ? '...' : (stats.total_active_complaints || 0)}
+                                tone="violet"
+                            />
                         </div>
                     </div>
 
-                    <div className="mt-5">
-                        <div className="flex items-center justify-between gap-3 mb-3">
-                            <h3 className="text-sm font-semibold text-gray-900">Riwayat Proyek Payroll</h3>
-                            {hasMoreEmployeePayrollHistory && (
+                    <div className="mt-6 flex flex-wrap gap-3">
+                        {!isFinance && (
+                            <a
+                                href="/customer-verification"
+                                className="inline-flex items-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-orange-600"
+                            >
+                                <Plus size={18} />
+                                Aktivasi Baru
+                            </a>
+                        )}
+                        {canEditMutations && (
+                            <>
                                 <button
                                     type="button"
-                                    onClick={() => setVisibleEmployeeHistoryCount((prev) => prev + 3)}
-                                    className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                                    onClick={() => setShowManualIncomeModal(true)}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-emerald-700"
                                 >
-                                    Lihat Lebih Banyak
+                                    <Plus size={18} />
+                                    Pemasukan Manual
                                 </button>
-                            )}
-                        </div>
-
-                        {visibleEmployeePayrollHistory.length === 0 ? (
-                            <p className="text-sm text-gray-500">Belum ada riwayat proyek payroll.</p>
-                        ) : (
-                            <ResponsiveDataView
-                                rows={visibleEmployeePayrollHistory.map((item, index) => ({
-                                    ...item,
-                                    __rowKey: `${item.project_id}-${item.tanggal}-${index}`,
-                                }))}
-                                columns={employeePayrollColumns}
-                                keyField="__rowKey"
-                                priorityFields={['tanggal', 'project', 'status', 'bagian']}
-                                tableClassName="w-full text-sm md:min-w-[720px]"
-                            />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAdjustModal(true)}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-blue-700"
+                                >
+                                    <Wallet size={18} />
+                                    Penyesuaian Saldo
+                                </button>
+                            </>
                         )}
                     </div>
-                </div>
-            )}
+                </section>
 
-            {!isFinance && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
-                        <h2 className="text-xl font-bold mb-1">Monitoring Perangkat</h2>
-                        <p className="text-sm text-purple-100">Status perangkat PPPoE real-time</p>
-                        <div className="mt-4 flex items-end gap-2">
-                            <span className="text-4xl font-bold">{loading ? '...' : (stats.online_customers || 0)}</span>
-                            <span className="text-xl text-purple-200">/ {loading ? '...' : (stats.total_customers || 0)}</span>
-                        </div>
-                        <p className="text-sm mt-1">Status: <span className="font-semibold">Live</span></p>
-                        <a href="/monitoring" className="inline-flex mt-4 bg-white text-purple-600 hover:bg-purple-50 px-4 py-2 rounded-lg font-semibold text-sm">
-                            Lihat Monitoring
-                        </a>
-                    </div>
+                {error && (
+                    <Alert
+                        type="error"
+                        title="Error"
+                        message={error}
+                        onClose={() => setError(null)}
+                        className="border-rose-200 bg-rose-50 text-rose-800 shadow-none"
+                    />
+                )}
 
-                    <div className="bg-gradient-to-br from-red-600 to-orange-600 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
-                        <h2 className="text-xl font-bold mb-1">Perangkat Isolir</h2>
-                        <p className="text-sm text-red-100">Terbatas karena lewat jatuh tempo</p>
-                        <div className="mt-4 flex items-end gap-2">
-                            <span className="text-4xl font-bold">{isolatedCountLoading ? '...' : isolatedCount}</span>
-                            <span className="text-sm text-red-200">perangkat</span>
-                        </div>
-                        <p className="text-sm mt-1">Status: <span className="font-semibold">{isolatedCount > 0 ? 'Warning' : 'Normal'}</span></p>
-                        <a href="/isolir" className="inline-flex mt-4 bg-white text-red-600 hover:bg-red-50 px-4 py-2 rounded-lg font-semibold text-sm">
-                            Lihat Detail
-                        </a>
-                    </div>
-                </div>
-            )}
+                {loading && (
+                    <Alert
+                        type="info"
+                        title="Memuat Dashboard"
+                        message="Ringkasan utama sedang diproses."
+                        className="border-blue-200 bg-blue-50 text-blue-800 shadow-none"
+                    />
+                )}
 
-            <div className={`grid grid-cols-2 ${isFinance ? 'lg:grid-cols-3' : isTeknisi ? 'lg:grid-cols-4' : 'lg:grid-cols-6'} gap-4`}>
                 {!isFinance && (
-                    <div className="bg-blue-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-blue-100">Total Pelanggan</p>
-                        <p className="text-3xl font-bold mt-1">{loading ? '...' : totalCustomerCount}</p>
-                    </div>
-                )}
-                {!isFinance && (
-                    <div className="bg-emerald-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-emerald-100">Pelanggan Aktif</p>
-                        <p className="text-3xl font-bold mt-1">{loading ? '...' : activeCustomerCount}</p>
-                        <p className="text-xs text-emerald-100 mt-1">Di luar pelanggan lewat jatuh tempo atau isolir</p>
-                    </div>
-                )}
-                {!isTeknisi && (
-                    <div className="bg-violet-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-violet-100">Pendapatan Bulan Ini</p>
-                        <p className="text-2xl font-bold mt-1">{loading ? '...' : `Rp ${new Intl.NumberFormat('id-ID', { notation: 'compact', maximumFractionDigits: 1 }).format(stats.monthly_revenue || 0)}`}</p>
-                    </div>
-                )}
-                {!isFinance && (
-                    <div className="bg-cyan-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-cyan-100">Pemasangan Bulan Ini</p>
-                        <p className="text-3xl font-bold mt-1">{loading ? '...' : monthlyInstallations}</p>
-                    </div>
-                )}
-                {!isTeknisi && (
-                    <div className="bg-orange-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-orange-100">Invoice Tertunda</p>
-                        <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.pending_invoices || 0)}</p>
-                    </div>
-                )}
-                {!isFinance && (
-                    <div className="bg-pink-600 rounded-2xl p-5 text-white transition hover:-translate-y-0.5">
-                        <p className="text-sm text-pink-100">Aduan Aktif</p>
-                        <p className="text-3xl font-bold mt-1">{loading ? '...' : (stats.total_active_complaints || 0)}</p>
-                    </div>
-                )}
-            </div>
-
-            {!isTeknisi && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                        <div className="flex items-center justify-between mb-6">
-                            <div>
-                                <h2 className="text-lg font-bold text-gray-900">Pemasukan vs Pengeluaran</h2>
-                                <p className="text-sm text-gray-500">Semua pemasukan termasuk pemasangan dan pembayaran, dibandingkan dengan pengeluaran</p>
+                    <div className="grid gap-5 xl:grid-cols-2">
+                        <SectionFrame
+                            eyebrow="Monitoring"
+                            title="Jaringan & isolir"
+                        >
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <DashboardPanelSurface accent="violet" className="border-orange-100 bg-orange-50">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-orange-600">Monitoring perangkat</p>
+                                    <p className="mt-3 text-4xl font-black">{loading ? '...' : (stats.online_customers || 0)}</p>
+                                    <p className="mt-1 text-sm text-orange-700/80">dari {loading ? '...' : (stats.total_customers || 0)} pelanggan terpantau</p>
+                                    <a href="/monitoring" className="mt-5 inline-flex items-center gap-2 rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-600">
+                                        Lihat Monitoring
+                                        <ArrowRight size={16} />
+                                    </a>
+                                </DashboardPanelSurface>
+                                <DashboardPanelSurface accent="rose" className="border-rose-100 bg-rose-50">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-rose-600">Perangkat isolir</p>
+                                    <p className="mt-3 text-4xl font-black">{isolatedCountLoading ? '...' : isolatedCount}</p>
+                                    <p className="mt-1 text-sm text-rose-700/80">perangkat dibatasi karena lewat jatuh tempo</p>
+                                    <a href="/isolir" className="mt-5 inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-700">
+                                        Lihat Detail
+                                        <ArrowRight size={16} />
+                                    </a>
+                                </DashboardPanelSurface>
                             </div>
-                            <div className="flex items-center gap-3 text-sm">
-                                <span className="flex items-center gap-2 text-gray-600"><span className="w-3 h-3 bg-emerald-500 rounded-full"></span>Pemasukan</span>
-                                <span className="flex items-center gap-2 text-gray-600"><span className="w-3 h-3 bg-red-500 rounded-full"></span>Pengeluaran</span>
+                        </SectionFrame>
+
+                        <SectionFrame
+                            eyebrow="KPI"
+                            title="Kartu ringkas"
+                        >
+                            <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${isFinance ? 'xl:grid-cols-3' : ''}`}>
+                                {headlineMetrics.map((item) => (
+                                    <DataTile
+                                        key={item.key}
+                                        icon={item.icon}
+                                        label={item.label}
+                                        value={item.value}
+                                        helper={item.helper}
+                                        accent={item.accent}
+                                    />
+                                ))}
                             </div>
-                        </div>
-                        <div className="h-[300px]">
-                            <Bar data={financeChartData} options={financeChartOptions} />
-                        </div>
+                        </SectionFrame>
                     </div>
+                )}
 
-                    <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                        <div className="mb-6">
-                            <h2 className="text-lg font-bold text-gray-900">Status Pelanggan</h2>
-                            <p className="text-sm text-gray-500">Distribusi aktif dan tidak aktif (lewat jatuh tempo atau isolir)</p>
-                        </div>
-                        <div className="h-[200px] relative">
-                            <Doughnut data={customerStatusData} options={doughnutOptions} />
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="text-center">
-                                    <p className="text-3xl font-bold text-gray-900">{totalCustomerCount}</p>
-                                    <p className="text-xs text-gray-500">Total</p>
-                                </div>
+                {employeePayroll?.enabled && (
+                    <SectionFrame
+                        eyebrow="Payroll"
+                        title="Ringkasan payroll karyawan"
+                        aside={(
+                            <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-3 text-right">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Total gaji payroll</p>
+                                <p className="mt-2 text-2xl font-bold text-slate-900">{formatCurrency(employeePayroll?.salary_total || 0)}</p>
                             </div>
+                        )}
+                    >
+                        {employeePayroll?.warning && (
+                            <Alert
+                                type="warning"
+                                title="Perhatian"
+                                message={employeePayroll.warning}
+                                className="border-amber-200 bg-amber-50 text-amber-800 shadow-none"
+                            />
+                        )}
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <DataTile icon={TrendingUp} label="Sudah Dibayar" value={formatCurrency(employeePayroll?.salary_paid || 0)} accent="cyan" />
+                            <DataTile icon={TrendingDown} label="Sisa Gaji" value={formatCurrency(employeePayroll?.salary_unpaid || 0)} accent="amber" />
                         </div>
-                        <div className="flex justify-center gap-6 mt-6">
-                            <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 bg-green-500 rounded-full"></span>
-                                <span className="text-sm text-gray-600">Aktif ({activeCustomerCount})</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="w-3 h-3 bg-red-500 rounded-full"></span>
-                                <span className="text-sm text-gray-600">Tidak Aktif ({inactiveCustomerCount})</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {!isTeknisi && (
-                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
-                        <div>
-                            <h2 className="text-lg font-bold text-gray-900">Persentase Paket Layanan</h2>
-                            <p className="text-sm text-gray-500">Perbandingan paket pada seluruh pelanggan dan pelanggan aktif saja</p>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        {[
-                            {
-                                key: 'total',
-                                title: 'Total Pelanggan',
-                                subtitle: 'Distribusi paket dari seluruh pelanggan',
-                                totalLabel: 'Total pelanggan dengan paket',
-                                totalValue: packageDistributionTotal,
-                                items: packageDistribution,
-                                data: packageDistributionData,
-                                options: packageDoughnutOptions,
-                                emptyText: 'Belum ada data paket layanan.',
-                            },
-                            {
-                                key: 'active',
-                                title: 'Pelanggan Aktif',
-                                subtitle: 'Distribusi paket dari pelanggan aktif saja',
-                                totalLabel: 'Total pelanggan aktif dengan paket',
-                                totalValue: activePackageDistributionTotal,
-                                items: activePackageDistribution,
-                                data: activePackageDistributionData,
-                                options: activePackageDoughnutOptions,
-                                emptyText: 'Belum ada pelanggan aktif dengan paket.',
-                            },
-                        ].map((card) => (
-                            <div key={card.key} className="rounded-2xl border border-gray-100 bg-gray-50/70 p-5">
-                                <div className="flex items-center justify-between gap-3 mb-5">
-                                    <div>
-                                        <h3 className="text-base font-bold text-gray-900">{card.title}</h3>
-                                        <p className="text-sm text-gray-500">{card.subtitle}</p>
-                                    </div>
-                                    <div className="text-sm text-gray-600 text-right">
-                                        {card.totalLabel}: <span className="font-semibold text-gray-900">{card.totalValue}</span>
-                                    </div>
-                                </div>
-
-                                {card.items.length === 0 ? (
-                                    <div className="rounded-xl border border-dashed border-gray-200 bg-white px-4 py-10 text-center text-gray-500">
-                                        {card.emptyText}
-                                    </div>
-                                ) : (
-                                    <div className="grid grid-cols-1 gap-5">
-                                        <div className="h-[280px] relative bg-white rounded-xl border border-gray-100">
-                                            <Doughnut data={card.data} options={card.options} />
-                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                                <div className="text-center">
-                                                    <p className="text-3xl font-bold text-gray-900">{card.items.length}</p>
-                                                    <p className="text-xs text-gray-500">Jenis Paket</p>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-3">
-                                            {card.items.map((item, index) => {
-                                                const color = packagePalette[index % packagePalette.length];
-                                                return (
-                                                    <div key={`${card.key}-${item.label}-${index}`} className="rounded-xl border border-gray-100 bg-white p-4">
-                                                        <div className="flex items-center justify-between gap-3">
-                                                            <div className="flex items-center gap-3 min-w-0">
-                                                                <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color }}></span>
-                                                                <div className="min-w-0">
-                                                                    <p className="font-semibold text-gray-900 truncate">{item.label}</p>
-                                                                    <p className="text-xs text-gray-500">{item.count} pelanggan</p>
-                                                                </div>
-                                                            </div>
-                                                            <span className="text-sm font-semibold text-gray-900">{formatPercent(item.percentage)}</span>
-                                                        </div>
-                                                        <div className="mt-3 h-2 rounded-full bg-gray-200 overflow-hidden">
-                                                            <div
-                                                                className="h-full rounded-full"
-                                                                style={{ width: `${Math.min(100, Number(item.percentage || 0))}%`, backgroundColor: color }}
-                                                            ></div>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
+                        <div className="mt-6">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                                <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">Riwayat proyek payroll</h3>
+                                {hasMoreEmployeePayrollHistory && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setVisibleEmployeeHistoryCount((prev) => prev + 3)}
+                                        className="text-sm font-medium text-blue-600 transition hover:text-blue-700"
+                                    >
+                                        Lihat Lebih Banyak
+                                    </button>
                                 )}
                             </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
-            {!isFinance ? (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                        <div className="flex items-center justify-between mb-6">
-                            <div>
-                                <h2 className="text-lg font-bold text-gray-900">Pemasangan Baru</h2>
-                                <p className="text-sm text-gray-500">Statistik aktivasi per bulan</p>
-                            </div>
-                            <div className="flex items-center gap-2 text-sm">
-                                <span className="w-3 h-3 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"></span>
-                                <span className="text-gray-600">Pelanggan Baru</span>
-                            </div>
+                            {visibleEmployeePayrollHistory.length === 0 ? (
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                                    Belum ada riwayat proyek payroll.
+                                </div>
+                            ) : (
+                                <DashboardPanelSurface accent="cyan" className="p-2">
+                                    <ResponsiveDataView
+                                        rows={visibleEmployeePayrollHistory.map((item, index) => ({
+                                            ...item,
+                                            __rowKey: `${item.project_id}-${item.tanggal}-${index}`,
+                                        }))}
+                                        columns={employeePayrollColumns}
+                                        keyField="__rowKey"
+                                        priorityFields={['tanggal', 'project', 'status', 'bagian']}
+                                        tableClassName="w-full text-sm md:min-w-[720px]"
+                                        headClassName="bg-slate-50"
+                                        bodyClassName="divide-y divide-slate-100"
+                                        rowHoverClassName="hover:bg-orange-50/50"
+                                        emptyDesktopClassName="px-4 py-8 text-center text-slate-500"
+                                        mobileCardClassName="border border-slate-200 bg-white"
+                                        mobileLabelClassName="text-slate-500"
+                                        mobileValueClassName="text-slate-900"
+                                    />
+                                </DashboardPanelSurface>
+                            )}
                         </div>
-                        <div className="h-[280px]">
-                            <Bar data={installationChartData} options={barChartOptions} />
-                        </div>
-                    </div>
+                    </SectionFrame>
+                )}
 
-                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
-                        <div className="mb-6">
-                            <h2 className="text-lg font-bold flex items-center gap-2">
-                                <Zap size={20} className="text-yellow-400" />
-                                Aksi Cepat
-                            </h2>
-                            <p className="text-sm text-gray-400 mt-1">Pintasan menu utama</p>
-                        </div>
-                        <div className="space-y-3">
-                            {quickActions.map((item) => {
-                                const Icon = item.icon;
-                                return (
-                                    <a
-                                        key={item.href}
-                                        href={item.href}
-                                        className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition group"
-                                    >
-                                        <div className={`${item.color} p-2 rounded-lg group-hover:scale-110 transition`}>
-                                            <Icon size={18} />
+                {!isTeknisi && (
+                    <div className="grid gap-5 xl:grid-cols-[1.7fr_1fr]">
+                        <SectionFrame
+                            eyebrow="Finansial"
+                            title="Pemasukan vs pengeluaran"
+                            aside={(
+                                <div className="flex items-center gap-4 text-sm">
+                                    <span className="flex items-center gap-2 text-slate-600"><span className="h-3 w-3 rounded-full bg-emerald-500" />Pemasukan</span>
+                                    <span className="flex items-center gap-2 text-slate-600"><span className="h-3 w-3 rounded-full bg-rose-500" />Pengeluaran</span>
+                                </div>
+                            )}
+                        >
+                                <DashboardPanelSurface accent="emerald">
+                                    <div className="h-[320px]">
+                                        <Bar data={financeChartData} options={financeChartOptions} />
+                                    </div>
+                                </DashboardPanelSurface>
+                            </SectionFrame>
+
+                        <SectionFrame
+                            eyebrow="Pelanggan"
+                            title="Status pelanggan"
+                        >
+                            <DashboardPanelSurface accent="violet">
+                                <div className="relative h-[280px]">
+                                    <Doughnut data={customerStatusData} options={doughnutOptions} />
+                                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                        <div className="text-center">
+                                            <p className="text-4xl font-black text-slate-900">{totalCustomerCount}</p>
+                                            <p className="mt-1 text-xs uppercase tracking-[0.28em] text-slate-500">Total</p>
                                         </div>
+                                    </div>
+                                </div>
+                                <div className="mt-5 grid grid-cols-2 gap-3">
+                                    <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">Aktif ({activeCustomerCount})</div>
+                                    <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">Tidak Aktif ({inactiveCustomerCount})</div>
+                                </div>
+                            </DashboardPanelSurface>
+                        </SectionFrame>
+                    </div>
+                )}
+
+                {!isTeknisi && (
+                    <SectionFrame
+                        eyebrow="Paket"
+                        title="Distribusi paket layanan"
+                    >
+                        <div className="grid gap-5 xl:grid-cols-2">
+                            {[
+                                {
+                                    key: 'total',
+                                    title: 'Total Pelanggan',
+                                    totalLabel: 'Total pelanggan dengan paket',
+                                    totalValue: packageDistributionTotal,
+                                    items: packageDistribution,
+                                    data: packageDistributionData,
+                                    options: packageDoughnutOptions,
+                                    emptyText: 'Belum ada data paket layanan.',
+                                },
+                                {
+                                    key: 'active',
+                                    title: 'Pelanggan Aktif',
+                                    totalLabel: 'Total pelanggan aktif dengan paket',
+                                    totalValue: activePackageDistributionTotal,
+                                    items: activePackageDistribution,
+                                    data: activePackageDistributionData,
+                                    options: activePackageDoughnutOptions,
+                                    emptyText: 'Belum ada pelanggan aktif dengan paket.',
+                                },
+                            ].map((card) => (
+                                <DashboardPanelSurface key={card.key} accent={card.key === 'active' ? 'emerald' : 'cyan'} className="p-5">
+                                    <div className="mb-5 flex items-center justify-between gap-3">
                                         <div>
-                                            <p className="font-medium">{item.label}</p>
-                                            <p className="text-xs text-gray-400">{item.desc}</p>
+                                            <h3 className="text-lg font-semibold text-slate-900">{card.title}</h3>
                                         </div>
-                                    </a>
-                                );
-                            })}
+                                        <div className="text-right text-sm text-slate-600">
+                                            {card.totalLabel}: <span className="font-semibold text-slate-900">{card.totalValue}</span>
+                                        </div>
+                                    </div>
+
+                                    {card.items.length === 0 ? (
+                                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-10 text-center text-slate-500">
+                                            {card.emptyText}
+                                        </div>
+                                    ) : (
+                                        <div className="grid gap-5">
+                                            <div className="relative h-[280px] rounded-lg border border-slate-100 bg-slate-50 p-3">
+                                                <Doughnut data={card.data} options={card.options} />
+                                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                                    <div className="text-center">
+                                                        <p className="text-3xl font-black text-slate-900">{card.items.length}</p>
+                                                        <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Jenis Paket</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-3">
+                                                {card.items.map((item, index) => {
+                                                    const color = packagePalette[index % packagePalette.length];
+                                                    return (
+                                                        <div key={`${card.key}-${item.label}-${index}`} className="rounded-lg border border-slate-100 bg-white p-4">
+                                                            <div className="flex items-center justify-between gap-3">
+                                                                <div className="flex min-w-0 items-center gap-3">
+                                                                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                                                                    <div className="min-w-0">
+                                                                        <p className="truncate font-semibold text-slate-900">{item.label}</p>
+                                                                        <p className="text-xs text-slate-500">{item.count} pelanggan</p>
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-sm font-semibold text-slate-900">{formatPercent(item.percentage)}</span>
+                                                            </div>
+                                                            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                                                                <div
+                                                                    className="h-full rounded-full"
+                                                                    style={{ width: `${Math.min(100, Number(item.percentage || 0))}%`, backgroundColor: color }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </DashboardPanelSurface>
+                            ))}
                         </div>
-                    </div>
-                </div>
-            ) : (
-                <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 text-white transition hover:-translate-y-0.5 hover:shadow-xl">
-                    <h2 className="text-lg font-bold flex items-center gap-2 mb-4">
-                        <Zap size={20} className="text-yellow-400" />
-                        Aksi Cepat Keuangan
-                    </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <a href="/penagihan" className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition">
-                            <DollarSign size={18} className="text-violet-300" />
-                            <span>Kelola Tagihan</span>
-                        </a>
-                        <a href="/pengeluaran" className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-3 rounded-xl transition">
-                            <FileText size={18} className="text-emerald-300" />
-                            <span>Catat Pengeluaran</span>
-                        </a>
-                    </div>
-                </div>
-            )}
+                    </SectionFrame>
+                )}
 
-            {!isTeknisi && (
-                <div className="app-card p-6 transition hover:-translate-y-0.5 hover:shadow-md motion-safe:animate-[fadeIn_.35s_ease-out]">
-                    <div className="mb-6">
-                        <h2 className="text-lg font-bold text-gray-900">Transaksi Keuangan Terintegrasi</h2>
-                        <p className="text-sm text-gray-500">Pemasukan, pengeluaran, payroll, dan adjustment dalam satu ledger</p>
-                    </div>
+                <div className={`grid gap-5 ${!isFinance ? 'xl:grid-cols-[1.45fr_1fr]' : ''}`}>
+                    {!isFinance ? (
+                        <>
+                            <SectionFrame
+                                eyebrow="Aktivasi"
+                                title="Pemasangan baru"
+                            >
+                                <DashboardPanelSurface accent="violet">
+                                    <div className="h-[300px]">
+                                        <Bar data={installationChartData} options={barChartOptions} />
+                                    </div>
+                                </DashboardPanelSurface>
+                            </SectionFrame>
 
-                    {transactionsLoading ? (
-                        <p className="text-sm text-gray-500">Memuat transaksi...</p>
-                    ) : transactions.length === 0 ? (
-                        <p className="text-sm text-gray-500">Belum ada transaksi.</p>
+                            <SectionFrame
+                                eyebrow="Shortcut"
+                                title="Aksi cepat"
+                            >
+                                <div className="grid gap-3">
+                                    {quickActions.map((item) => (
+                                        <ActionTile
+                                            key={item.href}
+                                            href={item.href}
+                                            icon={item.icon}
+                                            label={item.label}
+                                            accent={item.accent}
+                                        />
+                                    ))}
+                                </div>
+                            </SectionFrame>
+                        </>
                     ) : (
-                        <ResponsiveDataView
-                            rows={transactions.slice(0, 5)}
-                            columns={dashboardTransactionColumns}
-                            keyField="id"
-                            priorityFields={['transaction_date', 'type', 'amount', 'source']}
-                            tableClassName="w-full text-sm md:min-w-[800px]"
-                        />
+                        <SectionFrame
+                            eyebrow="Shortcut"
+                            title="Aksi cepat keuangan"
+                        >
+                            <div className="grid gap-3 md:grid-cols-3">
+                                <ActionTile href="/penagihan" icon={DollarSign} label="Kelola Tagihan" />
+                                <ActionTile href="/pengeluaran" icon={FileText} label="Catat Pengeluaran" />
+                                <ActionTile href="/laporan" icon={Activity} label="Laporan Keuangan" />
+                            </div>
+                        </SectionFrame>
                     )}
                 </div>
-            )}
+
+                {!isTeknisi && (
+                    <SectionFrame
+                        eyebrow="Ledger"
+                        title="Transaksi keuangan terintegrasi"
+                    >
+                        {transactionsLoading ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                                Memuat transaksi...
+                            </div>
+                        ) : transactions.length === 0 ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                                Belum ada transaksi.
+                            </div>
+                        ) : (
+                            <DashboardPanelSurface accent="amber" className="p-2">
+                                <ResponsiveDataView
+                                    rows={transactions.slice(0, 5)}
+                                    columns={dashboardTransactionColumns}
+                                    keyField="id"
+                                    priorityFields={['transaction_date', 'type', 'amount', 'source']}
+                                    tableClassName="w-full text-sm md:min-w-[800px]"
+                                    headClassName="bg-slate-50"
+                                    bodyClassName="divide-y divide-slate-100"
+                                    rowHoverClassName="hover:bg-orange-50/50"
+                                    emptyDesktopClassName="px-4 py-8 text-center text-slate-500"
+                                    mobileCardClassName="border border-slate-200 bg-white"
+                                    mobileLabelClassName="text-slate-500"
+                                    mobileValueClassName="text-slate-900"
+                                />
+                            </DashboardPanelSurface>
+                        )}
+                    </SectionFrame>
+                )}
+
+                {borrowerDebts.length > 0 && (
+                    <SectionFrame eyebrow="Pinjaman" title="Hutang Saya ke Perusahaan">
+                        <div className="grid gap-4">
+                            {borrowerDebts.map((item) => (
+                                <DashboardPanelSurface key={item.id} accent="amber">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <p className="text-sm font-semibold text-slate-900">{item.invoice?.invoice_link || 'Tanpa invoice'}</p>
+                                            <p className="text-xs text-slate-500">Status: {item.status}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-lg font-bold text-amber-700">{formatCurrency(item.outstanding_amount || 0)}</p>
+                                            <a href="/pinjaman" className="text-xs text-blue-600 hover:underline">Lihat detail hutang</a>
+                                        </div>
+                                    </div>
+                                </DashboardPanelSurface>
+                            ))}
+                        </div>
+                    </SectionFrame>
+                )}
+            </div>
 
             <Modal
                 isOpen={showAdjustModal}
                 onClose={() => setShowAdjustModal(false)}
                 title="Penyesuaian Saldo"
+                theme="dashboard"
             >
-                <form onSubmit={handleAdjustBalance} className="space-y-4">
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
-                        Gunakan nilai positif untuk menambah saldo dan nilai negatif untuk mengurangi saldo.
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
+                <form onSubmit={handleAdjustBalance} className="space-y-5">
+                    <DashboardPanelSurface accent="amber" className="border-amber-100 bg-amber-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-700">Panduan</p>
+                        <p className="mt-2 text-sm leading-6 text-amber-800">
+                            Gunakan nilai positif untuk menambah saldo dan nilai negatif untuk mengurangi saldo.
+                        </p>
+                    </DashboardPanelSurface>
+
+                    <DashboardField label="Deskripsi">
                         <input
                             type="text"
                             value={adjustForm.description}
                             onChange={(e) => setAdjustForm((prev) => ({ ...prev, description: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Nominal (+/-)</label>
+                    </DashboardField>
+
+                    <DashboardField label="Nominal (+/-)" hint="contoh: 50000 atau -50000">
                         <input
                             type="number"
                             value={adjustForm.amount}
                             onChange={(e) => setAdjustForm((prev) => ({ ...prev, amount: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal Transaksi</label>
+                    </DashboardField>
+
+                    <DashboardField label="Tanggal Transaksi">
                         <input
                             type="date"
                             value={adjustForm.transaction_date}
                             onChange={(e) => setAdjustForm((prev) => ({ ...prev, transaction_date: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button type="button" variant="secondary" onClick={() => setShowAdjustModal(false)}>
+                    </DashboardField>
+
+                    <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setShowAdjustModal(false)}
+                            className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 focus:ring-orange-200"
+                        >
                             Batal
                         </Button>
-                        <Button type="submit" variant="primary" disabled={adjustSubmitting}>
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            disabled={adjustSubmitting}
+                            className="border-transparent bg-orange-500 text-white shadow-sm hover:bg-orange-600 focus:ring-orange-200"
+                        >
                             {adjustSubmitting ? 'Menyimpan...' : 'Simpan'}
                         </Button>
                     </div>
@@ -1082,61 +1304,79 @@ function Dashboard() {
                 isOpen={showManualIncomeModal}
                 onClose={() => setShowManualIncomeModal(false)}
                 title="Tambah Pemasukan Manual"
+                theme="dashboard"
             >
-                <form onSubmit={handleManualIncome} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Sumber</label>
+                <form onSubmit={handleManualIncome} className="space-y-5">
+                    <DashboardPanelSurface accent="emerald" className="border-emerald-100 bg-emerald-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Input cepat</p>
+                        <p className="mt-2 text-sm leading-6 text-emerald-800">
+                            Catatan pemasukan ini langsung ikut ke ringkasan finansial dan ledger dashboard.
+                        </p>
+                    </DashboardPanelSurface>
+
+                    <DashboardField label="Sumber">
                         <select
                             value={manualIncomeForm.source}
                             onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, source: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardSelectClassName}
                         >
                             <option value="manual">Manual</option>
                             <option value="pemasangan">Pemasangan</option>
                             <option value="pembayaran">Pembayaran</option>
                         </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
+                    </DashboardField>
+
+                    <DashboardField label="Deskripsi">
                         <input
                             type="text"
                             value={manualIncomeForm.description}
                             onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, description: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Nominal</label>
+                    </DashboardField>
+
+                    <DashboardField label="Nominal">
                         <input
                             type="number"
                             value={manualIncomeForm.amount}
                             onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, amount: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal</label>
+                    </DashboardField>
+
+                    <DashboardField label="Tanggal">
                         <input
                             type="date"
                             value={manualIncomeForm.transaction_date}
                             onChange={(e) => setManualIncomeForm((prev) => ({ ...prev, transaction_date: e.target.value }))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                            className={dashboardInputClassName}
                             required
                         />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button type="button" variant="secondary" onClick={() => setShowManualIncomeModal(false)}>
+                    </DashboardField>
+
+                    <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setShowManualIncomeModal(false)}
+                            className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50 focus:ring-orange-200"
+                        >
                             Batal
                         </Button>
-                        <Button type="submit" variant="primary" disabled={manualIncomeSubmitting}>
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            disabled={manualIncomeSubmitting}
+                            className="border-transparent bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 focus:ring-emerald-200"
+                        >
                             {manualIncomeSubmitting ? 'Menyimpan...' : 'Simpan'}
                         </Button>
                     </div>
                 </form>
             </Modal>
-        </div>
+        </DashboardShell>
     );
 }
 

@@ -3,25 +3,22 @@
 namespace App\Services;
 
 use App\Models\FinancialTransaction;
+use App\Models\PaymentReceiptOption;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\PayrollMemberPayment;
 use App\Models\Pengeluaran;
+use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 
 class FinancialLedgerService
 {
-    private function isReady(): bool
-    {
-        return Schema::hasTable('financial_transactions');
-    }
-
-    public function syncInvoicePayment(Invoice $invoice, ?int $actorId = null): void
+    public function syncInvoicePayment(Invoice $invoice, ?int $actorId = null, string $transactionStatus = FinancialTransaction::STATUS_CONFIRMED): ?FinancialTransaction
     {
         if (!$this->isReady()) {
-            return;
+            return null;
         }
 
         $customer = $invoice->relationLoaded('customer')
@@ -39,6 +36,13 @@ class FinancialLedgerService
         $receivedViaName = $receivedViaOption?->name
             ?: $receivedViaPaymentMethod?->display_name;
 
+        $paymentReceiver = null;
+        if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+            $paymentReceiver = $invoice->relationLoaded('paymentReceiver')
+                ? $invoice->paymentReceiver
+                : $invoice->paymentReceiver()->first();
+        }
+
         $pppoeUsername = trim((string) ($customer->pppoe_username ?? ''));
         $description = $pppoeUsername !== ''
             ? 'Pembayaran PPPoE ' . $pppoeUsername
@@ -49,14 +53,17 @@ class FinancialLedgerService
             ->where('reference_type', Invoice::class)
             ->where('reference_id', $invoice->id);
 
-        if ($invoice->status !== 'paid') {
+        $includeInMutation = !Schema::hasColumn('invoices', 'include_in_mutation')
+            || (bool) ($invoice->include_in_mutation ?? true);
+
+        if ($invoice->status !== 'paid' || !$includeInMutation) {
             $query->delete();
-            return;
+            return null;
         }
 
         $transactionDate = $invoice->paid_at ? Carbon::parse($invoice->paid_at)->toDateString() : now()->toDateString();
 
-        $query->updateOrCreate(
+        return $query->updateOrCreate(
             [
                 'source' => 'invoice_payment',
                 'reference_type' => Invoice::class,
@@ -70,6 +77,7 @@ class FinancialLedgerService
                 'transaction_date' => $transactionDate,
                 'created_by' => $actorId,
                 'updated_by' => $actorId,
+                'status' => $transactionStatus,
                 'meta' => [
                     'invoice_link' => $invoice->invoice_link,
                     'customer_id' => $invoice->customer_id,
@@ -77,15 +85,31 @@ class FinancialLedgerService
                     'status' => $invoice->status,
                     'received_via_id' => $receivedViaOption?->id,
                     'received_via_name' => $receivedViaName,
+                    'payment_receiver_user_id' => $paymentReceiver?->id,
+                    'payment_receiver_name' => $paymentReceiver?->name,
+                    'payment_receiver_is_company_finance' => $paymentReceiver
+                        ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
+                        : false,
                 ],
             ]
         );
     }
 
-    public function syncCustomerInstallationIncome(Customer $customer, ?int $actorId = null): void
+    private function isReady(): bool
+    {
+        return Schema::hasTable('financial_transactions');
+    }
+
+    public function syncCustomerInstallationIncome(
+        Customer $customer,
+        ?int $actorId = null,
+        string $transactionStatus = FinancialTransaction::STATUS_CONFIRMED,
+        ?PaymentReceiptOption $receivedViaOption = null,
+        ?User $paymentReceiver = null
+    ): ?FinancialTransaction
     {
         if (!$this->isReady()) {
-            return;
+            return null;
         }
 
         $fee = (float) ($customer->installation_fee ?? 0);
@@ -97,14 +121,14 @@ class FinancialLedgerService
 
         if ($fee <= 0) {
             $query->delete();
-            return;
+            return null;
         }
 
         $transactionDate = $customer->activation_date
             ? Carbon::parse($customer->activation_date)->toDateString()
             : now()->toDateString();
 
-        $query->updateOrCreate(
+        return $query->updateOrCreate(
             [
                 'source' => 'installation_income',
                 'reference_type' => Customer::class,
@@ -118,9 +142,17 @@ class FinancialLedgerService
                 'transaction_date' => $transactionDate,
                 'created_by' => $actorId,
                 'updated_by' => $actorId,
+                'status' => $transactionStatus,
                 'meta' => [
                     'customer_id' => $customer->id,
                     'customer_name' => $customer->name,
+                    'received_via_id' => $receivedViaOption?->id,
+                    'received_via_name' => $receivedViaOption?->name,
+                    'payment_receiver_user_id' => $paymentReceiver?->id,
+                    'payment_receiver_name' => $paymentReceiver?->name,
+                    'payment_receiver_is_company_finance' => $paymentReceiver
+                        ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
+                        : false,
                 ],
             ]
         );
@@ -146,6 +178,13 @@ class FinancialLedgerService
                 'transaction_date' => Carbon::parse($pengeluaran->tanggal)->toDateString(),
                 'created_by' => $pengeluaran->user_id,
                 'updated_by' => $actorId,
+                'status' => FinancialTransaction::STATUS_CONFIRMED,
+                'meta' => [
+                    'payment_source' => $pengeluaran->payment_source ?? 'company_cash',
+                    'borrower_id' => $pengeluaran->borrower_id,
+                    'borrower_loan_settlement_amount' => (int) ($pengeluaran->borrower_loan_settlement_amount ?? 0),
+                    'borrower_loan_settlement_action_group_key' => $pengeluaran->borrower_loan_settlement_action_group_key,
+                ],
             ]
         );
     }
@@ -178,6 +217,22 @@ class FinancialLedgerService
             ? 'Pembayaran payroll member ' . $memberName
             : 'Pembayaran payroll member #' . $payment->payroll_member_id);
 
+        $loanDeductionAmount = (float) ($payment->loan_deduction_amount ?? 0);
+        $cashPaidAmount = (float) ($payment->cash_paid_amount ?? 0);
+        if ($cashPaidAmount <= 0 && $loanDeductionAmount <= 0) {
+            $cashPaidAmount = (float) $payment->nominal;
+        }
+        $grossPayrollAmount = (float) ($payment->gross_nominal ?: $payment->nominal);
+        $query = FinancialTransaction::query()
+            ->where('source', 'payroll')
+            ->where('reference_type', PayrollMemberPayment::class)
+            ->where('reference_id', $payment->id);
+
+        if ($grossPayrollAmount <= 0) {
+            $query->delete();
+            return;
+        }
+
         FinancialTransaction::updateOrCreate(
             [
                 'source' => 'payroll',
@@ -188,13 +243,20 @@ class FinancialLedgerService
                 'type' => 'expense',
                 'category' => 'payroll',
                 'description' => $description,
-                'amount' => (float) $payment->nominal,
+                'amount' => $grossPayrollAmount,
                 'transaction_date' => Carbon::parse($payment->created_at ?? now())->toDateString(),
                 'created_by' => $actorId,
                 'updated_by' => $actorId,
+                'status' => FinancialTransaction::STATUS_CONFIRMED,
                 'meta' => [
                     'payroll_member_id' => $payment->payroll_member_id,
                     'payroll_member_name' => $memberName,
+                    'gross_nominal' => $grossPayrollAmount,
+                    'loan_handling' => $payment->loan_handling ?? 'cash',
+                    'loan_deduction_amount' => $loanDeductionAmount,
+                    'cash_paid_amount' => $cashPaidAmount,
+                    'borrower_id' => $payment->borrower_id,
+                    'borrower_loan_settlement_action_group_key' => $payment->borrower_loan_settlement_action_group_key,
                 ],
             ]
         );
@@ -213,14 +275,29 @@ class FinancialLedgerService
 
         $totalIncome = (float) FinancialTransaction::query()
             ->where('type', 'income')
+            ->where(function ($query) {
+                if (Schema::hasColumn('financial_transactions', 'status')) {
+                    $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                }
+            })
             ->sum('amount');
 
         $totalExpense = (float) FinancialTransaction::query()
             ->where('type', 'expense')
+            ->where(function ($query) {
+                if (Schema::hasColumn('financial_transactions', 'status')) {
+                    $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                }
+            })
             ->sum('amount');
 
         $adjustmentNet = (float) FinancialTransaction::query()
             ->where('type', 'adjustment')
+            ->where(function ($query) {
+                if (Schema::hasColumn('financial_transactions', 'status')) {
+                    $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                }
+            })
             ->sum('amount');
 
         $balance = $totalIncome - $totalExpense + $adjustmentNet;
@@ -249,16 +326,25 @@ class FinancialLedgerService
 
         $totalIncome = (float) FinancialTransaction::query()
             ->where('type', 'income')
+            ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+            })
             ->whereDate('transaction_date', '<=', $cutoffDate)
             ->sum('amount');
 
         $totalExpense = (float) FinancialTransaction::query()
             ->where('type', 'expense')
+            ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+            })
             ->whereDate('transaction_date', '<=', $cutoffDate)
             ->sum('amount');
 
         $adjustmentNet = (float) FinancialTransaction::query()
             ->where('type', 'adjustment')
+            ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+            })
             ->whereDate('transaction_date', '<=', $cutoffDate)
             ->sum('amount');
 

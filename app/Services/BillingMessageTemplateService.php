@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use Carbon\Carbon;
 
 class BillingMessageTemplateService
 {
@@ -27,10 +28,20 @@ class BillingMessageTemplateService
 
     public function buildPaymentConfirmationMessage(Customer $customer, bool $withAutoLabel = true): string
     {
+        $activeUntil = '-';
+        if (!empty($customer->due_date)) {
+            try {
+                $activeUntil = Carbon::parse((string) $customer->due_date)->format('d/m/Y');
+            } catch (\Throwable $exception) {
+                $activeUntil = '-';
+            }
+        }
+
         $message = "TERIMA KASIH ATAS PEMBAYARANNYA\n\n" .
             "Pelanggan yang terhormat,\n" .
             "Kami mengucapkan terima kasih karena telah melakukan pembayaran tagihan internet.\n\n" .
             "Pembayaran Anda telah kami terima dan layanan tetap aktif seperti biasa.\n" .
+            "Paket aktif sampai: " . $activeUntil . ".\n" .
             "Jika ada pertanyaan atau kendala, jangan ragu untuk menghubungi kami melalui WhatsApp ini.\n\n" .
             "Terima kasih telah mempercayakan koneksi internet Anda kepada Rumah Kita Network.\n" .
             "Semoga layanan kami selalu memenuhi kebutuhan digital Anda.\n\n" .
@@ -52,6 +63,53 @@ class BillingMessageTemplateService
             "Jam Operasional: 08:00-17:00 WIB\n\n" .
             "Terima kasih atas perhatian dan kerja samanya.\n" .
             "Salam,\n" .
+            "Tim Rumah Kita Network";
+
+        return $withAutoLabel ? $this->appendAutoLabel($message) : $message;
+    }
+
+    public function buildVerificationWelcomeMessage(Customer $customer, string $portalUrl, string $defaultPassword = 'user123', bool $withAutoLabel = true): string
+    {
+        $activeUntil = '-';
+        if (!empty($customer->due_date)) {
+            try {
+                $activeUntil = Carbon::parse((string) $customer->due_date)->format('d/m/Y');
+            } catch (\Throwable $exception) {
+                $activeUntil = '-';
+            }
+        }
+
+        $packageName = trim((string) ($customer->package_type ?? ''));
+        if ($packageName === '') {
+            $packageName = trim((string) ($customer->custom_package ?? ''));
+        }
+        if ($packageName === '') {
+            $packageName = '-';
+        }
+
+        $pppoeUsername = trim((string) ($customer->pppoe_username ?? ''));
+        if ($pppoeUsername === '') {
+            $pppoeUsername = '-';
+        }
+
+        $phone = trim((string) ($customer->phone ?? ''));
+        if ($phone === '') {
+            $phone = '-';
+        }
+
+        $message = "Selamat datang di Rumah Kita Network.\n\n" .
+            "Akun internet Anda sudah berhasil terdaftar dan layanan sudah aktif.\n\n" .
+            "Link akses dashboard pelanggan:\n" .
+            $portalUrl . "\n\n" .
+            "Informasi login pelanggan:\n" .
+            "Username PPPoE: " . $pppoeUsername . "\n" .
+            "No. HP: " . $phone . "\n" .
+            "Password awal: " . $defaultPassword . "\n\n" .
+            "Informasi paket:\n" .
+            "Paket aktif: " . $packageName . "\n" .
+            "Paket aktif sampai: " . $activeUntil . "\n\n" .
+            "Silakan login dan segera ganti password untuk keamanan akun Anda.\n\n" .
+            "Salam hangat,\n" .
             "Tim Rumah Kita Network";
 
         return $withAutoLabel ? $this->appendAutoLabel($message) : $message;

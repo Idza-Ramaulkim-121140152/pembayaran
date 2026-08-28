@@ -15,6 +15,10 @@ export function MobileRowCard({
     columns = [],
     actions = null,
     priorityFields = [],
+    cardClassName = '',
+    labelClassName = '',
+    valueClassName = '',
+    actionBarClassName = '',
 }) {
     const priority = new Set(priorityFields);
     const visibleColumns = columns.filter((column) => !column.mobileHidden);
@@ -22,9 +26,11 @@ export function MobileRowCard({
         ...visibleColumns.filter((column) => priority.has(column.key)),
         ...visibleColumns.filter((column) => !priority.has(column.key)),
     ];
+    const resolvedLabelClassName = labelClassName || 'text-slate-500';
+    const resolvedValueClassName = valueClassName || 'text-slate-800';
 
     return (
-        <article className="mobile-section">
+        <article className={`mobile-section ${cardClassName}`}>
             <dl className="space-y-2">
                 {orderedColumns.map((column) => {
                     const content = typeof column.renderMobile === 'function'
@@ -35,15 +41,15 @@ export function MobileRowCard({
 
                     return (
                         <div key={column.key || column.label} className="grid grid-cols-[minmax(90px,38%)_minmax(0,1fr)] gap-2">
-                            <dt className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">{column.label}</dt>
-                            <dd className="text-sm text-slate-800 break-words">{content}</dd>
+                            <dt className={`text-[11px] font-semibold uppercase tracking-wide ${resolvedLabelClassName}`}>{column.label}</dt>
+                            <dd className={`break-words text-sm ${resolvedValueClassName}`}>{content}</dd>
                         </div>
                     );
                 })}
             </dl>
 
             {typeof actions === 'function' ? (
-                <div className="mobile-action-bar">
+                <div className={`mobile-action-bar ${actionBarClassName}`}>
                     {actions(row)}
                 </div>
             ) : null}

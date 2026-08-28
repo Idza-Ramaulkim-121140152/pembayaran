@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 trait PaymentProofGuard
@@ -124,6 +125,39 @@ trait PaymentProofGuard
         return route('billing.invoice.payment-proof', ['invoice' => $invoice->id], false);
     }
 
+    protected function buildPublicPaymentProofUrl(?string $normalizedPath): ?string
+    {
+        if ($normalizedPath === null || $normalizedPath === '') {
+            return null;
+        }
+
+        return '/storage/' . ltrim($normalizedPath, '/');
+    }
+
+    protected function inferPaymentProofPreviewType(?string $mimeType, ?string $path): string
+    {
+        $normalizedMimeType = strtolower(trim((string) $mimeType));
+        if (str_contains($normalizedMimeType, 'image/heic') || str_contains($normalizedMimeType, 'image/heif')) {
+            return 'other';
+        }
+
+        if (str_starts_with($normalizedMimeType, 'image/')) {
+            return 'image';
+        }
+
+        if (str_contains($normalizedMimeType, 'application/pdf')) {
+            return 'pdf';
+        }
+
+        $extension = strtolower(pathinfo((string) $path, PATHINFO_EXTENSION));
+
+        return match ($extension) {
+            'jpg', 'jpeg', 'png', 'webp' => 'image',
+            'pdf' => 'pdf',
+            default => 'other',
+        };
+    }
+
     protected function appendPaymentProofAttributes(?Invoice $invoice): void
     {
         if (!$invoice) {
@@ -131,13 +165,23 @@ trait PaymentProofGuard
         }
 
         $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
-        $hasProof = $normalizedPath !== null;
+        $hasProof = $normalizedPath !== null && Storage::disk('public')->exists($normalizedPath);
         $proofUrl = $hasProof ? $this->buildPaymentProofUrl($invoice) : null;
+        $publicUrl = $hasProof ? $this->buildPublicPaymentProofUrl($normalizedPath) : null;
+        $mimeType = $hasProof ? (Storage::disk('public')->mimeType($normalizedPath) ?: null) : null;
+        $fileName = $hasProof ? basename($normalizedPath) : null;
+        $extension = $hasProof ? strtolower(pathinfo($normalizedPath, PATHINFO_EXTENSION)) : null;
+        $previewType = $hasProof ? $this->inferPaymentProofPreviewType($mimeType, $normalizedPath) : null;
 
         // Pastikan payload selalu konsisten dan tidak membawa marker invalid seperti "0".
-        $invoice->setAttribute('bukti_pembayaran', $normalizedPath);
+        $invoice->setAttribute('bukti_pembayaran', $hasProof ? $normalizedPath : null);
         $invoice->setAttribute('has_payment_proof', $hasProof);
         $invoice->setAttribute('payment_proof_url', $proofUrl);
+        $invoice->setAttribute('payment_proof_public_url', $publicUrl);
+        $invoice->setAttribute('payment_proof_mime_type', $mimeType);
+        $invoice->setAttribute('payment_proof_file_name', $fileName);
+        $invoice->setAttribute('payment_proof_extension', $extension);
+        $invoice->setAttribute('payment_proof_preview_type', $previewType);
         // Backward compatibility untuk frontend lama.
         $invoice->setAttribute('bukti_pembayaran_url', $proofUrl);
     }

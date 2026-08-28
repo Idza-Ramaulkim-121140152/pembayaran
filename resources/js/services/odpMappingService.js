@@ -7,6 +7,7 @@ const odpMappingService = {
     options: () => apiClient.get('/odps/options'),
     createOdp: (payload) => apiClient.post('/odp', payload),
     backfill: () => apiClient.post('/odp-mapping/backfill'),
+    qualityAudit: () => apiClient.get('/odp-mapping/quality-audit'),
 };
 
 export default odpMappingService;

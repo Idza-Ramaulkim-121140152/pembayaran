@@ -31,11 +31,26 @@ export const billingService = {
         apiClient.patch(`/billing/customer/${customerId}/service-package`, { package_id: packageId }),
 
     // Konfirmasi pembayaran
-    confirmPayment: (invoiceId, paidAmount, paymentReceiptOptionId = null) =>
+    confirmPayment: (
+        invoiceId,
+        paidAmount,
+        paymentReceiptOptionId = null,
+        includeInMutation = true,
+        paymentReceiverUserId = null,
+        options = {}
+    ) =>
         apiClient.post(`/billing/invoice/${invoiceId}/confirm`, {
             paid_amount: paidAmount,
             payment_receipt_option_id: paymentReceiptOptionId,
+            include_in_mutation: includeInMutation,
+            payment_receiver_user_id: paymentReceiverUserId,
+            other_receiver_confirmed: options.otherReceiverConfirmed ?? false,
+            receiver_conflict_resolution: options.receiverConflictResolution ?? null,
         }),
+
+    // Get selectable payment receivers
+    getPaymentReceivers: () =>
+        apiClient.get('/payment-receivers'),
 
     // Get active payment receipt options for receive-via selector
     getActivePaymentReceiptOptions: () =>
@@ -51,6 +66,13 @@ export const billingService = {
             responseType: 'blob',
         }),
 
+    // Fetch payment proof as base64 data URL fallback when direct image rendering fails
+    getPaymentProofPreview: (invoiceId) =>
+        apiClient.get(`/billing/invoice/${invoiceId}/payment-proof/preview`),
+
+
+    sendManagedInvoiceWhatsApp: (invoiceId) =>
+        apiClient.post(`/billing/invoice-management/${invoiceId}/send-whatsapp`),
     // Superadmin invoice management
     getInvoiceManagement: (params = {}) =>
         apiClient.get('/billing/invoice-management', { params }),

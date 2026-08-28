@@ -28,13 +28,28 @@ Schedule::command('billing:dunning-run')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
+Schedule::command('complaints:sla-watch')
+    ->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+Schedule::command('system:health-check')
+    ->everyFiveMinutes()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+Schedule::command('customer:usage-snapshot')
+    ->everyMinute()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
 Schedule::command('dashboard:prediction-snapshot')
-    ->weeklyOn(1, '00:05')
+    ->hourlyAt(5)
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
 Schedule::command('dashboard:prediction-evaluate')
-    ->weeklyOn(1, '00:15')
+    ->dailyAt('00:15')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 

@@ -39,6 +39,8 @@ class User extends Authenticatable
         'role',
         'can_confirm_payments',
         'can_edit_mutations',
+        'can_choose_payment_mutation',
+        'can_choose_payment_receiver',
         'is_employee',
         'payroll_member_id',
     ];
@@ -90,6 +92,8 @@ class User extends Authenticatable
             'password' => 'hashed',
             'can_confirm_payments' => 'boolean',
             'can_edit_mutations' => 'boolean',
+            'can_choose_payment_mutation' => 'boolean',
+            'can_choose_payment_receiver' => 'boolean',
             'is_employee' => 'boolean',
         ];
     }
@@ -109,6 +113,16 @@ class User extends Authenticatable
         return $this->isSuperAdmin() || (bool) $this->can_edit_mutations;
     }
 
+    public function canChoosePaymentMutation(): bool
+    {
+        return $this->isSuperAdmin() || (bool) $this->can_choose_payment_mutation;
+    }
+
+    public function canChoosePaymentReceiver(): bool
+    {
+        return $this->isSuperAdmin() || (bool) $this->can_choose_payment_receiver;
+    }
+
     public function accessGroups()
     {
         return $this->belongsToMany(AccessGroup::class, 'group_user_memberships')->withTimestamps();
@@ -117,5 +131,20 @@ class User extends Authenticatable
     public function permissionRules()
     {
         return $this->hasMany(UserPermissionRule::class);
+    }
+
+    public function borrowerProfile()
+    {
+        return $this->hasOne(Borrower::class, 'mapped_user_id');
+    }
+
+    public function allowedPaymentReceivers()
+    {
+        return $this->belongsToMany(
+            User::class,
+            'payment_receiver_user_mappings',
+            'user_id',
+            'receiver_user_id'
+        )->withTimestamps();
     }
 }

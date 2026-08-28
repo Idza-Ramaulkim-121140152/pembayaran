@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 
 use App\Models\Invoice;
+use App\Models\BorrowerLoan;
+use App\Models\BorrowerLoanPayment;
 use App\Models\Complaint;
 use App\Models\Customer;
 use App\Models\Package;
@@ -15,6 +17,8 @@ use App\Models\PayrollMember;
 use App\Models\PredictionRunEvaluation;
 use App\Models\User;
 use App\Services\DashboardPredictionSnapshotService;
+use App\Services\BorrowerLoanService;
+use App\Services\MonthlyBudgetService;
 use App\Services\FinancialLedgerService;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -52,11 +56,38 @@ class DashboardController extends Controller
         $projectionStart = $ranges['projection_start'] ?? $defaults['projection_start'];
         $projectionEnd = $ranges['projection_end'] ?? $defaults['projection_end'];
 
-        $managementKpis = $this->buildManagementKpis($kpiStart, $kpiEnd);
-        $revenueForecast = $this->buildRevenueForecast($forecastStart, $forecastEnd);
-        $financialProjection = $this->buildFinancialProjection($projectionStart, $projectionEnd);
-        $financialProjection['ai_assistant'] = $this->buildFinancialProjectionAssistant($financialProjection);
-        $ispIntelligence = $this->buildIspIntelligence($kpiStart, $kpiEnd);
+        $sectionWarnings = [];
+        $sectionSources = [];
+
+        $managementKpis = $this->buildPredictionSectionSafely(
+            'management_kpis',
+            fn () => $this->buildManagementKpis($kpiStart, $kpiEnd),
+            $sectionWarnings,
+            $sectionSources
+        );
+        $revenueForecast = $this->buildPredictionSectionSafely(
+            'revenue_forecast',
+            fn () => $this->buildRevenueForecast($forecastStart, $forecastEnd),
+            $sectionWarnings,
+            $sectionSources
+        );
+        $financialProjection = $this->buildPredictionSectionSafely(
+            'financial_projection',
+            fn () => $this->buildFinancialProjection($projectionStart, $projectionEnd),
+            $sectionWarnings,
+            $sectionSources
+        );
+        if (is_array($financialProjection) && is_array($financialProjection['summary'] ?? null)) {
+            $financialProjection['ai_assistant'] = $this->buildFinancialProjectionAssistant($financialProjection);
+        } else {
+            $financialProjection['ai_assistant'] = null;
+        }
+        $ispIntelligence = $this->buildPredictionSectionSafely(
+            'isp_intelligence',
+            fn () => $this->buildIspIntelligence($kpiStart, $kpiEnd),
+            $sectionWarnings,
+            $sectionSources
+        );
 
         return [
             'management_kpis' => $managementKpis,
@@ -81,13 +112,83 @@ class DashboardController extends Controller
                 'is_stale' => false,
                 'model_version' => null,
                 'data_granularity' => null,
-                'section_sources' => [],
+                'section_sources' => $sectionSources,
                 'model_bundle_version' => null,
-                'bundle_warnings' => [],
+                'bundle_warnings' => $sectionWarnings,
                 'section_completeness' => null,
                 'last_rehydrate_at' => null,
             ], $meta),
         ];
+    }
+
+    private function buildPredictionSectionSafely(
+        string $sectionKey,
+        callable $builder,
+        array &$sectionWarnings,
+        array &$sectionSources
+    ): mixed {
+        try {
+            $result = $builder();
+            $sectionSources[$sectionKey] = 'live';
+            return $result;
+        } catch (\Throwable $e) {
+            Log::warning('dashboard.prediction_bundle.section_failed', [
+                'section' => $sectionKey,
+                'error' => $e->getMessage(),
+            ]);
+
+            $sectionWarnings[] = [
+                'section' => $sectionKey,
+                'reason' => 'live_section_failed',
+            ];
+            $sectionSources[$sectionKey] = 'unavailable';
+
+            return $this->emptyPredictionSectionData($sectionKey);
+        }
+    }
+
+    private function emptyPredictionSectionData(string $sectionKey): mixed
+    {
+        return match ($sectionKey) {
+            'management_kpis' => [
+                'summary' => null,
+                'variance' => [],
+                'customer_health' => [],
+            ],
+            'revenue_forecast' => [
+                'range' => null,
+                'summary' => null,
+                'collection_adjustment' => null,
+                'historical_context' => null,
+                'daily_forecast' => [],
+            ],
+            'financial_projection' => [
+                'range' => null,
+                'summary' => null,
+                'forecast_context' => null,
+                'daily_projection' => [],
+                'mandatory_expense_projection' => [],
+                'purchase_goals' => [],
+                'ai_assistant' => null,
+            ],
+            'isp_intelligence' => [
+                'summary' => null,
+                'mikrotik' => null,
+                'service_forecast' => null,
+                'financial_forecast' => null,
+                'risk_matrix' => [],
+            ],
+            default => null,
+        };
+    }
+
+    private function hasMinimumLivePredictionBundleData(array $bundle): bool
+    {
+        return $this->hasPredictionSectionData($bundle, 'financial_projection')
+            || (
+                $this->hasPredictionSectionData($bundle, 'management_kpis')
+                && $this->hasPredictionSectionData($bundle, 'revenue_forecast')
+            );
     }
 
     private function canViewFinancialMetrics(?User $user): bool
@@ -390,6 +491,9 @@ class DashboardController extends Controller
         $user = request()->user();
         $canViewFinancialMetrics = $this->canViewFinancialMetrics($user);
         $employeePayroll = $this->buildEmployeePayrollWidget($user);
+        $borrowerLoanService = app(BorrowerLoanService::class);
+        $totalOutstandingLoans = $borrowerLoanService->totalOutstanding();
+        $currentBorrower = $borrowerLoanService->borrowerForUser($user);
 
         // Ringkasan pendapatan bulan ini
         $now = Carbon::now();
@@ -444,41 +548,65 @@ class DashboardController extends Controller
             if ($this->isLedgerReady()) {
                 $monthlyRevenue = (float) FinancialTransaction::query()
                     ->where('type', 'income')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
                     ->sum('amount');
 
                 $monthlyIncomeForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'income')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
                     ->sum('amount');
 
                 $monthlyExpenseForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'expense')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
                     ->sum('amount');
 
                 $monthlyAdjustmentForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'adjustment')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
                     ->sum('amount');
 
                 $lastMonthIncomeForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'income')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
                     ->sum('amount');
 
                 $lastMonthExpenseForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'expense')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
                     ->sum('amount');
 
                 $lastMonthAdjustmentForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'adjustment')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
                     ->sum('amount');
 
                 $lastMonthIncomeForComparison = (float) FinancialTransaction::query()
                     ->where('type', 'income')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                        $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                    })
                     ->whereBetween('transaction_date', [$lastMonthStart->toDateString(), $lastMonthEnd->toDateString()])
                     ->sum('amount');
 
@@ -489,11 +617,17 @@ class DashboardController extends Controller
 
                     $incomeByMonth[5 - $i] = (int) round((float) FinancialTransaction::query()
                         ->where('type', 'income')
+                        ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                            $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                        })
                         ->whereBetween('transaction_date', [$start->toDateString(), $end->toDateString()])
                         ->sum('amount'));
 
                     $expenseByMonth[5 - $i] = (int) round((float) FinancialTransaction::query()
                         ->where('type', 'expense')
+                        ->when(Schema::hasColumn('financial_transactions', 'status'), function ($query) {
+                            $query->where('status', FinancialTransaction::STATUS_CONFIRMED);
+                        })
                         ->whereBetween('transaction_date', [$start->toDateString(), $end->toDateString()])
                         ->sum('amount'));
                 }
@@ -699,7 +833,33 @@ class DashboardController extends Controller
                 'incident_open_count' => $incidentOpenCount,
             ],
             'alerts' => $alerts,
+            'loan_summary' => [
+                'total_outstanding' => (float) $totalOutstandingLoans,
+                'pending_receipts' => Schema::hasTable('financial_transactions') && Schema::hasColumn('financial_transactions', 'status')
+                    ? (float) FinancialTransaction::query()
+                        ->where('type', 'income')
+                        ->where('status', FinancialTransaction::STATUS_PENDING)
+                        ->sum('amount')
+                    : 0.0,
+            ],
         ];
+
+        if ($currentBorrower) {
+            $payload['borrower_debts'] = $currentBorrower->loans()
+                ->whereIn('status', ['outstanding', 'rejected_by_receiver'])
+                ->with(['invoice:id,invoice_link,customer_id', 'confirmedBy:id,name'])
+                ->orderByDesc('occurred_at')
+                ->get()
+                ->map(function ($loan) {
+                    return [
+                        ...$loan->toArray(),
+                        'outstanding_amount' => max(0, (int) $loan->amount - (int) $loan->settled_amount),
+                    ];
+                })
+                ->values();
+        } else {
+            $payload['borrower_debts'] = [];
+        }
 
         if ($canViewFinancialMetrics) {
             $payload['monthly_revenue'] = $monthlyRevenue;
@@ -711,7 +871,7 @@ class DashboardController extends Controller
             $payload['expense_by_month'] = $expenseByMonth;
             $payload['monthly_finance'] = $monthlyFinance;
             $payload['finance_summary'] = $financeSummary;
-            $cashBalance = (float) ($financeSummary['balance'] ?? 0);
+            $cashBalance = (float) ($financeSummary['balance'] ?? 0) - $totalOutstandingLoans;
             $monthExpenseValue = (float) ($monthlyFinance['current_month']['expense'] ?? 0);
             $elapsedDayOfMonth = max(1, (int) $now->day);
             $avgDailyExpense = $monthExpenseValue > 0 ? $monthExpenseValue / $elapsedDayOfMonth : 0.0;
@@ -1029,6 +1189,10 @@ class DashboardController extends Controller
         }
 
         $projectionData = $this->buildFinancialProjection($startDate, $endDate);
+        $projectionData = array_merge(
+            $projectionData,
+            app(MonthlyBudgetService::class)->buildInsights($startDate->copy(), $endDate->copy(), $projectionData)
+        );
         $projectionData['ai_assistant'] = $this->buildFinancialProjectionAssistant($projectionData);
         $this->logFinancialProjectionDebug(
             $request,
@@ -1167,34 +1331,90 @@ class DashboardController extends Controller
             }
 
             $coverage = $this->summarizePredictionSectionCompleteness($bundle);
+            $snapshotAgeMinutes = $snapshot?->generated_at?->diffInMinutes(now());
+            $snapshotFreshness = $this->resolvePredictionSnapshotFreshness($snapshot);
+            $availabilityStatus = ($coverage['percent'] ?? 0) >= 100
+                ? ($snapshotFreshness === 'fresh' ? 'healthy' : 'degraded')
+                : 'degraded';
             data_set($bundle, 'meta.section_sources', $sectionSources);
-            data_set($bundle, 'meta.bundle_warnings', []);
+            data_set($bundle, 'meta.bundle_warnings', $snapshotFreshness === 'fresh' ? [] : [[
+                'section' => 'bundle',
+                'reason' => $snapshotFreshness,
+            ]]);
             data_set($bundle, 'meta.section_completeness', $coverage);
-            data_set($bundle, 'meta.snapshot_status', $coverage['percent'] >= 100 ? 'ready_complete' : 'model_unavailable');
+            data_set($bundle, 'meta.snapshot_status', $coverage['percent'] >= 100 ? 'ready_complete' : 'degraded');
             data_set($bundle, 'meta.latest_7d_accuracy', $latestAccuracyMeta);
             data_set($bundle, 'meta.latest_model_version', $latestModelMeta['model_version'] ?? null);
             data_set($bundle, 'meta.latest_retrain_at', $latestAccuracyMeta['latest_retrain_at'] ?? null);
-
-            if (($coverage['percent'] ?? 0) < 100) {
-                return response()->json([
-                    'code' => 'model_unavailable',
-                    'message' => 'Model prediksi belum siap atau data model belum lengkap.',
-                    'last_model_meta' => $latestModelMeta,
-                    'latest_7d_accuracy' => $latestAccuracyMeta,
-                ], 503);
-            }
+            data_set($bundle, 'meta.source_mode', $snapshotFreshness === 'fresh' ? 'snapshot' : 'stale_snapshot');
+            data_set($bundle, 'meta.snapshot_age_minutes', $snapshotAgeMinutes);
+            data_set($bundle, 'meta.worker_status', $latestModelMeta['worker_status'] ?? null);
+            data_set($bundle, 'meta.availability_status', $availabilityStatus);
+            data_set($bundle, 'meta.failure_reason', ($coverage['percent'] ?? 0) >= 100 ? ($snapshotFreshness === 'fresh' ? null : $snapshotFreshness) : 'incomplete_sections');
 
             return response()->json([
                 'data' => $bundle,
             ]);
         }
 
-        return response()->json([
-            'code' => 'model_unavailable',
-            'message' => 'Snapshot model prediksi belum tersedia.',
-            'last_model_meta' => $latestModelMeta,
-            'latest_7d_accuracy' => $latestAccuracyMeta,
-        ], 503);
+        try {
+            $liveBundle = $this->buildPredictionBundleData();
+            data_set($liveBundle, 'meta.snapshot_status', 'live_fallback');
+            data_set($liveBundle, 'meta.source_mode', 'live_fallback');
+            data_set($liveBundle, 'meta.snapshot_age_minutes', null);
+            data_set($liveBundle, 'meta.worker_status', $latestModelMeta['worker_status'] ?? 'live_fallback');
+            data_set($liveBundle, 'meta.availability_status', 'fallback_live');
+            data_set($liveBundle, 'meta.failure_reason', 'snapshot_unavailable');
+            data_set($liveBundle, 'meta.latest_7d_accuracy', $latestAccuracyMeta);
+            data_set($liveBundle, 'meta.latest_model_version', $latestModelMeta['model_version'] ?? null);
+            data_set($liveBundle, 'meta.latest_retrain_at', $latestAccuracyMeta['latest_retrain_at'] ?? null);
+            data_set($liveBundle, 'meta.bundle_warnings', array_merge([[
+                'section' => 'bundle',
+                'reason' => 'live_fallback',
+            ]], (array) data_get($liveBundle, 'meta.bundle_warnings', [])));
+            data_set($liveBundle, 'meta.section_completeness', $this->summarizePredictionSectionCompleteness($liveBundle));
+
+            if (!$this->hasMinimumLivePredictionBundleData($liveBundle)) {
+                return response()->json([
+                    'code' => 'model_unavailable',
+                    'message' => 'Sumber prediksi utama belum bisa diproses saat ini.',
+                    'last_model_meta' => $latestModelMeta,
+                    'latest_7d_accuracy' => $latestAccuracyMeta,
+                    'failure_reason' => 'live_fallback_minimum_unavailable',
+                ], 503);
+            }
+
+            return response()->json([
+                'data' => $liveBundle,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'code' => 'model_unavailable',
+                'message' => 'Snapshot model prediksi belum tersedia dan fallback live gagal diproses.',
+                'last_model_meta' => $latestModelMeta,
+                'latest_7d_accuracy' => $latestAccuracyMeta,
+                'failure_reason' => 'live_fallback_failed',
+            ], 503);
+        }
+    }
+
+    private function resolvePredictionSnapshotFreshness(?\App\Models\DashboardPredictionSnapshot $snapshot): string
+    {
+        if (!$snapshot || !$snapshot->generated_at) {
+            return 'expired';
+        }
+
+        $ageMinutes = $snapshot->generated_at->diffInMinutes(now());
+
+        if ($ageMinutes <= 90) {
+            return 'fresh';
+        }
+
+        if ($ageMinutes <= 24 * 60) {
+            return 'stale';
+        }
+
+        return 'expired';
     }
 
     private function predictionCoverageSectionKeys(): array
@@ -2782,11 +3002,13 @@ class DashboardController extends Controller
         foreach ($selectedRows as $index => $row) {
             $dateKey = (string) ($row['date'] ?? '');
             $chartBalance = (float) ($row['chart_balance'] ?? $row['projected_balance'] ?? 0);
+            $availableCash = (float) ($row['available_cash'] ?? 0);
+            $availableCashAfterReserve = (float) ($row['available_cash_after_reserve'] ?? $availableCash);
             $pendingMandatory = (float) ($row['pending_mandatory_unconfirmed_total'] ?? 0);
             $confirmedAllocationAccumulated = (float) ($row['confirmed_monthly_allocation_accumulated'] ?? 0);
-            $baseDiscretionary = array_key_exists('discretionary_balance_display', $row)
-                ? (float) ($row['discretionary_balance_display'] ?? 0)
-                : max(0.0, (0.9 * $chartBalance) - $pendingMandatory - $confirmedAllocationAccumulated);
+            $baseDiscretionary = array_key_exists('discretionary_balance_available_cash', $row)
+                ? (float) ($row['discretionary_balance_available_cash'] ?? 0)
+                : max(0.0, $availableCashAfterReserve - $pendingMandatory - $confirmedAllocationAccumulated);
             $effectivePurchaseImpact = $index >= 0 ? $purchaseSafeImpact : 0.0;
             $adjustedDiscretionary = $baseDiscretionary - $effectivePurchaseImpact;
 
@@ -2799,7 +3021,8 @@ class DashboardController extends Controller
             $trace[] = [
                 'date' => $dateKey,
                 'chart_balance' => (int) round($chartBalance),
-                'safe_balance' => (int) round(0.9 * $chartBalance),
+                'available_cash' => (int) round($availableCash),
+                'available_cash_after_reserve' => (int) round($availableCashAfterReserve),
                 'pending_mandatory' => (int) round($pendingMandatory),
                 'confirmed_monthly_allocation_accumulated' => (int) round($confirmedAllocationAccumulated),
                 'discretionary_before_purchase' => (int) round($baseDiscretionary),
@@ -2819,6 +3042,91 @@ class DashboardController extends Controller
                 : 'Saldo bebas diproyeksikan negatif sebelum periode berakhir.',
             'daily_trace' => $trace,
         ];
+    }
+
+    private function buildLoanDailyImpactMap(Carbon $startDate, Carbon $endDate): array
+    {
+        $rows = [];
+        for ($cursor = $startDate->copy()->startOfDay(); $cursor->lte($endDate->copy()->startOfDay()); $cursor->addDay()) {
+            $rows[$cursor->toDateString()] = [
+                'opening_outstanding' => 0.0,
+                'new_loans' => 0.0,
+                'settlements' => 0.0,
+                'closing_outstanding' => 0.0,
+                'projected_loan_change' => 0.0,
+            ];
+        }
+
+        if (!Schema::hasTable('borrower_loans')) {
+            return $rows;
+        }
+
+        $excludedStatuses = [BorrowerLoan::STATUS_PENDING_RECEIVER_APPROVAL];
+        $loanRows = BorrowerLoan::query()
+            ->selectRaw('DATE(occurred_at) as loan_date, SUM(amount) as total_amount')
+            ->whereDate('occurred_at', '>=', $startDate->toDateString())
+            ->whereDate('occurred_at', '<=', $endDate->toDateString())
+            ->whereNotIn('status', $excludedStatuses)
+            ->groupBy('loan_date')
+            ->pluck('total_amount', 'loan_date');
+
+        $settlementRows = Schema::hasTable('borrower_loan_payments')
+            ? BorrowerLoanPayment::query()
+                ->selectRaw('payment_date, SUM(amount) as total_amount')
+                ->whereBetween('payment_date', [$startDate->toDateString(), $endDate->toDateString()])
+                ->groupBy('payment_date')
+                ->pluck('total_amount', 'payment_date')
+            : collect();
+
+        $runningOutstanding = $this->outstandingLoanAsOf($startDate->copy()->subDay()->endOfDay());
+
+        foreach (array_keys($rows) as $dateKey) {
+            $newLoans = (float) ($loanRows[$dateKey] ?? 0);
+            $settlements = (float) ($settlementRows[$dateKey] ?? 0);
+            $closingOutstanding = max(0, $runningOutstanding + $newLoans - $settlements);
+
+            $rows[$dateKey] = [
+                'opening_outstanding' => $runningOutstanding,
+                'new_loans' => $newLoans,
+                'settlements' => $settlements,
+                'closing_outstanding' => $closingOutstanding,
+                'projected_loan_change' => $settlements - $newLoans,
+            ];
+
+            $runningOutstanding = $closingOutstanding;
+        }
+
+        return $rows;
+    }
+
+    private function outstandingLoanAsOf(Carbon $asOf): float
+    {
+        if (!Schema::hasTable('borrower_loans')) {
+            return 0.0;
+        }
+
+        $loans = BorrowerLoan::query()
+            ->whereDate('occurred_at', '<=', $asOf->toDateString())
+            ->whereNotIn('status', [BorrowerLoan::STATUS_PENDING_RECEIVER_APPROVAL])
+            ->get(['id', 'amount']);
+
+        if ($loans->isEmpty()) {
+            return 0.0;
+        }
+
+        $paymentsByLoan = Schema::hasTable('borrower_loan_payments')
+            ? BorrowerLoanPayment::query()
+                ->whereIn('borrower_loan_id', $loans->pluck('id'))
+                ->whereDate('payment_date', '<=', $asOf->toDateString())
+                ->get(['borrower_loan_id', 'amount'])
+                ->groupBy('borrower_loan_id')
+            : collect();
+
+        return (float) $loans->sum(function (BorrowerLoan $loan) use ($paymentsByLoan) {
+            $paid = (float) collect($paymentsByLoan->get($loan->id, []))->sum('amount');
+
+            return max(0, (float) $loan->amount - $paid);
+        });
     }
 
     private function buildFinancialProjection(Carbon $startDate, Carbon $endDate, bool $evaluatePurchaseGoals = true): array
@@ -2913,6 +3221,16 @@ class DashboardController extends Controller
             }
 
             $dailyForecastIncomeMap[$date] = (float) ($item['predicted_revenue'] ?? 0);
+        }
+
+        $loanDailyImpactMap = $this->buildLoanDailyImpactMap($rangeStart->copy(), $rangeEnd->copy());
+        $minimumCashReserveTarget = 0.0;
+        $monthlyBudgetService = app(MonthlyBudgetService::class);
+        if ($monthlyBudgetService->isReady()) {
+            $monthlyBudget = $monthlyBudgetService->findByMonth($rangeStart->format('Y-m'));
+            $reserveItem = collect($monthlyBudgetService->serializeBudget($monthlyBudget, $rangeStart->format('Y-m'))['items'] ?? [])
+                ->firstWhere('category_key', MonthlyBudgetService::CATEGORY_MINIMUM_CASH_RESERVE);
+            $minimumCashReserveTarget = (float) ($reserveItem['target_amount'] ?? 0);
         }
 
         $cash = $openingBalance;
@@ -3030,6 +3348,11 @@ class DashboardController extends Controller
                 'projected_balance' => (int) round($cash),
                 '__projected_balance_raw' => $cash,
                 '__mandatory_expense_raw' => $mandatorySpentToday,
+                '__loan_opening_outstanding_raw' => (float) data_get($loanDailyImpactMap, $dateKey . '.opening_outstanding', 0),
+                '__loan_new_loans_raw' => (float) data_get($loanDailyImpactMap, $dateKey . '.new_loans', 0),
+                '__loan_settlements_raw' => (float) data_get($loanDailyImpactMap, $dateKey . '.settlements', 0),
+                '__loan_closing_outstanding_raw' => (float) data_get($loanDailyImpactMap, $dateKey . '.closing_outstanding', 0),
+                '__projected_loan_change_raw' => (float) data_get($loanDailyImpactMap, $dateKey . '.projected_loan_change', 0),
             ];
         }
 
@@ -3043,8 +3366,21 @@ class DashboardController extends Controller
             $engineDiscretionaryBalance = (int) round($projectedBalanceRaw - $pendingStock);
             $dailyProjection[$index]['discretionary_balance_engine'] = $engineDiscretionaryBalance;
             $dailyProjection[$index]['discretionary_balance'] = $engineDiscretionaryBalance;
+            $dailyProjection[$index]['loan_opening_outstanding'] = (int) round((float) ($dailyProjection[$index]['__loan_opening_outstanding_raw'] ?? 0));
+            $dailyProjection[$index]['loan_new_loans'] = (int) round((float) ($dailyProjection[$index]['__loan_new_loans_raw'] ?? 0));
+            $dailyProjection[$index]['loan_settlements'] = (int) round((float) ($dailyProjection[$index]['__loan_settlements_raw'] ?? 0));
+            $dailyProjection[$index]['loan_outstanding'] = (int) round((float) ($dailyProjection[$index]['__loan_closing_outstanding_raw'] ?? 0));
+            $dailyProjection[$index]['projected_loan_change'] = (int) round((float) ($dailyProjection[$index]['__projected_loan_change_raw'] ?? 0));
 
-            unset($dailyProjection[$index]['__projected_balance_raw'], $dailyProjection[$index]['__mandatory_expense_raw']);
+            unset(
+                $dailyProjection[$index]['__projected_balance_raw'],
+                $dailyProjection[$index]['__mandatory_expense_raw'],
+                $dailyProjection[$index]['__loan_opening_outstanding_raw'],
+                $dailyProjection[$index]['__loan_new_loans_raw'],
+                $dailyProjection[$index]['__loan_settlements_raw'],
+                $dailyProjection[$index]['__loan_closing_outstanding_raw'],
+                $dailyProjection[$index]['__projected_loan_change_raw']
+            );
         }
 
         $coveredMandatory = collect($mandatoryExpenseProjection)->where('can_cover', true)->count();
@@ -3163,21 +3499,32 @@ class DashboardController extends Controller
         foreach ($dailyProjection as $index => $row) {
             $dateKey = (string) ($row['date'] ?? '');
             $chartBalance = (float) ($row['chart_balance'] ?? $row['projected_balance'] ?? 0);
+            $loanOutstanding = (float) ($row['loan_outstanding'] ?? 0);
             $pendingMandatoryReserve = (float) ($row['pending_mandatory_unconfirmed_total'] ?? $row['remaining_mandatory_reserve'] ?? 0);
             $confirmedMonthlyAllocationDaily = (float) ($confirmedMonthlyAllocationDailyMap[$dateKey] ?? 0);
             $confirmedMonthlyAllocationAccumulated = (float) ($confirmedMonthlyAllocationStockMap[$dateKey] ?? 0);
-            $displayDiscretionary = max(
-                0.0,
-                (0.9 * $chartBalance) - $pendingMandatoryReserve - $confirmedMonthlyAllocationAccumulated
-            );
+            $availableCash = $chartBalance - $loanOutstanding;
+            $availableCashAfterReserve = $availableCash - $minimumCashReserveTarget;
+            $displayDiscretionary = max(0.0, $availableCashAfterReserve - $pendingMandatoryReserve - $confirmedMonthlyAllocationAccumulated);
+            $ledgerDiscretionary = max(0.0, (0.9 * $chartBalance) - $pendingMandatoryReserve - $confirmedMonthlyAllocationAccumulated);
 
             $dailyProjection[$index]['confirmed_monthly_allocation_daily'] = (int) round($confirmedMonthlyAllocationDaily);
             $dailyProjection[$index]['confirmed_monthly_allocation_accumulated'] = (int) round($confirmedMonthlyAllocationAccumulated);
             $dailyProjection[$index]['pending_mandatory_unconfirmed_total'] = (int) round($pendingMandatoryReserve);
+            $dailyProjection[$index]['available_cash'] = (int) round($availableCash);
+            $dailyProjection[$index]['available_cash_after_reserve'] = (int) round($availableCashAfterReserve);
+            $dailyProjection[$index]['minimum_cash_reserve_target'] = (int) round($minimumCashReserveTarget);
+            $dailyProjection[$index]['discretionary_balance_ledger'] = (int) round($ledgerDiscretionary);
+            $dailyProjection[$index]['discretionary_balance_available_cash'] = (int) round($displayDiscretionary);
             $dailyProjection[$index]['discretionary_balance_display'] = (int) round($displayDiscretionary);
         }
 
         $coverageNow = $this->computeCoverageSimulation($dailyProjection, $simulationAnchorDate, 0);
+        $todayProjectionRow = collect($dailyProjection)->firstWhere('date', $todayDateKey);
+        $endingProjectionRow = count($dailyProjection) > 0 ? $dailyProjection[count($dailyProjection) - 1] : [];
+        $actualBalanceTodayAvailableCash = (float) ($todayProjectionRow['available_cash'] ?? ($actualBalanceToday - $this->outstandingLoanAsOf($today->copy()->endOfDay())));
+        $projectedEndingAvailableCash = (float) ($endingProjectionRow['available_cash'] ?? ($cash - $this->outstandingLoanAsOf($rangeEnd->copy()->endOfDay())));
+        $loanOutstandingToday = (float) ($todayProjectionRow['loan_outstanding'] ?? $this->outstandingLoanAsOf($today->copy()->endOfDay()));
 
         return [
             'range' => [
@@ -3194,9 +3541,14 @@ class DashboardController extends Controller
                 'mandatory_shortfall_total' => (int) round($mandatoryShortfallTotal),
                 'net_after_mandatory' => (int) round($predictedIncomeTotal - $mandatoryExpenseTotal),
                 'projected_ending_balance' => (int) round($cash),
+                'projected_ending_balance_ledger' => (int) round($cash),
+                'projected_ending_balance_available_cash' => (int) round($projectedEndingAvailableCash),
                 'actual_balance_today' => (int) round($actualBalanceToday),
+                'actual_balance_today_available_cash' => (int) round($actualBalanceTodayAvailableCash),
                 'actual_balance_today_date' => $actualBalanceTodayDate,
                 'actual_balance_today_source' => $actualBalanceTodaySource,
+                'loan_outstanding_today' => (int) round($loanOutstandingToday),
+                'minimum_cash_reserve_target' => (int) round($minimumCashReserveTarget),
                 'real_daily_income' => (int) round($realDailyIncome),
                 'real_daily_income_date' => $todayDateKey,
                 'real_daily_income_source' => $realDailyIncomeSource,
@@ -3354,7 +3706,7 @@ class DashboardController extends Controller
 
             $dailyRow = $dailyProjection->get($dueDateKey);
             $totalBefore = (float) (($dailyRow['chart_balance'] ?? $dailyRow['projected_balance'] ?? 0));
-            $freeBefore = (float) ($dailyRow['discretionary_balance_display'] ?? 0);
+            $freeBefore = (float) ($dailyRow['discretionary_balance_available_cash'] ?? $dailyRow['discretionary_balance_display'] ?? 0);
             $totalAfter = $totalBefore - $targetAmount;
             $freeAfter = $freeBefore - $targetAmount;
             $mandatoryAmount = (float) $rows->sum(function ($row) {

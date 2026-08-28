@@ -25,7 +25,7 @@ class IncidentPublisherService
                 'affected_odp' => $incident->odps->pluck('nama')->implode(', '),
                 'start_time' => $incident->started_at,
                 'end_time' => $incident->resolved_at,
-                'is_active' => $incident->status === 'open',
+                'is_active' => $incident->status !== 'resolved',
                 'created_by' => $userId,
             ]
         );

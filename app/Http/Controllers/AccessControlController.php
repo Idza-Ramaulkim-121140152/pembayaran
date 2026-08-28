@@ -6,6 +6,7 @@ use App\Models\AccessGroup;
 use App\Models\PermissionAuditLog;
 use App\Models\PermissionKey;
 use App\Models\RolePermissionRule;
+use App\Models\SystemAuditLog;
 use App\Models\User;
 use App\Models\UserPermissionRule;
 use App\Services\AccessPolicyService;
@@ -456,6 +457,19 @@ class AccessControlController extends Controller
             'new_effect' => $newEffect,
             'meta' => $meta,
             'created_at' => now(),
+        ]);
+
+        SystemAuditLog::create([
+            'event_type' => 'access_policy.' . $action,
+            'subject_type' => $subjectType,
+            'subject_id' => $subjectId,
+            'actor_id' => auth()->id(),
+            'payload' => [
+                'permission_key' => $permissionKey,
+                'old_effect' => $oldEffect,
+                'new_effect' => $newEffect,
+                'meta' => $meta,
+            ],
         ]);
     }
 }

@@ -1392,23 +1392,8 @@ class MikroTikService
             ]);
             
             \Log::info('Profile changed to Isolir', ['username' => $username]);
-            
-            // Disconnect active PPPoE session if exists
-            try {
-                $activeSessions = $this->command('/ppp/active/print');
-                foreach ($activeSessions as $session) {
-                    if (isset($session['name']) && $session['name'] === $username) {
-                        $sessionId = $session['.id'] ?? null;
-                        if ($sessionId) {
-                            $this->command('/ppp/active/remove', ['.id' => $sessionId]);
-                            \Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
-                        }
-                    }
-                }
-            } catch (Exception $e) {
-                \Log::warning('Failed to disconnect active session', ['error' => $e->getMessage()]);
-                // Continue even if disconnect fails
-            }
+
+            $this->disconnectActiveSession($username);
             
             return [
                 'success' => true,
@@ -1451,6 +1436,8 @@ class MikroTikService
             ]);
             
             \Log::info('Profile restored', ['username' => $username, 'new_profile' => $targetProfile]);
+
+            $this->disconnectActiveSession($username);
             
             return [
                 'success' => true,
@@ -1464,6 +1451,27 @@ class MikroTikService
                 'error' => $e->getMessage()
             ]);
             throw $e;
+        }
+    }
+
+    private function disconnectActiveSession(string $username): void
+    {
+        try {
+            $activeSessions = $this->command('/ppp/active/print');
+            foreach ($activeSessions as $session) {
+                if (isset($session['name']) && $session['name'] === $username) {
+                    $sessionId = $session['.id'] ?? null;
+                    if ($sessionId) {
+                        $this->command('/ppp/active/remove', ['.id' => $sessionId]);
+                        \Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            \Log::warning('Failed to disconnect active session', [
+                'username' => $username,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 

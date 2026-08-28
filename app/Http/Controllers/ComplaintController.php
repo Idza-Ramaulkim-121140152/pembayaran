@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Complaint;
 use App\Models\ComplaintCauseCategory;
 use App\Services\AuditLogService;
+use App\Services\ComplaintSlaService;
 use App\Services\FeatureService;
 use App\Services\TicketingService;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ class ComplaintController extends Controller
         private TicketingService $ticketingService,
         private FeatureService $featureService,
         private AuditLogService $auditLogService,
+        private ComplaintSlaService $complaintSlaService,
     ) {
     }
 
@@ -297,6 +299,80 @@ class ComplaintController extends Controller
     {
         return response()->json([
             'data' => ComplaintCauseCategory::query()->orderBy('name')->get(),
+        ]);
+    }
+
+    public function slaLive()
+    {
+        if (!$this->featureService->enabled('sla_board_v1')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        return response()->json([
+            'data' => $this->complaintSlaService->liveBoard(),
+        ]);
+    }
+
+    public function reply(Request $request, Complaint $complaint)
+    {
+        if (!$this->featureService->enabled('sla_board_v1')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        $validated = $request->validate([
+            'message' => 'required|string|max:2000',
+        ]);
+
+        if (!$complaint->first_response_at) {
+            $complaint->first_response_at = now();
+        }
+
+        $complaint->admin_response = $validated['message'];
+        $complaint->last_activity_at = now();
+        if ($complaint->status === 'pending') {
+            $complaint->status = 'in_progress';
+        }
+        $complaint->save();
+
+        $this->ticketingService->logEvent($complaint, 'reply', $validated['message'], false, auth()->id());
+        $this->auditLogService->log('ticket.public_reply', $complaint, [], auth()->id());
+
+        return response()->json([
+            'message' => 'Balasan publik berhasil dikirim.',
+            'complaint' => $complaint->fresh(['customer', 'assignee', 'events.creator']),
+        ]);
+    }
+
+    public function escalate(Request $request, Complaint $complaint)
+    {
+        if (!$this->featureService->enabled('sla_board_v1')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'required|string|max:1000',
+            'assigned_to' => 'nullable|integer|exists:users,id',
+        ]);
+
+        $complaint->priority = 'high';
+        if (!empty($validated['assigned_to'])) {
+            $complaint->assigned_to = (int) $validated['assigned_to'];
+        }
+        if ($complaint->status === 'pending') {
+            $complaint->status = 'in_progress';
+        }
+        $complaint->last_activity_at = now();
+        $complaint->save();
+
+        $this->ticketingService->logEvent($complaint, 'comment', 'Eskalasi: ' . $validated['reason'], true, auth()->id(), [
+            'action' => 'escalated',
+            'assigned_to' => $validated['assigned_to'] ?? null,
+        ]);
+        $this->auditLogService->log('ticket.escalated', $complaint, ['reason' => $validated['reason']], auth()->id());
+
+        return response()->json([
+            'message' => 'Tiket berhasil dieskalasi.',
+            'complaint' => $complaint->fresh(['customer', 'assignee', 'events.creator']),
         ]);
     }
 }

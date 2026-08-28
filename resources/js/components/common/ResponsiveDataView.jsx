@@ -22,6 +22,17 @@ export function ResponsiveDataView({
     tableClassName = 'w-full text-sm',
     cardContainerClassName = 'mobile-stack md:hidden',
     rowClassName = null,
+    headClassName = 'bg-gray-50 border-b border-gray-100',
+    bodyClassName = 'divide-y divide-gray-100',
+    emptyDesktopClassName = 'px-4 py-8 text-center text-gray-500',
+    mobileCardClassName = '',
+    mobileLabelClassName = '',
+    mobileValueClassName = '',
+    mobileEmptyClassName = '',
+    mobileActionBarClassName = '',
+    rowHoverClassName = 'hover:bg-gray-50',
+    actionsHeaderClassName = 'px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider',
+    actionsCellClassName = 'px-4 py-3 text-sm text-gray-800',
 }) {
     const keyForRow = (row, index) => resolveValue(row, keyField) ?? `${index}-${JSON.stringify(row)}`;
 
@@ -29,7 +40,7 @@ export function ResponsiveDataView({
         <>
             <div className={cardContainerClassName}>
                 {rows.length === 0 ? (
-                    <div className="mobile-section text-sm text-slate-500 text-center">{emptyMessage}</div>
+                    <div className={`mobile-section text-center text-sm ${mobileEmptyClassName || 'text-slate-500'}`}>{emptyMessage}</div>
                 ) : (
                     rows.map((row, index) => (
                         <MobileRowCard
@@ -38,6 +49,10 @@ export function ResponsiveDataView({
                             columns={columns}
                             actions={actions}
                             priorityFields={priorityFields}
+                            cardClassName={mobileCardClassName}
+                            labelClassName={mobileLabelClassName}
+                            valueClassName={mobileValueClassName}
+                            actionBarClassName={mobileActionBarClassName}
                         />
                     ))
                 )}
@@ -45,7 +60,7 @@ export function ResponsiveDataView({
 
             <div className={`hidden md:block ${desktopWrapperClassName}`}>
                 <table className={tableClassName}>
-                    <thead className="bg-gray-50 border-b border-gray-100">
+                    <thead className={headClassName}>
                         <tr>
                             {columns.map((column) => (
                                 <th key={column.key || column.label} className={column.headerClassName || 'px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider'}>
@@ -53,14 +68,14 @@ export function ResponsiveDataView({
                                 </th>
                             ))}
                             {actions ? (
-                                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
+                                <th className={actionsHeaderClassName}>Aksi</th>
                             ) : null}
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className={bodyClassName}>
                         {rows.length === 0 ? (
                             <tr>
-                                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-8 text-center text-gray-500">
+                                <td colSpan={columns.length + (actions ? 1 : 0)} className={emptyDesktopClassName}>
                                     {emptyMessage}
                                 </td>
                             </tr>
@@ -68,7 +83,7 @@ export function ResponsiveDataView({
                             rows.map((row, index) => (
                                 <tr
                                     key={keyForRow(row, index)}
-                                    className={`${typeof rowClassName === 'function' ? (rowClassName(row, index) || '') : (rowClassName || '')} hover:bg-gray-50 transition-colors`}
+                                    className={`${typeof rowClassName === 'function' ? (rowClassName(row, index) || '') : (rowClassName || '')} ${rowHoverClassName} transition-colors`}
                                 >
                                     {columns.map((column) => {
                                         const content = typeof column.render === 'function'
@@ -81,7 +96,7 @@ export function ResponsiveDataView({
                                         );
                                     })}
                                     {actions ? (
-                                        <td className="px-4 py-3 text-sm text-gray-800">{actions(row, index)}</td>
+                                        <td className={actionsCellClassName}>{actions(row, index)}</td>
                                     ) : null}
                                 </tr>
                             ))

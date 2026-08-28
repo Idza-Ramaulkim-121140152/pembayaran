@@ -4,10 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
     @auth
     <meta name="user-name" content="{{ auth()->user()->name }}">
     @endauth
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2060193879936074" crossorigin="anonymous"></script>
     <title>Sistem Pembayaran</title>
 
     @viteReactRefresh
@@ -18,9 +18,13 @@
     @auth
     <script>
         window.appUser = @json(auth()->user()->name);
+        window.appUserId = @json(auth()->id());
         window.appUserRole = @json(auth()->user()->role);
         window.appUserEmail = @json(auth()->user()->email);
         window.appCanEditMutations = @json(auth()->user()->canEditMutations());
+        window.appCanChoosePaymentMutation = @json(auth()->user()->canChoosePaymentMutation());
+        window.appCanChoosePaymentReceiver = @json(auth()->user()->canChoosePaymentReceiver());
+        window.appCanManageCustomerWifi = @json(app(\App\Services\AccessPolicyService::class)->has(auth()->user(), 'customer.wifi.manage'));
         window.isAuthenticated = true;
     </script>
     @else

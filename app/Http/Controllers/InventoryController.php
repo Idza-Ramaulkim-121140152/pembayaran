@@ -6,7 +6,11 @@ use App\Models\InventoryDebt;
 use App\Models\InventoryItem;
 use App\Models\InventoryItemType;
 use App\Models\InventoryMovement;
+use App\Models\Borrower;
 use App\Models\SiteSetting;
+use App\Services\BorrowerLoanService;
+use App\Services\FinancialLedgerService;
+use App\Services\InstallationPricingService;
 use App\Services\InventoryMovementSyncService;
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
@@ -23,6 +27,9 @@ class InventoryController extends Controller
     public function __construct(
         private InventoryService $inventoryService,
         private InventoryMovementSyncService $movementSyncService,
+        private InstallationPricingService $installationPricingService,
+        private BorrowerLoanService $borrowerLoanService,
+        private FinancialLedgerService $ledgerService,
     )
     {
     }
@@ -300,19 +307,43 @@ class InventoryController extends Controller
             'items.*.inventory_item_id' => 'required|integer|exists:inventory_items,id',
             'items.*.quantity' => 'required|numeric|min:0.01',
             'items.*.unit_price' => 'nullable|numeric|min:0',
+            'payment_source' => 'nullable|in:company_cash,borrower_loan_repayment',
+            'borrower_id' => 'nullable|integer|exists:borrowers,id',
         ]);
 
         DB::beginTransaction();
 
         try {
+            $paymentContext = $this->resolveIncomingPaymentContext($validated);
+
             $result = $this->inventoryService->recordIncoming(
                 $validated['items'],
                 $validated['payment_type'],
                 $validated['transaction_date'],
                 $validated['notes'] ?? null,
                 $validated['due_date'] ?? null,
-                (int) auth()->id()
+                (int) auth()->id(),
+                $paymentContext
             );
+
+            $pengeluaran = $result['pengeluaran'] ?? null;
+            if ($pengeluaran && ($paymentContext['payment_source'] ?? 'company_cash') === 'borrower_loan_repayment') {
+                $borrower = Borrower::query()->findOrFail((int) $paymentContext['borrower_id']);
+                $settlement = $this->borrowerLoanService->settleBorrowerTotal(
+                    $borrower,
+                    (int) $pengeluaran->jumlah,
+                    $validated['transaction_date'],
+                    auth()->user(),
+                    'Pengurangan pinjaman dari pembelian inventori #' . $pengeluaran->id
+                );
+
+                $pengeluaran->forceFill([
+                    'borrower_loan_settlement_amount' => (int) $pengeluaran->jumlah,
+                    'borrower_loan_settlement_action_group_key' => $settlement['action_group_key'] ?? null,
+                ])->save();
+
+                $this->ledgerService->syncPengeluaran($pengeluaran->fresh(), (int) auth()->id());
+            }
 
             DB::commit();
 
@@ -332,6 +363,51 @@ class InventoryController extends Controller
                 'message' => 'Gagal mencatat pemasukan inventori: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function resolveIncomingPaymentContext(array $validated): array
+    {
+        $paymentSource = $validated['payment_source'] ?? 'company_cash';
+        if (($validated['payment_type'] ?? 'cash') !== 'cash') {
+            return ['payment_source' => 'company_cash'];
+        }
+
+        if ($paymentSource !== 'borrower_loan_repayment') {
+            return ['payment_source' => 'company_cash'];
+        }
+
+        if (!auth()->user()?->isSuperAdmin()) {
+            throw ValidationException::withMessages([
+                'payment_source' => ['Hanya superadmin yang dapat memakai mode potong pinjaman borrower.'],
+            ]);
+        }
+
+        if (empty($validated['borrower_id'])) {
+            throw ValidationException::withMessages([
+                'borrower_id' => ['Pilih borrower yang akan dipotong pinjamannya.'],
+            ]);
+        }
+
+        $cashTotal = collect($validated['items'] ?? [])->sum(function (array $item) {
+            return (float) ($item['quantity'] ?? 0) * (float) ($item['unit_price'] ?? 0);
+        });
+
+        $borrower = Borrower::query()
+            ->where('is_active', true)
+            ->findOrFail((int) $validated['borrower_id']);
+
+        $outstanding = $this->borrowerLoanService->outstandingForBorrower($borrower);
+        if ((int) round($cashTotal) > $outstanding) {
+            throw ValidationException::withMessages([
+                'borrower_id' => ['Total pembelian melebihi sisa pinjaman borrower.'],
+            ]);
+        }
+
+        return [
+            'payment_source' => 'borrower_loan_repayment',
+            'borrower_id' => $borrower->id,
+            'borrower_loan_settlement_amount' => (int) round($cashTotal),
+        ];
     }
 
     public function storeOutgoing(Request $request)
@@ -843,9 +919,18 @@ class InventoryController extends Controller
 
     private function installationDefaultPricing(): array
     {
+        $activePricing = $this->installationPricingService->getOrCreateActive();
+
         return [
             'installation_labor_fee_default' => (float) SiteSetting::get(self::SETTING_DEFAULT_INSTALLATION_LABOR_FEE, 0),
             'installation_cable_rate_default' => (float) SiteSetting::get(self::SETTING_DEFAULT_INSTALLATION_CABLE_RATE, 0),
+            'report_material_pricing' => [
+                'cable_price_per_meter' => (float) ($activePricing?->cable_price_per_meter ?? InstallationPricingService::DEFAULT_CABLE_PRICE_PER_METER),
+                'router_unit_price' => (float) ($activePricing?->router_unit_price ?? InstallationPricingService::DEFAULT_ROUTER_UNIT_PRICE),
+            ],
+            'connector_unit_price_default' => (float) ($activePricing?->connector_unit_price ?? InstallationPricingService::DEFAULT_CONNECTOR_UNIT_PRICE),
+            'connector_quantity_default' => (int) ($activePricing?->connector_quantity_default ?? InstallationPricingService::DEFAULT_CONNECTOR_QUANTITY),
+            'router_unit_price_default' => (float) ($activePricing?->router_unit_price ?? InstallationPricingService::DEFAULT_ROUTER_UNIT_PRICE),
         ];
     }
 

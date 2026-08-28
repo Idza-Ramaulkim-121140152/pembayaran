@@ -4,6 +4,7 @@
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="csrf-token" content="{{ csrf_token() }}">
+        <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
         <meta name="user-name" content="{{ Auth::user()?->name ?? 'User' }}">
 
     <title>@yield('title', (isset($pageTitle) ? $pageTitle : (isset($header) ? strip_tags($header) : config('app.name', 'Laravel'))))</title>
@@ -12,10 +13,6 @@
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
 
-        <!-- Google AdSense -->
-        <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2060193879936074"
-            crossorigin="anonymous"></script>
-
         <!-- Scripts -->
         @vite(['resources/css/app.css', 'resources/js/main.jsx'])
     </head>
@@ -23,6 +20,10 @@
         <script>
             // Set username to localStorage for React to read
             window.appUser = "{{ Auth::user()?->name ?? 'User' }}";
+            window.appUserId = @json(Auth::id());
+            window.appCanChoosePaymentMutation = @json(Auth::user()?->canChoosePaymentMutation() ?? false);
+            window.appCanChoosePaymentReceiver = @json(Auth::user()?->canChoosePaymentReceiver() ?? false);
+            window.appCanManageCustomerWifi = @json(Auth::user() ? app(\App\Services\AccessPolicyService::class)->has(Auth::user(), 'customer.wifi.manage') : false);
             if (typeof localStorage !== 'undefined') {
                 localStorage.setItem('appUserName', "{{ Auth::user()?->name ?? 'User' }}");
             }

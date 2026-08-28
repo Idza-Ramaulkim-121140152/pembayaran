@@ -64,9 +64,40 @@ export const customerService = {
     updateServicePackage: (id, packageId) =>
         apiClient.patch(`/customers/${id}/service-package`, { package_id: packageId }),
 
+    getWifiDevice: (id) => apiClient.get(`/customers/${id}/wifi/device`),
+
+    updateWifiPassword: (id, data) => apiClient.post(`/customers/${id}/wifi/password`, data),
+
+    getWifiPasswordVerification: (id, verificationId) =>
+        apiClient.get(`/customers/${id}/wifi/password-verifications/${verificationId}`),
+
     // Get active/inactive status in bulk without blocking initial list render
     getActiveStatusBulk: (customerIds = []) =>
         apiClient.post('/customers/active-status', { customer_ids: customerIds }),
+
+    getContracts: (id) => apiClient.get(`/customers/${id}/contracts`),
+
+    generateContract: (id, formData) => apiClient.post(`/customers/${id}/contracts`, formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+        },
+    }),
+
+    sendContractWhatsApp: (id, contractId) =>
+        apiClient.post(`/customers/${id}/contracts/${contractId}/send-whatsapp`),
+
+    getTerminations: (id) => apiClient.get(`/customers/${id}/termination`),
+
+    createTermination: (id, data) => apiClient.post(`/customers/${id}/termination`, data),
+
+    sendTerminationWhatsApp: (id, terminationId) =>
+        apiClient.post(`/customers/${id}/termination/${terminationId}/send-whatsapp`),
+
+    finalizeTermination: (id, terminationId) =>
+        apiClient.post(`/customers/${id}/termination/${terminationId}/finalize`),
+
+    cancelTermination: (id, terminationId) =>
+        apiClient.post(`/customers/${id}/termination/${terminationId}/cancel`),
 };
 
 export default customerService;

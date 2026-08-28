@@ -134,13 +134,122 @@ class BillingPaymentProofTest extends TestCase
 
         $this->assertFalse((bool) data_get($invalidItem, 'active_invoice.has_payment_proof'));
         $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_url'));
+        $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_public_url'));
         $this->assertNull(data_get($invalidItem, 'active_invoice.bukti_pembayaran_url'));
         $this->assertNull(data_get($invalidItem, 'active_invoice.bukti_pembayaran'));
+        $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_mime_type'));
+        $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_file_name'));
+        $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_extension'));
+        $this->assertNull(data_get($invalidItem, 'active_invoice.payment_proof_preview_type'));
 
         $this->assertTrue((bool) data_get($validItem, 'active_invoice.has_payment_proof'));
         $this->assertSame('/billing/invoice/' . $validInvoice->id . '/payment-proof', data_get($validItem, 'active_invoice.payment_proof_url'));
+        $this->assertSame('/storage/' . $proofPath, data_get($validItem, 'active_invoice.payment_proof_public_url'));
         $this->assertSame('/billing/invoice/' . $validInvoice->id . '/payment-proof', data_get($validItem, 'active_invoice.bukti_pembayaran_url'));
         $this->assertSame($proofPath, data_get($validItem, 'active_invoice.bukti_pembayaran'));
+        $this->assertNotNull(data_get($validItem, 'active_invoice.payment_proof_mime_type'));
+        $this->assertSame('proof-list-valid.jpg', data_get($validItem, 'active_invoice.payment_proof_file_name'));
+        $this->assertSame('jpg', data_get($validItem, 'active_invoice.payment_proof_extension'));
+        $this->assertSame('image', data_get($validItem, 'active_invoice.payment_proof_preview_type'));
+    }
+
+    public function test_public_upload_payment_proof_is_visible_in_billing_list(): void
+    {
+        Storage::fake('public');
+        $user = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+
+        $customer = Customer::create([
+            'name' => 'Public Upload Billing Customer',
+            'phone' => '081234567812',
+            'pppoe_username' => 'PUBLIC-BILLING-01',
+            'is_active' => true,
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->toDateString(),
+            'amount' => 280000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-public-billing-visible',
+        ]);
+
+        $this->post('/invoice/' . $invoice->id . '/konfirmasi', [
+            'paid_amount' => 280000,
+            'bukti_pembayaran' => UploadedFile::fake()->image('bukti-visible.jpg'),
+        ], [
+            'Accept' => 'application/json',
+            'X-Requested-With' => 'XMLHttpRequest',
+        ])->assertOk();
+
+        $response = $this->actingAs($user)->getJson('/api/billing?include_isolation_status=0');
+        $response->assertOk();
+
+        $item = $this->collectBillingItems($response->json('data'))
+            ->first(fn (array $row) => (int) data_get($row, 'pending_confirmation_invoice.id') === (int) $invoice->id);
+
+        $this->assertNotNull($item);
+        $this->assertSame('menunggu konfirmasi', data_get($item, 'pending_confirmation_invoice.status'));
+        $this->assertTrue((bool) data_get($item, 'pending_confirmation_invoice.has_payment_proof'));
+        $this->assertSame('/billing/invoice/' . $invoice->id . '/payment-proof', data_get($item, 'pending_confirmation_invoice.payment_proof_url'));
+        $this->assertStringStartsWith('/storage/bukti_pembayaran/', (string) data_get($item, 'pending_confirmation_invoice.payment_proof_public_url'));
+        $this->assertNotNull(data_get($item, 'pending_confirmation_invoice.payment_proof_mime_type'));
+        $this->assertSame('jpg', data_get($item, 'pending_confirmation_invoice.payment_proof_extension'));
+        $this->assertSame('image', data_get($item, 'pending_confirmation_invoice.payment_proof_preview_type'));
+    }
+
+    public function test_billing_list_prioritizes_pending_confirmation_invoice_with_proof_over_newer_open_invoice(): void
+    {
+        Storage::fake('public');
+        $user = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+
+        $customer = Customer::create([
+            'name' => 'Pending Proof Conflict Customer',
+            'phone' => '081234567813',
+            'pppoe_username' => 'PENDING-PROOF-01',
+            'is_active' => true,
+            'due_date' => now()->subDays(2)->toDateString(),
+        ]);
+
+        $proofPath = 'bukti_pembayaran/proof-conflict.jpg';
+        Storage::disk('public')->put($proofPath, 'fake-conflict-content');
+
+        $pendingInvoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_date' => now()->subDay()->toDateString(),
+            'due_date' => now()->toDateString(),
+            'amount' => 290000,
+            'status' => 'menunggu konfirmasi',
+            'invoice_link' => 'inv-pending-proof-conflict',
+            'bukti_pembayaran' => $proofPath,
+        ]);
+
+        $newerOpenInvoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->addDays(7)->toDateString(),
+            'amount' => 295000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-newer-open-conflict',
+        ]);
+
+        $response = $this->actingAs($user)->getJson('/api/billing?include_isolation_status=0');
+        $response->assertOk();
+
+        $item = $this->collectBillingItems($response->json('data'))
+            ->first(fn (array $row) => (int) data_get($row, 'customer.id') === (int) $customer->id);
+
+        $this->assertNotNull($item);
+        $this->assertSame($newerOpenInvoice->id, data_get($item, 'active_invoice.id'));
+        $this->assertSame($pendingInvoice->id, data_get($item, 'pending_confirmation_invoice.id'));
+        $this->assertTrue((bool) data_get($item, 'pending_confirmation_invoice.has_payment_proof'));
+        $this->assertSame('/billing/invoice/' . $pendingInvoice->id . '/payment-proof', data_get($item, 'pending_confirmation_invoice.payment_proof_url'));
+        $this->assertSame('/storage/' . $proofPath, data_get($item, 'pending_confirmation_invoice.payment_proof_public_url'));
+        $this->assertNotNull(data_get($item, 'pending_confirmation_invoice.payment_proof_mime_type'));
+        $this->assertSame('proof-conflict.jpg', data_get($item, 'pending_confirmation_invoice.payment_proof_file_name'));
+        $this->assertSame('jpg', data_get($item, 'pending_confirmation_invoice.payment_proof_extension'));
+        $this->assertSame('image', data_get($item, 'pending_confirmation_invoice.payment_proof_preview_type'));
     }
 
     public function test_public_invoice_confirmation_returns_json_and_sets_payment_proof_for_valid_file(): void
@@ -177,6 +286,9 @@ class BillingPaymentProofTest extends TestCase
         $response->assertJsonPath('data.status', 'menunggu konfirmasi');
         $response->assertJsonPath('data.has_payment_proof', true);
         $response->assertJsonPath('data.payment_proof_url', '/billing/invoice/' . $invoice->id . '/payment-proof');
+        $this->assertStringStartsWith('/storage/bukti_pembayaran/', (string) $response->json('data.payment_proof_public_url'));
+        $response->assertJsonPath('data.payment_proof_extension', 'jpg');
+        $response->assertJsonPath('data.payment_proof_preview_type', 'image');
 
         $invoice->refresh();
         $this->assertSame('menunggu konfirmasi', $invoice->status);

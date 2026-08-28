@@ -11,15 +11,29 @@ use App\Models\Odp;
 use App\Models\Package;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
+use App\Models\NotificationLog;
+use App\Models\PaymentReceiptOption;
 use App\Models\SiteSetting;
+use App\Models\User;
+use App\Models\FinancialTransaction;
+use App\Services\BillingMessageTemplateService;
+use App\Services\BorrowerLoanService;
+use App\Services\CustomerAgreementService;
+use App\Services\CustomerAgreementWhatsAppService;
+use App\Services\CustomerInstallationCostSnapshotService;
 use App\Services\FinancialLedgerService;
 use App\Services\GoogleSheetsService;
+use App\Services\InstallationPricingService;
 use App\Services\InventoryService;
 use App\Services\MikroTikService;
+use App\Services\PaymentReceiverService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Exception;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -27,12 +41,18 @@ class CustomerVerificationController extends Controller
 {
     private const SETTING_DEFAULT_INSTALLATION_LABOR_FEE = 'default_installation_labor_fee_payroll';
     private const SETTING_DEFAULT_INSTALLATION_CABLE_RATE = 'default_installation_cable_rate_payroll';
-    private const DEFAULT_MOBILE_PASSWORD = '12345678';
+    private const DEFAULT_MOBILE_PASSWORD = 'user123';
 
     protected $sheetsService;
     protected $sheetsError;
 
-    public function __construct()
+    public function __construct(
+        private FinancialLedgerService $financialLedgerService,
+        private PaymentReceiverService $paymentReceiverService,
+        private BorrowerLoanService $borrowerLoanService,
+        private CustomerInstallationCostSnapshotService $installationCostSnapshotService,
+        private InstallationPricingService $installationPricingService,
+    )
     {
         try {
             $this->sheetsService = new GoogleSheetsService();
@@ -157,10 +177,35 @@ class CustomerVerificationController extends Controller
     public function verifyCustomer(Request $request)
     {
         $validated = $request->validate($this->verificationValidationRules());
+        $agreementInput = $request->only([
+            'contract_ktp_number',
+            'contract_router_mac',
+            'contract_device_serial',
+            'contract_device_notes',
+            'contract_photo_front_url',
+            'contract_photo_modem_url',
+            'contract_photo_ktp_url',
+        ]);
         $validated = $this->normalizeHomeRouterInput($validated);
         $validated = $this->normalizeVerificationToggleInput($validated);
+        $this->validateInstallationCableUsage($validated);
         $secretInfo = null;
         $createdSecretUsername = null;
+        $currentUser = $request->user();
+        $installationFee = (int) round((float) ($validated['installation_fee'] ?? 0));
+        $installationPaymentFlow = [
+            'enabled' => false,
+            'selected_receiver' => null,
+            'selected_receiver_is_company_finance' => false,
+            'receipt_option' => null,
+            'mutation_status' => null,
+            'borrower' => null,
+            'should_create_pending_approval' => false,
+            'should_create_direct_debt' => false,
+            'non_company_self_confirm_debt' => false,
+            'message' => null,
+            'response' => null,
+        ];
 
         if (($validated['enable_installation_team'] ?? false)
             && $this->hasInstallationPayrollInput($validated)
@@ -168,6 +213,13 @@ class CustomerVerificationController extends Controller
             throw ValidationException::withMessages([
                 'installer_member_ids' => 'Pilih minimal 1 pelaksana agar detail pemasangan bisa masuk ke payroll.',
             ]);
+        }
+
+        if ($installationFee > 0) {
+            $installationPaymentFlow = $this->resolveInstallationPaymentFlow($validated, $currentUser, $installationFee);
+            if ($installationPaymentFlow['response']) {
+                return $installationPaymentFlow['response'];
+            }
         }
 
         try {
@@ -207,7 +259,7 @@ class CustomerVerificationController extends Controller
                     'reason' => 'verified_customer_default_password',
                 ];
             }
-            $mikrotik = new MikroTikService();
+            $mikrotik = app(MikroTikService::class);
             $serviceLabel = $this->resolveServiceLabelForSecret($validated);
             $profileName = $this->resolveStrictProfileName($mikrotik, $serviceLabel);
             $secretInfo = $this->createSecretWithUsernameRetry($mikrotik, $validated, $areaPrefix, $profileName);
@@ -217,16 +269,69 @@ class CustomerVerificationController extends Controller
             $validated['mikrotik_profile'] = $profileName;
 
             DB::beginTransaction();
-            $customer = Customer::create($validated);
+            $customer = Customer::create(Arr::except($validated, [
+                'contract_ktp_number',
+                'contract_router_mac',
+                'contract_device_serial',
+                'contract_device_notes',
+                'contract_photo_front_url',
+                'contract_photo_modem_url',
+                'contract_photo_ktp_url',
+                'contract_installation_photos',
+            ]));
 
-            // Auto-post installation fee as income to unified ledger.
-            try {
-                app(FinancialLedgerService::class)->syncCustomerInstallationIncome($customer, auth()->id());
-            } catch (Exception $ledgerException) {
-                \Log::warning('Failed to sync installation income on customer verification', [
-                    'customer_id' => $customer->id,
-                    'error' => $ledgerException->getMessage(),
-                ]);
+            $installationMutation = null;
+            if ($installationPaymentFlow['enabled']) {
+                try {
+                    $installationMutation = $this->financialLedgerService->syncCustomerInstallationIncome(
+                        $customer,
+                        auth()->id(),
+                        $installationPaymentFlow['mutation_status'],
+                        $installationPaymentFlow['receipt_option'],
+                        $installationPaymentFlow['selected_receiver'],
+                    );
+                } catch (Exception $ledgerException) {
+                    \Log::warning('Failed to sync installation income on customer verification', [
+                        'customer_id' => $customer->id,
+                        'error' => $ledgerException->getMessage(),
+                    ]);
+                }
+
+                if ($installationPaymentFlow['should_create_direct_debt'] && $installationPaymentFlow['borrower']) {
+                    $this->borrowerLoanService->createInstallationFeeDebt(
+                        $installationPaymentFlow['borrower'],
+                        $customer,
+                        $installationFee,
+                        $currentUser,
+                        $installationPaymentFlow['selected_receiver'],
+                        $installationPaymentFlow['selected_receiver'],
+                        $installationPaymentFlow['non_company_self_confirm_debt']
+                            ? 'Biaya pemasangan self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.'
+                            : 'Biaya pemasangan diarahkan langsung menjadi hutang tanpa menunggu approval penerima.'
+                    );
+                } elseif (
+                    $installationPaymentFlow['should_create_pending_approval']
+                    && $installationPaymentFlow['borrower']
+                    && $installationPaymentFlow['selected_receiver']
+                    && $installationMutation
+                ) {
+                    $this->borrowerLoanService->createApprovalRequest(
+                        $installationPaymentFlow['borrower'],
+                        null,
+                        $currentUser,
+                        $installationPaymentFlow['selected_receiver'],
+                        $installationMutation,
+                        [
+                            'customer' => $customer,
+                            'source_type' => 'installation_income',
+                            'source_id' => $customer->id,
+                            'meta' => [
+                                'customer_name' => $customer->name,
+                                'installation_fee' => $installationFee,
+                            ],
+                        ]
+                    );
+                }
             }
 
             $payrollProject = null;
@@ -248,7 +353,46 @@ class CustomerVerificationController extends Controller
                 }
             }
 
+            $resolvedLaborFee = $this->resolveInstallationLaborFee($validated);
+            $resolvedCablePayrollRate = $this->resolveInstallationCableRate($validated);
+            $activePricing = $this->installationPricingService->resolveForDate($customer->activation_date);
+            $this->installationCostSnapshotService->captureForVerification($customer, [
+                'installation_date' => $customer->activation_date?->toDateString(),
+                'cable_used_meter' => (float) ($validated['installation_cable_used'] ?? 0),
+                'cable_material_price_per_meter' => (float) ($activePricing?->cable_price_per_meter ?? InstallationPricingService::DEFAULT_CABLE_PRICE_PER_METER),
+                'cable_payroll_price_per_meter' => $resolvedCablePayrollRate,
+                'connector_quantity' => (int) ($activePricing?->connector_quantity_default ?? InstallationPricingService::DEFAULT_CONNECTOR_QUANTITY),
+                'connector_unit_price' => (float) ($activePricing?->connector_unit_price ?? InstallationPricingService::DEFAULT_CONNECTOR_UNIT_PRICE),
+                'router_used' => !empty($validated['installation_router_item_id']),
+                'router_unit_price' => (float) ($activePricing?->router_unit_price ?? InstallationPricingService::DEFAULT_ROUTER_UNIT_PRICE),
+                'labor_fee' => $resolvedLaborFee,
+                'source' => 'verification',
+                'meta' => [
+                    'installation_router_item_id' => $validated['installation_router_item_id'] ?? null,
+                    'installation_cable_item_id' => $validated['installation_cable_item_id'] ?? null,
+                    'installation_notes' => $validated['installation_notes'] ?? null,
+                    'payroll_project_id' => $payrollProject?->id,
+                ],
+            ], auth()->id());
+
             DB::commit();
+
+            $agreement = null;
+            try {
+                $agreement = app(CustomerAgreementService::class)->generate(
+                    $customer,
+                    $agreementInput,
+                    $request->file('contract_installation_photos', []),
+                    auth()->id()
+                );
+            } catch (\Throwable $agreementException) {
+                Log::warning('Failed to generate customer agreement after verification', [
+                    'customer_id' => $customer->id,
+                    'error' => $agreementException->getMessage(),
+                ]);
+            }
+
+            $this->sendVerificationWelcomeMessage($customer, $agreement);
 
             return response()->json([
                 'success' => true,
@@ -256,6 +400,11 @@ class CustomerVerificationController extends Controller
                 'customer' => $customer,
                 'secret' => $secretInfo,
                 'payroll_project' => $payrollProject,
+                'agreement' => $agreement ? app(CustomerAgreementService::class)->toPayload($agreement) : null,
+                'installation_income_flow' => $installationPaymentFlow['enabled'] ? [
+                    'status' => $installationPaymentFlow['mutation_status'],
+                    'message' => $installationPaymentFlow['message'],
+                ] : null,
             ]);
 
         } catch (ValidationException $e) {
@@ -274,7 +423,7 @@ class CustomerVerificationController extends Controller
                 DB::rollBack();
             }
             $this->cleanupCreatedSecret($createdSecretUsername);
-            \Log::error('Failed to verify customer: ' . $e->getMessage());
+            Log::error('Failed to verify customer: ' . $e->getMessage());
 
             return response()->json([
                 'error' => 'Failed to verify customer',
@@ -361,6 +510,10 @@ class CustomerVerificationController extends Controller
             'pppoe_password' => 'nullable|string|max:64',
             'odp' => 'nullable|string|max:64',
             'installation_fee' => 'nullable|numeric',
+            'payment_receipt_option_id' => 'nullable|integer',
+            'payment_receiver_user_id' => 'nullable|integer|exists:users,id',
+            'other_receiver_confirmed' => 'nullable|boolean',
+            'receiver_conflict_resolution' => 'nullable|in:debt,approval',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable|boolean',
@@ -369,7 +522,7 @@ class CustomerVerificationController extends Controller
             'dusun_id' => 'required|integer|exists:master_wilayah_dusuns,id',
             'enable_home_router' => 'nullable|boolean',
             'enable_installation_team' => 'nullable|boolean',
-            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01',
+            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01,cdata',
             'home_router_host' => 'nullable|string|max:255',
             'home_router_port' => 'nullable|integer|min:1|max:65535',
             'home_router_username' => 'nullable|string|max:255',
@@ -384,7 +537,31 @@ class CustomerVerificationController extends Controller
             'installation_labor_fee' => 'nullable|numeric|min:0',
             'installation_cable_rate' => 'nullable|numeric|min:0',
             'installation_notes' => 'nullable|string|max:500',
+            'contract_ktp_number' => 'nullable|string|max:32',
+            'contract_router_mac' => 'nullable|string|max:64',
+            'contract_device_serial' => 'nullable|string|max:128',
+            'contract_device_notes' => 'nullable|string|max:1000',
+            'contract_photo_front_url' => 'nullable|string|max:1000',
+            'contract_photo_modem_url' => 'nullable|string|max:1000',
+            'contract_photo_ktp_url' => 'nullable|string|max:1000',
+            'contract_installation_photos' => 'nullable|array|max:8',
+            'contract_installation_photos.*' => 'file|image|max:4096',
         ];
+    }
+
+    private function validateInstallationCableUsage(array $validated): void
+    {
+        if (!($validated['enable_installation_team'] ?? false)) {
+            return;
+        }
+
+        $cableUsed = $validated['installation_cable_used'] ?? null;
+
+        if ($cableUsed === null || $cableUsed === '' || (float) $cableUsed <= 0) {
+            throw ValidationException::withMessages([
+                'installation_cable_used' => 'Habis Kabel wajib diisi untuk pemasangan.',
+            ]);
+        }
     }
 
     private function createInstallationPayrollProject(Customer $customer, array $validated): ?PayrollProject
@@ -711,6 +888,100 @@ class CustomerVerificationController extends Controller
         throw new Exception('Gagal membuat secret PPPoE: ' . ($lastError?->getMessage() ?? 'unknown error'));
     }
 
+    private function resolveInstallationPaymentFlow(array $validated, ?User $currentUser, int $installationFee): array
+    {
+        $paymentReceiptOptionId = $validated['payment_receipt_option_id'] ?? null;
+        $paymentReceiverUserId = $currentUser?->canChoosePaymentReceiver()
+            ? (int) ($validated['payment_receiver_user_id'] ?? $currentUser?->id)
+            : $currentUser?->id;
+        $selectedReceiver = $paymentReceiverUserId ? User::query()->find($paymentReceiverUserId) : null;
+        $actorIsCompanyFinance = $this->paymentReceiverService->isCompanyFinanceReceiver($currentUser?->id);
+        $selectedReceiverIsCompanyFinance = $selectedReceiver
+            ? $this->paymentReceiverService->isCompanyFinanceReceiver($selectedReceiver->id)
+            : false;
+        $selfReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id === $currentUser->id;
+        $nonCompanySelfConfirmDebt = $selfReceiver && !$actorIsCompanyFinance;
+        $selectingAnotherReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id !== $currentUser->id;
+        $otherReceiverConfirmed = (bool) ($validated['other_receiver_confirmed'] ?? false);
+        $receiverConflictResolution = $validated['receiver_conflict_resolution'] ?? null;
+
+        if ($selectingAnotherReceiver && !$otherReceiverConfirmed) {
+            return [
+                'response' => response()->json([
+                    'message' => 'Anda memilih akun penerima selain akun sendiri. Konfirmasi ulang untuk melanjutkan.',
+                    'action_required' => 'confirm_other_receiver',
+                ], 422),
+            ];
+        }
+
+        $isAllowedReceiver = $this->paymentReceiverService->isAllowedReceiver($currentUser, $paymentReceiverUserId);
+        $shouldCreatePendingApproval = $selectingAnotherReceiver && $isAllowedReceiver;
+        $borrower = null;
+
+        if ($nonCompanySelfConfirmDebt && $currentUser) {
+            $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
+        } elseif (($shouldCreatePendingApproval || !$isAllowedReceiver) && $currentUser) {
+            $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
+        }
+
+        if (!$isAllowedReceiver && !$receiverConflictResolution) {
+            return [
+                'response' => response()->json([
+                    'message' => 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan. Pilih masukkan ke hutang atau kirim approval ke akun penerima.',
+                    'action_required' => 'resolve_invalid_receiver',
+                ], 422),
+            ];
+        }
+
+        $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
+        $shouldCreateDirectDebt = false;
+
+        if ($nonCompanySelfConfirmDebt) {
+            $shouldCreateDirectDebt = true;
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+            $mutationStatus = FinancialTransaction::STATUS_PENDING;
+        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'approval') {
+            $mutationStatus = FinancialTransaction::STATUS_PENDING;
+        } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') || (!$isAllowedReceiver && $receiverConflictResolution === 'debt')) {
+            $mutationStatus = FinancialTransaction::STATUS_REJECTED;
+            $shouldCreateDirectDebt = true;
+        }
+
+        $receiptOption = null;
+        if ($paymentReceiptOptionId) {
+            $receiptOption = PaymentReceiptOption::query()
+                ->where('id', $paymentReceiptOptionId)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        $message = null;
+        if ($nonCompanySelfConfirmDebt) {
+            $message = 'Biaya pemasangan tercatat, mutasi tetap masuk, dan otomatis dimasukkan ke hutang akun pengkonfirmasi.';
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+            $message = $selectedReceiverIsCompanyFinance
+                ? 'Biaya pemasangan tercatat dan mutasi menunggu persetujuan akun keuangan perusahaan.'
+                : 'Biaya pemasangan tercatat dan mutasi menunggu persetujuan akun penerima.';
+        } elseif (($shouldCreatePendingApproval || !$isAllowedReceiver) && $receiverConflictResolution === 'debt') {
+            $message = 'Biaya pemasangan tercatat dan langsung dimasukkan ke hutang akun pengkonfirmasi.';
+        }
+
+        return [
+            'response' => null,
+            'enabled' => true,
+            'selected_receiver' => $selectedReceiver,
+            'selected_receiver_is_company_finance' => $selectedReceiverIsCompanyFinance,
+            'receipt_option' => $receiptOption,
+            'mutation_status' => $mutationStatus,
+            'borrower' => $borrower,
+            'should_create_pending_approval' => $mutationStatus === FinancialTransaction::STATUS_PENDING,
+            'should_create_direct_debt' => $shouldCreateDirectDebt,
+            'non_company_self_confirm_debt' => $nonCompanySelfConfirmDebt,
+            'message' => $message,
+            'installation_fee' => $installationFee,
+        ];
+    }
+
     private function cleanupCreatedSecret(?string $username): void
     {
         if (!$username) {
@@ -718,11 +989,129 @@ class CustomerVerificationController extends Controller
         }
 
         try {
-            $mikrotik = new MikroTikService();
+            $mikrotik = app(MikroTikService::class);
             $mikrotik->removePPPoESecret($username);
         } catch (Exception $exception) {
-            \Log::warning('Failed to cleanup MikroTik secret after verification failure', [
+            Log::warning('Failed to cleanup MikroTik secret after verification failure', [
                 'username' => $username,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function sendVerificationWelcomeMessage(Customer $customer, $agreement = null): void
+    {
+        $phone = (string) ($customer->phone ?? '');
+        if (!$this->isValidPhone($phone)) {
+            $this->logVerificationNotification(
+                $customer,
+                $phone,
+                '',
+                'skipped',
+                'no_valid_whatsapp',
+                ['type' => 'customer_verification_welcome', 'is_auto' => true]
+            );
+            return;
+        }
+
+        $portalUrl = rtrim((string) config('app.url'), '/') . '/customer/login';
+        $message = app(BillingMessageTemplateService::class)->buildVerificationWelcomeMessage(
+            $customer,
+            $portalUrl,
+            self::DEFAULT_MOBILE_PASSWORD,
+            false
+        );
+
+        if ($agreement) {
+            $contractUrl = route('contracts.public.download', ['token' => $agreement->public_token], true);
+            $verifyUrl = route('contracts.public.verify', ['token' => $agreement->public_token], true);
+            $message .= "\n\nKontrak perjanjian pelanggan:\n"
+                . "Nomor kontrak: {$agreement->agreement_number}\n"
+                . "Download PDF: {$contractUrl}\n"
+                . "Verifikasi QR: {$verifyUrl}";
+
+            $message = app(BillingMessageTemplateService::class)->appendAutoLabel($message);
+            app(CustomerAgreementWhatsAppService::class)->send($agreement, $message);
+            return;
+        }
+
+        $message = app(BillingMessageTemplateService::class)->appendAutoLabel($message);
+        [$success, $error] = $this->sendWhatsAppMessage($phone, $message, (string) ($customer->name ?? 'Pelanggan'));
+
+        $this->logVerificationNotification(
+            $customer,
+            $phone,
+            $message,
+            $success ? 'sent' : 'failed',
+            $error,
+            ['type' => 'customer_verification_welcome', 'is_auto' => true]
+        );
+    }
+
+    private function isValidPhone(?string $phone): bool
+    {
+        if (!$phone || $phone === '0') {
+            return false;
+        }
+
+        $cleaned = preg_replace('/\D/', '', $phone);
+        return strlen((string) $cleaned) >= 10 && strlen((string) $cleaned) <= 15;
+    }
+
+    /**
+     * @return array{0: bool, 1: ?string}
+     */
+    private function sendWhatsAppMessage(string $phone, string $message, string $name): array
+    {
+        try {
+            $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+            $response = Http::timeout(30)->post($gatewayUrl . '/send', [
+                'phone' => $phone,
+                'name' => $name,
+                'message' => $message,
+            ]);
+
+            if ($response->successful()) {
+                $payload = $response->json();
+                if (is_array($payload) && array_key_exists('success', $payload) && !$payload['success']) {
+                    return [false, (string) ($payload['message'] ?? 'gateway_rejected')];
+                }
+
+                return [true, null];
+            }
+
+            return [false, 'gateway_http_' . $response->status()];
+        } catch (\Throwable $exception) {
+            return [false, 'Gateway error: ' . $exception->getMessage()];
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     */
+    private function logVerificationNotification(
+        Customer $customer,
+        ?string $phone,
+        string $message,
+        string $status,
+        ?string $error = null,
+        array $meta = []
+    ): void {
+        try {
+            NotificationLog::create([
+                'customer_id' => $customer->id,
+                'phone' => $phone,
+                'message' => mb_substr($message, 0, 2000),
+                'notice_id' => null,
+                'status' => in_array($status, ['sent', 'failed', 'skipped'], true) ? $status : 'failed',
+                'error' => $error,
+                'meta' => array_merge(['channel' => 'whatsapp'], $meta),
+                'sent_at' => now(),
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to log verification welcome notification', [
+                'customer_id' => $customer->id,
+                'status' => $status,
                 'error' => $exception->getMessage(),
             ]);
         }

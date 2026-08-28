@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle, Upload } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
+import Modal from '../../components/common/Modal';
 import { HOME_ROUTER_OPTIONS, getHomeRouterPreset } from '../../constants/homeRouterPresets';
 
 const DEFAULT_FORM_DATA = {
@@ -43,19 +44,39 @@ const DEFAULT_FORM_DATA = {
     installation_labor_fee: '',
     installation_cable_rate: '',
     installation_notes: '',
+    contract_ktp_number: '',
+    contract_router_mac: '',
+    contract_device_serial: '',
+    contract_device_notes: '',
+    contract_installation_photos: [],
+    contract_photo_front_url: '',
+    contract_photo_modem_url: '',
+    contract_photo_ktp_url: '',
 };
 
 function CustomerVerificationForm() {
     const { timestamp } = useParams();
     const navigate = useNavigate();
+    const userRole = window.appUserRole || 'admin';
+    const isSuperAdmin = userRole === 'superadmin';
+    const canChoosePaymentReceiver = isSuperAdmin || !!window.appCanChoosePaymentReceiver;
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
+    const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
+    const [paymentReceivers, setPaymentReceivers] = useState([]);
+    const [loadingPaymentReceivers, setLoadingPaymentReceivers] = useState(false);
+    const [paymentReceiptOptionId, setPaymentReceiptOptionId] = useState('');
+    const [paymentReceiverUserId, setPaymentReceiverUserId] = useState(window.appUserId ? String(window.appUserId) : '');
+    const [installationPaymentModal, setInstallationPaymentModal] = useState({ open: false });
+    const [otherReceiverModal, setOtherReceiverModal] = useState({ open: false, selectedReceiver: null });
+    const [receiverConflictModal, setReceiverConflictModal] = useState({ open: false, message: '' });
     const [packageList, setPackageList] = useState([]);
     const [gettingLocation, setGettingLocation] = useState(false);
     const [sheetsReference, setSheetsReference] = useState(null);
     const [secretInfo, setSecretInfo] = useState(null);
+    const [agreementInfo, setAgreementInfo] = useState(null);
     const [showSecretModal, setShowSecretModal] = useState(false);
     const [showErrorModal, setShowErrorModal] = useState(false);
     const [errorModalMessage, setErrorModalMessage] = useState('');
@@ -97,8 +118,15 @@ function CustomerVerificationForm() {
         fetchPayrollMembers();
         fetchInstallInventoryOptions();
         fetchKecamatanOptions();
+        fetchPaymentReceiptOptions();
         fetchCustomerData();
     }, [timestamp]);
+
+    useEffect(() => {
+        if (canChoosePaymentReceiver) {
+            fetchPaymentReceivers();
+        }
+    }, [canChoosePaymentReceiver]);
 
     useEffect(() => {
         if (!formData.desa_id || !formData.dusun_id) {
@@ -166,6 +194,42 @@ function CustomerVerificationForm() {
             setPackageList(data.data || []);
         } catch (err) {
             console.error('Failed to load package list', err);
+        }
+    };
+
+    const fetchPaymentReceiptOptions = async () => {
+        try {
+            const response = await fetch('/api/payment-receipt-options/active', {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            });
+            const data = await response.json();
+            const rows = Array.isArray(data) ? data : [];
+            setPaymentReceiptOptions(rows);
+            const defaultOption = rows.find((option) => option.is_default) || rows[0];
+            setPaymentReceiptOptionId(defaultOption ? String(defaultOption.id) : '');
+        } catch (err) {
+            setPaymentReceiptOptions([]);
+        }
+    };
+
+    const fetchPaymentReceivers = async () => {
+        try {
+            setLoadingPaymentReceivers(true);
+            const response = await fetch('/api/payment-receivers', {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin',
+            });
+            const data = await response.json();
+            const rows = Array.isArray(data?.data) ? data.data : [];
+            setPaymentReceivers(rows);
+            if (!paymentReceiverUserId && window.appUserId) {
+                setPaymentReceiverUserId(String(window.appUserId));
+            }
+        } catch (err) {
+            setPaymentReceivers([]);
+        } finally {
+            setLoadingPaymentReceivers(false);
         }
     };
 
@@ -380,6 +444,10 @@ function CustomerVerificationForm() {
             setFormData((prev) => ({
                 ...DEFAULT_FORM_DATA,
                 ...sanitizedData,
+                contract_ktp_number: sanitizedData.contract_ktp_number || data.sheets_reference?.nik || '',
+                contract_photo_front_url: data.sheets_reference?.photo_front_url || sanitizedData.photo_front_url || '',
+                contract_photo_modem_url: data.sheets_reference?.photo_modem_url || sanitizedData.photo_modem_url || '',
+                contract_photo_ktp_url: data.sheets_reference?.photo_ktp_url || sanitizedData.photo_ktp_url || '',
                 installation_labor_fee: hasSanitizedLaborFee
                     ? sanitizedData.installation_labor_fee
                     : prev.installation_labor_fee,
@@ -529,6 +597,16 @@ function CustomerVerificationForm() {
         }));
     };
 
+    const handleFileChange = (e) => {
+        const { name, files } = e.target;
+        setFormData((prev) => ({
+            ...prev,
+            [name]: Array.from(files || []),
+        }));
+    };
+
+    const contractPhotoNames = formData.contract_installation_photos || [];
+
     const handleInstallerToggle = (memberId) => {
         setFormData((prev) => {
             const current = Array.isArray(prev.installer_member_ids) ? prev.installer_member_ids : [];
@@ -590,8 +668,20 @@ function CustomerVerificationForm() {
         );
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    const getPaymentReceiverLabel = (receiver) => {
+        if (!receiver) return '-';
+        const role = receiver.role ? ` (${receiver.role})` : '';
+        const companyTag = receiver.is_company_finance_receiver ? ' [Keuangan Perusahaan]' : '';
+        return `${receiver.name || receiver.email || receiver.id}${role}${companyTag}`;
+    };
+
+    const closeInstallationPaymentFlow = () => {
+        setInstallationPaymentModal({ open: false });
+        setOtherReceiverModal({ open: false, selectedReceiver: null });
+        setReceiverConflictModal({ open: false, message: '' });
+    };
+
+    const performVerification = async (options = {}) => {
         setSubmitting(true);
         setError(null);
         setShowErrorModal(false);
@@ -636,29 +726,77 @@ function CustomerVerificationForm() {
                 payload.installation_notes = null;
             }
 
+            const installationFee = Number(payload.installation_fee || 0);
+            if (installationFee > 0) {
+                if (paymentReceiptOptions.length > 0 && !paymentReceiptOptionId) {
+                    throw new Error('Pilih metode pada Terima via untuk biaya pemasangan.');
+                }
+
+                payload.payment_receipt_option_id = paymentReceiptOptionId ? Number(paymentReceiptOptionId) : null;
+                payload.payment_receiver_user_id = canChoosePaymentReceiver && paymentReceiverUserId
+                    ? Number(paymentReceiverUserId)
+                    : null;
+                payload.other_receiver_confirmed = options.otherReceiverConfirmed ? '1' : '0';
+                payload.receiver_conflict_resolution = options.receiverConflictResolution || '';
+            }
+
+            const formPayload = new FormData();
+            Object.entries(payload).forEach(([key, value]) => {
+                if (key === 'contract_installation_photos') return;
+                if (Array.isArray(value)) {
+                    value.forEach((item) => formPayload.append(`${key}[]`, item));
+                    return;
+                }
+                if (typeof value === 'boolean') {
+                    formPayload.append(key, value ? '1' : '0');
+                    return;
+                }
+                formPayload.append(key, value ?? '');
+            });
+
+            (formData.contract_installation_photos || []).forEach((file) => {
+                formPayload.append('contract_installation_photos[]', file);
+            });
+
             const response = await fetch('/api/customer-verification/verify', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-                    'Accept': 'application/json',
+                    Accept: 'application/json',
                 },
-                body: JSON.stringify(payload),
+                body: formPayload,
             });
 
+            const result = await response.json();
+
             if (!response.ok) {
-                const errorData = await response.json();
-                const message = errorData.message || 'Failed to verify customer';
+                if (response.status === 422 && result?.action_required === 'confirm_other_receiver') {
+                    const selectedReceiver = paymentReceivers.find((receiver) => Number(receiver.id) === Number(paymentReceiverUserId)) || null;
+                    setOtherReceiverModal({ open: true, selectedReceiver });
+                    setInstallationPaymentModal({ open: false });
+                    return;
+                }
+
+                if (response.status === 422 && result?.action_required === 'resolve_invalid_receiver') {
+                    setReceiverConflictModal({
+                        open: true,
+                        message: result?.message || 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan.',
+                    });
+                    setInstallationPaymentModal({ open: false });
+                    return;
+                }
+
+                const message = result.message || 'Failed to verify customer';
                 throw new Error(message);
             }
-
-            const result = await response.json();
 
             if (!result?.secret?.name || !result?.secret?.password) {
                 throw new Error('Secret PPPoE tidak tersedia pada respons verifikasi.');
             }
 
+            closeInstallationPaymentFlow();
             setSecretInfo(result.secret || null);
+            setAgreementInfo(result.agreement || null);
             setShowSecretModal(true);
             setSuccess(true);
         } catch (err) {
@@ -670,6 +808,24 @@ function CustomerVerificationForm() {
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (formData.enable_installation_team && Number(formData.installation_cable_used || 0) <= 0) {
+            const message = 'Habis Kabel wajib diisi untuk pemasangan.';
+            setError(message);
+            setErrorModalMessage(message);
+            setShowErrorModal(true);
+            return;
+        }
+
+        if (Number(formData.installation_fee || 0) > 0) {
+            setInstallationPaymentModal({ open: true });
+            return;
+        }
+
+        await performVerification();
     };
 
     if (loading) {
@@ -1242,6 +1398,135 @@ function CustomerVerificationForm() {
                         )}
                     </div>
 
+                    {/* Contract Data */}
+                    <div>
+                        <h2 className="text-xl font-bold text-gray-900 mb-4">Data Kontrak & Perangkat</h2>
+                        <div className="mb-4 rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
+                            Data ini akan masuk ke PDF kontrak pelanggan beserta QR tanda tangan digital. Foto dari Google Sheets otomatis disertakan sebagai link lampiran.
+                        </div>
+                        {(formData.contract_photo_front_url || formData.contract_photo_modem_url || formData.contract_photo_ktp_url) && (
+                            <div className="mb-4 rounded-lg border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+                                <p className="font-semibold">Foto dari Google Sheets sudah terdeteksi:</p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                    {formData.contract_photo_front_url && (
+                                        <a href={formData.contract_photo_front_url} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+                                            Poto Depan Rumah
+                                        </a>
+                                    )}
+                                    {formData.contract_photo_modem_url && (
+                                        <a href={formData.contract_photo_modem_url} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+                                            Poto Modem
+                                        </a>
+                                    )}
+                                    {formData.contract_photo_ktp_url && (
+                                        <a href={formData.contract_photo_ktp_url} target="_blank" rel="noopener noreferrer" className="rounded-full bg-white px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+                                            Poto KTP
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Nomor KTP
+                                </label>
+                                <input
+                                    type="text"
+                                    name="contract_ktp_number"
+                                    value={formData.contract_ktp_number}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Nomor KTP pelanggan"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    MAC Address Router/ONU
+                                </label>
+                                <input
+                                    type="text"
+                                    name="contract_router_mac"
+                                    value={formData.contract_router_mac}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Contoh: AA:BB:CC:DD:EE:FF"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Serial Number Perangkat
+                                </label>
+                                <input
+                                    type="text"
+                                    name="contract_device_serial"
+                                    value={formData.contract_device_serial}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Serial router/ONU/perangkat"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Tambah Foto Lain (Opsional)
+                                </label>
+                                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
+                                    <input
+                                        id="contract_installation_photos"
+                                        type="file"
+                                        name="contract_installation_photos"
+                                        accept="image/*"
+                                        multiple
+                                        onChange={handleFileChange}
+                                        className="sr-only"
+                                    />
+                                    <label
+                                        htmlFor="contract_installation_photos"
+                                        className="inline-flex cursor-pointer items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                                    >
+                                        <Upload size={16} className="mr-2" />
+                                        Pilih Foto Instalasi
+                                    </label>
+                                    <span className="ml-3 text-sm text-gray-600">
+                                        {contractPhotoNames.length > 0
+                                            ? `${contractPhotoNames.length} file dipilih`
+                                            : 'Tidak perlu jika foto sudah ada di Google Sheets'}
+                                    </span>
+                                    {contractPhotoNames.length > 0 && (
+                                        <div className="mt-3 space-y-1">
+                                            {contractPhotoNames.slice(0, 4).map((file, index) => (
+                                                <p key={`${file.name}-${index}`} className="truncate text-xs text-gray-600">
+                                                    • {file.name}
+                                                </p>
+                                            ))}
+                                            {contractPhotoNames.length > 4 && (
+                                                <p className="text-xs text-gray-500">
+                                                    +{contractPhotoNames.length - 4} file lainnya
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Opsional. Maksimal 8 foto tambahan, masing-masing 4MB.
+                                </p>
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Catatan Perangkat
+                                </label>
+                                <textarea
+                                    name="contract_device_notes"
+                                    value={formData.contract_device_notes}
+                                    onChange={handleChange}
+                                    rows={2}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    placeholder="Contoh: ONU dipasang di ruang tamu, adaptor 12V, kabel dropcore 35 meter"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Installation Team & Material Details */}
                     <div>
                         <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
@@ -1341,14 +1626,15 @@ function CustomerVerificationForm() {
                                     <input
                                         type="number"
                                         step="any"
-                                        min="0"
+                                        min={formData.enable_installation_team ? '0.01' : '0'}
                                         name="installation_cable_used"
                                         value={formData.installation_cable_used}
                                         onChange={handleChange}
+                                        required={formData.enable_installation_team}
                                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                         placeholder="Contoh: 35"
                                     />
-                                    <p className="text-xs text-gray-500 mt-1">Jika diisi, stok kabel terpilih otomatis berkurang sesuai angka ini.</p>
+                                    <p className="text-xs text-gray-500 mt-1">Wajib diisi saat pemasangan aktif. Stok kabel terpilih otomatis berkurang sesuai angka ini.</p>
                                 </div>
 
                                 <div>
@@ -1442,6 +1728,165 @@ function CustomerVerificationForm() {
                     </div>
                 </form>
 
+                <Modal
+                    isOpen={installationPaymentModal.open}
+                    onClose={closeInstallationPaymentFlow}
+                    title="Konfirmasi Biaya Pemasangan"
+                    theme="dashboard"
+                    size="lg"
+                >
+                    <div className="space-y-4 text-slate-100">
+                        <p className="text-sm text-slate-300">
+                            Biaya pemasangan akan dicatat ke mutasi dengan alur penerima pembayaran yang sama seperti konfirmasi penagihan.
+                        </p>
+                        <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                            <p className="text-sm text-slate-300">Nominal biaya pemasangan</p>
+                            <p className="mt-2 text-2xl font-bold text-amber-300">
+                                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(formData.installation_fee || 0))}
+                            </p>
+                        </div>
+                        <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-200">Terima via</label>
+                            <select
+                                className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white"
+                                value={paymentReceiptOptionId}
+                                onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
+                            >
+                                <option value="">Pilih metode</option>
+                                {paymentReceiptOptions.map((option) => (
+                                    <option key={option.id} value={option.id}>{option.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        {canChoosePaymentReceiver && (
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-200">Akun penerima pembayaran</label>
+                                <select
+                                    className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white"
+                                    value={paymentReceiverUserId}
+                                    onChange={(e) => setPaymentReceiverUserId(e.target.value)}
+                                    disabled={loadingPaymentReceivers}
+                                >
+                                    <option value="">{loadingPaymentReceivers ? 'Memuat penerima...' : 'Akun saya (default)'}</option>
+                                    {paymentReceivers.map((receiver) => (
+                                        <option key={receiver.id} value={receiver.id}>
+                                            {getPaymentReceiverLabel(receiver)}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm text-cyan-50">
+                            Jika akun penerima bukan diri sendiri, sistem bisa meminta approval akun penerima atau langsung memasukkan biaya pemasangan ke hutang sesuai keputusan Anda.
+                        </div>
+                        <div className="flex gap-3 justify-end">
+                            <Button type="button" variant="secondary" onClick={closeInstallationPaymentFlow}>
+                                Batal
+                            </Button>
+                            <Button type="button" variant="primary" disabled={submitting} onClick={() => performVerification()}>
+                                {submitting ? 'Memproses...' : 'Lanjutkan Verifikasi'}
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+
+                <Modal
+                    isOpen={otherReceiverModal.open}
+                    onClose={() => setOtherReceiverModal({ open: false, selectedReceiver: null })}
+                    title="Konfirmasi Akun Penerima"
+                    theme="dashboard"
+                >
+                    <div className="space-y-4 text-slate-100">
+                        <p className="text-sm text-slate-300">
+                            Anda memilih akun penerima selain akun Anda sendiri. Pilih apakah mutasi biaya pemasangan menunggu konfirmasi akun penerima atau langsung dimasukkan ke hutang.
+                        </p>
+                        {otherReceiverModal.selectedReceiver?.is_company_finance_receiver && (
+                            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-50">
+                                Akun yang dipilih adalah akun keuangan perusahaan. Jika akun ini menyetujui, mutasi biaya pemasangan akan menjadi confirmed tanpa membuat hutang.
+                            </div>
+                        )}
+                        <div className="flex gap-3 justify-end">
+                            <Button type="button" variant="secondary" onClick={() => setOtherReceiverModal({ open: false, selectedReceiver: null })}>
+                                Batal
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="warning"
+                                disabled={submitting}
+                                onClick={async () => {
+                                    setOtherReceiverModal({ open: false, selectedReceiver: null });
+                                    await performVerification({
+                                        otherReceiverConfirmed: true,
+                                        receiverConflictResolution: 'approval',
+                                    });
+                                }}
+                            >
+                                {submitting ? 'Memproses...' : 'Tunggu Konfirmasi Penerima'}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="danger"
+                                disabled={submitting}
+                                onClick={async () => {
+                                    setOtherReceiverModal({ open: false, selectedReceiver: null });
+                                    await performVerification({
+                                        otherReceiverConfirmed: true,
+                                        receiverConflictResolution: 'debt',
+                                    });
+                                }}
+                            >
+                                {submitting ? 'Memproses...' : 'Masukkan ke Hutang'}
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+
+                <Modal
+                    isOpen={receiverConflictModal.open}
+                    onClose={() => setReceiverConflictModal({ open: false, message: '' })}
+                    title="Akun Penerima Tidak Diizinkan"
+                    theme="dashboard"
+                >
+                    <div className="space-y-4 text-slate-100">
+                        <p className="text-sm text-slate-300">
+                            {receiverConflictModal.message || 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan.'}
+                        </p>
+                        <div className="flex gap-3 justify-end">
+                            <Button type="button" variant="secondary" onClick={() => setReceiverConflictModal({ open: false, message: '' })}>
+                                Batal
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="warning"
+                                disabled={submitting}
+                                onClick={async () => {
+                                    setReceiverConflictModal({ open: false, message: '' });
+                                    await performVerification({
+                                        otherReceiverConfirmed: true,
+                                        receiverConflictResolution: 'approval',
+                                    });
+                                }}
+                            >
+                                {submitting ? 'Memproses...' : 'Jangan Masuk Hutang'}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="danger"
+                                disabled={submitting}
+                                onClick={async () => {
+                                    setReceiverConflictModal({ open: false, message: '' });
+                                    await performVerification({
+                                        otherReceiverConfirmed: true,
+                                        receiverConflictResolution: 'debt',
+                                    });
+                                }}
+                            >
+                                {submitting ? 'Memproses...' : 'Masukkan ke Hutang'}
+                            </Button>
+                        </div>
+                    </div>
+                </Modal>
+
                 {/* Secret Info Modal */}
                 {showSecretModal && secretInfo && (
                     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1476,6 +1921,31 @@ function CustomerVerificationForm() {
                                     <p className="text-sm font-mono font-medium text-gray-900">{secretInfo.remote_address}</p>
                                 </div>
                             </div>
+
+                            {agreementInfo && (
+                                <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                                    <p className="text-xs text-emerald-700 mb-1">Kontrak Pelanggan</p>
+                                    <p className="text-sm font-semibold text-emerald-900">{agreementInfo.agreement_number}</p>
+                                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                                        <a
+                                            href={agreementInfo.download_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                                        >
+                                            Download PDF
+                                        </a>
+                                        <a
+                                            href={agreementInfo.verify_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center justify-center rounded-lg bg-white px-3 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                                        >
+                                            Verifikasi QR
+                                        </a>
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="flex gap-3">
                                 <button

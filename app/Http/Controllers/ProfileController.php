@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ProfileUpdateRequest;
+use App\Services\AuditLogService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -11,6 +12,10 @@ use Illuminate\View\View;
 
 class ProfileController extends Controller
 {
+    public function __construct(private readonly AuditLogService $auditLogService)
+    {
+    }
+
     /**
      * Display the user's profile form.
      */
@@ -26,6 +31,7 @@ class ProfileController extends Controller
      */
     public function update(ProfileUpdateRequest $request): RedirectResponse
     {
+        $before = $request->user()->only(['name', 'email']);
         $request->user()->fill($request->validated());
 
         if ($request->user()->isDirty('email')) {
@@ -33,6 +39,11 @@ class ProfileController extends Controller
         }
 
         $request->user()->save();
+
+        $this->auditLogService->log('profile.updated', $request->user(), [
+            'before' => $before,
+            'after' => $request->user()->only(['name', 'email']),
+        ], $request->user()->id);
 
         return Redirect::route('profile.edit')->with('status', 'profile-updated');
     }
@@ -47,6 +58,11 @@ class ProfileController extends Controller
         ]);
 
         $user = $request->user();
+
+        $this->auditLogService->log('profile.deleted', $user, [
+            'name' => $user->name,
+            'email' => $user->email,
+        ], $user->id);
 
         Auth::logout();
 

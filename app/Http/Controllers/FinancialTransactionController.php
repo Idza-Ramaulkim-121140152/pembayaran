@@ -4,12 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Models\FinancialTransaction;
 use App\Models\PaymentReceiptOption;
+use App\Models\User;
+use App\Services\PaymentReceiverService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class FinancialTransactionController extends Controller
 {
+    public function __construct(private PaymentReceiverService $paymentReceiverService)
+    {
+    }
+
     private function isLedgerReady(): bool
     {
         return Schema::hasTable('financial_transactions');
@@ -22,6 +28,47 @@ class FinancialTransactionController extends Controller
                 'message' => 'Anda tidak memiliki izin edit mutasi. Hubungi superadmin.',
             ], 403));
         }
+    }
+
+    private function paymentReceiverRule(): array
+    {
+        if (!Schema::hasTable('users')) {
+            return ['nullable'];
+        }
+
+        return [
+            'nullable',
+            'integer',
+            Rule::exists('users', 'id'),
+        ];
+    }
+
+    private function resolvePaymentReceiver(?int $requestedUserId = null): ?User
+    {
+        $actor = auth()->user();
+        $receiverId = $actor?->canChoosePaymentReceiver()
+            ? ($requestedUserId ?: auth()->id())
+            : auth()->id();
+
+        if ($receiverId && !$this->paymentReceiverService->isAllowedReceiver($actor, $receiverId)) {
+            $receiverId = auth()->id();
+        }
+
+        return $receiverId ? User::query()->find($receiverId) : null;
+    }
+
+    private function putPaymentReceiverMeta(array $meta, ?User $receiver): array
+    {
+        if (!$receiver) {
+            unset($meta['payment_receiver_user_id'], $meta['payment_receiver_name'], $meta['payment_receiver_is_company_finance']);
+            return $meta;
+        }
+
+        $meta['payment_receiver_user_id'] = $receiver->id;
+        $meta['payment_receiver_name'] = $receiver->name;
+        $meta['payment_receiver_is_company_finance'] = $this->paymentReceiverService->isCompanyFinanceReceiver($receiver->id);
+
+        return $meta;
     }
 
     public function index(Request $request)
@@ -48,6 +95,10 @@ class FinancialTransactionController extends Controller
             $baseQuery->where('source', $request->string('source'));
         }
 
+        if ($request->filled('status') && Schema::hasColumn('financial_transactions', 'status')) {
+            $baseQuery->where('status', $request->string('status'));
+        }
+
         if ($request->filled('start_date')) {
             $baseQuery->whereDate('transaction_date', '>=', $request->string('start_date'));
         }
@@ -69,7 +120,12 @@ class FinancialTransactionController extends Controller
             });
         }
 
-        $summaryRow = (clone $baseQuery)
+        $summaryBaseQuery = clone $baseQuery;
+        if (Schema::hasColumn('financial_transactions', 'status')) {
+            $summaryBaseQuery->where('status', FinancialTransaction::STATUS_CONFIRMED);
+        }
+
+        $summaryRow = $summaryBaseQuery
             ->selectRaw("\n                COALESCE(SUM(CASE WHEN type = 'income' OR (type = 'adjustment' AND amount > 0) THEN ABS(amount) ELSE 0 END), 0) AS income,\n                COALESCE(SUM(CASE WHEN type = 'expense' OR (type = 'adjustment' AND amount < 0) THEN ABS(amount) ELSE 0 END), 0) AS expense\n            ")
             ->first();
 
@@ -107,6 +163,7 @@ class FinancialTransactionController extends Controller
             'amount' => 'required|numeric|min:1',
             'transaction_date' => 'required|date',
             'payment_receipt_option_id' => 'nullable',
+            'payment_receiver_user_id' => $this->paymentReceiverRule(),
         ];
 
         if (Schema::hasTable('payment_receipt_options')) {
@@ -130,13 +187,14 @@ class FinancialTransactionController extends Controller
             $receiptOption = PaymentReceiptOption::find($validated['payment_receipt_option_id']);
         }
 
-        $meta = null;
+        $meta = [];
         if ($receiptOption) {
-            $meta = [
-                'received_via_id' => $receiptOption->id,
-                'received_via_name' => $receiptOption->name,
-            ];
+            $meta['received_via_id'] = $receiptOption->id;
+            $meta['received_via_name'] = $receiptOption->name;
         }
+
+        $receiver = $this->resolvePaymentReceiver($validated['payment_receiver_user_id'] ?? null);
+        $meta = $this->putPaymentReceiverMeta($meta, $receiver);
 
         $transaction = FinancialTransaction::create([
             'type' => 'income',
@@ -147,7 +205,8 @@ class FinancialTransactionController extends Controller
             'transaction_date' => $validated['transaction_date'],
             'created_by' => auth()->id(),
             'updated_by' => auth()->id(),
-            'meta' => $meta,
+            'status' => FinancialTransaction::STATUS_CONFIRMED,
+            'meta' => $meta !== [] ? $meta : null,
         ]);
 
         return response()->json([
@@ -179,6 +238,7 @@ class FinancialTransactionController extends Controller
             'transaction_date' => $validated['transaction_date'],
             'created_by' => auth()->id(),
             'updated_by' => auth()->id(),
+            'status' => FinancialTransaction::STATUS_CONFIRMED,
         ]);
 
         return response()->json([
@@ -201,6 +261,7 @@ class FinancialTransactionController extends Controller
             'transaction_date' => 'required|date',
             'category' => 'nullable|string|max:50',
             'payment_receipt_option_id' => 'nullable',
+            'payment_receiver_user_id' => $this->paymentReceiverRule(),
         ];
 
         if (Schema::hasTable('payment_receipt_options')) {
@@ -227,6 +288,11 @@ class FinancialTransactionController extends Controller
             } else {
                 unset($meta['received_via_id'], $meta['received_via_name']);
             }
+        }
+
+        if (array_key_exists('payment_receiver_user_id', $validated)) {
+            $receiver = $this->resolvePaymentReceiver($validated['payment_receiver_user_id'] ?? null);
+            $meta = $this->putPaymentReceiverMeta($meta, $receiver);
         }
 
         $financialTransaction->update([

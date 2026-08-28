@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Hash;
@@ -10,6 +11,10 @@ use Illuminate\Validation\Rule;
 
 class UserManagementController extends Controller
 {
+    public function __construct(private readonly AuditLogService $auditLogService)
+    {
+    }
+
     /**
      * List all users
      */
@@ -22,6 +27,12 @@ class UserManagementController extends Controller
         }
         if (Schema::hasColumn('users', 'can_edit_mutations')) {
             $select[] = 'can_edit_mutations';
+        }
+        if (Schema::hasColumn('users', 'can_choose_payment_mutation')) {
+            $select[] = 'can_choose_payment_mutation';
+        }
+        if (Schema::hasColumn('users', 'can_choose_payment_receiver')) {
+            $select[] = 'can_choose_payment_receiver';
         }
         if ($hasEmployeeFields) {
             $select[] = 'is_employee';
@@ -47,6 +58,20 @@ class UserManagementController extends Controller
         if (!Schema::hasColumn('users', 'can_edit_mutations')) {
             $users = $users->map(function ($user) {
                 $user->can_edit_mutations = false;
+                return $user;
+            });
+        }
+
+        if (!Schema::hasColumn('users', 'can_choose_payment_mutation')) {
+            $users = $users->map(function ($user) {
+                $user->can_choose_payment_mutation = false;
+                return $user;
+            });
+        }
+
+        if (!Schema::hasColumn('users', 'can_choose_payment_receiver')) {
+            $users = $users->map(function ($user) {
+                $user->can_choose_payment_receiver = false;
                 return $user;
             });
         }
@@ -81,6 +106,8 @@ class UserManagementController extends Controller
             'role' => ['required', Rule::in(User::ROLES)],
             'can_confirm_payments' => 'nullable|boolean',
             'can_edit_mutations' => 'nullable|boolean',
+            'can_choose_payment_mutation' => 'nullable|boolean',
+            'can_choose_payment_receiver' => 'nullable|boolean',
             'is_employee' => $hasEmployeeFields ? 'nullable|boolean' : 'nullable',
             'payroll_member_id' => $hasEmployeeFields ? 'nullable|integer|exists:payroll_members,id' : 'nullable',
         ]);
@@ -104,15 +131,27 @@ class UserManagementController extends Controller
             'role' => $validated['role'],
             'can_confirm_payments' => (bool) ($validated['can_confirm_payments'] ?? false),
             'can_edit_mutations' => (bool) ($validated['can_edit_mutations'] ?? false),
+            'can_choose_payment_mutation' => (bool) ($validated['can_choose_payment_mutation'] ?? false),
+            'can_choose_payment_receiver' => (bool) ($validated['can_choose_payment_receiver'] ?? false),
             'is_employee' => $isEmployee,
             'payroll_member_id' => $isEmployee ? $payrollMemberId : null,
         ]);
 
         $user->loadMissing('payrollMember:id,nama');
+        $this->auditLogService->log('user.created', $user, [
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+            'can_confirm_payments' => (bool) $user->can_confirm_payments,
+            'can_edit_mutations' => (bool) $user->can_edit_mutations,
+            'can_choose_payment_mutation' => (bool) $user->can_choose_payment_mutation,
+            'can_choose_payment_receiver' => (bool) $user->can_choose_payment_receiver,
+        ], auth()->id());
+
         return response()->json([
             'message' => 'Akun berhasil dibuat.',
             'data' => [
-                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'is_employee', 'payroll_member_id', 'created_at'),
+                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'can_choose_payment_mutation', 'can_choose_payment_receiver', 'is_employee', 'payroll_member_id', 'created_at'),
                 'payroll_member_name' => $user->payrollMember?->nama,
             ],
         ], 201);
@@ -146,6 +185,8 @@ class UserManagementController extends Controller
             'role' => ['required', Rule::in(User::ROLES)],
             'can_confirm_payments' => 'nullable|boolean',
             'can_edit_mutations' => 'nullable|boolean',
+            'can_choose_payment_mutation' => 'nullable|boolean',
+            'can_choose_payment_receiver' => 'nullable|boolean',
             'is_employee' => $hasEmployeeFields ? 'nullable|boolean' : 'nullable',
             'payroll_member_id' => $hasEmployeeFields ? 'nullable|integer|exists:payroll_members,id' : 'nullable',
         ]);
@@ -156,11 +197,25 @@ class UserManagementController extends Controller
             return response()->json(['message' => 'Pilih teknisi payroll jika akun ditandai sebagai karyawan.'], 422);
         }
 
+        $before = $user->only([
+            'name',
+            'email',
+            'role',
+            'can_confirm_payments',
+            'can_edit_mutations',
+            'can_choose_payment_mutation',
+            'can_choose_payment_receiver',
+            'is_employee',
+            'payroll_member_id',
+        ]);
+
         $user->name = $validated['name'];
         $user->email = $validated['email'];
         $user->role = $validated['role'];
         $user->can_confirm_payments = (bool) ($validated['can_confirm_payments'] ?? false);
         $user->can_edit_mutations = (bool) ($validated['can_edit_mutations'] ?? false);
+        $user->can_choose_payment_mutation = (bool) ($validated['can_choose_payment_mutation'] ?? false);
+        $user->can_choose_payment_receiver = (bool) ($validated['can_choose_payment_receiver'] ?? false);
         if ($hasEmployeeFields) {
             $user->is_employee = $isEmployee;
             $user->payroll_member_id = $isEmployee ? $payrollMemberId : null;
@@ -173,10 +228,25 @@ class UserManagementController extends Controller
         $user->save();
         $user->loadMissing('payrollMember:id,nama');
 
+        $this->auditLogService->log('user.updated', $user, [
+            'before' => $before,
+            'after' => $user->only([
+                'name',
+                'email',
+                'role',
+                'can_confirm_payments',
+                'can_edit_mutations',
+                'can_choose_payment_mutation',
+                'can_choose_payment_receiver',
+                'is_employee',
+                'payroll_member_id',
+            ]),
+        ], auth()->id());
+
         return response()->json([
             'message' => 'Akun berhasil diperbarui.',
             'data' => [
-                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'is_employee', 'payroll_member_id', 'created_at'),
+                ...$user->only('id', 'name', 'email', 'role', 'can_confirm_payments', 'can_edit_mutations', 'can_choose_payment_mutation', 'can_choose_payment_receiver', 'is_employee', 'payroll_member_id', 'created_at'),
                 'payroll_member_name' => $user->payrollMember?->nama,
             ],
         ]);
@@ -196,6 +266,12 @@ class UserManagementController extends Controller
         if ($user->role === User::ROLE_SUPERADMIN && !auth()->user()->isSuperAdmin()) {
             return response()->json(['error' => 'Hanya superadmin yang dapat menghapus akun superadmin.'], 403);
         }
+
+        $this->auditLogService->log('user.deleted', $user, [
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+        ], auth()->id());
 
         $user->delete();
 

@@ -10,11 +10,19 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\NotificationLog;
 use App\Models\Package;
+use App\Models\User;
+use App\Models\FinancialTransaction;
 use App\Services\BillingAutoInvoiceService;
 use App\Services\BillingItemService;
 use App\Services\BillingMessageTemplateService;
+use App\Services\AuditLogService;
+use App\Services\BorrowerLoanService;
 use App\Services\FeatureService;
+use App\Services\InvoiceWhatsAppService;
+use App\Services\CustomerUsageSnapshotService;
 use App\Services\FinancialLedgerService;
+use App\Services\MikroTikService;
+use App\Services\PaymentReceiverService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -46,6 +54,10 @@ class BillingController extends Controller
         private FeatureService $featureService,
         private BillingItemService $billingItemService,
         private BillingMessageTemplateService $billingMessageTemplateService,
+        private CustomerUsageSnapshotService $customerUsageSnapshotService,
+        private AuditLogService $auditLogService,
+        private PaymentReceiverService $paymentReceiverService,
+        private BorrowerLoanService $borrowerLoanService,
     )
     {
     }
@@ -151,61 +163,41 @@ class BillingController extends Controller
         }
 
 
+        $responseMessage = 'Konfirmasi pembayaran berhasil dikirim.';
+
         // Jika admin (dari dashboard) konfirmasi, bisa kapan saja
         if ($this->canCurrentUserConfirmPayments()) {
             $invoice->status = 'paid';
             $invoice->paid_at = now();
             $invoice->tolak_info = null; // reset info tolak jika sudah dikonfirmasi
+            if (Schema::hasColumn('invoices', 'include_in_mutation')) {
+                $invoice->include_in_mutation = true;
+            }
+            if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+                $invoice->payment_receiver_user_id = Auth::id();
+            }
 
-            // Update due_date customer (basis: due_date customer saat ini + 30 hari)
-            $customer = $invoice->customer;
-            if ($customer) {
-                $customer->due_date = $this->computeNextDueDateFromCustomer($customer);
+            try {
+                $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, now());
+                $responseMessage = $confirmationResult['isolation_restored']
+                    ? 'Pembayaran berhasil dikonfirmasi dan status isolir pelanggan dicabut.'
+                    : 'Pembayaran berhasil dikonfirmasi.';
+            } catch (\Throwable $e) {
+                Log::error('Failed to finalize admin payment confirmation', [
+                    'invoice_id' => $invoice->id,
+                    'customer_id' => $invoice->customer_id,
+                    'error' => $e->getMessage(),
+                ]);
 
-                if ($customer->pppoe_username) {
-                    try {
-                        $mikrotik = new \App\Services\MikroTikService();
-                        $mikrotik->connect();
-                        $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
-
-                        if ($secret && strtolower((string) ($secret['profile'] ?? '')) === 'isolir') {
-                            $targetProfile = $this->resolveCustomerTargetProfile($customer);
-
-                            try {
-                                $profiles = $mikrotik->command('/ppp/profile/print');
-                                $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
-                                $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
-                                if ($resolvedProfile !== null) {
-                                    $targetProfile = $resolvedProfile;
-                                }
-                            } catch (\Exception $profileErr) {
-                                Log::warning('Could not validate profile list while restoring isolated user', [
-                                    'username' => $customer->pppoe_username,
-                                    'target_profile' => $targetProfile,
-                                    'error' => $profileErr->getMessage(),
-                                ]);
-                            }
-
-                            $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                            $customer->mikrotik_profile = null;
-
-                            Log::info('User restored from isolation after payment confirmation', [
-                                'username' => $customer->pppoe_username,
-                                'restored_profile' => $targetProfile,
-                                'new_due_date' => $customer->due_date,
-                            ]);
-                        }
-
-                        $mikrotik->disconnect();
-                    } catch (\Exception $e) {
-                        Log::error('Failed to check/restore user from isolation', [
-                            'username' => $customer->pppoe_username,
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
+                if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
+                    return response()->json([
+                        'message' => $e->getMessage() ?: 'Gagal memproses konfirmasi pembayaran.',
+                    ], 422);
                 }
 
-                $customer->save();
+                return back()->withErrors([
+                    'payment' => $e->getMessage() ?: 'Gagal memproses konfirmasi pembayaran.',
+                ])->withInput();
             }
         } else {
             // Jika dari publik (bukan admin), status selalu jadi menunggu konfirmasi (kecuali sudah paid)
@@ -222,17 +214,17 @@ class BillingController extends Controller
 
         if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
             return response()->json([
-                'message' => 'Konfirmasi pembayaran berhasil dikirim.',
+                'message' => $responseMessage,
                 'data' => $invoice,
             ]);
         }
 
         // Redirect sesuai asal request
         if ($this->canCurrentUserConfirmPayments()) {
-            return redirect()->route('billing.index')->with('success', 'Pembayaran dikonfirmasi.');
+            return redirect()->route('billing.index')->with('success', $responseMessage);
         }
         $invoice_link = $invoice->invoice_link;
-        return redirect()->route('invoice.show', $invoice_link)->with('success', 'Konfirmasi pembayaran berhasil dikirim.');
+        return redirect()->route('invoice.show', $invoice_link)->with('success', $responseMessage);
     }
     // Tampilkan invoice berdasarkan link unik, tanpa login
     public function showInvoice($invoice_link)
@@ -429,6 +421,7 @@ class BillingController extends Controller
             ->all();
 
         $activeInvoiceMap = [];
+        $pendingConfirmationInvoiceMap = [];
         if (!empty($customerIds)) {
             $activeInvoices = Invoice::query()
                 ->whereIn('customer_id', $customerIds)
@@ -439,6 +432,30 @@ class BillingController extends Controller
 
             foreach ($activeInvoices as $activeInvoice) {
                 $activeInvoiceMap[(int) $activeInvoice->customer_id] = $activeInvoice;
+            }
+
+            $pendingConfirmationInvoices = Invoice::query()
+                ->whereIn('customer_id', $customerIds)
+                ->where('status', 'menunggu konfirmasi')
+                ->orderByDesc('id')
+                ->get()
+                ->groupBy('customer_id');
+
+            foreach ($pendingConfirmationInvoices as $customerId => $invoices) {
+                $latestPendingInvoice = null;
+                $pendingInvoiceWithProof = null;
+
+                foreach ($invoices as $pendingInvoice) {
+                    $latestPendingInvoice ??= $pendingInvoice;
+
+                    $normalizedPath = $this->normalizePaymentProofPath($pendingInvoice->bukti_pembayaran);
+                    if ($normalizedPath !== null && Storage::disk('public')->exists($normalizedPath)) {
+                        $pendingInvoiceWithProof = $pendingInvoice;
+                        break;
+                    }
+                }
+
+                $pendingConfirmationInvoiceMap[(int) $customerId] = $pendingInvoiceWithProof ?: $latestPendingInvoice;
             }
         }
 
@@ -461,9 +478,11 @@ class BillingController extends Controller
         foreach ($customers as $customer) {
             $latestInvoice = $customer->latestInvoice;
             $activeInvoice = $activeInvoiceMap[(int) $customer->id] ?? null;
+            $pendingConfirmationInvoice = $pendingConfirmationInvoiceMap[(int) $customer->id] ?? null;
 
             $this->appendPaymentProofAttributes($latestInvoice);
             $this->appendPaymentProofAttributes($activeInvoice);
+            $this->appendPaymentProofAttributes($pendingConfirmationInvoice);
 
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
@@ -477,13 +496,14 @@ class BillingController extends Controller
                 'customer' => $customer,
                 'invoice' => $latestInvoice,
                 'active_invoice' => $activeInvoice,
+                'pending_confirmation_invoice' => $pendingConfirmationInvoice,
                 'has_active_invoice' => $hasActiveInvoice,
                 'can_create_invoice' => $canCreateInvoice,
                 'has_paid_this_month' => $hasPaidThisMonth,
             ];
             
             // Pelanggan yang sudah bayar tetap ditampilkan saat memasuki periode hampir jatuh tempo.
-            if ($latestInvoiceStatus === 'paid' && !$isLate && !$isAlmostLate) {
+            if ($latestInvoiceStatus === 'paid' && !$pendingConfirmationInvoice && !$isLate && !$isAlmostLate) {
                 $paid[] = $item;
                 continue;
             }
@@ -561,6 +581,41 @@ class BillingController extends Controller
             'Content-Disposition' => 'inline; filename="' . $fileName . '"',
             'X-Content-Type-Options' => 'nosniff',
             'Cache-Control' => 'private, max-age=60',
+        ]);
+    }
+
+    public function paymentProofPreview(Invoice $invoice)
+    {
+        $this->warnIfPublicStorageLinkMissing();
+
+        $normalizedPath = $this->normalizePaymentProofPath($invoice->bukti_pembayaran);
+        if ($normalizedPath === null) {
+            return response()->json([
+                'message' => 'Path bukti pembayaran tidak valid.',
+            ], 404);
+        }
+
+        if (!Storage::disk('public')->exists($normalizedPath)) {
+            return response()->json([
+                'message' => 'File bukti pembayaran tidak ditemukan di penyimpanan.',
+            ], 404);
+        }
+
+        $mimeType = Storage::disk('public')->mimeType($normalizedPath) ?: 'application/octet-stream';
+        if (!str_starts_with(strtolower($mimeType), 'image/')) {
+            return response()->json([
+                'message' => 'File bukti pembayaran bukan gambar yang bisa dipreview.',
+            ], 422);
+        }
+
+        $content = Storage::disk('public')->get($normalizedPath);
+
+        return response()->json([
+            'data' => [
+                'data_url' => 'data:' . $mimeType . ';base64,' . base64_encode($content),
+                'mime_type' => $mimeType,
+                'file_name' => basename($normalizedPath),
+            ],
         ]);
     }
 
@@ -906,8 +961,26 @@ class BillingController extends Controller
         return now()->startOfDay()->addDays(30)->toDateString();
     }
 
+    private function computeConfirmedDueDate(Customer $customer, bool $isIsolated, Carbon $confirmedAt): string
+    {
+        if ($isIsolated) {
+            return $confirmedAt->copy()->startOfDay()->addDays(30)->toDateString();
+        }
+
+        if (!empty($customer->due_date)) {
+            return Carbon::parse((string) $customer->due_date)->startOfDay()->addDays(30)->toDateString();
+        }
+
+        return $confirmedAt->copy()->startOfDay()->addDays(30)->toDateString();
+    }
+
     private function resolveCustomerTargetProfile(Customer $customer): string
     {
+        $storedRestoreProfile = trim((string) ($customer->isolation_restore_profile ?? ''));
+        if ($storedRestoreProfile !== '') {
+            return $storedRestoreProfile;
+        }
+
         $savedProfile = trim((string) ($customer->mikrotik_profile ?? ''));
         if ($savedProfile !== '') {
             return $savedProfile;
@@ -962,10 +1035,188 @@ class BillingController extends Controller
         return null;
     }
 
+    private function makeMikroTik(): MikroTikService
+    {
+        return app(MikroTikService::class);
+    }
+
+    private function isCustomerCurrentlyIsolated(Customer $customer, ?array $secret = null): bool
+    {
+        if ((bool) ($customer->is_service_isolated ?? false)) {
+            return true;
+        }
+
+        return strtolower(trim((string) ($secret['profile'] ?? ''))) === 'isolir';
+    }
+
+    /**
+     * @return array{isolation_restored: bool, restored_profile: string|null, is_isolated: bool, isolation_restore_failed: bool, isolation_restore_error: string|null}
+     */
+    private function applyConfirmedPaymentEffects(Invoice $invoice, Carbon $confirmedAt): array
+    {
+        $customer = $invoice->customer;
+        if (!$customer) {
+            return [
+                'isolation_restored' => false,
+                'restored_profile' => null,
+                'is_isolated' => false,
+                'isolation_restore_failed' => false,
+                'isolation_restore_error' => null,
+            ];
+        }
+
+        $secret = null;
+        $mikrotik = null;
+        $isolationRestored = false;
+        $restoredProfile = null;
+        $isolationRestoreFailed = false;
+        $isolationRestoreError = null;
+
+        if ($customer->pppoe_username) {
+            $mikrotik = $this->makeMikroTik();
+
+            try {
+                $mikrotik->connect();
+            } catch (\Throwable $e) {
+                Log::warning('Failed to connect MikroTik before payment confirmation check', [
+                    'username' => $customer->pppoe_username,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            try {
+                $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
+            } catch (\Throwable $e) {
+                Log::warning('Failed to inspect PPP secret while confirming payment', [
+                    'username' => $customer->pppoe_username,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $isCurrentlyIsolated = $this->isCustomerCurrentlyIsolated($customer, $secret);
+        $customer->due_date = $this->computeConfirmedDueDate($customer, $isCurrentlyIsolated, $confirmedAt);
+
+        $markRestoreFailure = function (?string $targetProfile, string $error) use (
+            $customer,
+            $invoice,
+            $confirmedAt,
+            &$isolationRestoreFailed,
+            &$isolationRestoreError
+        ): void {
+            $isolationRestoreFailed = true;
+            $isolationRestoreError = $error ?: 'Gagal mencabut isolir pelanggan dari MikroTik.';
+
+            Log::error('Failed to restore isolated user after payment confirmation', [
+                'invoice_id' => $invoice->id,
+                'customer_id' => $customer->id,
+                'username' => $customer->pppoe_username,
+                'target_profile' => $targetProfile,
+                'error' => $isolationRestoreError,
+            ]);
+
+            $this->auditLogService->log('billing.customer_unisolation_failed_after_payment', $customer, [
+                'customer_id' => $customer->id,
+                'invoice_id' => $invoice->id,
+                'pppoe_username' => $customer->pppoe_username,
+                'target_profile' => $targetProfile,
+                'error' => $isolationRestoreError,
+                'confirmed_at' => $confirmedAt->toIso8601String(),
+            ], Auth::id());
+        };
+
+        if ($isCurrentlyIsolated) {
+            $targetProfile = $this->resolveCustomerTargetProfile($customer);
+
+            if (!$customer->pppoe_username) {
+                $markRestoreFailure($targetProfile, 'Pelanggan sedang isolir tetapi tidak memiliki username PPPoE untuk dipulihkan.');
+            } else {
+                $mikrotik ??= $this->makeMikroTik();
+
+                try {
+                    $profiles = $mikrotik->command('/ppp/profile/print');
+                    $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
+                    $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
+                    if ($resolvedProfile !== null) {
+                        $targetProfile = $resolvedProfile;
+                    }
+                } catch (\Throwable $profileErr) {
+                    Log::warning('Could not validate profile list while restoring isolated user', [
+                        'username' => $customer->pppoe_username,
+                        'target_profile' => $targetProfile,
+                        'error' => $profileErr->getMessage(),
+                    ]);
+                }
+
+                try {
+                    $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+
+                    $customer->is_service_isolated = false;
+                    $customer->service_isolated_at = null;
+                    $customer->service_isolated_by = null;
+                    $customer->isolation_restore_profile = null;
+
+                    $isolationRestored = true;
+                    $restoredProfile = $targetProfile;
+
+                    $this->auditLogService->log('billing.customer_unisolated_after_payment', $customer, [
+                        'customer_id' => $customer->id,
+                        'invoice_id' => $invoice->id,
+                        'pppoe_username' => $customer->pppoe_username,
+                        'restored_profile' => $targetProfile,
+                        'confirmed_at' => $confirmedAt->toIso8601String(),
+                    ], Auth::id());
+
+                    Log::info('User restored from isolation after payment confirmation', [
+                        'username' => $customer->pppoe_username,
+                        'restored_profile' => $targetProfile,
+                        'new_due_date' => $customer->due_date,
+                    ]);
+                } catch (\Throwable $restoreErr) {
+                    $markRestoreFailure(
+                        $targetProfile,
+                        $restoreErr->getMessage() ?: 'Gagal mencabut isolir pelanggan dari MikroTik.'
+                    );
+                }
+            }
+        }
+
+        $customer->save();
+        $this->customerUsageSnapshotService->resetPeriodByCustomerId((int) $customer->id);
+
+        if ($mikrotik) {
+            try {
+                $mikrotik->disconnect();
+            } catch (\Throwable $e) {
+                Log::warning('Failed to disconnect MikroTik after payment confirmation', [
+                    'username' => $customer->pppoe_username,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return [
+            'isolation_restored' => $isolationRestored,
+            'restored_profile' => $restoredProfile,
+            'is_isolated' => $isCurrentlyIsolated,
+            'isolation_restore_failed' => $isolationRestoreFailed,
+            'isolation_restore_error' => $isolationRestoreError,
+        ];
+    }
+
     private function getBulkIsolationStatus($lateCustomers)
     {
+        $statusMap = [];
+        foreach ($lateCustomers as $item) {
+            $customer = $item['customer'];
+            $statusMap[$customer->id] = [
+                'isolated' => (bool) ($customer->is_service_isolated ?? false),
+                'profile' => (bool) ($customer->is_service_isolated ?? false) ? 'Isolir' : null,
+            ];
+        }
+
         try {
-            $mikrotik = new \App\Services\MikroTikService();
+            $mikrotik = $this->makeMikroTik();
             
             // Get all isolated secrets in ONE MikroTik call
             $isolatedSecrets = $mikrotik->getIsolatedSecrets();
@@ -980,20 +1231,23 @@ class BillingController extends Controller
             }
             
             // Build isolation status map by customer ID
-            $statusMap = [];
             foreach ($lateCustomers as $item) {
                 $customer = $item['customer'];
                 $username = strtolower(trim((string) ($customer->pppoe_username ?? '')));
                 $statusMap[$customer->id] = [
-                    'isolated' => $username !== '' && isset($isolatedUsernames[$username]),
-                    'profile' => ($username !== '' && isset($isolatedUsernames[$username])) ? $isolatedUsernames[$username] : null,
+                    'isolated' => $username !== '' && isset($isolatedUsernames[$username])
+                        ? true
+                        : (bool) ($customer->is_service_isolated ?? false),
+                    'profile' => ($username !== '' && isset($isolatedUsernames[$username]))
+                        ? $isolatedUsernames[$username]
+                        : ((bool) ($customer->is_service_isolated ?? false) ? 'Isolir' : null),
                 ];
             }
             
             return $statusMap;
         } catch (\Exception $e) {
             \Log::error('Failed to get bulk isolation status: ' . $e->getMessage());
-            return [];
+            return $statusMap;
         }
     }
 
@@ -1011,7 +1265,7 @@ class BillingController extends Controller
         ]);
     }
 
-    public function confirmPaymentApi($invoiceId)
+    public function confirmPaymentApi(Request $request, $invoiceId)
     {
         $this->ensureCanConfirmPayments();
 
@@ -1019,6 +1273,10 @@ class BillingController extends Controller
             'paid_amount' => 'nullable|numeric|min:1',
             'payment_receipt_option_id' => 'nullable',
             'payment_method_id' => 'nullable',
+            'include_in_mutation' => 'nullable|boolean',
+            'payment_receiver_user_id' => 'nullable',
+            'other_receiver_confirmed' => 'nullable|boolean',
+            'receiver_conflict_resolution' => 'nullable|in:debt,approval',
         ];
 
         if (Schema::hasTable('payment_receipt_options')) {
@@ -1037,12 +1295,97 @@ class BillingController extends Controller
             ];
         }
 
-        $validated = request()->validate($rules);
+        if (Schema::hasTable('users')) {
+            $rules['payment_receiver_user_id'] = [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id'),
+            ];
+        }
+
+        $validated = $request->validate($rules);
 
         $invoice = Invoice::findOrFail($invoiceId);
         $paidAmount = $validated['paid_amount'] ?? null;
         $paymentReceiptOptionId = $validated['payment_receipt_option_id'] ?? null;
         $paymentMethodId = $validated['payment_method_id'] ?? null;
+        $includeInMutation = Auth::user()?->canChoosePaymentMutation()
+            ? (bool) ($validated['include_in_mutation'] ?? true)
+            : true;
+        $paymentReceiverUserId = Auth::user()?->canChoosePaymentReceiver()
+            ? (int) ($validated['payment_receiver_user_id'] ?? Auth::id())
+            : Auth::id();
+        $currentUser = $request->user();
+        $selectedReceiver = $paymentReceiverUserId ? User::query()->find($paymentReceiverUserId) : null;
+        $actorIsCompanyFinance = $this->paymentReceiverService->isCompanyFinanceReceiver($currentUser?->id);
+        $selectedReceiverIsCompanyFinance = $selectedReceiver
+            ? $this->paymentReceiverService->isCompanyFinanceReceiver($selectedReceiver->id)
+            : false;
+        $selfReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id === $currentUser->id;
+        $nonCompanySelfConfirmDebt = $selfReceiver && !$actorIsCompanyFinance;
+        $selectingAnotherReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id !== $currentUser->id;
+        $needsOtherReceiverConfirmation = $selectingAnotherReceiver && !$selectedReceiverIsCompanyFinance;
+        $otherReceiverConfirmed = (bool) ($validated['other_receiver_confirmed'] ?? false);
+        $receiverConflictResolution = $validated['receiver_conflict_resolution'] ?? null;
+
+        if ($includeInMutation && $needsOtherReceiverConfirmation && !$otherReceiverConfirmed) {
+            return response()->json([
+                'message' => 'Anda memilih akun penerima selain akun sendiri. Konfirmasi ulang untuk melanjutkan.',
+                'action_required' => 'confirm_other_receiver',
+            ], 422);
+        }
+
+        $isAllowedReceiver = $this->paymentReceiverService->isAllowedReceiver($currentUser, $paymentReceiverUserId);
+        $shouldCreatePendingApproval = $includeInMutation && $selectingAnotherReceiver && $isAllowedReceiver;
+        $borrower = null;
+
+        if (!$includeInMutation) {
+            $nonCompanySelfConfirmDebt = false;
+            $receiverConflictResolution = null;
+        } elseif ($nonCompanySelfConfirmDebt && $currentUser) {
+            $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
+            $includeInMutation = true;
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') {
+            try {
+                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'message' => $e->getMessage(),
+                    'action_required' => 'borrower_mapping_required',
+                ], 422);
+            }
+
+            $includeInMutation = true;
+        } elseif ($shouldCreatePendingApproval) {
+            try {
+                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'message' => $e->getMessage(),
+                    'action_required' => 'borrower_mapping_required',
+                ], 422);
+            }
+
+            $includeInMutation = true;
+        } elseif (!$isAllowedReceiver) {
+            try {
+                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
+            } catch (\RuntimeException $e) {
+                return response()->json([
+                    'message' => $e->getMessage(),
+                    'action_required' => 'borrower_mapping_required',
+                ], 422);
+            }
+
+            if (!$receiverConflictResolution) {
+                return response()->json([
+                'message' => 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan. Pilih masukkan ke hutang atau kirim approval ke akun penerima.',
+                    'action_required' => 'resolve_invalid_receiver',
+                ], 422);
+            }
+
+            $includeInMutation = true;
+        }
         
         if ($paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
@@ -1056,68 +1399,116 @@ class BillingController extends Controller
             $invoice->received_via_payment_receipt_option_id = $paymentReceiptOptionId;
         }
 
+        if (Schema::hasColumn('invoices', 'include_in_mutation')) {
+            $invoice->include_in_mutation = $includeInMutation;
+        }
+
+        if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+            $invoice->payment_receiver_user_id = $paymentReceiverUserId ?: Auth::id();
+        }
+
         $invoice->status = 'paid';
         $invoice->paid_at = now();
         $invoice->tolak_info = null;
 
-        // Update due_date customer (basis: due_date customer saat ini + 30 hari)
-        $customer = $invoice->customer;
-        if ($customer) {
-            $customer->due_date = $this->computeNextDueDateFromCustomer($customer);
-
-            if ($customer->pppoe_username) {
-                try {
-                    $mikrotik = new \App\Services\MikroTikService();
-                    $mikrotik->connect();
-                    $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
-
-                    if ($secret && strtolower((string) ($secret['profile'] ?? '')) === 'isolir') {
-                        $targetProfile = $this->resolveCustomerTargetProfile($customer);
-
-                        try {
-                            $profiles = $mikrotik->command('/ppp/profile/print');
-                            $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
-                            $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
-                            if ($resolvedProfile !== null) {
-                                $targetProfile = $resolvedProfile;
-                            }
-                        } catch (\Exception $profileErr) {
-                            Log::warning('Could not validate profile list while restoring isolated user', [
-                                'username' => $customer->pppoe_username,
-                                'target_profile' => $targetProfile,
-                                'error' => $profileErr->getMessage(),
-                            ]);
-                        }
-
-                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                        $customer->mikrotik_profile = null;
-
-                        Log::info('User restored from isolation after payment confirmation', [
-                            'username' => $customer->pppoe_username,
-                            'restored_profile' => $targetProfile,
-                            'new_due_date' => $customer->due_date,
-                        ]);
-                    }
-
-                    $mikrotik->disconnect();
-                } catch (\Exception $e) {
-                    Log::error('Failed to check/restore user from isolation', [
-                        'username' => $customer->pppoe_username,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            }
-
-            $customer->save();
+        $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, now());
+        $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
+        if (!$includeInMutation) {
+            $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
+        } elseif ($nonCompanySelfConfirmDebt) {
+            $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+            $mutationStatus = FinancialTransaction::STATUS_PENDING;
+        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'approval') {
+            $mutationStatus = FinancialTransaction::STATUS_PENDING;
+        } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') || (!$isAllowedReceiver && $receiverConflictResolution === 'debt')) {
+            $mutationStatus = FinancialTransaction::STATUS_REJECTED;
         }
 
         $invoice->save();
-        $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
+        $mutation = $this->ledgerService->syncInvoicePayment($invoice, Auth::id(), $mutationStatus);
         $invoice->loadMissing('receivedViaPaymentMethod');
         $invoice->loadMissing('receivedViaPaymentReceiptOption');
+        $invoice->loadMissing('paymentReceiver');
+
+        if (!$includeInMutation) {
+            // Invoice paid intentionally bypasses mutation, approval, and borrower debt effects.
+        } elseif ($nonCompanySelfConfirmDebt && $borrower) {
+            $this->borrowerLoanService->createDirectDebt(
+                $borrower,
+                $invoice,
+                $currentUser,
+                $selectedReceiver,
+                $selectedReceiver,
+                'Pembayaran self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.',
+            );
+        } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') && $borrower) {
+            $this->borrowerLoanService->createDirectDebt(
+                $borrower,
+                $invoice,
+                $currentUser,
+                $selectedReceiver,
+                $selectedReceiver,
+                'Pembayaran diarahkan langsung menjadi hutang tanpa menunggu approval penerima.'
+            );
+        } elseif ($shouldCreatePendingApproval && $selectedReceiver && $mutation && $borrower) {
+            $this->borrowerLoanService->createApprovalRequest(
+                $borrower,
+                $invoice,
+                $currentUser,
+                $selectedReceiver,
+                $mutation
+            );
+        } elseif (!$isAllowedReceiver && $borrower) {
+            if ($receiverConflictResolution === 'debt') {
+                $this->borrowerLoanService->createDirectDebt(
+                    $borrower,
+                    $invoice,
+                    $currentUser,
+                    $selectedReceiver,
+                    $selectedReceiver
+                );
+            } elseif ($receiverConflictResolution === 'approval' && $selectedReceiver) {
+                $this->borrowerLoanService->createApprovalRequest(
+                    $borrower,
+                    $invoice,
+                    $currentUser,
+                    $selectedReceiver,
+                    $mutation
+                );
+            }
+        }
+
         $this->sendAutoPaymentConfirmationIfEligible($invoice);
 
-        return response()->json(['message' => 'Pembayaran berhasil dikonfirmasi', 'data' => $invoice]);
+        $message = 'Pembayaran berhasil dikonfirmasi';
+        if (!$includeInMutation) {
+            $message = 'Pembayaran pelanggan sudah lunas tanpa masuk mutasi dan tanpa hutang penerima.';
+        } elseif ($confirmationResult['isolation_restored']) {
+            $message = 'Pembayaran berhasil dikonfirmasi dan status isolir pelanggan dicabut.';
+        } elseif ($confirmationResult['isolation_restore_failed']) {
+            $message = 'Pembayaran berhasil dikonfirmasi, tetapi status isolir belum bisa dicabut otomatis: '
+                . ($confirmationResult['isolation_restore_error'] ?: 'silakan cek layanan/PPPoE pelanggan secara manual.');
+        } elseif ($nonCompanySelfConfirmDebt) {
+            $message = 'Pembayaran pelanggan sudah lunas, mutasi tetap tercatat, dan otomatis dimasukkan ke hutang akun pengkonfirmasi.';
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+            $message = $selectedReceiverIsCompanyFinance
+                ? 'Pembayaran pelanggan sudah lunas dan mutasi menunggu persetujuan akun keuangan perusahaan.'
+                : 'Pembayaran pelanggan sudah lunas dan mutasi menunggu persetujuan akun penerima.';
+        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') {
+            $message = 'Pembayaran pelanggan sudah lunas dan langsung dimasukkan ke hutang akun pengkonfirmasi.';
+        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'debt') {
+            $message = 'Pembayaran berhasil dikonfirmasi, mutasi tidak masuk saldo, dan dimasukkan ke hutang akun pengkonfirmasi.';
+        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'approval') {
+            $message = $selectedReceiverIsCompanyFinance
+                ? 'Pembayaran berhasil dikonfirmasi dan mutasi menunggu persetujuan akun keuangan perusahaan.'
+                : 'Pembayaran berhasil dikonfirmasi dan mutasi menunggu persetujuan akun penerima.';
+        }
+
+        return response()->json([
+            'message' => $message,
+            'data' => $invoice,
+        ]);
     }
 
     public function updateInvoiceAmountApi(Request $request, $invoiceId)
@@ -1310,6 +1701,23 @@ class BillingController extends Controller
         ]);
     }
 
+    public function sendInvoiceManagementWhatsApp(
+        Invoice $invoice,
+        InvoiceWhatsAppService $whatsAppService
+    ) {
+        $invoice->load('customer:id,name,pppoe_username,phone,address,package_type,installation_fee,package_id');
+        $result = $whatsAppService->send($invoice);
+
+        return response()->json([
+            'success' => $result['success'],
+            'message' => $result['success']
+                ? 'Invoice PDF berhasil dikirim melalui WhatsApp.'
+                : 'Invoice PDF gagal dikirim melalui WhatsApp.',
+            'result' => $result,
+            'data' => $invoice->fresh(['customer:id,name,pppoe_username,phone']),
+        ], $result['success'] ? 200 : 422);
+    }
+
     public function isolateCustomer($customerId)
     {
         try {
@@ -1322,7 +1730,7 @@ class BillingController extends Controller
                 ], 400);
             }
             
-            $mikrotik = new \App\Services\MikroTikService();
+            $mikrotik = $this->makeMikroTik();
             
             // Get current profile BEFORE isolating so we can restore later
             $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
@@ -1344,25 +1752,38 @@ class BillingController extends Controller
                 ], 422);
             }
             
-            // Save original MikroTik profile to customer record
-            $customer->mikrotik_profile = $currentProfile;
-            $customer->save();
-            
-            \Log::info('Saving original MikroTik profile before isolation', [
-                'customer_id' => $customer->id,
-                'username' => $customer->pppoe_username,
-                'original_profile' => $currentProfile,
-            ]);
-            
-            // Now isolate
-            $result = $mikrotik->isolateUser($customer->pppoe_username);
+            $result = DB::transaction(function () use ($customer, $currentProfile, $mikrotik) {
+                $customer->is_service_isolated = true;
+                $customer->service_isolated_at = now();
+                $customer->service_isolated_by = Auth::id();
+                $customer->isolation_restore_profile = $currentProfile;
+                $customer->save();
+
+                Log::info('Saving isolation metadata before isolation', [
+                    'customer_id' => $customer->id,
+                    'username' => $customer->pppoe_username,
+                    'original_profile' => $currentProfile,
+                ]);
+
+                $result = $mikrotik->isolateUser($customer->pppoe_username);
+
+                $this->auditLogService->log('billing.customer_isolated', $customer, [
+                    'customer_id' => $customer->id,
+                    'pppoe_username' => $customer->pppoe_username,
+                    'saved_profile' => $currentProfile,
+                    'isolated_at' => now()->toIso8601String(),
+                ], Auth::id());
+
+                return $result;
+            });
             
             return response()->json([
                 'success' => true,
-                'message' => 'Pelanggan ' . $customer->name . ' berhasil diisolir',
+                'message' => 'Pelanggan ' . $customer->name . ' berhasil diisolir, koneksi aktif diputus, dan status isolir tersimpan.',
                 'data' => array_merge($result, [
                     'saved_profile' => $currentProfile,
                     'customer_name' => $customer->name,
+                    'local_isolation_saved' => true,
                 ])
             ]);
             
@@ -1386,26 +1807,26 @@ class BillingController extends Controller
             
             if (!$customer->pppoe_username) {
                 return response()->json([
-                    'isolated' => false,
-                    'profile' => null
+                    'isolated' => (bool) ($customer->is_service_isolated ?? false),
+                    'profile' => (bool) ($customer->is_service_isolated ?? false) ? 'Isolir' : null,
                 ]);
             }
             
-            $mikrotik = new \App\Services\MikroTikService();
+            $mikrotik = $this->makeMikroTik();
             $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
             
             if (!$secret) {
                 return response()->json([
-                    'isolated' => false,
-                    'profile' => null
+                    'isolated' => (bool) ($customer->is_service_isolated ?? false),
+                    'profile' => (bool) ($customer->is_service_isolated ?? false) ? 'Isolir' : null,
                 ]);
             }
             
-            $isIsolated = strtolower($secret['profile']) === 'isolir';
+            $isIsolated = $this->isCustomerCurrentlyIsolated($customer, $secret);
             
             return response()->json([
                 'isolated' => $isIsolated,
-                'profile' => $secret['profile']
+                'profile' => $secret['profile'] ?? ($isIsolated ? 'Isolir' : null),
             ]);
             
         } catch (\Exception $e) {
@@ -1413,10 +1834,13 @@ class BillingController extends Controller
                 'customer_id' => $customerId,
                 'error' => $e->getMessage()
             ]);
+
+            $customer = Customer::find($customerId);
+            $fallbackIsolated = (bool) ($customer?->is_service_isolated ?? false);
             
             return response()->json([
-                'isolated' => false,
-                'profile' => null,
+                'isolated' => $fallbackIsolated,
+                'profile' => $fallbackIsolated ? 'Isolir' : null,
                 'error' => $e->getMessage()
             ]);
         }

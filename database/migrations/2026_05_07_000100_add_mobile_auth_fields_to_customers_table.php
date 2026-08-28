@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    private const DEFAULT_PASSWORD = '12345678';
+    private const DEFAULT_PASSWORD = 'user123';
 
     /**
      * Run the migrations.

@@ -206,6 +206,47 @@
     .mobile-action-bar {
         @apply sticky bottom-0 z-10 mt-3 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 pt-3 backdrop-blur;
     }
+
+    .fin-indicator {
+        position: relative;
+        isolation: isolate;
+        overflow: visible;
+    }
+
+    .fin-indicator::before {
+        content: '';
+        position: absolute;
+        inset: -6px;
+        border-radius: 9999px;
+        background: var(--fin-indicator-glow, rgba(148, 163, 184, 0.18));
+        filter: blur(10px);
+        opacity: 0.55;
+        z-index: -1;
+    }
+
+    .fin-indicator--pulse::before {
+        animation: finIndicatorPulse 2.2s ease-in-out infinite;
+    }
+
+    .fin-indicator-safe {
+        --fin-indicator-glow: rgba(16, 185, 129, 0.20);
+    }
+
+    .fin-indicator-warning {
+        --fin-indicator-glow: rgba(245, 158, 11, 0.28);
+    }
+
+    .fin-indicator-risk {
+        --fin-indicator-glow: rgba(249, 115, 22, 0.30);
+    }
+
+    .fin-indicator-danger {
+        --fin-indicator-glow: rgba(244, 63, 94, 0.34);
+    }
+
+    .fin-indicator-unconfigured {
+        --fin-indicator-glow: rgba(148, 163, 184, 0.20);
+    }
 }
 
 @keyframes shimmer {
@@ -226,8 +267,26 @@
     }
 }
 
+@keyframes finIndicatorPulse {
+    0%, 100% {
+        opacity: 0.42;
+        transform: scale(0.98);
+    }
+
+    50% {
+        opacity: 0.78;
+        transform: scale(1.04);
+    }
+}
+
 .app-page-enter {
     animation: fadeIn .24s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .fin-indicator--pulse::before {
+        animation: none !important;
+    }
 }
 
 @media (max-width: 767px) {

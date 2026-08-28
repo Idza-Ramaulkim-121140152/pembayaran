@@ -26,6 +26,15 @@ export const HOME_ROUTER_PRESETS = {
         managementMode: 'web',
         helper: 'Preset web admin GL-01. Dipakai untuk probing panel router dan pengembangan parser berikutnya.',
     },
+    cdata: {
+        value: 'cdata',
+        label: 'CDATA',
+        defaultPort: '80',
+        defaultUsername: 'admin',
+        defaultPassword: 'rumahkita69',
+        managementMode: 'web',
+        helper: 'Preset router CDATA untuk penentuan direct link ubah password WiFi pelanggan.',
+    },
 };
 
 export const HOME_ROUTER_OPTIONS = Object.values(HOME_ROUTER_PRESETS);

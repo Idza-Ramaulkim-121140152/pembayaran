@@ -98,6 +98,7 @@ class NetworkIncidentController extends Controller
         $incident->resolved_at = now();
         $incident->meta = array_merge($incident->meta ?? [], [
             'resolve_reason' => $validated['reason'] ?? null,
+            'mttr_minutes' => $incident->started_at ? $incident->started_at->diffInMinutes(now()) : null,
         ]);
         $incident->save();
 
@@ -121,6 +122,102 @@ class NetworkIncidentController extends Controller
         return response()->json([
             'message' => 'Incident engine dijalankan.',
             'data' => $summary,
+        ]);
+    }
+
+    public function acknowledge(Request $request, NetworkIncident $incident)
+    {
+        return $this->transition($request, $incident, 'acknowledged', ['open'], 'Incident berhasil di-acknowledge.');
+    }
+
+    public function escalate(Request $request, NetworkIncident $incident)
+    {
+        return $this->transition($request, $incident, 'escalated', ['open', 'acknowledged'], 'Incident berhasil dieskalasi.');
+    }
+
+    public function mitigate(Request $request, NetworkIncident $incident)
+    {
+        return $this->transition($request, $incident, 'mitigated', ['open', 'acknowledged', 'escalated'], 'Incident ditandai mitigated.');
+    }
+
+    public function postmortem(Request $request, NetworkIncident $incident)
+    {
+        $this->ensureEnabled();
+
+        if ($incident->status !== 'resolved') {
+            return response()->json(['message' => 'Postmortem hanya bisa ditambahkan setelah incident resolved.'], 422);
+        }
+
+        $validated = $request->validate([
+            'root_cause' => 'required|string|max:1000',
+            'impact' => 'required|string|max:1000',
+            'prevention' => 'required|string|max:1000',
+        ]);
+
+        $incident->meta = array_merge($incident->meta ?? [], [
+            'postmortem' => [
+                'root_cause' => $validated['root_cause'],
+                'impact' => $validated['impact'],
+                'prevention' => $validated['prevention'],
+                'created_at' => now()->toIso8601String(),
+                'created_by' => auth()->id(),
+            ],
+        ]);
+        $incident->save();
+
+        $incident->events()->create([
+            'event_type' => 'postmortem_added',
+            'message' => 'Postmortem incident ditambahkan.',
+            'created_by' => auth()->id(),
+            'meta' => $validated,
+        ]);
+
+        $this->auditLogService->log('incident.postmortem_added', $incident, $validated, auth()->id());
+
+        return response()->json([
+            'message' => 'Postmortem berhasil disimpan.',
+            'data' => $incident->fresh(['odps:id,nama', 'events.creator']),
+        ]);
+    }
+
+    private function transition(Request $request, NetworkIncident $incident, string $nextStatus, array $allowedFrom, string $message)
+    {
+        $this->ensureEnabled();
+
+        if (!in_array($incident->status, $allowedFrom, true)) {
+            return response()->json(['message' => 'Transisi status incident tidak valid.'], 422);
+        }
+
+        $validated = $request->validate([
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        $now = now();
+        $metaKey = $nextStatus . '_at';
+        $actorKey = $nextStatus . '_by';
+        $meta = $incident->meta ?? [];
+        $meta[$metaKey] = $now->toIso8601String();
+        $meta[$actorKey] = auth()->id();
+        $meta['mtta_minutes'] = $nextStatus === 'acknowledged' && $incident->started_at
+            ? $incident->started_at->diffInMinutes($now)
+            : ($meta['mtta_minutes'] ?? null);
+
+        $incident->status = $nextStatus;
+        $incident->meta = $meta;
+        $incident->save();
+
+        $incident->events()->create([
+            'event_type' => $nextStatus,
+            'message' => $validated['note'] ?? $message,
+            'created_by' => auth()->id(),
+            'meta' => ['status' => $nextStatus],
+        ]);
+
+        $this->auditLogService->log('incident.' . $nextStatus, $incident, ['note' => $validated['note'] ?? null], auth()->id());
+
+        return response()->json([
+            'message' => $message,
+            'data' => $incident->fresh(['odps:id,nama', 'events.creator']),
         ]);
     }
 

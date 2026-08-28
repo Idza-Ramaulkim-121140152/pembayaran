@@ -4,8 +4,12 @@ namespace App\Http\Controllers;
 
 use App\Models\BillingPaymentCapture;
 use App\Services\BillingDunningService;
+use App\Services\BillingPaymentCapturePresenter;
 use App\Services\PaymentMatchingService;
+use App\Services\PaymentVerificationConfigService;
+use App\Jobs\AnalyzeWhatsAppPaymentCaptureJob;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
 class BillingAutomationController extends Controller
@@ -13,6 +17,8 @@ class BillingAutomationController extends Controller
     public function __construct(
         private BillingDunningService $billingDunningService,
         private PaymentMatchingService $paymentMatchingService,
+        private BillingPaymentCapturePresenter $capturePresenter,
+        private PaymentVerificationConfigService $paymentVerificationConfigService,
     ) {
     }
 
@@ -100,8 +106,92 @@ class BillingAutomationController extends Controller
         return response()->json([
             'message' => $result['message'],
             'duplicate' => $result['duplicate'],
-            'data' => $result['capture'],
+            'data' => $this->capturePresenter->present($result['capture']),
         ]);
+    }
+
+    public function paymentVerificationConfig()
+    {
+        return response()->json([
+            'data' => $this->paymentVerificationConfigService->getConfig(),
+        ]);
+    }
+
+    public function updatePaymentVerificationConfig(Request $request)
+    {
+        $validated = $request->validate([
+            'openai_model' => 'sometimes|string|max:120',
+            'auto_approve_enabled' => 'sometimes|boolean',
+            'confidence_thresholds' => 'sometimes|array',
+            'confidence_thresholds.auto_approve' => 'sometimes|numeric|min:0|max:100',
+            'confidence_thresholds.manual_review' => 'sometimes|numeric|min:0|max:100',
+            'allowed_source_mime_types' => 'sometimes|array',
+            'allowed_source_mime_types.*' => 'string|max:120',
+            'destination_whitelist' => 'sometimes|array',
+            'destination_whitelist.qris' => 'sometimes|array',
+            'destination_whitelist.transfer_bank' => 'sometimes|array',
+            'notification_recipients' => 'sometimes|array',
+            'notification_recipients.*.id' => 'nullable|string|max:80',
+            'notification_recipients.*.name' => 'required_with:notification_recipients|string|max:120',
+            'notification_recipients.*.phone' => 'required_with:notification_recipients|string|max:40',
+            'notification_recipients.*.is_active' => 'nullable|boolean',
+            'notification_recipients.*.receive_auto_approved' => 'nullable|boolean',
+            'notification_recipients.*.receive_needs_review' => 'nullable|boolean',
+        ]);
+
+        if (array_key_exists('notification_recipients', $validated)) {
+            $validated['notification_recipients'] = $this->validateNotificationRecipients(
+                is_array($validated['notification_recipients']) ? $validated['notification_recipients'] : []
+            );
+        }
+
+        $config = $this->paymentVerificationConfigService->updateConfig($validated);
+
+        return response()->json([
+            'message' => 'Konfigurasi verifikasi pembayaran berhasil diperbarui.',
+            'data' => $config,
+        ]);
+    }
+
+    private function validateNotificationRecipients(array $recipients): array
+    {
+        $normalized = $this->paymentVerificationConfigService->normalizeNotificationRecipients($recipients);
+        $phones = [];
+
+        foreach ($normalized as $index => $recipient) {
+            $phone = trim((string) ($recipient['phone'] ?? ''));
+            $name = trim((string) ($recipient['name'] ?? ''));
+            $enabledForSomething = (bool) ($recipient['receive_auto_approved'] ?? false) || (bool) ($recipient['receive_needs_review'] ?? false);
+            $digits = preg_replace('/\D/', '', $phone) ?: '';
+
+            if ($name === '') {
+                throw ValidationException::withMessages([
+                    "notification_recipients.$index.name" => ['Nama penerima wajib diisi.'],
+                ]);
+            }
+
+            if (strlen($digits) < 10 || strlen($digits) > 15) {
+                throw ValidationException::withMessages([
+                    "notification_recipients.$index.phone" => ['Nomor WA penerima harus 10-15 digit.'],
+                ]);
+            }
+
+            if (in_array($phone, $phones, true)) {
+                throw ValidationException::withMessages([
+                    "notification_recipients.$index.phone" => ['Nomor WA penerima tidak boleh duplikat.'],
+                ]);
+            }
+
+            if (!$enabledForSomething) {
+                throw ValidationException::withMessages([
+                    "notification_recipients.$index.receive_auto_approved" => ['Pilih minimal satu jenis notifikasi untuk penerima ini.'],
+                ]);
+            }
+
+            $phones[] = $phone;
+        }
+
+        return $normalized;
     }
 
     public function runMatch(Request $request)
@@ -131,9 +221,11 @@ class BillingAutomationController extends Controller
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
 
-        return response()->json(
-            $this->paymentMatchingService->unmatched((int) ($validated['per_page'] ?? 50))
-        );
+        $paginator = $this->paymentMatchingService->unmatched((int) ($validated['per_page'] ?? 50));
+
+        return response()->json([
+            'data' => $this->capturePresenter->presentPaginator($paginator),
+        ]);
     }
 
     public function resolveCapture(Request $request, BillingPaymentCapture $capture)
@@ -152,7 +244,24 @@ class BillingAutomationController extends Controller
 
         return response()->json([
             'message' => 'Capture pembayaran berhasil diproses.',
-            'data' => $resolved,
+            'data' => $this->capturePresenter->present($resolved),
         ]);
+    }
+
+    public function reanalyzeCapture(BillingPaymentCapture $capture)
+    {
+        $capture->update([
+            'match_status' => 'pending',
+            'meta' => array_merge((array) ($capture->meta ?? []), [
+                'reanalyze_requested_at' => now()->toISOString(),
+            ]),
+        ]);
+
+        AnalyzeWhatsAppPaymentCaptureJob::dispatch($capture->id);
+
+        return response()->json([
+            'message' => 'Capture pembayaran dijadwalkan untuk analisis ulang.',
+            'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice'])),
+        ], 202);
     }
 }

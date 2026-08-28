@@ -86,11 +86,23 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [saving, setSaving] = useState(false);
     const [payments, setPayments] = useState([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
+    const [loanContext, setLoanContext] = useState(null);
+    const [loanHandling, setLoanHandling] = useState('cash');
+    const [loanDeductionAmount, setLoanDeductionAmount] = useState('');
+    const [loanChoicePromptOpen, setLoanChoicePromptOpen] = useState(false);
 
     useEffect(() => {
         if (isOpen && member) {
             setNominal('');
             setCatatan('');
+            const initialLoanContext = Number(member.borrower_outstanding || 0) > 0 ? {
+                borrower: member.borrower || null,
+                outstanding: Number(member.borrower_outstanding || 0),
+            } : null;
+            setLoanContext(initialLoanContext);
+            setLoanHandling('cash');
+            setLoanDeductionAmount('');
+            setLoanChoicePromptOpen(Boolean(initialLoanContext));
             // Load riwayat pembayaran
             setLoadingHistory(true);
             fetch(`/api/payroll/members/${member.id}/payments`, {
@@ -98,7 +110,13 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                 credentials: 'same-origin',
             })
                 .then(r => r.ok ? r.json() : { payments: [] })
-                .then(d => setPayments(d.payments || []))
+                .then(d => {
+                    setPayments(d.payments || []);
+                    if (Number(d.loan_context?.outstanding || 0) > 0) {
+                        setLoanContext(d.loan_context);
+                        setLoanChoicePromptOpen(true);
+                    }
+                })
                 .catch(() => setPayments([]))
                 .finally(() => setLoadingHistory(false));
         }
@@ -114,13 +132,39 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
         if (!amount || amount <= 0) return alert('Masukkan nominal yang valid');
         if (amount > unpaid) return alert('Nominal melebihi sisa saldo (' + formatRupiah(unpaid) + ')');
 
+        const loanOutstanding = Number(loanContext?.outstanding || 0);
+        const rawDeduction = Number(loanDeductionAmount || 0);
+        const requestedDeduction = loanHandling === 'deduct_loan' ? rawDeduction : 0;
+
+        if (loanHandling === 'deduct_loan' && requestedDeduction <= 0) {
+            return alert('Masukkan nominal potong pinjaman yang valid');
+        }
+
+        if (loanHandling === 'deduct_loan' && requestedDeduction > amount) {
+            return alert('Nominal bayar pinjaman tidak boleh lebih besar dari jumlah payroll');
+        }
+
+        if (loanHandling === 'deduct_loan' && requestedDeduction > loanOutstanding) {
+            return alert('Nominal bayar pinjaman tidak boleh lebih besar dari sisa pinjaman');
+        }
+
+        if (loanHandling === 'deduct_loan') {
+            const ok = window.confirm(`Bayar pinjaman ${formatRupiah(requestedDeduction)} dari pembayaran payroll ini?`);
+            if (!ok) return;
+        }
+
         setSaving(true);
         try {
             const res = await fetch(`/api/payroll/members/${member.id}/pay`, {
                 method: 'POST',
                 headers: API_HEADERS(),
                 credentials: 'same-origin',
-                body: JSON.stringify({ nominal: amount, catatan: catatan.trim() || null }),
+                body: JSON.stringify({
+                    nominal: amount,
+                    catatan: catatan.trim() || null,
+                    loan_handling: loanHandling,
+                    loan_deduction_amount: requestedDeduction,
+                }),
             });
             const d = await res.json();
             if (res.ok) {
@@ -138,31 +182,49 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
 
     const handlePayFull = () => {
         setNominal(String(unpaid));
+        if (loanHandling === 'deduct_loan' && loanContext?.outstanding) {
+            setLoanDeductionAmount(String(Math.min(unpaid, Number(loanContext.outstanding || 0))));
+        }
     };
 
+    const chooseCashPayroll = () => {
+        setLoanHandling('cash');
+        setLoanDeductionAmount('');
+        setLoanChoicePromptOpen(false);
+    };
+
+    const chooseLoanDeduction = () => {
+        const amount = Number(nominal || unpaid || 0);
+        setLoanHandling('deduct_loan');
+        setLoanDeductionAmount(String(Math.min(amount, Number(loanContext?.outstanding || 0))));
+        setLoanChoicePromptOpen(false);
+    };
+    const maxLoanDeduction = Math.min(Number(nominal || unpaid || 0), Number(loanContext?.outstanding || 0));
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
-                <div className="flex items-center justify-between p-5 border-b">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8 sm:py-10">
+            <div className="my-0 flex max-h-[calc(100vh-4rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl sm:max-h-[calc(100vh-5rem)]">
+                <div className="shrink-0 flex items-center justify-between border-b bg-white p-5">
                     <h3 className="text-lg font-bold text-gray-800">Bayar - {member.nama}</h3>
                     <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><X size={20} /></button>
                 </div>
 
-                {/* Saldo Info */}
-                <div className="mx-5 mt-5 bg-orange-50 border border-orange-200 rounded-xl p-4">
-                    <div className="flex items-center justify-between">
-                        <span className="text-sm text-orange-700">Sisa Belum Dibayar</span>
-                        <span className="text-lg font-bold text-orange-600">{formatRupiah(unpaid)}</span>
-                    </div>
-                    {Number(member.total_paid) > 0 && (
-                        <div className="flex items-center justify-between mt-1">
-                            <span className="text-xs text-gray-500">Total Sudah Dibayar</span>
-                            <span className="text-sm font-medium text-green-600">{formatRupiah(member.total_paid)}</span>
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                    {/* Saldo Info */}
+                    <div className="mx-5 mt-5 bg-orange-50 border border-orange-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-orange-700">Sisa Belum Dibayar</span>
+                            <span className="text-lg font-bold text-orange-600">{formatRupiah(unpaid)}</span>
                         </div>
-                    )}
-                </div>
+                        {Number(member.total_paid) > 0 && (
+                            <div className="flex items-center justify-between mt-1">
+                                <span className="text-xs text-gray-500">Total Sudah Dibayar</span>
+                                <span className="text-sm font-medium text-green-600">{formatRupiah(member.total_paid)}</span>
+                            </div>
+                        )}
+                    </div>
 
-                <form onSubmit={handleSubmit} className="p-5 space-y-4">
+                    <form onSubmit={handleSubmit} className="p-5 space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Pembayaran *</label>
                         <div className="relative">
@@ -187,6 +249,60 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                             Bayar penuh ({formatRupiah(unpaid)})
                         </button>
                     </div>
+                    {Number(loanContext?.outstanding || 0) > 0 && (
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-3">
+                            <div>
+                                <p className="text-sm font-semibold text-blue-900">Karyawan punya pinjaman aktif</p>
+                                <p className="text-xs text-blue-700">
+                                    {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanContext.outstanding)}.
+                                </p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setLoanHandling('deduct_loan');
+                                        const amount = Number(nominal || unpaid || 0);
+                                        setLoanDeductionAmount(String(Math.min(amount, Number(loanContext.outstanding || 0))));
+                                    }}
+                                    className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
+                                        loanHandling === 'deduct_loan'
+                                            ? 'bg-white border-blue-500 text-blue-700'
+                                            : 'border-transparent bg-blue-100 text-blue-700'
+                                    }`}
+                                >
+                                    Bayar pinjaman
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={chooseCashPayroll}
+                                    className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
+                                        loanHandling === 'cash'
+                                            ? 'bg-white border-green-400 text-green-700'
+                                            : 'border-transparent bg-blue-100 text-blue-700'
+                                    }`}
+                                >
+                                    Tidak
+                                </button>
+                            </div>
+                            {loanHandling === 'deduct_loan' && (
+                                <div>
+                                    <label className="block text-xs font-medium text-blue-900 mb-1">Nominal Bayar Pinjaman</label>
+                                    <input
+                                        type="number"
+                                        value={loanDeductionAmount}
+                                        onChange={(e) => setLoanDeductionAmount(e.target.value)}
+                                        min="1"
+                                        max={maxLoanDeduction}
+                                        className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                    <p className="mt-1 text-xs text-blue-700">
+                                        Maksimal {formatRupiah(maxLoanDeduction)} atau tidak lebih dari jumlah payroll.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Catatan</label>
                         <input
@@ -202,9 +318,21 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                     {nominal && parseFloat(nominal) > 0 && (
                         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
                             <div className="flex justify-between text-sm">
-                                <span className="text-gray-600">Dibayarkan:</span>
+                                <span className="text-gray-600">Gross payroll:</span>
                                 <span className="font-bold text-green-700">{formatRupiah(parseFloat(nominal))}</span>
                             </div>
+                            {loanHandling === 'deduct_loan' && (
+                                <>
+                                    <div className="flex justify-between text-sm mt-1">
+                                        <span className="text-gray-600">Potong pinjaman:</span>
+                                        <span className="font-semibold text-blue-700">{formatRupiah(Number(loanDeductionAmount || 0))}</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm mt-1">
+                                        <span className="text-gray-600">Tunai keluar:</span>
+                                        <span className="font-semibold text-gray-700">{formatRupiah(Math.max(0, parseFloat(nominal) - Number(loanDeductionAmount || 0)))}</span>
+                                    </div>
+                                </>
+                            )}
                             <div className="flex justify-between text-sm mt-1">
                                 <span className="text-gray-600">Sisa setelah bayar:</span>
                                 <span className="font-semibold text-gray-700">{formatRupiah(Math.max(0, unpaid - parseFloat(nominal)))}</span>
@@ -218,33 +346,82 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                             {saving ? 'Memproses...' : 'Bayar'}
                         </button>
                     </div>
-                </form>
+                    </form>
 
-                {/* Riwayat Pembayaran */}
-                {payments.length > 0 && (
-                    <div className="border-t px-5 pb-5 pt-4">
-                        <h4 className="text-sm font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
-                            <Clock size={14} /> Riwayat Pembayaran
-                        </h4>
-                        <div className="max-h-40 overflow-y-auto space-y-2">
-                            {payments.map(p => (
-                                <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-                                    <div>
-                                        <span className="text-sm font-medium text-green-700">{formatRupiah(p.nominal)}</span>
-                                        {p.catatan && <p className="text-xs text-gray-400">{p.catatan}</p>}
+                    {/* Riwayat Pembayaran */}
+                    {payments.length > 0 && (
+                        <div className="border-t px-5 pb-5 pt-4">
+                            <h4 className="text-sm font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
+                                <Clock size={14} /> Riwayat Pembayaran
+                            </h4>
+                            <div className="max-h-40 overflow-y-auto space-y-2">
+                                {payments.map(p => (
+                                    <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+	                                        <div>
+	                                            <span className="text-sm font-medium text-green-700">{formatRupiah(p.nominal)}</span>
+	                                            {Number(p.loan_deduction_amount || 0) > 0 && (
+	                                                <p className="text-xs text-blue-600">
+	                                                    Potong pinjaman {formatRupiah(p.loan_deduction_amount)} | Tunai {formatRupiah(p.cash_paid_amount)}
+	                                                </p>
+	                                            )}
+	                                            {p.catatan && <p className="text-xs text-gray-400">{p.catatan}</p>}
+	                                        </div>
+                                        <span className="text-xs text-gray-400">{formatDate(p.created_at)}</span>
                                     </div>
-                                    <span className="text-xs text-gray-400">{formatDate(p.created_at)}</span>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {loadingHistory && (
+                        <div className="border-t px-5 pb-5 pt-4 text-center">
+                            <p className="text-xs text-gray-400">Memuat riwayat...</p>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {loanChoicePromptOpen && Number(loanContext?.outstanding || 0) > 0 && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4">
+                    <div className="w-full max-w-md rounded-3xl border border-blue-100 bg-white p-5 shadow-2xl">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="text-base font-bold text-slate-900">Pilihan pinjaman</p>
+                            <button
+                                type="button"
+                                onClick={chooseCashPayroll}
+                                className="rounded-xl p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+                                aria-label="Tutup pilihan pinjaman"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                            <p className="text-sm font-bold text-blue-900">Karyawan memiliki pinjaman aktif</p>
+                            <p className="mt-1 text-sm text-blue-700">
+                                {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanContext.outstanding)}.
+                            </p>
+                        </div>
+                        <p className="text-sm text-gray-600">
+                            Fitur ini tidak wajib. Jika pilih bayar pinjaman, Anda bisa mengisi nominalnya di form dengan batas tidak lebih besar dari jumlah payroll.
+                        </p>
+                        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                            <button
+                                type="button"
+                                onClick={chooseLoanDeduction}
+                                className="rounded-2xl border border-blue-200 bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-blue-700"
+                            >
+                                Bayar pinjaman
+                            </button>
+                            <button
+                                type="button"
+                                onClick={chooseCashPayroll}
+                                className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"
+                            >
+                                Tidak
+                            </button>
                         </div>
                     </div>
-                )}
-                {loadingHistory && (
-                    <div className="border-t px-5 pb-5 pt-4 text-center">
-                        <p className="text-xs text-gray-400">Memuat riwayat...</p>
-                    </div>
-                )}
-            </div>
+                </div>
+            )}
         </div>
     );
 }

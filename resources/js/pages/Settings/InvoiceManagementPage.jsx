@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, FileText, Pencil, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ExternalLink, FileText, Pencil, RefreshCw, Search, Send, Trash2 } from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
@@ -46,6 +46,8 @@ function InvoiceManagementPage() {
     });
 
     const [editModal, setEditModal] = useState({ open: false, invoice: null });
+    const [sendModal, setSendModal] = useState({ open: false, invoice: null });
+    const [sendingInvoiceId, setSendingInvoiceId] = useState(null);
     const [formData, setFormData] = useState({
         invoice_date: '',
         due_date: '',
@@ -221,6 +223,45 @@ function InvoiceManagementPage() {
             setSubmitting(false);
         }
     };
+    const isValidPhone = (phone) => {
+        const digits = String(phone || '').replace(/\D/g, '');
+        return digits.length >= 10 && digits.length <= 15;
+    };
+
+    const openSendModal = (invoice) => {
+        setError(null);
+        setSuccess(null);
+        setSendModal({ open: true, invoice });
+    };
+
+    const closeSendModal = () => {
+        if (sendingInvoiceId) return;
+        setSendModal({ open: false, invoice: null });
+    };
+
+    const handleSendInvoice = async () => {
+        const invoice = sendModal.invoice;
+        if (!invoice || !isValidPhone(invoice.customer?.phone)) {
+            setError('Nomor WhatsApp pelanggan tidak valid.');
+            return;
+        }
+
+        try {
+            setSendingInvoiceId(invoice.id);
+            setError(null);
+            setSuccess(null);
+
+            const response = await billingService.sendManagedInvoiceWhatsApp(invoice.id);
+            setSuccess(response.data?.message || 'Invoice PDF berhasil dikirim melalui WhatsApp.');
+            setSendModal({ open: false, invoice: null });
+            await fetchInvoices(page);
+        } catch (err) {
+            setError(err.response?.data?.result?.error || err.response?.data?.message || 'Gagal mengirim invoice PDF.');
+        } finally {
+            setSendingInvoiceId(null);
+        }
+    };
+
     const invoiceColumns = [
         {
             key: 'id',
@@ -376,6 +417,17 @@ function InvoiceManagementPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <Button
                                             size="sm"
+                                            variant="success"
+                                            onClick={() => openSendModal(invoice)}
+                                            className="inline-flex items-center gap-1 w-full sm:w-auto"
+                                            disabled={submitting || sendingInvoiceId === invoice.id}
+                                            title="Kirim invoice PDF melalui WhatsApp"
+                                        >
+                                            <Send size={14} />
+                                            {sendingInvoiceId === invoice.id ? 'Mengirim...' : 'Kirim'}
+                                        </Button>
+                                        <Button
+                                            size="sm"
                                             variant="secondary"
                                             onClick={() => openEditModal(invoice)}
                                             className="inline-flex items-center gap-1 w-full sm:w-auto"
@@ -429,6 +481,53 @@ function InvoiceManagementPage() {
                     </Button>
                 </div>
             </div>
+
+            <Modal
+                isOpen={sendModal.open}
+                onClose={closeSendModal}
+                title="Kirim Invoice PDF"
+                size="md"
+            >
+                <div className="space-y-5">
+                    <div className="rounded-xl bg-blue-50 p-4 text-sm text-blue-900">
+                        PDF akan dibuat dengan QR tanda tangan digital lalu dikirim melalui WhatsApp API.
+                    </div>
+
+                    <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-sm">
+                        <dt className="text-gray-500">Pelanggan</dt>
+                        <dd className="font-medium text-gray-900">{sendModal.invoice?.customer?.name || '-'}</dd>
+                        <dt className="text-gray-500">WhatsApp</dt>
+                        <dd className="font-medium text-gray-900">{sendModal.invoice?.customer?.phone || '-'}</dd>
+                        <dt className="text-gray-500">Nominal</dt>
+                        <dd className="font-medium text-gray-900">{formatCurrency(sendModal.invoice?.amount)}</dd>
+                        <dt className="text-gray-500">Status</dt>
+                        <dd className="font-medium uppercase text-gray-900">{sendModal.invoice?.status || '-'}</dd>
+                    </dl>
+
+                    {sendModal.invoice && !isValidPhone(sendModal.invoice.customer?.phone) && (
+                        <Alert type="error" message="Nomor WhatsApp pelanggan tidak valid. Perbarui data pelanggan terlebih dahulu." />
+                    )}
+
+                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                        <Button type="button" variant="secondary" onClick={closeSendModal} disabled={!!sendingInvoiceId}>
+                            Batal
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="success"
+                            onClick={handleSendInvoice}
+                            disabled={
+                                !!sendingInvoiceId
+                                || !sendModal.invoice
+                                || !isValidPhone(sendModal.invoice.customer?.phone)
+                            }
+                        >
+                            <Send size={16} />
+                            {sendingInvoiceId ? 'Mengirim PDF...' : 'Kirim via WhatsApp'}
+                        </Button>
+                    </div>
+                </div>
+            </Modal>
 
             <Modal
                 isOpen={editModal.open}

@@ -4,6 +4,7 @@ return [
     'permissions' => [
         ['key' => 'dashboard.view', 'label' => 'Lihat dashboard'],
         ['key' => 'dashboard.prediction.view', 'label' => 'Lihat dashboard prediksi'],
+        ['key' => 'report.view', 'label' => 'Lihat laporan'],
 
         ['key' => 'billing.invoice.view', 'label' => 'Lihat billing'],
         ['key' => 'billing.invoice.create', 'label' => 'Buat invoice'],
@@ -22,6 +23,9 @@ return [
         ['key' => 'customer.verification', 'label' => 'Verifikasi pelanggan'],
         ['key' => 'customer.package_audit.view', 'label' => 'Lihat audit kesesuaian paket pelanggan'],
         ['key' => 'customer.package_audit.manage', 'label' => 'Kelola sinkronisasi paket pelanggan'],
+        ['key' => 'customer.package_migration.manage', 'label' => 'Migrasi PPPoE pelanggan'],
+        ['key' => 'customer.account.manage', 'label' => 'Kelola akun login pelanggan'],
+        ['key' => 'customer.wifi.manage', 'label' => 'Ubah password WiFi pelanggan'],
 
         ['key' => 'odp.view', 'label' => 'Lihat ODP'],
         ['key' => 'odp.manage', 'label' => 'Kelola ODP'],
@@ -60,7 +64,9 @@ return [
         ['key' => 'master.package.manage', 'label' => 'Kelola paket'],
         ['key' => 'master.promo.manage', 'label' => 'Kelola promo'],
         ['key' => 'master.payment.manage', 'label' => 'Kelola metode pembayaran'],
+        ['key' => 'master.expense_category.manage', 'label' => 'Kelola master jenis pengeluaran'],
         ['key' => 'master.network_notice.manage', 'label' => 'Kelola network notice'],
+        ['key' => 'master.customer_wifi_links.manage', 'label' => 'Kelola link WiFi pelanggan'],
 
         ['key' => 'user.manage', 'label' => 'Kelola akun pengguna'],
         ['key' => 'access_policy.manage', 'label' => 'Kelola akses & policy'],
@@ -73,6 +79,7 @@ return [
         'admin' => [
             'dashboard.view',
             'dashboard.prediction.view',
+            'report.view',
             'billing.invoice.view',
             'billing.invoice.create',
             'billing.invoice.approve',
@@ -89,6 +96,7 @@ return [
             'customer.verification',
             'customer.package_audit.view',
             'customer.package_audit.manage',
+            'customer.wifi.manage',
             'odp.view',
             'odp.manage',
             'odp.mapping.view',
@@ -116,7 +124,9 @@ return [
             'master.package.manage',
             'master.promo.manage',
             'master.payment.manage',
+            'master.expense_category.manage',
             'master.network_notice.manage',
+            'master.customer_wifi_links.manage',
         ],
         'teknisi' => [
             'dashboard.view',
@@ -126,6 +136,7 @@ return [
             'customer.delete',
             'customer.verification',
             'customer.package_audit.view',
+            'customer.wifi.manage',
             'odp.view',
             'odp.manage',
             'odp.mapping.view',
@@ -150,6 +161,7 @@ return [
         'finance' => [
             'dashboard.view',
             'dashboard.prediction.view',
+            'report.view',
             'billing.invoice.view',
             'billing.invoice.create',
             'billing.invoice.approve',
@@ -175,10 +187,13 @@ return [
     'menu_map' => [
         ['menu_key' => 'dashboard', 'label' => 'Dashboard', 'permission_keys' => ['dashboard.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'dashboard_prediction', 'label' => 'Prediksi', 'permission_keys' => ['dashboard.prediction.view'], 'navbar_section' => 'main', 'default_visible' => true],
+        ['menu_key' => 'reports', 'label' => 'Laporan', 'permission_keys' => ['report.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'billing', 'label' => 'Penagihan', 'permission_keys' => ['billing.invoice.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'customers', 'label' => 'Pelanggan', 'permission_keys' => ['customer.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'customer_verification', 'label' => 'Verifikasi Pelanggan', 'permission_keys' => ['customer.verification'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'customer_package_management', 'label' => 'Manajemen Paket Pelanggan', 'permission_keys' => ['customer.package_audit.view'], 'navbar_section' => 'settings', 'default_visible' => true],
+        ['menu_key' => 'customer_package_migration', 'label' => 'Migrasi PPPoE Pelanggan', 'permission_keys' => ['customer.package_migration.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
+        ['menu_key' => 'customer_account_mapping', 'label' => 'Mapping Akun Pelanggan', 'permission_keys' => ['customer.account.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
         ['menu_key' => 'odp_mapping', 'label' => 'Pemetaan ODP', 'permission_keys' => ['odp.mapping.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'inventory', 'label' => 'Inventori', 'permission_keys' => ['inventory.view'], 'navbar_section' => 'main', 'default_visible' => true],
         ['menu_key' => 'pengeluaran', 'label' => 'Pengeluaran', 'permission_keys' => ['finance.expense.manage'], 'navbar_section' => 'main', 'default_visible' => true],
@@ -198,6 +213,7 @@ return [
         ['menu_key' => 'master_mikrotik', 'label' => 'Master Mikrotik', 'permission_keys' => ['master.mikrotik.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'package_management', 'label' => 'Manajemen Paket', 'permission_keys' => ['master.package.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'payment_methods', 'label' => 'Metode Pembayaran', 'permission_keys' => ['master.payment.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
+        ['menu_key' => 'expense_categories', 'label' => 'Jenis Pengeluaran', 'permission_keys' => ['master.expense_category.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'payment_receipts', 'label' => 'Receipt Pembayaran', 'permission_keys' => ['master.payment.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'promo_management', 'label' => 'Promosi', 'permission_keys' => ['master.promo.manage'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'user_management', 'label' => 'Kelola Akun', 'permission_keys' => ['user.manage'], 'navbar_section' => 'admin', 'default_visible' => true],

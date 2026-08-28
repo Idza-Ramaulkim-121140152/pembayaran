@@ -35,4 +35,16 @@ return [
         ],
     ],
 
+    'genieacs' => [
+        'api_url' => env('GENIEACS_API_URL', 'http://103.37.124.76:7557'),
+        'ui_url' => env('GENIEACS_UI_URL', 'http://103.37.124.76:3000'),
+        'username' => env('GENIEACS_USERNAME'),
+        'password' => env('GENIEACS_PASSWORD'),
+        'timeout' => (int) env('GENIEACS_TIMEOUT', 20),
+    ],
+
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+    ],
+
 ];

@@ -54,7 +54,7 @@ class OdpIncidentEngineService
                 ->get();
 
             $openIncident = NetworkIncident::query()
-                ->where('status', 'open')
+                ->where('status', '!=', 'resolved')
                 ->whereHas('odps', fn ($query) => $query->where('odps.id', $odp->id))
                 ->latest('id')
                 ->first();

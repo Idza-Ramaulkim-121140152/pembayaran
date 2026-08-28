@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Storage;
 
 class CustomerController extends Controller
 {
-    private const DEFAULT_MOBILE_PASSWORD = '12345678';
+    private const DEFAULT_MOBILE_PASSWORD = 'user123';
 
     public function __construct(private AuditLogService $auditLogService)
     {
@@ -815,7 +815,7 @@ class CustomerController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'is_active' => 'nullable|boolean',
-            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01',
+            'home_router_type' => 'nullable|in:mikrotik,vsol_v2801rgw,global_gl01,cdata',
             'home_router_host' => 'nullable|string|max:255',
             'home_router_port' => 'nullable|integer|min:1|max:65535',
             'home_router_username' => 'nullable|string|max:255',

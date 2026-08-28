@@ -167,9 +167,19 @@ class GenerateDashboardPredictionSnapshot extends Command
                     $ranges['kpi_start'],
                     $ranges['projection_end'],
                     $e->getMessage(),
-                    ['model_version' => 'xgboost-hourly-v2.1']
+                    [
+                        'model_version' => 'xgboost-hourly-v2.1',
+                        'worker_status' => 'failed',
+                        'failure_reason' => get_class($e),
+                    ]
                 );
             }
+            logger()->error('dashboard.prediction.snapshot.failed', [
+                'scope' => $scope,
+                'month' => $monthReference->format('Y-m'),
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
             $this->error('Gagal membuat snapshot prediksi: ' . $e->getMessage());
             return self::FAILURE;
         }

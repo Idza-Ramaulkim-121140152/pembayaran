@@ -8,6 +8,10 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class FinancialTransaction extends Model
 {
+    public const STATUS_PENDING = 'pending';
+    public const STATUS_CONFIRMED = 'confirmed';
+    public const STATUS_REJECTED = 'rejected';
+
     protected $fillable = [
         'type',
         'source',
@@ -20,6 +24,7 @@ class FinancialTransaction extends Model
         'created_by',
         'updated_by',
         'meta',
+        'status',
     ];
 
     protected $casts = [
@@ -41,5 +46,10 @@ class FinancialTransaction extends Model
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function receiverApprovalRequests()
+    {
+        return $this->hasMany(PaymentReceiverApprovalRequest::class);
     }
 }

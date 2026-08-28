@@ -4,7 +4,7 @@ import {
     User, Calendar, MapPin, Wifi, CreditCard,
     MessageCircle, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, History,
     CheckCircle, Clock, XCircle, Router, Gift, Download, MoreVertical,
-    RefreshCw
+    RefreshCw, FileText, Upload, KeyRound, EyeOff
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -13,9 +13,21 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import customerService from '../../services/customerService';
 
+const WIFI_PASSWORD_VERIFICATION_INTERVAL_MS = 5000;
+const WIFI_PASSWORD_VERIFICATION_TIMEOUT_MS = 60000;
+const WIFI_PASSWORD_VERIFICATION_TERMINAL_STATUSES = ['verified', 'partial', 'failed'];
+
 function CustomersPage() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
+    const hasWifiCapability = window.appCapabilities
+        && Object.prototype.hasOwnProperty.call(window.appCapabilities, 'customer.wifi.manage');
+    const canManageCustomerWifi = userRole === 'superadmin'
+        || (hasWifiCapability
+            ? Boolean(window.appCapabilities['customer.wifi.manage'])
+            : (typeof window.appCanManageCustomerWifi !== 'undefined'
+                ? Boolean(window.appCanManageCustomerWifi)
+                : ['admin', 'teknisi'].includes(userRole)));
     const [customers, setCustomers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingActiveStatus, setLoadingActiveStatus] = useState(false);
@@ -65,13 +77,63 @@ function CustomersPage() {
     });
     const [lastServicePackagePayload, setLastServicePackagePayload] = useState(null);
     const [openActionMenuId, setOpenActionMenuId] = useState(null);
+    const [contractModal, setContractModal] = useState({
+        open: false,
+        customer: null,
+        contracts: [],
+        loading: false,
+        submitting: false,
+        sendingId: null,
+        form: {
+            contract_ktp_number: '',
+            contract_router_mac: '',
+            contract_device_serial: '',
+            contract_device_notes: '',
+            contract_installation_photos: [],
+        },
+    });
+    const [terminationModal, setTerminationModal] = useState({
+        open: false,
+        customer: null,
+        items: [],
+        loading: false,
+        submitting: false,
+        sendingId: null,
+        finalizingId: null,
+        cancellingId: null,
+        form: {
+            planned_termination_date: '',
+            reason: '',
+            device_notes: '',
+            return_instructions: '',
+        },
+    });
+    const [wifiPasswordModal, setWifiPasswordModal] = useState({
+        open: false,
+        customer: null,
+        checking: false,
+        submitting: false,
+        device: null,
+        result: null,
+        verification: null,
+        visibleCurrentPasswords: {},
+        visibleNewPasswordFields: {},
+        form: {
+            password: '',
+            password_confirmation: '',
+        },
+    });
     const activeStatusRequestRef = useRef(0);
     const actionMenuRef = useRef(null);
+    const wifiVerificationPollRef = useRef(null);
+    const wifiVerificationStartedAtRef = useRef(null);
 
     useEffect(() => {
         fetchCustomers();
         fetchActivePackages();
     }, []);
+
+    useEffect(() => () => clearWifiVerificationPolling(), []);
 
     useEffect(() => {
         if (openActionMenuId === null) return undefined;
@@ -258,6 +320,242 @@ function CustomersPage() {
         }
     };
 
+    const openContractModalForCustomer = async (customer) => {
+        setOpenActionMenuId(null);
+        setContractModal((prev) => ({
+            ...prev,
+            open: true,
+            customer,
+            contracts: [],
+            loading: true,
+            form: {
+                contract_ktp_number: '',
+                contract_router_mac: '',
+                contract_device_serial: '',
+                contract_device_notes: '',
+                contract_installation_photos: [],
+            },
+        }));
+
+        try {
+            const response = await customerService.getContracts(customer.id);
+            setContractModal((prev) => ({
+                ...prev,
+                contracts: response?.data?.data || [],
+                loading: false,
+            }));
+        } catch (err) {
+            console.error('Gagal memuat kontrak pelanggan', err);
+            setError('Gagal memuat kontrak pelanggan');
+            setContractModal((prev) => ({ ...prev, loading: false }));
+        }
+    };
+
+    const closeContractModal = () => {
+        setContractModal((prev) => ({ ...prev, open: false, customer: null }));
+    };
+
+    const handleContractFieldChange = (event) => {
+        const { name, value, files } = event.target;
+        setContractModal((prev) => ({
+            ...prev,
+            form: {
+                ...prev.form,
+                [name]: files ? Array.from(files) : value,
+            },
+        }));
+    };
+
+    const handleGenerateContract = async (event) => {
+        event.preventDefault();
+        if (!contractModal.customer) return;
+
+        const formData = new FormData();
+        Object.entries(contractModal.form).forEach(([key, value]) => {
+            if (key === 'contract_installation_photos') return;
+            formData.append(key, value || '');
+        });
+        (contractModal.form.contract_installation_photos || []).forEach((file) => {
+            formData.append('contract_installation_photos[]', file);
+        });
+
+        try {
+            setContractModal((prev) => ({ ...prev, submitting: true }));
+            const response = await customerService.generateContract(contractModal.customer.id, formData);
+            const contract = response?.data?.data;
+            setContractModal((prev) => ({
+                ...prev,
+                submitting: false,
+                contracts: contract ? [contract, ...prev.contracts] : prev.contracts,
+                form: {
+                    contract_ktp_number: '',
+                    contract_router_mac: '',
+                    contract_device_serial: '',
+                    contract_device_notes: '',
+                    contract_installation_photos: [],
+                },
+            }));
+            setSuccess('Kontrak pelanggan berhasil dibuat');
+        } catch (err) {
+            console.error('Gagal membuat kontrak pelanggan', err);
+            setError(err.response?.data?.message || 'Gagal membuat kontrak pelanggan');
+            setContractModal((prev) => ({ ...prev, submitting: false }));
+        }
+    };
+
+    const handleSendContractWhatsApp = async (contract) => {
+        if (!contractModal.customer || !contract) return;
+
+        try {
+            setContractModal((prev) => ({ ...prev, sendingId: contract.id }));
+            const response = await customerService.sendContractWhatsApp(contractModal.customer.id, contract.id);
+            const updated = response?.data?.data;
+            setContractModal((prev) => ({
+                ...prev,
+                sendingId: null,
+                contracts: prev.contracts.map((item) => (item.id === contract.id ? { ...item, ...updated } : item)),
+            }));
+            setSuccess('Kontrak berhasil dikirim via WhatsApp');
+        } catch (err) {
+            console.error('Gagal mengirim kontrak via WhatsApp', err);
+            setError(err.response?.data?.message || 'Gagal mengirim kontrak via WhatsApp');
+            setContractModal((prev) => ({ ...prev, sendingId: null }));
+        }
+    };
+
+    const selectedContractPhotoNames = contractModal.form.contract_installation_photos || [];
+
+    const openTerminationModalForCustomer = async (customer) => {
+        setOpenActionMenuId(null);
+        setTerminationModal((prev) => ({
+            ...prev,
+            open: true,
+            customer,
+            items: [],
+            loading: true,
+            form: {
+                planned_termination_date: '',
+                reason: 'Pengingat rencana copot pemasangan dan penarikan perangkat.',
+                device_notes: '',
+                return_instructions: 'Mohon beri akses kepada petugas untuk mengambil perangkat milik perusahaan.',
+            },
+        }));
+
+        try {
+            const response = await customerService.getTerminations(customer.id);
+            setTerminationModal((prev) => ({
+                ...prev,
+                items: response?.data?.data || [],
+                loading: false,
+            }));
+        } catch (err) {
+            console.error('Gagal memuat surat copot pemasangan', err);
+            setError(err.response?.data?.message || 'Gagal memuat surat copot pemasangan');
+            setTerminationModal((prev) => ({ ...prev, loading: false }));
+        }
+    };
+
+    const closeTerminationModal = () => {
+        setTerminationModal((prev) => ({ ...prev, open: false, customer: null }));
+    };
+
+    const handleTerminationFieldChange = (event) => {
+        const { name, value } = event.target;
+        setTerminationModal((prev) => ({
+            ...prev,
+            form: {
+                ...prev.form,
+                [name]: value,
+            },
+        }));
+    };
+
+    const handleCreateTermination = async (event) => {
+        event.preventDefault();
+        if (!terminationModal.customer) return;
+
+        try {
+            setTerminationModal((prev) => ({ ...prev, submitting: true }));
+            const response = await customerService.createTermination(terminationModal.customer.id, terminationModal.form);
+            const item = response?.data?.data;
+            setTerminationModal((prev) => ({
+                ...prev,
+                submitting: false,
+                items: item ? [item, ...prev.items] : prev.items,
+            }));
+            setSuccess('Surat copot pemasangan berhasil dibuat');
+        } catch (err) {
+            console.error('Gagal membuat surat copot pemasangan', err);
+            setError(err.response?.data?.message || 'Gagal membuat surat copot pemasangan');
+            setTerminationModal((prev) => ({ ...prev, submitting: false }));
+        }
+    };
+
+    const handleSendTerminationWhatsApp = async (item) => {
+        if (!terminationModal.customer || !item) return;
+
+        try {
+            setTerminationModal((prev) => ({ ...prev, sendingId: item.id }));
+            const response = await customerService.sendTerminationWhatsApp(terminationModal.customer.id, item.id);
+            const updated = response?.data?.data;
+            setTerminationModal((prev) => ({
+                ...prev,
+                sendingId: null,
+                items: prev.items.map((row) => (row.id === item.id ? { ...row, ...updated } : row)),
+            }));
+            setSuccess('Surat copot berhasil dikirim via WhatsApp');
+        } catch (err) {
+            console.error('Gagal mengirim surat copot via WhatsApp', err);
+            setError(err.response?.data?.message || 'Gagal mengirim surat copot via WhatsApp');
+            setTerminationModal((prev) => ({ ...prev, sendingId: null }));
+        }
+    };
+
+    const handleFinalizeTermination = async (item) => {
+        if (!terminationModal.customer || !item) return;
+        if (!window.confirm('Verifikasi final akan menonaktifkan pelanggan. Lanjutkan?')) return;
+
+        try {
+            setTerminationModal((prev) => ({ ...prev, finalizingId: item.id }));
+            const response = await customerService.finalizeTermination(terminationModal.customer.id, item.id);
+            const updated = response?.data?.data;
+            setTerminationModal((prev) => ({
+                ...prev,
+                finalizingId: null,
+                items: prev.items.map((row) => (row.id === item.id ? { ...row, ...updated } : row)),
+                customer: prev.customer ? { ...prev.customer, is_active: false } : prev.customer,
+            }));
+            setCustomers((prev) => prev.map((customer) => (
+                customer.id === terminationModal.customer.id ? { ...customer, is_active: false } : customer
+            )));
+            setSuccess('Copot pemasangan final. Pelanggan dinonaktifkan.');
+        } catch (err) {
+            console.error('Gagal verifikasi final copot pemasangan', err);
+            setError(err.response?.data?.message || 'Gagal verifikasi final copot pemasangan');
+            setTerminationModal((prev) => ({ ...prev, finalizingId: null }));
+        }
+    };
+
+    const handleCancelTermination = async (item) => {
+        if (!terminationModal.customer || !item) return;
+
+        try {
+            setTerminationModal((prev) => ({ ...prev, cancellingId: item.id }));
+            const response = await customerService.cancelTermination(terminationModal.customer.id, item.id);
+            const updated = response?.data?.data;
+            setTerminationModal((prev) => ({
+                ...prev,
+                cancellingId: null,
+                items: prev.items.map((row) => (row.id === item.id ? { ...row, ...updated } : row)),
+            }));
+            setSuccess('Surat copot pemasangan dibatalkan');
+        } catch (err) {
+            console.error('Gagal membatalkan surat copot pemasangan', err);
+            setError(err.response?.data?.message || 'Gagal membatalkan surat copot pemasangan');
+            setTerminationModal((prev) => ({ ...prev, cancellingId: null }));
+        }
+    };
+
     const formatDate = (date) => {
         if (!date) return '-';
         return new Date(date).toLocaleDateString('id-ID', { 
@@ -292,6 +590,306 @@ function CustomersPage() {
             setSortBy(field);
             setSortOrder('asc');
         }
+    };
+
+    const openWifiPasswordModal = (customer) => {
+        setOpenActionMenuId(null);
+        setWifiPasswordModal({
+            open: true,
+            customer,
+            checking: false,
+            submitting: false,
+            device: null,
+            result: null,
+            verification: null,
+            visibleCurrentPasswords: {},
+            visibleNewPasswordFields: {},
+            form: {
+                password: '',
+                password_confirmation: '',
+            },
+        });
+    };
+
+    const closeWifiPasswordModal = () => {
+        clearWifiVerificationPolling();
+        setWifiPasswordModal({
+            open: false,
+            customer: null,
+            checking: false,
+            submitting: false,
+            device: null,
+            result: null,
+            verification: null,
+            visibleCurrentPasswords: {},
+            visibleNewPasswordFields: {},
+            form: {
+                password: '',
+                password_confirmation: '',
+            },
+        });
+    };
+
+    const handleWifiPasswordFieldChange = (event) => {
+        const { name, value } = event.target;
+        clearWifiVerificationPolling();
+        setWifiPasswordModal((prev) => ({
+            ...prev,
+            result: null,
+            verification: null,
+            form: {
+                ...prev.form,
+                [name]: value,
+            },
+        }));
+    };
+
+    const handleCheckWifiDevice = async () => {
+        const customer = wifiPasswordModal.customer;
+        if (!customer?.id) return;
+
+        try {
+            setWifiPasswordModal((prev) => ({ ...prev, checking: true, result: null }));
+            const response = await customerService.getWifiDevice(customer.id);
+            setWifiPasswordModal((prev) => ({
+                ...prev,
+                checking: false,
+                device: response?.data?.data || null,
+                visibleCurrentPasswords: {},
+            }));
+        } catch (err) {
+            setWifiPasswordModal((prev) => ({ ...prev, checking: false }));
+            setError(err.response?.data?.message || 'Gagal mengecek device GenieACS.');
+        }
+    };
+
+    const handleSubmitWifiPassword = async (event) => {
+        event.preventDefault();
+        const customer = wifiPasswordModal.customer;
+        const password = wifiPasswordModal.form.password;
+        const confirmation = wifiPasswordModal.form.password_confirmation;
+
+        if (!customer?.id) return;
+        if (password.length < 8 || password.length > 63) {
+            setError('Password WiFi harus 8 sampai 63 karakter.');
+            return;
+        }
+        if (password !== confirmation) {
+            setError('Konfirmasi password WiFi tidak cocok.');
+            return;
+        }
+
+        try {
+            setWifiPasswordModal((prev) => ({ ...prev, submitting: true, result: null }));
+            const response = await customerService.updateWifiPassword(customer.id, {
+                password,
+                password_confirmation: confirmation,
+            });
+            const result = response?.data?.data || {};
+            const verificationId = result.verification_id || '';
+            const verification = verificationId
+                ? {
+                    id: verificationId,
+                    status: result.verification_status || 'pending',
+                    message: 'Task dikirim. Sistem sedang memverifikasi status password di GenieACS.',
+                    verified_ssid_count: result.verified_ssid_count || 0,
+                    target_ssid_count: result.target_ssid_count || result.updated_ssid_count || 0,
+                    ssids: result.ssids || [],
+                    polling: true,
+                    timedOut: false,
+                }
+                : null;
+
+            setWifiPasswordModal((prev) => ({
+                ...prev,
+                submitting: false,
+                result,
+                verification,
+                visibleNewPasswordFields: {},
+            }));
+            if (verificationId) {
+                startWifiPasswordVerificationPolling(customer.id, verificationId);
+            }
+            setSuccess(response?.data?.message || 'Task ubah password WiFi berhasil dikirim.');
+        } catch (err) {
+            setWifiPasswordModal((prev) => ({ ...prev, submitting: false }));
+            setError(err.response?.data?.message || 'Gagal mengubah password WiFi pelanggan.');
+        }
+    };
+
+    function clearWifiVerificationPolling() {
+        if (wifiVerificationPollRef.current) {
+            clearInterval(wifiVerificationPollRef.current);
+            wifiVerificationPollRef.current = null;
+        }
+        wifiVerificationStartedAtRef.current = null;
+    }
+
+    const updateWifiVerificationState = (data, extra = {}) => {
+        setWifiPasswordModal((prev) => {
+            const status = data?.status || prev.verification?.status || 'pending';
+            const shouldClearPassword = status === 'verified';
+
+            return {
+                ...prev,
+                verification: {
+                    ...(prev.verification || {}),
+                    id: data?.verification_id || prev.verification?.id,
+                    status,
+                    message: data?.message || prev.verification?.message || 'Menunggu verifikasi GenieACS.',
+                    verified_ssid_count: data?.verified_ssid_count ?? prev.verification?.verified_ssid_count ?? 0,
+                    target_ssid_count: data?.target_ssid_count ?? prev.verification?.target_ssid_count ?? 0,
+                    ssids: data?.ssids || prev.verification?.ssids || [],
+                    polling: extra.polling ?? prev.verification?.polling ?? false,
+                    timedOut: extra.timedOut ?? prev.verification?.timedOut ?? false,
+                },
+                form: shouldClearPassword
+                    ? {
+                        password: '',
+                        password_confirmation: '',
+                    }
+                    : prev.form,
+                visibleNewPasswordFields: shouldClearPassword ? {} : prev.visibleNewPasswordFields,
+            };
+        });
+    };
+
+    const pollWifiPasswordVerification = async (customerId, verificationId) => {
+        if (!customerId || !verificationId) return;
+
+        const startedAt = wifiVerificationStartedAtRef.current || Date.now();
+        if (Date.now() - startedAt >= WIFI_PASSWORD_VERIFICATION_TIMEOUT_MS) {
+            clearWifiVerificationPolling();
+            updateWifiVerificationState({
+                status: 'pending',
+                message: 'Task sudah dikirim, tetapi belum terverifikasi dari GenieACS. Coba cek lagi beberapa saat lagi.',
+            }, {
+                polling: false,
+                timedOut: true,
+            });
+            return;
+        }
+
+        try {
+            const response = await customerService.getWifiPasswordVerification(customerId, verificationId);
+            const data = response?.data?.data || {};
+            const isTerminal = WIFI_PASSWORD_VERIFICATION_TERMINAL_STATUSES.includes(data.status);
+
+            updateWifiVerificationState(data, {
+                polling: !isTerminal,
+                timedOut: false,
+            });
+
+            if (isTerminal) {
+                clearWifiVerificationPolling();
+            }
+        } catch (err) {
+            clearWifiVerificationPolling();
+            updateWifiVerificationState({
+                status: 'failed',
+                message: err.response?.data?.message || 'Gagal mengecek status verifikasi password WiFi.',
+            }, {
+                polling: false,
+                timedOut: false,
+            });
+        }
+    };
+
+    const startWifiPasswordVerificationPolling = (customerId, verificationId) => {
+        clearWifiVerificationPolling();
+        wifiVerificationStartedAtRef.current = Date.now();
+        wifiVerificationPollRef.current = setInterval(() => {
+            pollWifiPasswordVerification(customerId, verificationId);
+        }, WIFI_PASSWORD_VERIFICATION_INTERVAL_MS);
+        pollWifiPasswordVerification(customerId, verificationId);
+    };
+
+    const handleRetryWifiPasswordVerification = () => {
+        const customerId = wifiPasswordModal.customer?.id;
+        const verificationId = wifiPasswordModal.verification?.id || wifiPasswordModal.result?.verification_id;
+        if (!customerId || !verificationId) return;
+
+        setWifiPasswordModal((prev) => ({
+            ...prev,
+            verification: {
+                ...(prev.verification || {}),
+                status: 'pending',
+                message: 'Memverifikasi ulang status password di GenieACS.',
+                polling: true,
+                timedOut: false,
+            },
+        }));
+        startWifiPasswordVerificationPolling(customerId, verificationId);
+    };
+
+    const getWifiVerificationPresentation = (verification) => {
+        if (!verification) {
+            return {
+                title: 'Menunggu verifikasi',
+                className: 'border-blue-200 bg-blue-50 text-blue-800',
+                icon: <Clock size={17} className="text-blue-600" />,
+            };
+        }
+
+        if (verification.timedOut) {
+            return {
+                title: 'Belum terverifikasi',
+                className: 'border-amber-200 bg-amber-50 text-amber-900',
+                icon: <Clock size={17} className="text-amber-600" />,
+            };
+        }
+
+        if (verification.status === 'verified') {
+            return {
+                title: 'Berhasil diverifikasi',
+                className: 'border-green-200 bg-green-50 text-green-800',
+                icon: <CheckCircle size={17} className="text-green-600" />,
+            };
+        }
+
+        if (verification.status === 'partial') {
+            return {
+                title: 'Sebagian berhasil',
+                className: 'border-amber-200 bg-amber-50 text-amber-900',
+                icon: <Clock size={17} className="text-amber-600" />,
+            };
+        }
+
+        if (verification.status === 'failed') {
+            return {
+                title: 'Verifikasi gagal',
+                className: 'border-red-200 bg-red-50 text-red-800',
+                icon: <XCircle size={17} className="text-red-600" />,
+            };
+        }
+
+        return {
+            title: verification.polling ? 'Memverifikasi ke GenieACS' : 'Menunggu verifikasi',
+            className: 'border-blue-200 bg-blue-50 text-blue-800',
+            icon: verification.polling
+                ? <RefreshCw size={17} className="animate-spin text-blue-600" />
+                : <Clock size={17} className="text-blue-600" />,
+        };
+    };
+
+    const toggleCurrentWifiPasswordVisibility = (key) => {
+        setWifiPasswordModal((prev) => ({
+            ...prev,
+            visibleCurrentPasswords: {
+                ...prev.visibleCurrentPasswords,
+                [key]: !prev.visibleCurrentPasswords?.[key],
+            },
+        }));
+    };
+
+    const toggleNewWifiPasswordFieldVisibility = (field) => {
+        setWifiPasswordModal((prev) => ({
+            ...prev,
+            visibleNewPasswordFields: {
+                ...prev.visibleNewPasswordFields,
+                [field]: !prev.visibleNewPasswordFields?.[field],
+            },
+        }));
     };
 
     const handleOpenCompensation = (customer) => {
@@ -841,6 +1439,36 @@ function CustomersPage() {
                                                         <span>Lihat Secret PPPoE</span>
                                                     </button>
                                                 )}
+                                                {canManageCustomerWifi && customer.pppoe_username && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openWifiPasswordModal(customer)}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                    >
+                                                        <KeyRound size={16} className="text-rose-600" />
+                                                        <span>Ubah Password WiFi</span>
+                                                    </button>
+                                                )}
+                                                {userRole === 'superadmin' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openContractModalForCustomer(customer)}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                    >
+                                                        <FileText size={16} className="text-emerald-600" />
+                                                        <span>Kontrak Pelanggan</span>
+                                                    </button>
+                                                )}
+                                                {(userRole === 'superadmin' || userRole === 'admin') && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openTerminationModalForCustomer(customer)}
+                                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                                    >
+                                                        <XCircle size={16} className="text-red-600" />
+                                                        <span>Copot Pemasangan</span>
+                                                    </button>
+                                                )}
                                                 <a
                                                     href={getWhatsAppLink(customer.phone)}
                                                     target="_blank"
@@ -895,6 +1523,451 @@ function CustomersPage() {
                             Aktivasi Pelanggan Baru
                         </Button>
                     </Link>
+                </div>
+            )}
+
+            {wifiPasswordModal.open && wifiPasswordModal.customer && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-lg max-h-[92vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-start justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">Ubah Password WiFi</h2>
+                                <p className="text-sm text-gray-500">{wifiPasswordModal.customer.name}</p>
+                            </div>
+                            <button type="button" onClick={closeWifiPasswordModal} className="text-gray-400 hover:text-gray-600 transition">
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSubmitWifiPassword} className="p-5 space-y-4">
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">PPPoE</p>
+                                        <p className="font-mono text-sm text-gray-900 break-all">{wifiPasswordModal.customer.pppoe_username || '-'}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleCheckWifiDevice}
+                                        disabled={wifiPasswordModal.checking}
+                                        className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                    >
+                                        <RefreshCw size={15} className={wifiPasswordModal.checking ? 'animate-spin' : ''} />
+                                        Cek
+                                    </button>
+                                </div>
+
+                                {wifiPasswordModal.device && (
+                                    <div className="rounded-lg bg-white border border-gray-200 p-3 text-sm space-y-2">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            <div>
+                                                <p className="text-xs text-gray-500">Device ID</p>
+                                                <p className="font-mono text-xs text-gray-900 break-all">{wifiPasswordModal.device.device_id || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-gray-500">Serial / Model</p>
+                                                <p className="text-gray-900 break-words">
+                                                    {wifiPasswordModal.device.serial_number || '-'}{wifiPasswordModal.device.product_class ? ` / ${wifiPasswordModal.device.product_class}` : ''}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs text-gray-500 mb-2">SSID aktif & password sekarang</p>
+                                            <div className="space-y-2">
+                                                {(wifiPasswordModal.device.ssids || []).length > 0 ? (
+                                                    (wifiPasswordModal.device.ssids || []).map((ssid, index) => {
+                                                        const passwordKey = `${ssid.path || ssid.ssid || 'ssid'}-${index}`;
+                                                        const currentPassword = ssid.current_password || '';
+                                                        const hasCurrentPassword = currentPassword.length > 0;
+                                                        const isVisible = Boolean(wifiPasswordModal.visibleCurrentPasswords?.[passwordKey]);
+
+                                                        return (
+                                                            <div key={passwordKey} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                                                                <p className="font-medium text-gray-900 break-words">{ssid.ssid || `SSID ${index + 1}`}</p>
+                                                                <div className="mt-1 flex items-center gap-2">
+                                                                    <span className="min-w-0 flex-1 font-mono text-xs text-gray-700 break-all">
+                                                                        {hasCurrentPassword
+                                                                            ? (isVisible ? currentPassword : '********')
+                                                                            : 'Tidak tersedia'}
+                                                                    </span>
+                                                                    {hasCurrentPassword && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => toggleCurrentWifiPasswordVisibility(passwordKey)}
+                                                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-100"
+                                                                            title={isVisible ? 'Sembunyikan password' : 'Lihat password'}
+                                                                        >
+                                                                            {isVisible ? <EyeOff size={15} /> : <Eye size={15} />}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <p className="text-gray-900">-</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Password WiFi Baru</label>
+                                <div className="relative">
+                                    <input
+                                        type={wifiPasswordModal.visibleNewPasswordFields?.password ? 'text' : 'password'}
+                                        name="password"
+                                        value={wifiPasswordModal.form.password}
+                                        onChange={handleWifiPasswordFieldChange}
+                                        minLength={8}
+                                        maxLength={63}
+                                        autoComplete="new-password"
+                                        className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-11 focus:border-blue-500 focus:ring-blue-500"
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleNewWifiPasswordFieldVisibility('password')}
+                                        className="absolute inset-y-0 right-1 my-1 inline-flex w-9 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                        title={wifiPasswordModal.visibleNewPasswordFields?.password ? 'Sembunyikan password baru' : 'Lihat password baru'}
+                                    >
+                                        {wifiPasswordModal.visibleNewPasswordFields?.password ? <EyeOff size={17} /> : <Eye size={17} />}
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Konfirmasi Password</label>
+                                <div className="relative">
+                                    <input
+                                        type={wifiPasswordModal.visibleNewPasswordFields?.password_confirmation ? 'text' : 'password'}
+                                        name="password_confirmation"
+                                        value={wifiPasswordModal.form.password_confirmation}
+                                        onChange={handleWifiPasswordFieldChange}
+                                        minLength={8}
+                                        maxLength={63}
+                                        autoComplete="new-password"
+                                        className="w-full rounded-lg border border-gray-300 px-3 py-2 pr-11 focus:border-blue-500 focus:ring-blue-500"
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleNewWifiPasswordFieldVisibility('password_confirmation')}
+                                        className="absolute inset-y-0 right-1 my-1 inline-flex w-9 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                        title={wifiPasswordModal.visibleNewPasswordFields?.password_confirmation ? 'Sembunyikan konfirmasi password' : 'Lihat konfirmasi password'}
+                                    >
+                                        {wifiPasswordModal.visibleNewPasswordFields?.password_confirmation ? <EyeOff size={17} /> : <Eye size={17} />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {wifiPasswordModal.verification && (
+                                (() => {
+                                    const verification = wifiPasswordModal.verification;
+                                    const presentation = getWifiVerificationPresentation(verification);
+
+                                    return (
+                                        <div className={`rounded-lg border p-3 text-sm ${presentation.className}`}>
+                                            <div className="flex items-start gap-2">
+                                                <span className="mt-0.5 shrink-0">{presentation.icon}</span>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                        <p className="font-semibold">{presentation.title}</p>
+                                                        <p className="text-xs font-medium">
+                                                            {verification.verified_ssid_count || 0}/{verification.target_ssid_count || 0} SSID terverifikasi
+                                                        </p>
+                                                    </div>
+                                                    <p className="mt-1">{verification.message || 'Menunggu status dari GenieACS.'}</p>
+                                                    {(verification.ssids || []).length > 0 && (
+                                                        <div className="mt-3 space-y-1">
+                                                            {(verification.ssids || []).map((ssid, index) => (
+                                                                <div key={`${ssid.path || ssid.ssid || 'ssid'}-${index}`} className="flex items-center justify-between gap-2 rounded-md bg-white/60 px-2 py-1">
+                                                                    <span className="min-w-0 break-words">{ssid.ssid || `SSID ${index + 1}`}</span>
+                                                                    <span className="shrink-0 text-xs font-semibold">
+                                                                        {ssid.verified ? 'Berhasil' : 'Menunggu'}
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {verification.timedOut && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleRetryWifiPasswordVerification}
+                                                            className="mt-3 inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+                                                        >
+                                                            <RefreshCw size={15} />
+                                                            Cek Lagi
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            )}
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={closeWifiPasswordModal}
+                                    className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                                >
+                                    Tutup
+                                </button>
+                                <Button type="submit" disabled={wifiPasswordModal.submitting || wifiPasswordModal.verification?.polling}>
+                                    {wifiPasswordModal.submitting ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <KeyRound size={16} className="mr-2" />}
+                                    Simpan Password
+                                </Button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {contractModal.open && contractModal.customer && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                                    <FileText size={20} className="text-emerald-600" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900">Kontrak Pelanggan</h2>
+                                    <p className="text-sm text-gray-500">{contractModal.customer.name}</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={closeContractModal} className="text-gray-400 hover:text-gray-600 transition">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="max-h-[76vh] overflow-y-auto p-6 space-y-6">
+                            <form onSubmit={handleGenerateContract} className="rounded-2xl border border-gray-200 p-4">
+                                <h3 className="font-semibold text-gray-900 mb-3">Buat / Generate Ulang Kontrak</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <input type="text" name="contract_ktp_number" value={contractModal.form.contract_ktp_number} onChange={handleContractFieldChange} className="w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="Nomor KTP" />
+                                    <input type="text" name="contract_router_mac" value={contractModal.form.contract_router_mac} onChange={handleContractFieldChange} className="w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="MAC Address router/ONU" />
+                                    <input type="text" name="contract_device_serial" value={contractModal.form.contract_device_serial} onChange={handleContractFieldChange} className="w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="Serial number perangkat" />
+                                    <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
+                                        <input
+                                            id="customer_contract_installation_photos"
+                                            type="file"
+                                            name="contract_installation_photos"
+                                            accept="image/*"
+                                            multiple
+                                            onChange={handleContractFieldChange}
+                                            className="sr-only"
+                                        />
+                                        <label
+                                            htmlFor="customer_contract_installation_photos"
+                                            className="inline-flex cursor-pointer items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                                        >
+                                            <Upload size={16} className="mr-2" />
+                                            Pilih Foto
+                                        </label>
+                                        <span className="ml-3 text-sm text-gray-600">
+                                            {selectedContractPhotoNames.length > 0
+                                                ? `${selectedContractPhotoNames.length} file dipilih`
+                                                : 'Belum ada foto dipilih'}
+                                        </span>
+                                        {selectedContractPhotoNames.length > 0 && (
+                                            <div className="mt-3 space-y-1">
+                                                {selectedContractPhotoNames.slice(0, 3).map((file, index) => (
+                                                    <p key={`${file.name}-${index}`} className="truncate text-xs text-gray-600">
+                                                        • {file.name}
+                                                    </p>
+                                                ))}
+                                                {selectedContractPhotoNames.length > 3 && (
+                                                    <p className="text-xs text-gray-500">
+                                                        +{selectedContractPhotoNames.length - 3} file lainnya
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <textarea name="contract_device_notes" value={contractModal.form.contract_device_notes} onChange={handleContractFieldChange} rows={2} className="md:col-span-2 w-full rounded-lg border border-gray-300 px-3 py-2" placeholder="Catatan perangkat / instalasi" />
+                                </div>
+                                <div className="mt-4 flex justify-end">
+                                    <Button type="submit" disabled={contractModal.submitting}>
+                                        {contractModal.submitting ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <FileText size={16} className="mr-2" />}
+                                        Generate Kontrak
+                                    </Button>
+                                </div>
+                            </form>
+
+                            <div>
+                                <h3 className="font-semibold text-gray-900 mb-3">Riwayat Kontrak</h3>
+                                {contractModal.loading ? (
+                                    <div className="py-8 text-center"><LoadingSpinner text="Memuat kontrak..." /></div>
+                                ) : contractModal.contracts.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {contractModal.contracts.map((contract) => (
+                                            <div key={contract.id} className="rounded-xl border border-gray-200 p-4">
+                                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                                    <div>
+                                                        <p className="font-mono text-sm font-semibold text-gray-900">{contract.agreement_number}</p>
+                                                        <p className="text-xs text-gray-500">WA: {contract.whatsapp_status || '-'} · Hash: {contract.pdf_hash ? `${contract.pdf_hash.slice(0, 12)}...` : '-'}</p>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        <a href={contract.download_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                                                            <Download size={15} className="mr-1" /> PDF
+                                                        </a>
+                                                        <a href={contract.verify_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">
+                                                            Verifikasi QR
+                                                        </a>
+                                                        <button type="button" onClick={() => handleSendContractWhatsApp(contract)} disabled={contractModal.sendingId === contract.id} className="inline-flex items-center rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                                                            {contractModal.sendingId === contract.id ? <RefreshCw size={15} className="mr-1 animate-spin" /> : <MessageCircle size={15} className="mr-1" />}
+                                                            Kirim WA
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                {contract.whatsapp_error && <p className="mt-2 text-xs text-amber-700">Catatan WA: {contract.whatsapp_error}</p>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-500">Belum ada kontrak untuk pelanggan ini.</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {terminationModal.open && terminationModal.customer && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden shadow-2xl">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                                    <XCircle size={20} className="text-red-600" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900">Copot Pemasangan</h2>
+                                    <p className="text-sm text-gray-500">{terminationModal.customer.name}</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={closeTerminationModal} className="text-gray-400 hover:text-gray-600 transition">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="max-h-[76vh] overflow-y-auto p-6 space-y-6">
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                                Tahap 1 hanya mengirim surat pengingat ke pelanggan. Pelanggan baru dinonaktifkan setelah tombol <strong>Verifikasi Final</strong> ditekan.
+                            </div>
+
+                            <form onSubmit={handleCreateTermination} className="rounded-2xl border border-gray-200 p-4">
+                                <h3 className="font-semibold text-gray-900 mb-3">Buat Surat Pengingat Copot</h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal Rencana</label>
+                                        <input
+                                            type="date"
+                                            name="planned_termination_date"
+                                            value={terminationModal.form.planned_termination_date}
+                                            onChange={handleTerminationFieldChange}
+                                            className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Catatan Perangkat</label>
+                                        <input
+                                            type="text"
+                                            name="device_notes"
+                                            value={terminationModal.form.device_notes}
+                                            onChange={handleTerminationFieldChange}
+                                            className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                                            placeholder="Contoh: modem dan adaptor wajib dikembalikan"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Alasan</label>
+                                        <textarea
+                                            name="reason"
+                                            value={terminationModal.form.reason}
+                                            onChange={handleTerminationFieldChange}
+                                            rows={2}
+                                            className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Instruksi Pengembalian</label>
+                                        <textarea
+                                            name="return_instructions"
+                                            value={terminationModal.form.return_instructions}
+                                            onChange={handleTerminationFieldChange}
+                                            rows={2}
+                                            className="w-full rounded-lg border border-gray-300 px-3 py-2"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex justify-end">
+                                    <Button type="submit" disabled={terminationModal.submitting}>
+                                        {terminationModal.submitting ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <FileText size={16} className="mr-2" />}
+                                        Generate Surat
+                                    </Button>
+                                </div>
+                            </form>
+
+                            <div>
+                                <h3 className="font-semibold text-gray-900 mb-3">Riwayat Surat Copot</h3>
+                                {terminationModal.loading ? (
+                                    <div className="py-8 text-center"><LoadingSpinner text="Memuat surat copot..." /></div>
+                                ) : terminationModal.items.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {terminationModal.items.map((item) => {
+                                            const isFinal = item.status === 'completed';
+                                            const isCancelled = item.status === 'cancelled';
+                                            return (
+                                                <div key={item.id} className="rounded-xl border border-gray-200 p-4">
+                                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                        <div>
+                                                            <p className="font-mono text-sm font-semibold text-gray-900">{item.document_number}</p>
+                                                            <p className="text-xs text-gray-500">
+                                                                Status: {item.status} · WA: {item.whatsapp_status || '-'} · Rencana: {item.planned_termination_date || '-'}
+                                                            </p>
+                                                            {item.whatsapp_error && <p className="mt-1 text-xs text-amber-700">Catatan WA: {item.whatsapp_error}</p>}
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            <a href={item.download_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
+                                                                <Download size={15} className="mr-1" /> PDF
+                                                            </a>
+                                                            <a href={item.verify_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200">
+                                                                Verifikasi QR
+                                                            </a>
+                                                            {!isCancelled && (
+                                                                <button type="button" onClick={() => handleSendTerminationWhatsApp(item)} disabled={terminationModal.sendingId === item.id || isFinal} className="inline-flex items-center rounded-lg bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60">
+                                                                    {terminationModal.sendingId === item.id ? <RefreshCw size={15} className="mr-1 animate-spin" /> : <MessageCircle size={15} className="mr-1" />}
+                                                                    Kirim WA
+                                                                </button>
+                                                            )}
+                                                            {!isFinal && !isCancelled && (
+                                                                <button type="button" onClick={() => handleFinalizeTermination(item)} disabled={terminationModal.finalizingId === item.id} className="inline-flex items-center rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
+                                                                    {terminationModal.finalizingId === item.id ? <RefreshCw size={15} className="mr-1 animate-spin" /> : <CheckCircle size={15} className="mr-1" />}
+                                                                    Verifikasi Final
+                                                                </button>
+                                                            )}
+                                                            {!isFinal && !isCancelled && (
+                                                                <button type="button" onClick={() => handleCancelTermination(item)} disabled={terminationModal.cancellingId === item.id} className="inline-flex items-center rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-60">
+                                                                    Batalkan
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-500">Belum ada surat copot untuk pelanggan ini.</div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 

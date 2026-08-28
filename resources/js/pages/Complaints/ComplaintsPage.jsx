@@ -14,6 +14,7 @@ function ComplaintsPage() {
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
     const [stats, setStats] = useState(null);
+    const [slaLive, setSlaLive] = useState(null);
     
     // Filters
     const [filters, setFilters] = useState({
@@ -44,6 +45,7 @@ function ComplaintsPage() {
     useEffect(() => {
         fetchComplaints();
         fetchStats();
+        fetchSlaLive();
     }, [filters, pagination.currentPage]);
 
     const fetchComplaints = async () => {
@@ -77,6 +79,15 @@ function ComplaintsPage() {
             setStats(response.data);
         } catch (err) {
             console.error(err);
+        }
+    };
+
+    const fetchSlaLive = async () => {
+        try {
+            const response = await apiClient.get('/complaints/sla-live');
+            setSlaLive(response.data?.data || null);
+        } catch (err) {
+            setSlaLive(null);
         }
     };
 
@@ -252,6 +263,51 @@ function ComplaintsPage() {
                             </div>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {slaLive && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-pink-500">Live SLA Board</p>
+                            <h2 className="text-xl font-bold text-gray-900">Pantauan SLA tiket aktif</h2>
+                            <p className="text-sm text-gray-500">Generated: {slaLive.summary?.generated_at ? formatDate(slaLive.summary.generated_at) : '-'}</p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={fetchSlaLive}
+                            className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                        >
+                            Refresh SLA
+                        </button>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-4">
+                        {[
+                            ['Open', slaLive.summary?.open_total || 0, 'bg-blue-50 text-blue-700'],
+                            ['Breached', slaLive.summary?.breached_total || 0, 'bg-red-50 text-red-700'],
+                            ['Due Soon', slaLive.summary?.due_soon_total || 0, 'bg-amber-50 text-amber-700'],
+                            ['Unassigned', slaLive.summary?.unassigned_total || 0, 'bg-slate-50 text-slate-700'],
+                        ].map(([label, value, tone]) => (
+                            <div key={label} className={`rounded-xl p-4 ${tone}`}>
+                                <p className="text-sm font-semibold">{label}</p>
+                                <p className="mt-1 text-2xl font-bold">{value}</p>
+                            </div>
+                        ))}
+                    </div>
+                    {slaLive.breached?.length > 0 && (
+                        <div className="mt-4 rounded-xl border border-red-100 bg-red-50 p-3">
+                            <p className="text-sm font-semibold text-red-700">Tiket breach terbaru</p>
+                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                {slaLive.breached.slice(0, 4).map((ticket) => (
+                                    <div key={ticket.id} className="rounded-lg bg-white p-3 text-sm">
+                                        <p className="font-semibold text-gray-900">{ticket.ticket_number || `#${ticket.id}`} · {ticket.subject}</p>
+                                        <p className="text-gray-500">{ticket.customer_name || '-'} · {ticket.priority}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

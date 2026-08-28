@@ -401,6 +401,7 @@ class CustomerHomeRouterService
             'auto_web_router' => 'Router Rumah via PPPoE',
             'vsol_v2801rgw' => 'VSOL V2801RGW',
             'global_gl01' => 'Global GL-01',
+            'cdata' => 'CDATA',
             'mikrotik' => 'MikroTik',
             default => 'Router Rumah',
         };

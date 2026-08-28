@@ -56,10 +56,10 @@ class CheckDashboardPredictionHealth extends Command
 
         if ($tooOld || (($completeness['percent'] ?? 0) < 100)) {
             $payload['status'] = 'warning';
-            $payload['reason'] = $tooOld ? 'snapshot_too_old' : 'incomplete_sections';
+            $payload['reason'] = $tooOld ? 'snapshot_degraded_stale' : 'incomplete_sections';
             Log::warning('dashboard.prediction.health', $payload);
             $this->warn(sprintf(
-                'Health warning: age=%s menit, completeness=%s%%, missing=%s',
+                'Health degraded: age=%s menit, completeness=%s%%, missing=%s',
                 (string) $ageMinutes,
                 (string) ($completeness['percent'] ?? 0),
                 implode(', ', (array) ($completeness['missing_sections'] ?? []))
@@ -126,4 +126,3 @@ class CheckDashboardPredictionHealth extends Command
         };
     }
 }
-

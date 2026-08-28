@@ -3,9 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\InventoryItem;
+use App\Models\Borrower;
 use App\Models\PayrollMember;
+use App\Models\PayrollMemberPayment;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
+use App\Models\User;
+use App\Services\BorrowerLoanService;
 use App\Services\FinancialLedgerService;
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
@@ -18,6 +22,7 @@ class PayrollController extends Controller
     public function __construct(
         private FinancialLedgerService $ledgerService,
         private InventoryService $inventoryService,
+        private BorrowerLoanService $borrowerLoanService,
     )
     {
     }
@@ -41,7 +46,16 @@ class PayrollController extends Controller
                 SELECT SUM(pmp.nominal) FROM payroll_member_payments pmp WHERE pmp.payroll_member_id = payroll_members.id
             ), 0) as total_unpaid')
             ->orderByDesc('total_unpaid')
-            ->get();
+            ->get()
+            ->map(function (PayrollMember $member) {
+                $loanContext = $this->resolvePayrollBorrowerContext($member);
+
+                return [
+                    ...$member->toArray(),
+                    'borrower' => $loanContext['borrower'],
+                    'borrower_outstanding' => $loanContext['outstanding'],
+                ];
+            });
 
         // Daftar proyek
         $query = PayrollProject::with(['members', 'details.inventoryItem.type'])
@@ -313,6 +327,8 @@ class PayrollController extends Controller
         $validated = $request->validate([
             'nominal' => 'required|numeric|min:1',
             'catatan' => 'nullable|string|max:255',
+            'loan_handling' => 'nullable|in:cash,deduct_loan',
+            'loan_deduction_amount' => 'nullable|numeric|min:0',
         ]);
 
         $member = PayrollMember::findOrFail($memberId);
@@ -330,16 +346,69 @@ class PayrollController extends Controller
             return response()->json(['message' => 'Tidak ada saldo yang belum dibayar untuk anggota ini'], 422);
         }
 
-        $nominal = min($validated['nominal'], $remaining); // jangan lebih dari sisa
+        $nominal = (int) min($validated['nominal'], $remaining); // jangan lebih dari sisa
+        $loanHandling = $validated['loan_handling'] ?? 'cash';
+        $loanDeductionAmount = 0;
+        $borrower = null;
+
+        if ($loanHandling === 'deduct_loan') {
+            $loanContext = $this->resolvePayrollBorrowerContext($member);
+            $borrowerData = $loanContext['borrower'];
+            $borrower = $borrowerData ? Borrower::query()->find((int) $borrowerData['id']) : null;
+
+            if (!$borrower) {
+                return response()->json(['message' => 'Karyawan ini belum memiliki mapping borrower aktif.'], 422);
+            }
+
+            $requestedDeduction = (int) ($validated['loan_deduction_amount'] ?? 0);
+            $loanDeductionAmount = $requestedDeduction > 0 ? $requestedDeduction : $nominal;
+
+            if ($loanDeductionAmount <= 0) {
+                return response()->json(['message' => 'Nominal potong pinjaman harus lebih dari 0.'], 422);
+            }
+
+            if ($loanDeductionAmount > $nominal) {
+                return response()->json(['message' => 'Nominal bayar pinjaman tidak boleh lebih besar dari jumlah payroll.'], 422);
+            }
+
+            if ($loanDeductionAmount > (int) $loanContext['outstanding']) {
+                return response()->json(['message' => 'Nominal potong pinjaman melebihi sisa pinjaman karyawan.'], 422);
+            }
+        }
+
+        $cashPaidAmount = max(0, $nominal - $loanDeductionAmount);
 
         try {
-            $payment = \App\Models\PayrollMemberPayment::create([
-                'payroll_member_id' => $memberId,
-                'nominal' => $nominal,
-                'catatan' => $validated['catatan'] ?? null,
-            ]);
+            $payment = DB::transaction(function () use ($memberId, $nominal, $validated, $loanHandling, $loanDeductionAmount, $cashPaidAmount, $borrower) {
+                $payment = PayrollMemberPayment::create([
+                    'payroll_member_id' => $memberId,
+                    'nominal' => $nominal,
+                    'catatan' => $validated['catatan'] ?? null,
+                    'loan_handling' => $loanHandling,
+                    'gross_nominal' => $nominal,
+                    'loan_deduction_amount' => $loanDeductionAmount,
+                    'cash_paid_amount' => $cashPaidAmount,
+                    'borrower_id' => $borrower?->id,
+                ]);
 
-            $this->ledgerService->syncPayrollPayment($payment, auth()->id());
+                if ($borrower && $loanDeductionAmount > 0) {
+                    $settlement = $this->borrowerLoanService->settleBorrowerTotal(
+                        $borrower,
+                        $loanDeductionAmount,
+                        now()->toDateString(),
+                        auth()->user(),
+                        'Potong pinjaman dari pembayaran payroll #' . $payment->id
+                    );
+
+                    $payment->forceFill([
+                        'borrower_loan_settlement_action_group_key' => $settlement['action_group_key'] ?? null,
+                    ])->save();
+                }
+
+                $this->ledgerService->syncPayrollPayment($payment->fresh('member'), auth()->id());
+
+                return $payment->fresh(['member', 'borrower']);
+            });
 
             $newRemaining = $remaining - $nominal;
 
@@ -361,12 +430,14 @@ class PayrollController extends Controller
     {
         $member = PayrollMember::findOrFail($memberId);
         $payments = \App\Models\PayrollMemberPayment::where('payroll_member_id', $memberId)
+            ->with('borrower:id,name')
             ->orderByDesc('created_at')
             ->get();
 
         return response()->json([
             'member' => $member,
             'payments' => $payments,
+            'loan_context' => $this->resolvePayrollBorrowerContext($member),
         ]);
     }
 
@@ -399,5 +470,38 @@ class PayrollController extends Controller
     {
         $project = PayrollProject::with(['members', 'details.inventoryItem.type'])->findOrFail($id);
         return response()->json(['data' => $project]);
+    }
+
+    private function resolvePayrollBorrowerContext(PayrollMember $member): array
+    {
+        $user = User::query()
+            ->where('payroll_member_id', $member->id)
+            ->first();
+
+        if (!$user) {
+            return [
+                'user' => null,
+                'borrower' => null,
+                'outstanding' => 0,
+            ];
+        }
+
+        $borrower = $this->borrowerLoanService->borrowerForUser($user);
+        if (!$borrower) {
+            return [
+                'user' => $user->only(['id', 'name', 'email']),
+                'borrower' => null,
+                'outstanding' => 0,
+            ];
+        }
+
+        return [
+            'user' => $user->only(['id', 'name', 'email']),
+            'borrower' => [
+                'id' => $borrower->id,
+                'name' => $borrower->name,
+            ],
+            'outstanding' => $this->borrowerLoanService->outstandingForBorrower($borrower),
+        ];
     }
 }

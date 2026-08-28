@@ -3,6 +3,18 @@ import { Search, FileText, Send, Check, X, Eye, Clock, AlertTriangle, Users, Che
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
+import {
+    AdminConsoleActionRow,
+    AdminConsoleField,
+    AdminConsoleNotice,
+    AdminConsoleSurface,
+    adminConsoleButtonClassNames,
+    adminConsoleCheckboxClassName,
+    adminConsoleInputClassName,
+    adminConsoleReadOnlyClassName,
+    adminConsoleSelectClassName,
+    adminConsoleTextareaClassName,
+} from '../../components/common/AdminConsoleUI';
 import Modal from '../../components/common/Modal';
 import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import billingService from '../../services/billingService';
@@ -10,6 +22,8 @@ import billingService from '../../services/billingService';
 function BillingPage() {
     const userRole = window.appUserRole || 'admin';
     const isSuperAdmin = userRole === 'superadmin';
+    const canChoosePaymentMutation = isSuperAdmin || !!window.appCanChoosePaymentMutation;
+    const canChoosePaymentReceiver = isSuperAdmin || !!window.appCanChoosePaymentReceiver;
     const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
 
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
@@ -17,6 +31,8 @@ function BillingPage() {
     const [loadingActivePackages, setLoadingActivePackages] = useState(false);
     const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
     const [loadingPaymentReceiptOptions, setLoadingPaymentReceiptOptions] = useState(false);
+    const [paymentReceivers, setPaymentReceivers] = useState([]);
+    const [loadingPaymentReceivers, setLoadingPaymentReceivers] = useState(false);
     const [loading, setLoading] = useState(true);
     const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
     const [loadingIsolationStatus, setLoadingIsolationStatus] = useState(false);
@@ -35,13 +51,16 @@ function BillingPage() {
         open: false,
         url: '',
         externalUrl: '',
+        invoiceId: null,
         type: null, // 'image' | 'pdf' | 'other'
         contentType: '',
         loading: false,
+        fallbackTried: false,
         error: '',
     });
-    const proofObjectUrlRef = useRef(null);
     const [permissionModal, setPermissionModal] = useState({ open: false, message: '' });
+    const [otherReceiverModal, setOtherReceiverModal] = useState({ open: false, selectedReceiver: null });
+    const [receiverConflictModal, setReceiverConflictModal] = useState({ open: false, message: '' });
     const [rejectModal, setRejectModal] = useState({ open: false, invoice: null });
     const [linkModal, setLinkModal] = useState({ open: false, invoice: null, customer: null });
     const [resultModal, setResultModal] = useState({ open: false, data: null });
@@ -62,6 +81,8 @@ function BillingPage() {
     const [amount, setAmount] = useState('');
     const [paidAmount, setPaidAmount] = useState('');
     const [paymentReceiptOptionId, setPaymentReceiptOptionId] = useState('');
+    const [paymentReceiverUserId, setPaymentReceiverUserId] = useState('');
+    const [includeInMutation, setIncludeInMutation] = useState(true);
     const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
     const [rejectReason, setRejectReason] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -96,6 +117,12 @@ function BillingPage() {
     }, []);
 
     useEffect(() => {
+        if (canChoosePaymentReceiver) {
+            fetchPaymentReceivers();
+        }
+    }, [canChoosePaymentReceiver]);
+
+    useEffect(() => {
         fetchActivePackages();
     }, []);
 
@@ -104,10 +131,6 @@ function BillingPage() {
             if (autoPollingTimerRef.current) {
                 clearTimeout(autoPollingTimerRef.current);
                 autoPollingTimerRef.current = null;
-            }
-            if (proofObjectUrlRef.current) {
-                URL.revokeObjectURL(proofObjectUrlRef.current);
-                proofObjectUrlRef.current = null;
             }
         };
     }, []);
@@ -129,6 +152,24 @@ function BillingPage() {
             console.error('Gagal memuat opsi penerimaan pembayaran aktif', err);
         } finally {
             setLoadingPaymentReceiptOptions(false);
+        }
+    };
+
+    const fetchPaymentReceivers = async () => {
+        try {
+            setLoadingPaymentReceivers(true);
+            const response = await billingService.getPaymentReceivers();
+            const rows = Array.isArray(response?.data?.data) ? response.data.data : [];
+            setPaymentReceivers(rows);
+
+            if (!paymentReceiverUserId && window.appUserId) {
+                setPaymentReceiverUserId(String(window.appUserId));
+            }
+        } catch (err) {
+            console.error('Gagal memuat penerima pembayaran', err);
+            setPaymentReceivers([]);
+        } finally {
+            setLoadingPaymentReceivers(false);
         }
     };
 
@@ -159,25 +200,33 @@ function BillingPage() {
         return option.name || '-';
     };
 
+    const getPaymentReceiverLabel = (receiver) => {
+        if (!receiver) return '-';
+        const role = receiver.role ? ` (${receiver.role})` : '';
+        const companyTag = receiver.is_company_finance_receiver ? ' [Keuangan Perusahaan]' : '';
+        return `${receiver.name || receiver.email || receiver.id}${role}${companyTag}`;
+    };
+
     const closeConfirmModal = () => {
         setConfirmModal({ open: false, invoice: null, customer: null });
         setPaidAmount('');
         setPaymentReceiptOptionId('');
+        setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
+        setIncludeInMutation(true);
+        setOtherReceiverModal({ open: false, selectedReceiver: null });
+        setReceiverConflictModal({ open: false, message: '' });
     };
 
     const closeProofPreviewModal = () => {
-        if (proofObjectUrlRef.current) {
-            URL.revokeObjectURL(proofObjectUrlRef.current);
-            proofObjectUrlRef.current = null;
-        }
-
         setProofPreviewModal({
             open: false,
             url: '',
             externalUrl: '',
+            invoiceId: null,
             type: null,
             contentType: '',
             loading: false,
+            fallbackTried: false,
             error: '',
         });
     };
@@ -189,6 +238,8 @@ function BillingPage() {
         const amount = parseFloat(invoice.amount);
         setPaidAmount(isNaN(amount) ? '' : Math.round(amount).toString());
         setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
+        setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
+        setIncludeInMutation(true);
     };
 
     const fetchIsolationStatusBulk = async (lateItems, requestId) => {
@@ -651,13 +702,15 @@ function BillingPage() {
         }
     };
 
-    const handleConfirmPayment = async (e) => {
-        e.preventDefault();
-
+    const submitConfirmPayment = async (options = {}) => {
         if (paymentReceiptOptions.length > 0 && !paymentReceiptOptionId) {
             setError('Pilih metode pada Terima via sebelum konfirmasi pembayaran.');
             return;
         }
+
+        const selectedPaymentReceiverUserId = paymentReceiverUserId ? parseInt(paymentReceiverUserId, 10) : null;
+        const normalizedPaymentReceiverUserId = Number.isNaN(selectedPaymentReceiverUserId) ? null : selectedPaymentReceiverUserId;
+        const selectedReceiver = paymentReceivers.find((receiver) => Number(receiver.id) === normalizedPaymentReceiverUserId) || null;
 
         try {
             setSubmitting(true);
@@ -671,7 +724,10 @@ function BillingPage() {
             const response = await billingService.confirmPayment(
                 confirmModal.invoice.id,
                 numericAmount,
-                normalizedPaymentReceiptOptionId
+                normalizedPaymentReceiptOptionId,
+                includeInMutation,
+                normalizedPaymentReceiverUserId,
+                options
             );
 
             closeConfirmModal();
@@ -681,6 +737,7 @@ function BillingPage() {
         } catch (err) {
             const status = err.response?.status;
             const message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
+            const actionRequired = err.response?.data?.action_required;
 
             if (status === 403) {
                 closeConfirmModal();
@@ -688,12 +745,24 @@ function BillingPage() {
                     open: true,
                     message: message || 'Anda tidak diizinkan melakukan konfirmasi pembayaran.',
                 });
+            } else if (status === 422 && actionRequired === 'confirm_other_receiver') {
+                setOtherReceiverModal({ open: true, selectedReceiver });
+            } else if (status === 422 && actionRequired === 'resolve_invalid_receiver') {
+                setReceiverConflictModal({
+                    open: true,
+                    message,
+                });
             } else {
                 setError(message);
             }
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleConfirmPayment = async (e) => {
+        e.preventDefault();
+        await submitConfirmPayment();
     };
 
     const handleRejectPayment = async (e) => {
@@ -861,97 +930,121 @@ function BillingPage() {
         return resolvePaymentProofUrl(invoice) !== '';
     };
 
-    const inferPreviewType = (contentType = '', url = '') => {
+    const resolvePublicPaymentProofUrl = (invoice) => {
+        const publicUrl = (invoice?.payment_proof_public_url || '').toString().trim();
+        if (!publicUrl) return '';
+        if (/^https?:\/\//i.test(publicUrl)) return publicUrl;
+        if (publicUrl.startsWith('/')) return `${window.location.origin}${publicUrl}`;
+        return `${window.location.origin}/${publicUrl}`;
+    };
+
+    const inferPreviewType = (contentType = '', url = '', extension = '', proofPath = '', hasPaymentProof = false) => {
         const normalizedType = contentType.toLowerCase();
         if (normalizedType.includes('image/heic') || normalizedType.includes('image/heif')) return 'other';
         if (normalizedType.startsWith('image/')) return 'image';
         if (normalizedType.includes('application/pdf')) return 'pdf';
 
-        const cleanUrl = url.split('?')[0].toLowerCase();
-        if (/\.(heic|heif)$/i.test(cleanUrl)) return 'other';
-        if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(cleanUrl)) return 'image';
-        if (/\.pdf$/i.test(cleanUrl)) return 'pdf';
+        const normalizedExtension = extension.toLowerCase().replace(/^\./, '');
+        if (['heic', 'heif'].includes(normalizedExtension)) return 'other';
+        if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(normalizedExtension)) return 'image';
+        if (normalizedExtension === 'pdf') return 'pdf';
+
+        const pathForExtension = (proofPath || url || '').toString().split('?')[0].toLowerCase();
+        if (/\.(heic|heif)$/i.test(pathForExtension)) return 'other';
+        if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(pathForExtension)) return 'image';
+        if (/\.pdf$/i.test(pathForExtension)) return 'pdf';
+
+        if (hasPaymentProof) return 'image';
 
         return 'other';
     };
 
-    const openProofPreview = async (invoice) => {
-        const fallbackUrl = resolvePaymentProofUrl(invoice);
+    const appendPreviewCacheBuster = (url) => {
+        if (!url) return '';
+        const separator = url.includes('?') ? '&' : '?';
+        return `${url}${separator}preview=1`;
+    };
+
+    const openProofPreview = (invoice) => {
+        const publicUrl = resolvePublicPaymentProofUrl(invoice);
+        const fallbackUrl = publicUrl || resolvePaymentProofUrl(invoice);
         if (!fallbackUrl) {
             setProofPreviewModal({
                 open: true,
                 url: '',
                 externalUrl: '',
+                invoiceId: null,
                 type: null,
                 contentType: '',
                 loading: false,
+                fallbackTried: false,
                 error: 'URL bukti pembayaran tidak valid.',
             });
             return;
         }
 
+        const contentType = (invoice?.payment_proof_mime_type || '').toString().trim();
+        const extension = (invoice?.payment_proof_extension || '').toString().trim();
+        const proofPath = normalizePaymentProofPath(invoice?.bukti_pembayaran);
+        const previewType = (invoice?.payment_proof_preview_type || '').toString().trim()
+            || inferPreviewType(contentType, fallbackUrl, extension, proofPath, invoice?.has_payment_proof === true);
+        const previewUrl = appendPreviewCacheBuster(fallbackUrl);
+
         setProofPreviewModal({
             open: true,
-            url: '',
+            url: previewType === 'other' ? '' : previewUrl,
             externalUrl: fallbackUrl,
-            type: null,
-            contentType: '',
-            loading: true,
+            invoiceId: invoice?.id || null,
+            type: previewType,
+            contentType,
+            loading: false,
+            fallbackTried: false,
             error: '',
         });
+    };
+
+    const loadPaymentProofDataUrlFallback = async () => {
+        const invoiceId = proofPreviewModal.invoiceId;
+        if (!invoiceId || proofPreviewModal.fallbackTried) {
+            setProofPreviewModal((prev) => ({
+                ...prev,
+                url: '',
+                type: 'other',
+                loading: false,
+                error: '',
+                fallbackTried: true,
+            }));
+            return;
+        }
+
+        setProofPreviewModal((prev) => ({
+            ...prev,
+            loading: true,
+            fallbackTried: true,
+            error: '',
+        }));
 
         try {
-            if (!invoice?.id) {
-                setProofPreviewModal((prev) => ({
-                    ...prev,
-                    loading: false,
-                    error: 'ID invoice tidak valid untuk memuat preview bukti pembayaran.',
-                }));
-                return;
+            const response = await billingService.getPaymentProofPreview(invoiceId);
+            const dataUrl = response?.data?.data?.data_url || '';
+            if (!dataUrl) {
+                throw new Error('Data preview kosong.');
             }
-
-            const response = await billingService.getPaymentProofBlob(invoice.id);
-            const blob = response?.data;
-            const contentType = (response?.headers?.['content-type'] || blob?.type || '').toString().trim();
-            const previewType = inferPreviewType(contentType, fallbackUrl);
-            const blobUrl = blob instanceof Blob ? URL.createObjectURL(blob) : '';
-
-            if (!blobUrl) {
-                setProofPreviewModal((prev) => ({
-                    ...prev,
-                    loading: false,
-                    error: 'Gagal menyiapkan file bukti pembayaran untuk preview.',
-                }));
-                return;
-            }
-
-            if (proofObjectUrlRef.current) {
-                URL.revokeObjectURL(proofObjectUrlRef.current);
-            }
-            proofObjectUrlRef.current = blobUrl;
 
             setProofPreviewModal((prev) => ({
                 ...prev,
-                url: blobUrl,
+                url: dataUrl,
+                type: 'image',
                 loading: false,
-                type: previewType,
-                contentType,
-                error: previewType === 'other'
-                    ? 'Format file tidak bisa dipreview di modal. Gunakan "Buka di tab baru".'
-                    : '',
+                error: '',
             }));
         } catch (err) {
-            const status = err?.response?.status;
             setProofPreviewModal((prev) => ({
                 ...prev,
+                url: '',
+                type: 'other',
                 loading: false,
-                error: status === 403
-                    ? 'Akses ditolak. Akun Anda tidak memiliki izin melihat bukti pembayaran.'
-                    : status === 404
-                        ? 'File bukti pembayaran tidak ditemukan.'
-                        : status
-                            ? `Gagal memuat bukti pembayaran (HTTP ${status}).`
-                            : 'Terjadi kesalahan jaringan saat memuat bukti pembayaran.',
+                error: '',
             }));
         }
     };
@@ -996,10 +1089,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
     }
 
     const waitingMap = new Map();
-    [...(customers.late || []), ...(customers.almostLate || []), ...(customers.others || [])].forEach((item) => {
+    [...(customers.late || []), ...(customers.almostLate || []), ...(customers.others || []), ...(customers.paid || [])].forEach((item) => {
         const customerId = item?.customer?.id;
-        const activeStatus = (item?.active_invoice?.status || '').toString().trim().toLowerCase();
-        if (!customerId || activeStatus !== 'menunggu konfirmasi') return;
+        const invoiceForAction = item?.pending_confirmation_invoice || item?.active_invoice || null;
+        const invoiceStatus = (invoiceForAction?.status || '').toString().trim().toLowerCase();
+        if (!customerId || invoiceStatus !== 'menunggu konfirmasi') return;
         if (!waitingMap.has(customerId)) {
             waitingMap.set(customerId, item);
         }
@@ -1011,6 +1105,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
     const lateFiltered = (customers.late || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
     const almostLateFiltered = (customers.almostLate || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
     const othersFiltered = (customers.others || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
+    const paidFiltered = (customers.paid || []).filter((item) => !waitingCustomerIds.has(item?.customer?.id));
 
     const invalidServiceColumns = [
         {
@@ -1018,19 +1113,20 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             label: 'Pelanggan',
             render: (row) => (
                 <div>
-                    <p className="font-medium text-gray-900">{row.customer_name}</p>
-                    <p className="text-xs text-gray-500">{row.pppoe_username || '-'}</p>
+                    <p className="font-medium text-slate-900">{row.customer_name}</p>
+                    <p className="text-xs text-slate-500">{row.pppoe_username || '-'}</p>
                 </div>
             ),
+            cellClassName: 'px-4 py-3 text-sm text-slate-700',
         },
-        { key: 'service_label', label: 'Layanan Saat Ini', render: (row) => row.service_label || '-' },
+        { key: 'service_label', label: 'Layanan Saat Ini', render: (row) => row.service_label || '-', cellClassName: 'px-4 py-3 text-sm text-slate-700' },
     ];
 
     const autoResultColumns = [
-        { key: 'customer_id', label: 'Customer ID' },
-        { key: 'status', label: 'Status' },
-        { key: 'reason', label: 'Reason', render: (row) => row.reason || '-' },
-        { key: 'wa_status', label: 'WA', render: (row) => row.wa_status || '-' },
+        { key: 'customer_id', label: 'Customer ID', cellClassName: 'px-4 py-3 text-sm text-slate-700' },
+        { key: 'status', label: 'Status', cellClassName: 'px-4 py-3 text-sm text-slate-700' },
+        { key: 'reason', label: 'Reason', render: (row) => row.reason || '-', cellClassName: 'px-4 py-3 text-sm text-slate-700' },
+        { key: 'wa_status', label: 'WA', render: (row) => row.wa_status || '-', cellClassName: 'px-4 py-3 text-sm text-slate-700' },
     ];
 
     const resolveInvoiceActionState = (invoice) => {
@@ -1058,7 +1154,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             const customer = item?.customer;
             const latestInvoice = item?.invoice || null;
             const activeInvoice = item?.active_invoice || null;
-            const invoiceToUse = activeInvoice || null;
+            const pendingConfirmationInvoice = item?.pending_confirmation_invoice || null;
+            const invoiceToUse = pendingConfirmationInvoice || activeInvoice || null;
             const latestInvoiceStatus = (latestInvoice?.status || '').toString().trim().toLowerCase();
             const canCreateInvoice = !!item?.can_create_invoice;
             const paidMonthLabel = formatPaidMonth(latestInvoice?.paid_at || latestInvoice?.updated_at || latestInvoice?.created_at);
@@ -1198,16 +1295,22 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             },
         ];
 
+        const themedTableColumns = tableColumns.map((column) => ({
+            ...column,
+            headerClassName: column.headerClassName || 'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500',
+            cellClassName: column.cellClassName || 'px-4 py-3 text-sm text-slate-700',
+        }));
+
         return (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
                 <div className="w-full flex items-center justify-between p-4">
                     <div className="flex items-center gap-3">
                         <div className={`p-2 rounded-lg ${iconColor}`}>
                             <Icon size={20} className="text-white" />
                         </div>
                         <div className="text-left">
-                            <h3 className="font-semibold text-gray-900">{title}</h3>
-                            <p className="text-sm text-gray-500">{data.length} pelanggan</p>
+                            <h3 className="font-semibold text-slate-900">{title}</h3>
+                            <p className="text-sm text-slate-500">{data.length} pelanggan</p>
                         </div>
                         {canRunAutoInvoice && (
                             <Button
@@ -1225,7 +1328,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     <button
                         type="button"
                         onClick={() => setCollapsed(prev => ({ ...prev, [sectionKey]: !isCollapsed }))}
-                        className="p-1 rounded hover:bg-gray-100"
+                        className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
                     >
                         {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
                     </button>
@@ -1234,17 +1337,29 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 {!isCollapsed && (
                     <ResponsiveDataView
                         rows={data}
-                        columns={tableColumns}
+                        columns={themedTableColumns}
                         keyField="customer.id"
                         priorityFields={['name', 'status', 'due']}
                         emptyMessage="Tidak ada data"
                         tableClassName="w-full min-w-[980px] text-sm"
+                        headClassName="border-b border-slate-200 bg-slate-50"
+                        bodyClassName="divide-y divide-slate-100"
+                        emptyDesktopClassName="px-4 py-8 text-center text-slate-500"
+                        mobileCardClassName="border border-slate-200 bg-white"
+                        mobileLabelClassName="text-slate-500"
+                        mobileValueClassName="text-slate-900"
+                        mobileEmptyClassName="border border-slate-200 bg-white text-slate-500"
+                        mobileActionBarClassName="border-slate-100 bg-slate-50 pt-3"
+                        rowHoverClassName="hover:bg-orange-50/50"
+                        actionsHeaderClassName="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                        actionsCellClassName="px-4 py-3 text-sm text-slate-700"
                         actions={(item) => {
                             const meta = buildRowMeta(item);
                             const customer = meta.customer;
                             const invoiceToUse = meta.invoiceToUse;
                             const canCreateInvoice = meta.canCreateInvoice;
                             const actionState = meta.actionState;
+                            const secondaryActionClassName = '!border-slate-200 !bg-white !text-slate-700 !shadow-none hover:!bg-slate-50 hover:!text-slate-900 disabled:!bg-slate-100 disabled:!text-slate-400';
 
                             return (
                                 <div className="flex flex-wrap gap-1">
@@ -1283,6 +1398,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                             <Button
                                                 size="sm"
                                                 variant="secondary"
+                                                className={secondaryActionClassName}
                                                 onClick={() => {
                                                     const invoiceUrl = resolveInvoiceUrl(invoiceToUse);
                                                     if (invoiceUrl) {
@@ -1297,6 +1413,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                 <Button
                                                     size="sm"
                                                     variant="secondary"
+                                                    className={secondaryActionClassName}
                                                     onClick={() => openProofPreview(invoiceToUse)}
                                                 >
                                                     <Eye size={14} className="mr-1" />
@@ -1307,6 +1424,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                 <Button
                                                     size="sm"
                                                     variant="secondary"
+                                                    className={secondaryActionClassName}
                                                     onClick={() => {
                                                         setEditAmountModal({ open: true, invoice: invoiceToUse, customer });
                                                         const amount = parseFloat(invoiceToUse.amount);
@@ -1350,8 +1468,8 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Menu Penagihan</h1>
                     <p className="text-gray-600 mt-1">Kelola tagihan dan pembayaran pelanggan</p>
-                    <p className="text-xs text-gray-500 mt-2">Auto invoice 08:00 WIB (3 hari sebelum jatuh tempo, WA valid saja)</p>
-                    <p className="text-xs text-gray-500">Auto isolir terlambat 3 hari (WA valid saja)</p>
+                    <p className="text-xs text-slate-500 mt-2">Auto invoice 08:00 WIB (3 hari sebelum jatuh tempo, WA valid saja)</p>
+                    <p className="text-xs text-slate-500">Auto isolir terlambat 3 hari (WA valid saja)</p>
                     {isSuperAdmin && <p className="text-xs text-amber-700 mt-1">Checklist Auto Off tersedia per pelanggan pada kolom Auto.</p>}
                 </div>
             </div>
@@ -1361,24 +1479,24 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
 
             {/* Search */}
-            <div className="app-card p-4">
+            <AdminConsoleSurface accent="cyan" className="p-4">
                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
                     <input
                         type="text"
                         placeholder="Cari nama atau PPPoE..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                        className={`${adminConsoleInputClassName} pl-10`}
                     />
                 </div>
                 {loading && hasLoadedOnce && (
-                    <p className="text-xs text-gray-500 mt-2">Memuat hasil pencarian...</p>
+                    <p className="mt-2 text-xs text-slate-400">Memuat hasil pencarian...</p>
                 )}
                 {loadingIsolationStatus && (
-                    <p className="text-xs text-gray-500 mt-1">Memuat status isolir pelanggan...</p>
+                    <p className="mt-1 text-xs text-slate-400">Memuat status isolir pelanggan...</p>
                 )}
-            </div>
+            </AdminConsoleSurface>
 
             {/* Tables */}
             <div className="space-y-4">
@@ -1413,7 +1531,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 />
                 <CustomerTable
                     title="Pelanggan Sudah Bayar"
-                    data={customers.paid}
+                    data={paidFiltered}
                     segment="paid"
                     icon={Check}
                     iconColor="bg-green-500"
@@ -1440,37 +1558,38 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 }}
                 title="Proses Auto Invoice"
                 size="md"
+                theme="dashboard"
             >
                 <div className="space-y-4">
-                    <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
+                    <AdminConsoleNotice tone="info" title="Job Status">
                         <p className="font-semibold">
                             Section: {autoProcessModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Kurang dari 5 Hari Menuju Jatuh Tempo'}
                         </p>
                         <p className="mt-1">Status: {autoProcessModal.state}</p>
                         <p>Fase: {phaseLabel(autoProcessModal.phase)}</p>
                         {autoProcessModal.jobId && <p>Job ID: {autoProcessModal.jobId}</p>}
-                    </div>
+                    </AdminConsoleNotice>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                        <div className="rounded border border-gray-200 p-2">Total: <strong>{autoProcessModal.summary?.total ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Diproses: <strong>{autoProcessModal.summary?.processed ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoProcessModal.summary?.verified_wa ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Dibuat: <strong>{autoProcessModal.summary?.created ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoProcessModal.summary?.wa_sent ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoProcessModal.summary?.wa_failed ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoProcessModal.summary?.skipped_no_phone ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip Auto Off: <strong>{autoProcessModal.summary?.skipped_auto_disabled ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoProcessModal.summary?.skipped_invalid_service ?? 0}</strong></div>
+                        <AdminConsoleSurface className="p-3" accent="cyan">Total: <strong>{autoProcessModal.summary?.total ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="cyan">Diproses: <strong>{autoProcessModal.summary?.processed ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">Lolos WA: <strong>{autoProcessModal.summary?.verified_wa ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">Dibuat: <strong>{autoProcessModal.summary?.created ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">WA Sukses: <strong>{autoProcessModal.summary?.wa_sent ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="rose">WA Gagal: <strong>{autoProcessModal.summary?.wa_failed ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip No WA: <strong>{autoProcessModal.summary?.skipped_no_phone ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip Auto Off: <strong>{autoProcessModal.summary?.skipped_auto_disabled ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip Layanan: <strong>{autoProcessModal.summary?.skipped_invalid_service ?? 0}</strong></AdminConsoleSurface>
                     </div>
                     {autoProcessModal.errorMessage && (
-                        <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700">
+                        <AdminConsoleNotice tone="danger">
                             {autoProcessModal.errorMessage}
-                        </div>
+                        </AdminConsoleNotice>
                     )}
                     {(autoProcessModal.state === 'processing' || autoProcessModal.state === 'queued') && (
-                        <p className="text-xs text-gray-500">Proses sedang berjalan di background, popup ini update otomatis.</p>
+                        <p className="text-xs text-slate-400">Proses sedang berjalan di background, popup ini update otomatis.</p>
                     )}
                     {(autoProcessModal.state === 'completed' || autoProcessModal.state === 'failed') && (
-                        <div className="flex justify-end">
+                        <AdminConsoleActionRow className="border-t-0 pt-0">
                             <Button
                                 type="button"
                                 variant="secondary"
@@ -1483,10 +1602,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     summary: null,
                                     errorMessage: null,
                                 })}
+                                className={adminConsoleButtonClassNames.secondary}
                             >
                                 Tutup
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     )}
                 </div>
             </Modal>
@@ -1497,15 +1617,16 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 onClose={() => setInvalidServiceModal({ open: false, segment: null, rows: [] })}
                 title="Layanan Belum Valid"
                 size="lg"
+                theme="dashboard"
             >
                 <div className="space-y-4">
-                    <div className="bg-amber-50 rounded-lg p-4">
-                        <p className="text-sm text-amber-800">
+                    <AdminConsoleNotice tone="warning" title="Perlu Perbaikan">
+                        <p>
                             Proses auto invoice dihentikan karena ada layanan pelanggan yang belum terdaftar di paket aktif.
                             Set layanan terlebih dahulu lalu jalankan ulang.
                         </p>
-                    </div>
-                    <div className="max-h-80 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                    </AdminConsoleNotice>
+                    <AdminConsoleSurface className="max-h-80 overflow-y-auto p-2" accent="amber">
                         <ResponsiveDataView
                             rows={invalidServiceModal.rows}
                             columns={invalidServiceColumns}
@@ -1519,21 +1640,23 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     size="sm"
                                     variant="primary"
                                     onClick={() => openServicePackageModalFromInvalid(row)}
+                                    className={adminConsoleButtonClassNames.primary}
                                 >
                                     Set Layanan
                                 </Button>
                             )}
                         />
-                    </div>
-                    <div className="flex justify-end">
+                    </AdminConsoleSurface>
+                    <AdminConsoleActionRow className="border-t-0 pt-0">
                         <Button
                             type="button"
                             variant="secondary"
                             onClick={() => setInvalidServiceModal({ open: false, segment: null, rows: [] })}
+                            className={adminConsoleButtonClassNames.secondary}
                         >
                             Tutup
                         </Button>
-                    </div>
+                    </AdminConsoleActionRow>
                 </div>
             </Modal>
 
@@ -1543,24 +1666,25 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 onClose={() => setAutoResultModal({ open: false, segment: null, summary: null, results: [] })}
                 title="Hasil Proses Auto Invoice"
                 size="lg"
+                theme="dashboard"
             >
                 <div className="space-y-4">
-                    <div className="bg-blue-50 rounded-lg p-4 text-sm text-blue-900">
+                    <AdminConsoleNotice tone="info" title="Ringkasan Hasil">
                         Section: {autoResultModal.segment === 'late' ? 'Pelanggan Telat' : 'Pelanggan Kurang dari 5 Hari Menuju Jatuh Tempo'}
-                    </div>
+                    </AdminConsoleNotice>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                        <div className="rounded border border-gray-200 p-2">Total: <strong>{autoResultModal.summary?.total ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Lolos WA: <strong>{autoResultModal.summary?.verified_wa ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Dibuat: <strong>{autoResultModal.summary?.created ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">WA Sukses: <strong>{autoResultModal.summary?.wa_sent ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">WA Gagal: <strong>{autoResultModal.summary?.wa_failed ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip No WA: <strong>{autoResultModal.summary?.skipped_no_phone ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip Auto Off: <strong>{autoResultModal.summary?.skipped_auto_disabled ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip Invoice Aktif: <strong>{autoResultModal.summary?.skipped_existing_open_invoice ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></div>
-                        <div className="rounded border border-gray-200 p-2">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></div>
+                        <AdminConsoleSurface className="p-3" accent="cyan">Total: <strong>{autoResultModal.summary?.total ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">Lolos WA: <strong>{autoResultModal.summary?.verified_wa ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">Dibuat: <strong>{autoResultModal.summary?.created ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="emerald">WA Sukses: <strong>{autoResultModal.summary?.wa_sent ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="rose">WA Gagal: <strong>{autoResultModal.summary?.wa_failed ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip No WA: <strong>{autoResultModal.summary?.skipped_no_phone ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip Auto Off: <strong>{autoResultModal.summary?.skipped_auto_disabled ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip Invoice Aktif: <strong>{autoResultModal.summary?.skipped_existing_open_invoice ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="amber">Skip Layanan: <strong>{autoResultModal.summary?.skipped_invalid_service ?? 0}</strong></AdminConsoleSurface>
+                        <AdminConsoleSurface className="p-3" accent="rose">Error: <strong>{autoResultModal.summary?.errors_count ?? 0}</strong></AdminConsoleSurface>
                     </div>
-                    <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg p-2">
+                    <AdminConsoleSurface className="max-h-72 overflow-y-auto p-2" accent="violet">
                         <ResponsiveDataView
                             rows={(autoResultModal.results || []).map((row, idx) => ({ ...row, __rowKey: `${row.customer_id}-${idx}` }))}
                             columns={autoResultColumns}
@@ -1569,7 +1693,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             emptyMessage="Tidak ada detail hasil."
                             tableClassName="w-full md:min-w-[760px] text-sm"
                         />
-                    </div>
+                    </AdminConsoleSurface>
                 </div>
             </Modal>
 
@@ -1578,40 +1702,40 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={createModal.open}
                 onClose={closeCreateModal}
                 title="Buat Tagihan"
+                theme="dashboard"
             >
                 {createModal.customer && (
                     <form onSubmit={handleCreateInvoice} className="space-y-4">
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <p className="font-semibold text-gray-900">{createModal.customer.name}</p>
-                            <p className="text-sm text-gray-600">PPPoE: {createModal.customer.pppoe_username || '-'}</p>
-                            <p className="text-sm text-gray-600">Paket: {createModal.customer.package_type || createModal.customer.custom_package || '-'}</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Nominal (Rp)</label>
+                        <AdminConsoleSurface accent="cyan" className="p-4">
+                            <p className="font-semibold text-slate-900">{createModal.customer.name}</p>
+                            <p className="text-sm text-slate-600">PPPoE: {createModal.customer.pppoe_username || '-'}</p>
+                            <p className="text-sm text-slate-600">Paket: {createModal.customer.package_type || createModal.customer.custom_package || '-'}</p>
+                        </AdminConsoleSurface>
+                        <AdminConsoleField label="Nominal (Rp)">
                             <input
                                 type="text"
                                 value={formatNumberWithComma(amount)}
                                 onChange={(e) => handleAmountChange(e, setAmount)}
                                 required
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className={adminConsoleInputClassName}
                                 placeholder="Masukkan nominal tagihan"
                             />
-                            {amount && <p className="text-xs text-gray-500 mt-1">Rp {formatNumberWithComma(amount)}</p>}
+                            {amount && <p className="mt-1 text-xs text-slate-400">Rp {formatNumberWithComma(amount)}</p>}
                             {createModal.suggestedPackage && (
-                                <p className="text-xs text-blue-600 mt-1">
+                                <p className="mt-1 text-xs text-blue-600">
                                     Sugesti dari paket {createModal.suggestedPackage.name}: {formatCurrency(createModal.suggestedPackage.price)}.
                                     Anda tetap bisa ubah nominal jika diperlukan.
                                 </p>
                             )}
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={closeCreateModal}>
+                        </AdminConsoleField>
+                        <AdminConsoleActionRow>
+                            <Button type="button" variant="secondary" onClick={closeCreateModal} className={adminConsoleButtonClassNames.secondary}>
                                 Batal
                             </Button>
-                            <Button type="submit" variant="primary" disabled={submitting}>
+                            <Button type="submit" variant="primary" disabled={submitting} className={adminConsoleButtonClassNames.primary}>
                                 {submitting ? 'Memproses...' : 'Buat Tagihan'}
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>
@@ -1621,28 +1745,28 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={servicePackageModal.open}
                 onClose={closeServicePackageModal}
                 title="Pilih Layanan Pelanggan"
+                theme="dashboard"
             >
                 {servicePackageModal.customer && (
                     <form onSubmit={handleServicePackageSubmit} className="space-y-4">
-                        <div className="bg-amber-50 rounded-lg p-4">
-                            <p className="text-sm text-amber-800">
+                        <AdminConsoleNotice tone="warning" title="Data Layanan">
+                            <p>
                                 Layanan pelanggan saat ini tidak ditemukan pada daftar paket aktif.
                                 Pilih layanan yang tersedia untuk memperbarui data pelanggan sebelum membuat tagihan.
                             </p>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <p className="font-semibold text-gray-900">{servicePackageModal.customer.name}</p>
-                            <p className="text-sm text-gray-600">
+                        </AdminConsoleNotice>
+                        <AdminConsoleSurface accent="amber" className="p-4">
+                            <p className="font-semibold text-slate-900">{servicePackageModal.customer.name}</p>
+                            <p className="text-sm text-slate-600">
                                 Layanan saat ini: {getCustomerServiceLabel(servicePackageModal.customer) || '-'}
                             </p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Layanan Tersedia</label>
+                        </AdminConsoleSurface>
+                        <AdminConsoleField label="Layanan Tersedia">
                             <select
                                 value={servicePackageModal.selectedPackageId}
                                 onChange={(e) => setServicePackageModal((prev) => ({ ...prev, selectedPackageId: e.target.value }))}
                                 required
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className={adminConsoleSelectClassName}
                             >
                                 <option value="">Pilih layanan</option>
                                 {activePackages.map((pkg) => (
@@ -1651,15 +1775,15 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     </option>
                                 ))}
                             </select>
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={closeServicePackageModal}>
+                        </AdminConsoleField>
+                        <AdminConsoleActionRow>
+                            <Button type="button" variant="secondary" onClick={closeServicePackageModal} className={adminConsoleButtonClassNames.secondary}>
                                 Batal
                             </Button>
-                            <Button type="submit" variant="primary" disabled={updatingCustomerService}>
+                            <Button type="submit" variant="primary" disabled={updatingCustomerService} className={adminConsoleButtonClassNames.primary}>
                                 {updatingCustomerService ? 'Menyimpan...' : 'Simpan Layanan'}
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>
@@ -1669,41 +1793,42 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={linkModal.open}
                 onClose={() => setLinkModal({ open: false, invoice: null, customer: null })}
                 title="Kirim Link Penagihan"
+                theme="dashboard"
             >
                 {linkModal.invoice && linkModal.customer && (
                     <div className="space-y-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Link Invoice</label>
+                        <AdminConsoleField label="Link Invoice">
                             <div className="flex gap-2">
                                 <input
                                     type="text"
                                     readOnly
                                     value={resolveInvoiceUrl(linkModal.invoice)}
-                                    className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
+                                    className={`flex-1 ${adminConsoleReadOnlyClassName}`}
                                 />
                                 <Button
                                     type="button"
                                     variant="secondary"
                                     onClick={() => copyToClipboard(resolveInvoiceUrl(linkModal.invoice), 'Link')}
+                                    className={adminConsoleButtonClassNames.secondary}
                                 >
                                     <Copy size={16} />
                                 </Button>
                             </div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Template Pesan</label>
+                        </AdminConsoleField>
+                        <AdminConsoleField label="Template Pesan">
                             <textarea
                                 readOnly
                                 value={generateTemplate(linkModal.customer, linkModal.invoice)}
                                 rows={8}
-                                className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
+                                className={adminConsoleReadOnlyClassName}
                             />
-                        </div>
+                        </AdminConsoleField>
                         <div className="flex flex-wrap gap-2">
                             <Button
                                 type="button"
                                 variant="secondary"
                                 onClick={() => copyToClipboard(generateTemplate(linkModal.customer, linkModal.invoice), 'Template')}
+                                className={adminConsoleButtonClassNames.secondary}
                             >
                                 <Copy size={16} className="mr-1" /> Copy Template
                             </Button>
@@ -1711,7 +1836,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 href={getWhatsAppLink(linkModal.customer, linkModal.invoice)}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors"
+                                className="inline-flex items-center rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-white shadow-sm transition hover:bg-emerald-700"
                             >
                                 <ExternalLink size={16} className="mr-1" /> Kirim via WhatsApp
                             </a>
@@ -1725,6 +1850,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={confirmModal.open}
                 onClose={closeConfirmModal}
                 title="Konfirmasi Pembayaran"
+                theme="dashboard"
             >
                 {confirmModal.invoice && (
                     <form onSubmit={handleConfirmPayment} className="space-y-4">
@@ -1734,13 +1860,13 @@ Tim Layanan Pelanggan Rumah Kita Net`;
 
                             if (actionState.canPreviewProof) {
                                 return (
-                                    <div className="bg-blue-50 rounded-lg p-4">
-                                        <p className="text-sm text-blue-700 mb-2">Pelanggan telah mengupload bukti pembayaran</p>
+                                    <AdminConsoleNotice tone="info" title="Bukti Pembayaran">
+                                        <p className="mb-2">Pelanggan telah mengupload bukti pembayaran</p>
                                         <div className="flex flex-wrap items-center gap-3">
                                             <button
                                                 type="button"
                                                 onClick={() => openProofPreview(confirmModal.invoice)}
-                                                className="text-blue-600 hover:underline text-sm flex items-center gap-1"
+                                                className="flex items-center gap-1 text-sm text-blue-600 hover:underline"
                                             >
                                                 <Eye size={14} /> Lihat Bukti Pembayaran
                                             </button>
@@ -1748,46 +1874,44 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                 href={modalProofUrl}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-gray-600 hover:underline"
+                                                className="text-xs text-slate-600 hover:underline"
                                             >
                                                 Buka di tab baru
                                             </a>
                                         </div>
-                                    </div>
+                                    </AdminConsoleNotice>
                                 );
                             }
 
                             if (actionState.canReject) {
                                 return (
-                                    <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
-                                        <p className="text-sm text-amber-700">
+                                    <AdminConsoleNotice tone="warning">
+                                        <p>
                                             Status menunggu konfirmasi, tetapi file bukti pembayaran tidak tersedia atau tidak valid.
                                         </p>
-                                    </div>
+                                    </AdminConsoleNotice>
                                 );
                             }
 
                             return null;
                         })()}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Dibayarkan</label>
+                        <AdminConsoleField label="Nominal Dibayarkan">
                             <input
                                 type="text"
                                 value={formatNumberWithComma(paidAmount)}
                                 onChange={(e) => handleAmountChange(e, setPaidAmount)}
                                 required
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className={adminConsoleInputClassName}
                             />
-                            <p className="text-xs text-gray-500 mt-1">Rp {formatNumberWithComma(paidAmount)} - Nominal default sesuai invoice, bisa diubah jika pembayaran berbeda.</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Terima via</label>
+                            <p className="mt-1 text-xs text-slate-400">Rp {formatNumberWithComma(paidAmount)} - Nominal default sesuai invoice, bisa diubah jika pembayaran berbeda.</p>
+                        </AdminConsoleField>
+                        <AdminConsoleField label="Terima via">
                             <select
                                 value={paymentReceiptOptionId}
                                 onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
                                 required={paymentReceiptOptions.length > 0}
                                 disabled={loadingPaymentReceiptOptions}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+                                className={adminConsoleSelectClassName}
                             >
                                 <option value="">
                                     {loadingPaymentReceiptOptions
@@ -1802,19 +1926,53 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     </option>
                                 ))}
                             </select>
-                            <p className="text-xs text-gray-500 mt-1">Daftar diambil dari menu Pengaturan Penerimaan Pembayaran.</p>
+                            <p className="mt-1 text-xs text-slate-400">Daftar diambil dari menu Pengaturan Penerimaan Pembayaran.</p>
                             {!loadingPaymentReceiptOptions && paymentReceiptOptions.length === 0 && (
-                                <p className="text-xs text-amber-600 mt-1">Tambahkan atau aktifkan opsi penerimaan pembayaran di menu pengaturan terlebih dahulu.</p>
+                                <p className="mt-1 text-xs text-amber-600">Tambahkan atau aktifkan opsi penerimaan pembayaran di menu pengaturan terlebih dahulu.</p>
                             )}
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button type="button" variant="secondary" onClick={closeConfirmModal}>
+                        </AdminConsoleField>
+                        {canChoosePaymentReceiver && (
+                            <AdminConsoleField label="Penerima Pembayaran">
+                                <select
+                                    value={paymentReceiverUserId}
+                                    onChange={(e) => setPaymentReceiverUserId(e.target.value)}
+                                    disabled={loadingPaymentReceivers}
+                                    className={adminConsoleSelectClassName}
+                                >
+                                    <option value="">
+                                        {loadingPaymentReceivers ? 'Memuat penerima...' : 'Akun saya (default)'}
+                                    </option>
+                                    {paymentReceivers.map((receiver) => (
+                                        <option key={receiver.id} value={receiver.id}>
+                                        {getPaymentReceiverLabel(receiver)}
+                                    </option>
+                                ))}
+                                </select>
+                                <p className="mt-1 text-xs text-slate-400">Jika dikosongkan, penerima otomatis akun Anda.</p>
+                            </AdminConsoleField>
+                        )}
+                        {canChoosePaymentMutation && (
+                            <label className="flex items-start gap-3 rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={includeInMutation}
+                                    onChange={(e) => setIncludeInMutation(e.target.checked)}
+                                    className={adminConsoleCheckboxClassName}
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-slate-900">Masukkan ke Mutasi</p>
+                                    <p className="text-xs text-slate-500">Jika tidak dicentang, invoice dibayar tanpa mutasi dan tanpa hutang penerima.</p>
+                                </div>
+                            </label>
+                        )}
+                        <AdminConsoleActionRow>
+                            <Button type="button" variant="secondary" onClick={closeConfirmModal} className={adminConsoleButtonClassNames.secondary}>
                                 Batal
                             </Button>
-                            <Button type="submit" variant="warning" disabled={submitting}>
+                            <Button type="submit" variant="warning" disabled={submitting} className={adminConsoleButtonClassNames.warning}>
                                 {submitting ? 'Memproses...' : 'Konfirmasi'}
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>
@@ -1824,6 +1982,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={proofPreviewModal.open}
                 onClose={closeProofPreviewModal}
                 title="Preview Bukti Pembayaran"
+                theme="dashboard"
             >
                 <div className="space-y-3">
                     {proofPreviewModal.loading && (
@@ -1833,55 +1992,159 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     )}
 
                     {!proofPreviewModal.loading && proofPreviewModal.error && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                        <AdminConsoleNotice tone="danger">
                             {proofPreviewModal.error}
-                        </div>
+                        </AdminConsoleNotice>
                     )}
 
                     {!proofPreviewModal.loading && !proofPreviewModal.error && proofPreviewModal.type === 'image' && (
-                        <div className="max-h-[70vh] overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                        <AdminConsoleSurface className="max-h-[70vh] overflow-auto p-2" accent="cyan">
                             <img
                                 src={proofPreviewModal.url}
                                 alt="Bukti pembayaran"
                                 className="w-full h-auto object-contain rounded"
-                                onError={() => {
-                                    setProofPreviewModal((prev) => ({
-                                        ...prev,
-                                        error: 'Gagal memuat gambar bukti pembayaran.',
-                                    }));
-                                }}
+                                onError={loadPaymentProofDataUrlFallback}
                             />
-                        </div>
+                        </AdminConsoleSurface>
                     )}
 
                     {!proofPreviewModal.loading && !proofPreviewModal.error && proofPreviewModal.type === 'pdf' && (
-                        <div className="h-[70vh] rounded-lg border border-gray-200 overflow-hidden">
+                        <AdminConsoleSurface className="h-[70vh] overflow-hidden p-0" accent="violet">
                             <iframe
                                 src={proofPreviewModal.url}
                                 title="Preview Bukti Pembayaran PDF"
                                 className="w-full h-full"
                             />
-                        </div>
+                        </AdminConsoleSurface>
                     )}
 
                     {!proofPreviewModal.loading && proofPreviewModal.type === 'other' && (
-                        <div className="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-3 py-2">
-                            Format file tidak bisa dipreview di modal.
-                        </div>
+                        <AdminConsoleNotice tone="warning">
+                            Format file tidak bisa dipreview di modal. Gunakan "Buka di tab baru".
+                        </AdminConsoleNotice>
                     )}
 
                     {proofPreviewModal.externalUrl && (
-                        <div className="flex justify-end">
+                        <AdminConsoleActionRow className="border-t-0 pt-0">
                             <a
                                 href={proofPreviewModal.externalUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center px-3 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                                className="inline-flex items-center rounded-xl border border-blue-200 bg-blue-600 px-3 py-2 text-sm text-white shadow-sm transition hover:bg-blue-700"
                             >
                                 Buka di tab baru
                             </a>
-                        </div>
+                        </AdminConsoleActionRow>
                     )}
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={otherReceiverModal.open}
+                onClose={() => setOtherReceiverModal({ open: false, selectedReceiver: null })}
+                title="Konfirmasi Akun Penerima"
+                theme="dashboard"
+            >
+                <div className="space-y-4">
+                    <AdminConsoleNotice tone="warning" title="Penerima Bukan Akun Sendiri">
+                        <p>Anda memilih akun penerima selain akun Anda sendiri. Pilih apakah mutasi menunggu konfirmasi akun penerima atau langsung dimasukkan ke hutang.</p>
+                        {otherReceiverModal.selectedReceiver?.is_company_finance_receiver && (
+                            <p className="mt-2">Akun yang dipilih adalah akun keuangan perusahaan. Jika akun ini menyetujui, mutasi akan menjadi confirmed tanpa membuat hutang.</p>
+                        )}
+                    </AdminConsoleNotice>
+                    <AdminConsoleActionRow className="border-t-0 pt-0">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setOtherReceiverModal({ open: false, selectedReceiver: null })}
+                            className={adminConsoleButtonClassNames.secondary}
+                        >
+                            Batal
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="warning"
+                            disabled={submitting}
+                            onClick={async () => {
+                                setOtherReceiverModal({ open: false, selectedReceiver: null });
+                                await submitConfirmPayment({
+                                    otherReceiverConfirmed: true,
+                                    receiverConflictResolution: 'approval',
+                                });
+                            }}
+                            className={adminConsoleButtonClassNames.warning}
+                        >
+                            {submitting ? 'Memproses...' : 'Tunggu Konfirmasi Penerima'}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="danger"
+                            disabled={submitting}
+                            onClick={async () => {
+                                setOtherReceiverModal({ open: false, selectedReceiver: null });
+                                await submitConfirmPayment({
+                                    otherReceiverConfirmed: true,
+                                    receiverConflictResolution: 'debt',
+                                });
+                            }}
+                            className={adminConsoleButtonClassNames.danger}
+                        >
+                            {submitting ? 'Memproses...' : 'Masukkan ke Hutang'}
+                        </Button>
+                    </AdminConsoleActionRow>
+                </div>
+            </Modal>
+
+            <Modal
+                isOpen={receiverConflictModal.open}
+                onClose={() => setReceiverConflictModal({ open: false, message: '' })}
+                title="Akun Penerima Tidak Diizinkan"
+                theme="dashboard"
+            >
+                <div className="space-y-4">
+                    <AdminConsoleNotice tone="warning" title="Butuh Keputusan">
+                        <p>{receiverConflictModal.message || 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan.'}</p>
+                    </AdminConsoleNotice>
+                    <AdminConsoleActionRow className="border-t-0 pt-0">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setReceiverConflictModal({ open: false, message: '' })}
+                            className={adminConsoleButtonClassNames.secondary}
+                        >
+                            Batal
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="warning"
+                            disabled={submitting}
+                            onClick={async () => {
+                                setReceiverConflictModal({ open: false, message: '' });
+                                await submitConfirmPayment({
+                                    otherReceiverConfirmed: true,
+                                    receiverConflictResolution: 'approval',
+                                });
+                            }}
+                            className={adminConsoleButtonClassNames.warning}
+                        >
+                            {submitting ? 'Memproses...' : 'Jangan Masuk Hutang'}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="danger"
+                            disabled={submitting}
+                            onClick={async () => {
+                                setReceiverConflictModal({ open: false, message: '' });
+                                await submitConfirmPayment({
+                                    otherReceiverConfirmed: true,
+                                    receiverConflictResolution: 'debt',
+                                });
+                            }}
+                            className={adminConsoleButtonClassNames.danger}
+                        >
+                            {submitting ? 'Memproses...' : 'Masukkan ke Hutang'}
+                        </Button>
+                    </AdminConsoleActionRow>
                 </div>
             </Modal>
 
@@ -1890,22 +2153,24 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={permissionModal.open}
                 onClose={() => setPermissionModal({ open: false, message: '' })}
                 title="Akses Ditolak"
+                theme="dashboard"
             >
                 <div className="space-y-4">
-                    <div className="bg-red-50 rounded-lg p-4">
-                        <p className="text-sm text-red-700">
+                    <AdminConsoleNotice tone="danger" title="Akses Ditolak">
+                        <p>
                             {permissionModal.message || 'Anda tidak diizinkan melakukan konfirmasi pembayaran.'}
                         </p>
-                    </div>
-                    <div className="flex justify-end">
+                    </AdminConsoleNotice>
+                    <AdminConsoleActionRow className="border-t-0 pt-0">
                         <Button
                             type="button"
                             variant="secondary"
                             onClick={() => setPermissionModal({ open: false, message: '' })}
+                            className={adminConsoleButtonClassNames.secondary}
                         >
                             Tutup
                         </Button>
-                    </div>
+                    </AdminConsoleActionRow>
                 </div>
             </Modal>
 
@@ -1914,31 +2179,31 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={rejectModal.open}
                 onClose={() => setRejectModal({ open: false, invoice: null })}
                 title="Tolak Pembayaran"
+                theme="dashboard"
             >
                 <form onSubmit={handleRejectPayment} className="space-y-4">
-                    <div className="bg-red-50 rounded-lg p-4">
-                        <p className="text-sm text-red-700">
+                    <AdminConsoleNotice tone="danger" title="Konfirmasi">
+                        <p>
                             Yakin ingin menolak bukti pembayaran ini? Pelanggan akan diminta upload ulang bukti pembayaran yang valid.
                         </p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Alasan Penolakan (opsional)</label>
+                    </AdminConsoleNotice>
+                    <AdminConsoleField label="Alasan Penolakan (opsional)">
                         <textarea
                             value={rejectReason}
                             onChange={(e) => setRejectReason(e.target.value)}
                             rows={3}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                            className={adminConsoleTextareaClassName}
                             placeholder="Masukkan alasan penolakan..."
                         />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <Button type="button" variant="secondary" onClick={() => setRejectModal({ open: false, invoice: null })}>
+                    </AdminConsoleField>
+                    <AdminConsoleActionRow>
+                        <Button type="button" variant="secondary" onClick={() => setRejectModal({ open: false, invoice: null })} className={adminConsoleButtonClassNames.secondary}>
                             Batal
                         </Button>
-                        <Button type="submit" variant="danger" disabled={submitting}>
+                        <Button type="submit" variant="danger" disabled={submitting} className={adminConsoleButtonClassNames.danger}>
                             {submitting ? 'Memproses...' : 'Tolak'}
                         </Button>
-                    </div>
+                    </AdminConsoleActionRow>
                 </form>
             </Modal>
 
@@ -1947,57 +2212,57 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={resultModal.open}
                 onClose={() => setResultModal({ open: false, data: null })}
                 title="Tagihan Berhasil Dibuat"
+                theme="dashboard"
             >
                 {resultModal.data && (
                     <div className="space-y-4">
-                        <div className="bg-green-50 rounded-lg p-4">
-                            <p className="text-sm text-green-700">Tagihan berhasil dibuat! Kirim link ke pelanggan melalui WhatsApp.</p>
-                        </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <p className="font-semibold text-gray-900">{resultModal.data.customer?.name || '-'}</p>
-                            <p className="text-sm text-gray-600">PPPoE: {resultModal.data.customer?.pppoe_username || '-'}</p>
-                            <p className="text-sm text-gray-600">No. WA: {resultModal.data.customer?.phone || '-'}</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Link Invoice</label>
+                        <AdminConsoleNotice tone="success" title="Berhasil">
+                            <p>Tagihan berhasil dibuat! Kirim link ke pelanggan melalui WhatsApp.</p>
+                        </AdminConsoleNotice>
+                        <AdminConsoleSurface accent="emerald" className="p-4">
+                            <p className="font-semibold text-slate-900">{resultModal.data.customer?.name || '-'}</p>
+                            <p className="text-sm text-slate-600">PPPoE: {resultModal.data.customer?.pppoe_username || '-'}</p>
+                            <p className="text-sm text-slate-600">No. WA: {resultModal.data.customer?.phone || '-'}</p>
+                        </AdminConsoleSurface>
+                        <AdminConsoleField label="Link Invoice">
                             <div className="flex gap-2">
                                 <input
                                     type="text"
                                     readOnly
                                     value={resolveInvoiceUrl(resultModal.data.invoice_link)}
-                                    className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
+                                    className={`flex-1 ${adminConsoleReadOnlyClassName}`}
                                 />
                                 <Button
                                     type="button"
                                     variant="secondary"
                                     onClick={() => copyToClipboard(resolveInvoiceUrl(resultModal.data.invoice_link), 'Link')}
+                                    className={adminConsoleButtonClassNames.secondary}
                                 >
                                     <Copy size={16} />
                                 </Button>
                             </div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Template Pesan</label>
+                        </AdminConsoleField>
+                        <AdminConsoleField label="Template Pesan">
                             <textarea
                                 readOnly
                                 value={resultModal.data.template}
                                 rows={8}
-                                className="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm"
+                                className={adminConsoleReadOnlyClassName}
                             />
-                        </div>
-                        <div className="flex flex-wrap justify-end gap-2">
+                        </AdminConsoleField>
+                        <AdminConsoleActionRow className="border-t-0 pt-0 flex-wrap justify-end">
                             <a
                                 href={resultModal.data.customer ? getWhatsAppLink(resultModal.data.customer, resultModal.data.invoice_link) : '#'}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className={`inline-flex items-center px-4 py-2 rounded-lg font-medium transition-colors ${resultModal.data.customer ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-gray-300 text-gray-500 pointer-events-none'}`}
+                                className={`inline-flex items-center rounded-xl px-4 py-2 font-medium transition ${resultModal.data.customer ? 'border border-emerald-200 bg-emerald-600 text-white shadow-sm hover:bg-emerald-700' : 'pointer-events-none bg-slate-100 text-slate-400'}`}
                             >
                                 <Send size={16} className="mr-1" /> Kirim ke WhatsApp
                             </a>
-                            <Button type="button" variant="secondary" onClick={() => setResultModal({ open: false, data: null })}>
+                            <Button type="button" variant="secondary" onClick={() => setResultModal({ open: false, data: null })} className={adminConsoleButtonClassNames.secondary}>
                                 Tutup
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </div>
                 )}
             </Modal>
@@ -2007,36 +2272,37 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                 isOpen={editAmountModal.open}
                 onClose={() => setEditAmountModal({ open: false, invoice: null, customer: null })}
                 title="Ubah Nominal Invoice"
+                theme="dashboard"
             >
                 {editAmountModal.invoice && (
                     <form onSubmit={handleUpdateInvoiceAmount} className="space-y-4">
-                        <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">
-                            <p className="font-semibold text-gray-900">{editAmountModal.customer?.name || '-'}</p>
-                            <p>Status invoice: {editAmountModal.invoice.status}</p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Baru</label>
+                        <AdminConsoleSurface accent="violet" className="p-4 text-sm">
+                            <p className="font-semibold text-slate-900">{editAmountModal.customer?.name || '-'}</p>
+                            <p className="text-slate-600">Status invoice: {editAmountModal.invoice.status}</p>
+                        </AdminConsoleSurface>
+                        <AdminConsoleField label="Nominal Baru">
                             <input
                                 type="text"
                                 value={formatNumberWithComma(newInvoiceAmount)}
                                 onChange={(e) => handleAmountChange(e, setNewInvoiceAmount)}
                                 required
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                className={adminConsoleInputClassName}
                                 placeholder="Masukkan nominal"
                             />
-                        </div>
-                        <div className="flex justify-end gap-2">
+                        </AdminConsoleField>
+                        <AdminConsoleActionRow>
                             <Button
                                 type="button"
                                 variant="secondary"
                                 onClick={() => setEditAmountModal({ open: false, invoice: null, customer: null })}
+                                className={adminConsoleButtonClassNames.secondary}
                             >
                                 Batal
                             </Button>
-                            <Button type="submit" variant="primary" disabled={submitting}>
+                            <Button type="submit" variant="primary" disabled={submitting} className={adminConsoleButtonClassNames.primary}>
                                 {submitting ? 'Menyimpan...' : 'Simpan Nominal'}
                             </Button>
-                        </div>
+                        </AdminConsoleActionRow>
                     </form>
                 )}
             </Modal>

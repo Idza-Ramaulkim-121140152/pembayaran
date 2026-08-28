@@ -312,7 +312,7 @@ function InventoryMasterPage() {
             <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100">
                     <h2 className="font-semibold text-gray-800">Default Payroll Pemasangan</h2>
-                    <p className="text-sm text-gray-500 mt-1">Nilai awal untuk form verifikasi pelanggan. Tetap bisa diubah saat input per pelanggan.</p>
+                    <p className="text-sm text-gray-500 mt-1">Nilai awal untuk form verifikasi pelanggan. Ini adalah tarif jasa teknisi dan tetap bisa diubah saat input per pelanggan.</p>
                 </div>
                 <form onSubmit={submitDefaultPricing} className="p-4 space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -330,7 +330,7 @@ function InventoryMasterPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-gray-700 mb-1">Harga Kabel (Payroll) - Default</label>
+                            <label className="block text-sm text-gray-700 mb-1">Tarif Kabel Payroll per Meter - Default</label>
                             <input
                                 type="number"
                                 min="0"
@@ -341,6 +341,7 @@ function InventoryMasterPage() {
                                 placeholder="0"
                                 required
                             />
+                            <p className="mt-1 text-xs text-gray-500">Ini tarif pemasangan kabel per meter yang dibayar pelanggan kepada teknisi, bukan harga barang fisik kabel perusahaan.</p>
                         </div>
                     </div>
 

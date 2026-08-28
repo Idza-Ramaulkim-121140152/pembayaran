@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, User, LogIn, Wifi, ArrowLeft } from 'lucide-react';
+import { Phone, User, LogIn, Wifi, ArrowLeft, Lock } from 'lucide-react';
 import NetworkNoticePopup from '../../components/NetworkNoticePopup';
 
 function CustomerLoginPage() {
     const navigate = useNavigate();
     const [identifier, setIdentifier] = useState('');
+    const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(false);
     const [networkNotices, setNetworkNotices] = useState([]);
@@ -44,7 +45,7 @@ function CustomerLoginPage() {
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': csrfToken,
                 },
-                body: JSON.stringify({ identifier }),
+                body: JSON.stringify({ identifier, password }),
             });
 
             const data = await response.json();
@@ -131,13 +132,33 @@ function CustomerLoginPage() {
                                 />
                             </div>
                             <p className="mt-2 text-xs text-gray-500">
-                                Masukkan nomor HP yang terdaftar atau username PPPoE Anda
+                                Masukkan nomor HP terdaftar atau username PPPoE Anda
                             </p>
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Password
+                            </label>
+                            <div className="relative">
+                                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                    <Lock size={20} className="text-gray-400" />
+                                </div>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    required
+                                    minLength={6}
+                                    placeholder="Masukkan password Anda"
+                                    className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition"
+                                />
+                            </div>
                         </div>
 
                         <button
                             type="submit"
-                            disabled={loading || !identifier}
+                            disabled={loading || !identifier || !password}
                             className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white py-3 rounded-xl font-semibold transition shadow-lg shadow-orange-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {loading ? (

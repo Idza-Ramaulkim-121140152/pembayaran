@@ -1,4 +1,4 @@
-import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText } from 'lucide-react';
+import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText, Wallet } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const role = window.appUserRole || 'admin';
@@ -10,6 +10,13 @@ const MASTER_MENU = [
         icon: MapPin,
         path: '/settings/master-wilayah',
         roles: ['superadmin', 'admin'],
+    },
+    {
+        title: 'Jenis Pengeluaran',
+        description: 'Kelola master jenis pengeluaran untuk tim finance.',
+        icon: Wallet,
+        path: '/settings/expense-categories',
+        roles: ['superadmin'],
     },
     {
         title: 'Master MikroTik',
@@ -33,6 +40,13 @@ const MASTER_MENU = [
         roles: ['superadmin', 'admin', 'teknisi', 'finance'],
     },
     {
+        title: 'Harga Instalasi',
+        description: 'Kelola harga kabel, connector, dan router untuk laporan income pelanggan.',
+        icon: Package,
+        path: '/settings/installation-pricing',
+        roles: ['superadmin'],
+    },
+    {
         title: 'Master Inventori',
         description: 'Kelola jenis barang dan master item inventori.',
         icon: Shield,
@@ -54,6 +68,27 @@ const MASTER_MENU = [
         roles: ['superadmin', 'admin', 'finance'],
     },
     {
+        title: 'Akun Keuangan Perusahaan',
+        description: 'Kelola akun staff yang mewakili penerimaan uang perusahaan.',
+        icon: CreditCard,
+        path: '/settings/company-finance-receivers',
+        roles: ['superadmin', 'admin', 'finance'],
+    },
+    {
+        title: 'Daftar Peminjam',
+        description: 'Kelola master peminjam dan mapping ke akun user.',
+        icon: FileText,
+        path: '/settings/borrowers',
+        roles: ['superadmin', 'admin', 'finance'],
+    },
+    {
+        title: 'Mapping Penerima Pembayaran',
+        description: 'Atur akun penerima pembayaran yang diizinkan per user.',
+        icon: Shield,
+        path: '/settings/payment-receiver-mappings',
+        roles: ['superadmin', 'admin', 'finance'],
+    },
+    {
         title: 'Promo & Landing',
         description: 'Kelola promo, banner, dan pengaturan landing page.',
         icon: Megaphone,
@@ -72,6 +107,13 @@ const MASTER_MENU = [
         description: 'Kelola permission role, grup, dan override akun.',
         icon: Shield,
         path: '/settings/access-policy',
+        roles: ['superadmin'],
+    },
+    {
+        title: 'Mapping Akun Pelanggan',
+        description: 'Kelola login pelanggan: PPPoE/No HP, status login, dan reset password.',
+        icon: Shield,
+        path: '/settings/customer-accounts',
         roles: ['superadmin'],
     },
 ];

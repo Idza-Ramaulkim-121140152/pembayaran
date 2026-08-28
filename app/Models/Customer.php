@@ -13,8 +13,10 @@ class Customer extends Model
         'activation_date', 'gender', 'address', 'package_type', 'custom_package',
         'pppoe_username', 'mikrotik_profile', 'home_router_type', 'home_router_host',
         'home_router_port', 'home_router_username', 'home_router_password',
+        'is_service_isolated', 'service_isolated_at', 'service_isolated_by', 'isolation_restore_profile',
         'mobile_password', 'mobile_force_password_change', 'mobile_password_changed_at',
         'mobile_password_reset_at', 'mobile_password_reset_meta', 'mobile_password_reset_by_user_id',
+        'portal_login_enabled',
         'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
         'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp'
     ];
@@ -34,10 +36,14 @@ class Customer extends Model
         'enable_home_router' => 'boolean',
         'enable_installation_team' => 'boolean',
         'home_router_password' => 'encrypted',
+        'is_service_isolated' => 'boolean',
+        'service_isolated_at' => 'datetime',
+        'service_isolated_by' => 'integer',
         'mobile_force_password_change' => 'boolean',
         'mobile_password_changed_at' => 'datetime',
         'mobile_password_reset_at' => 'datetime',
         'mobile_password_reset_meta' => 'array',
+        'portal_login_enabled' => 'boolean',
     ];
 
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
@@ -122,6 +128,26 @@ class Customer extends Model
     public function packageHistories()
     {
         return $this->hasMany(\App\Models\CustomerPackageHistory::class);
+    }
+
+    public function agreements()
+    {
+        return $this->hasMany(\App\Models\CustomerAgreement::class);
+    }
+
+    public function latestAgreement()
+    {
+        return $this->hasOne(\App\Models\CustomerAgreement::class)->latestOfMany('id');
+    }
+
+    public function installationCostSnapshot()
+    {
+        return $this->hasOne(\App\Models\CustomerInstallationCostSnapshot::class);
+    }
+
+    public function terminationRequests()
+    {
+        return $this->hasMany(\App\Models\CustomerTerminationRequest::class);
     }
 
     public function kecamatan()

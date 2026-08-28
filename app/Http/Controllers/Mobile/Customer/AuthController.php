@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class AuthController extends BaseMobileCustomerController
 {
-    private const DEFAULT_PASSWORD = '12345678';
+    private const DEFAULT_PASSWORD = 'user123';
     private const TOKEN_TTL_DAYS = 30;
 
     public function __construct(private MobileCustomerAuthLogService $authLogService)
@@ -22,7 +22,7 @@ class AuthController extends BaseMobileCustomerController
     {
         $validated = $request->validate([
             'pppoe_username' => 'required|string|max:64',
-            'password' => 'required|string|min:8|max:255',
+            'password' => 'required|string|min:6|max:255',
             'device_name' => 'nullable|string|max:100',
             'device_id' => 'nullable|string|max:100',
         ]);
@@ -45,6 +45,12 @@ class AuthController extends BaseMobileCustomerController
             return response()->json([
                 'message' => 'Username PPPoE atau password salah.',
             ], 401);
+        }
+
+        if (!(bool) ($customer->portal_login_enabled ?? true)) {
+            return response()->json([
+                'message' => 'Akses login akun Anda sedang dinonaktifkan. Hubungi admin.',
+            ], 403);
         }
 
         if (empty($customer->mobile_password)) {
@@ -114,8 +120,8 @@ class AuthController extends BaseMobileCustomerController
         $customer = $this->customer($request);
 
         $validated = $request->validate([
-            'current_password' => 'required|string|min:8|max:255',
-            'new_password' => 'required|string|min:8|max:255|confirmed',
+            'current_password' => 'required|string|min:6|max:255',
+            'new_password' => 'required|string|min:6|max:255|confirmed',
         ]);
 
         if (!Hash::check($validated['current_password'], (string) $customer->mobile_password)) {

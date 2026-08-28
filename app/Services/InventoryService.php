@@ -51,7 +51,15 @@ class InventoryService
      * @param array<int, array<string, mixed>> $items
      * @return array<string, mixed>
      */
-    public function recordIncoming(array $items, string $paymentType, string $transactionDate, ?string $notes, ?string $dueDate, int $actorId): array
+    public function recordIncoming(
+        array $items,
+        string $paymentType,
+        string $transactionDate,
+        ?string $notes,
+        ?string $dueDate,
+        int $actorId,
+        array $paymentContext = []
+    ): array
     {
         if (!$this->isReady()) {
             return [
@@ -99,6 +107,8 @@ class InventoryService
                 'created_by' => $actorId,
                 'meta' => [
                     'payment_type' => $paymentType,
+                    'payment_source' => $paymentContext['payment_source'] ?? 'company_cash',
+                    'borrower_id' => $paymentContext['borrower_id'] ?? null,
                 ],
             ]);
 
@@ -134,6 +144,10 @@ class InventoryService
                 'kategori' => 'Inventori',
                 'detail' => $notes ?: 'Pembelian inventori tunai',
                 'user_id' => $actorId,
+                'payment_source' => $paymentContext['payment_source'] ?? 'company_cash',
+                'borrower_id' => $paymentContext['borrower_id'] ?? null,
+                'borrower_loan_settlement_amount' => (int) ($paymentContext['borrower_loan_settlement_amount'] ?? 0),
+                'borrower_loan_settlement_action_group_key' => $paymentContext['borrower_loan_settlement_action_group_key'] ?? null,
             ]);
 
             $this->ledgerService->syncPengeluaran($pengeluaran, $actorId);

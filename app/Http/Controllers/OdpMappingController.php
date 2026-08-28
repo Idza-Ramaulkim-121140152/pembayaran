@@ -7,6 +7,7 @@ use App\Models\Odp;
 use App\Models\OdpMappingAnomaly;
 use App\Services\AuditLogService;
 use App\Services\FeatureService;
+use App\Services\OdpQualityAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -15,6 +16,7 @@ class OdpMappingController extends Controller
     public function __construct(
         private FeatureService $featureService,
         private AuditLogService $auditLogService,
+        private OdpQualityAuditService $odpQualityAuditService,
     ) {
     }
 
@@ -273,6 +275,17 @@ class OdpMappingController extends Controller
                 'updated' => $updated,
                 'mismatch' => $mismatch,
             ],
+        ]);
+    }
+
+    public function qualityAudit()
+    {
+        if (!$this->featureService->enabled('odp_quality_score_v1')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        return response()->json([
+            'data' => $this->odpQualityAuditService->audit(),
         ]);
     }
 }

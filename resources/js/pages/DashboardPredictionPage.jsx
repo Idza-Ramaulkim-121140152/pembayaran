@@ -30,6 +30,7 @@ import Alert from '../components/common/Alert';
 import Modal from '../components/common/Modal';
 import ResponsiveDataView from '../components/common/ResponsiveDataView';
 import apiClient from '../services/api';
+import monthlyBudgetService from '../services/monthlyBudgetService';
 
 ChartJS.register(
     CategoryScale,
@@ -185,6 +186,103 @@ function getRiskLevelBadgeClass(level) {
     return 'bg-emerald-100 text-emerald-700';
 }
 
+function getBudgetStatusClass(status) {
+    if (status === 'defisit' || status === 'lewat_budget') return 'bg-rose-100 text-rose-700';
+    if (status === 'rawan') return 'bg-orange-100 text-orange-700';
+    if (status === 'waspada') return 'bg-amber-100 text-amber-700';
+    if (status === 'unconfigured') return 'bg-slate-100 text-slate-700';
+    return 'bg-emerald-100 text-emerald-700';
+}
+
+function normalizeFinancialStatus(status) {
+    const value = String(status || '').toLowerCase();
+
+    if (['defisit', 'lewat_budget', 'critical'].includes(value)) return 'defisit';
+    if (['rawan', 'tinggi', 'risiko'].includes(value)) return 'rawan';
+    if (['waspada', 'warning', 'sedang'].includes(value)) return 'waspada';
+    if (['aman', 'healthy', 'safe', 'configured', 'active'].includes(value)) return 'aman';
+    if (['unconfigured', 'unknown', ''].includes(value)) return 'unconfigured';
+
+    return value || 'unconfigured';
+}
+
+function getFinancialIndicatorMeta(status) {
+    const normalized = normalizeFinancialStatus(status);
+
+    if (normalized === 'defisit') {
+        return {
+            key: normalized,
+            label: 'Defisit',
+            className: 'bg-rose-100 text-rose-800 border border-rose-200 fin-indicator fin-indicator-danger fin-indicator--pulse',
+            dotClassName: 'bg-rose-500',
+        };
+    }
+
+    if (normalized === 'rawan') {
+        return {
+            key: normalized,
+            label: 'Rawan',
+            className: 'bg-orange-100 text-orange-800 border border-orange-200 fin-indicator fin-indicator-risk fin-indicator--pulse',
+            dotClassName: 'bg-orange-500',
+        };
+    }
+
+    if (normalized === 'waspada') {
+        return {
+            key: normalized,
+            label: 'Waspada',
+            className: 'bg-amber-100 text-amber-800 border border-amber-200 fin-indicator fin-indicator-warning fin-indicator--pulse',
+            dotClassName: 'bg-amber-500',
+        };
+    }
+
+    if (normalized === 'aman') {
+        return {
+            key: normalized,
+            label: 'Aman',
+            className: 'bg-emerald-100 text-emerald-800 border border-emerald-200 fin-indicator fin-indicator-safe',
+            dotClassName: 'bg-emerald-500',
+        };
+    }
+
+    return {
+        key: 'unconfigured',
+        label: 'Belum Terkonfigurasi',
+        className: 'bg-slate-100 text-slate-700 border border-slate-200 fin-indicator fin-indicator-unconfigured',
+        dotClassName: 'bg-slate-400',
+    };
+}
+
+function getBudgetStatusLabel(status) {
+    const normalized = normalizeFinancialStatus(status);
+    if (normalized === 'defisit') return 'Lewat Budget';
+    if (normalized === 'waspada') return 'Waspada';
+    if (normalized === 'aman') return 'Aman';
+    return 'Belum Disusun';
+}
+
+function getReserveStatusMeta(status) {
+    const value = String(status || '').toLowerCase();
+
+    if (value === 'unconfigured') {
+        return { status: 'unconfigured', label: 'Cadangan Belum Aktif' };
+    }
+
+    if (['low', 'thin', 'warning', 'waspada', 'rawan'].includes(value)) {
+        return { status: 'waspada', label: 'Cadangan Tipis' };
+    }
+
+    return { status: 'aman', label: 'Cadangan Aktif' };
+}
+
+function getCoverageStatusMeta(isCovered) {
+    if (isCovered === false) {
+        return { status: 'defisit', label: 'Coverage Tidak Aman' };
+    }
+
+    return { status: 'aman', label: 'Coverage Aman' };
+}
+
 function DashboardPredictionPage() {
     const userRole = window.appUserRole || 'admin';
     const isTeknisi = userRole === 'teknisi';
@@ -231,6 +329,10 @@ function DashboardPredictionPage() {
     const [purchaseRiskModalOpen, setPurchaseRiskModalOpen] = useState(false);
     const [purchaseRiskConfirmLoading, setPurchaseRiskConfirmLoading] = useState(false);
     const [purchaseRiskModalError, setPurchaseRiskModalError] = useState(null);
+    const [monthlyBudgetForm, setMonthlyBudgetForm] = useState([]);
+    const [monthlyBudgetNotes, setMonthlyBudgetNotes] = useState('');
+    const [monthlyBudgetSaving, setMonthlyBudgetSaving] = useState(false);
+    const [monthlyBudgetMessage, setMonthlyBudgetMessage] = useState(null);
     const projectionRequestSeqRef = useRef(0);
 
     const applyPredictionBundle = (bundle) => {
@@ -260,7 +362,6 @@ function DashboardPredictionPage() {
         } catch (err) {
             if (err?.response?.data?.code === 'model_unavailable') {
                 setModelUnavailableMeta(err.response.data || null);
-                setError(err.response?.data?.message || 'Model prediksi belum siap.');
                 return false;
             }
             throw err;
@@ -432,10 +533,25 @@ function DashboardPredictionPage() {
             setError(null);
             const bundleLoaded = await fetchPredictionBundle();
             if (!bundleLoaded) {
-                setKpiData(null);
-                setForecastData(null);
-                setFinancialProjectionData(null);
-                setIspIntelligenceData(null);
+                await Promise.all([
+                    fetchManagementKpis(kpiRange),
+                    fetchRevenueForecast(forecastRange),
+                    fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live', suppressError: false }),
+                    fetchIspIntelligence(kpiRange),
+                ]);
+                setBundleMeta((prev) => ({
+                    ...(prev || {}),
+                    source_mode: 'live_fallback',
+                    snapshot_status: 'live_fallback',
+                    availability_status: 'fallback_live',
+                    failure_reason: 'prediction_bundle_unavailable',
+                    bundle_warnings: [{ section: 'bundle', reason: 'live_fallback' }],
+                    section_completeness: prev?.section_completeness || null,
+                }));
+                setFinancialProjectionActionMessage({
+                    type: 'info',
+                    text: 'Data prediksi saat ini memakai perhitungan live lokal.',
+                });
                 return;
             }
 
@@ -486,6 +602,11 @@ function DashboardPredictionPage() {
     const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
     const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
     const projectionForecastContext = financialProjectionData?.forecast_context || null;
+    const monthlyBudget = financialProjectionData?.monthly_budget || null;
+    const cashPosition = financialProjectionData?.cash_position || null;
+    const monthlyBudgetSummary = financialProjectionData?.monthly_budget_summary || null;
+    const monthlyBudgetBreakdown = financialProjectionData?.monthly_budget_breakdown || [];
+    const systemCashGuardrail = financialProjectionData?.system_cash_guardrail || null;
     const ispSummary = ispIntelligenceData?.summary || null;
     const ispMikrotik = ispIntelligenceData?.mikrotik || null;
     const ispRiskMatrix = ispIntelligenceData?.risk_matrix || [];
@@ -547,6 +668,234 @@ function DashboardPredictionPage() {
         }
         return mandatoryProjectionRows;
     }, [mandatoryProjectionRows, mandatoryProjectionFilter]);
+
+    useEffect(() => {
+        if (!monthlyBudget) {
+            setMonthlyBudgetForm([]);
+            setMonthlyBudgetNotes('');
+            return;
+        }
+
+        setMonthlyBudgetForm(
+            Array.isArray(monthlyBudget.items)
+                ? monthlyBudget.items.map((item) => ({
+                    category_key: item.category_key,
+                    label: item.label,
+                    direction: item.direction,
+                    target_amount: String(item.final_active_amount ?? item.target_amount ?? 0),
+                    system_recommended_amount: Number(item.system_recommended_amount ?? item.target_amount ?? 0),
+                    is_overridden: Boolean(item.is_overridden),
+                    source: item.source || 'system',
+                }))
+                : []
+        );
+        setMonthlyBudgetNotes(monthlyBudget.notes || '');
+    }, [monthlyBudget?.id, monthlyBudget?.month, monthlyBudget?.status]);
+
+    const budgetOperationalRow = useMemo(
+        () => monthlyBudgetBreakdown.find((row) => row.category_key === 'operational_expense') || null,
+        [monthlyBudgetBreakdown]
+    );
+
+    const budgetPurchaseRow = useMemo(
+        () => monthlyBudgetBreakdown.find((row) => row.category_key === 'purchase_investment') || null,
+        [monthlyBudgetBreakdown]
+    );
+
+    const budgetInflowRows = useMemo(
+        () => monthlyBudgetBreakdown.filter((row) => row.direction === 'inflow'),
+        [monthlyBudgetBreakdown]
+    );
+
+    const budgetOutflowRows = useMemo(
+        () => monthlyBudgetBreakdown.filter((row) => row.direction === 'outflow' || row.direction === 'reserve'),
+        [monthlyBudgetBreakdown]
+    );
+
+    const reserveBasisMonthsCount = Number(cashPosition?.reserve_basis_months_count || 0);
+    const reserveBasisAverageInvoiceIncome = Number(cashPosition?.reserve_basis_average_invoice_income || 0);
+    const reserveBasisPercentage = Number(cashPosition?.reserve_basis_percentage || 25);
+    const reserveFormulaLabel = `${reserveBasisPercentage}% x rata-rata invoice paid historis`;
+    const reserveBasisLabel = reserveBasisMonthsCount > 0
+        ? `Rata-rata invoice paid: ${formatCurrency(reserveBasisAverageInvoiceIncome)} · basis ${reserveBasisMonthsCount} bulan`
+        : 'Belum ada histori invoice paid yang cukup untuk membentuk cadangan minimum.';
+
+    const budgetBreakdownColumns = [
+        {
+            key: 'label',
+            label: 'Pos',
+            cellClassName: 'px-3 py-2 font-medium text-gray-900',
+            render: (row) => (
+                <div>
+                    <div>{row.label}</div>
+                    {row.direction === 'reserve' && (
+                        <div className="text-[11px] font-normal text-amber-700">Kebijakan cadangan, bukan realisasi outflow operasional.</div>
+                    )}
+                </div>
+            ),
+        },
+        {
+            key: 'budget_amount',
+            label: 'Budget',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right text-gray-700',
+            render: (row) => formatCurrency(row.budget_amount || 0),
+        },
+        {
+            key: 'actual_amount',
+            label: 'Realisasi',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right text-gray-700',
+            render: (row) => formatCurrency(row.actual_amount || 0),
+        },
+        {
+            key: 'forecast_amount',
+            label: 'Forecast',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900',
+            render: (row) => formatCurrency(row.forecast_amount || 0),
+        },
+        {
+            key: 'variance_amount',
+            label: 'Deviasi',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right',
+            render: (row) => (
+                <span className={(row.variance_amount || 0) > 0 ? 'text-rose-700 font-semibold' : 'text-emerald-700 font-semibold'}>
+                    {formatCurrency(row.variance_amount || 0)}
+                </span>
+            ),
+        },
+        {
+            key: 'variance_pct',
+            label: 'Deviasi %',
+            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+            cellClassName: 'px-3 py-2 text-right text-gray-700',
+            render: (row) => formatPercent(row.variance_pct || 0, 1),
+        },
+        {
+            key: 'status',
+            label: 'Status',
+            render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getBudgetStatusClass(row.status)}`}>{row.status}</span>,
+        },
+    ];
+
+    const financialStatusIndicator = useMemo(() => {
+        const healthStatus = normalizeFinancialStatus(systemCashGuardrail?.health_status);
+        const budgetStatus = normalizeFinancialStatus(monthlyBudgetSummary?.status || monthlyBudget?.status);
+        const reserveMeta = getReserveStatusMeta(cashPosition?.reserve_status);
+        const coverageMeta = getCoverageStatusMeta(projectionSummary?.coverage_status_now);
+
+        let status = healthStatus;
+        if (status === 'unconfigured' && coverageMeta.status === 'defisit') {
+            status = 'rawan';
+        }
+        if (status === 'unconfigured' && reserveMeta.status === 'unconfigured' && budgetStatus === 'unconfigured') {
+            status = 'unconfigured';
+        }
+        if (status === 'unconfigured' && coverageMeta.status !== 'defisit' && reserveMeta.status !== 'unconfigured') {
+            status = 'aman';
+        }
+
+        const reason =
+            systemCashGuardrail?.drivers?.[0]?.detail
+            || systemCashGuardrail?.drivers?.[0]?.title
+            || (coverageMeta.status === 'defisit'
+                ? 'Coverage pengeluaran wajib belum aman untuk periode aktif.'
+                : reserveMeta.status === 'unconfigured'
+                    ? 'Cadangan kas minimum belum aktif, jadi buffer keputusan belum sepenuhnya terlindungi.'
+                    : budgetStatus === 'unconfigured'
+                        ? 'Budget bulan ini belum disusun, sehingga guardrail masih terbatas.'
+                        : 'Status keuangan dihitung dari guardrail sistem berdasarkan posisi kas saat ini.');
+
+        return {
+            main: getFinancialIndicatorMeta(status),
+            reason,
+            subIndicators: [
+                {
+                    key: 'budget',
+                    title: 'Status Budget',
+                    label: getBudgetStatusLabel(monthlyBudgetSummary?.status || monthlyBudget?.status),
+                    meta: getFinancialIndicatorMeta(monthlyBudgetSummary?.status || monthlyBudget?.status),
+                },
+                {
+                    key: 'reserve',
+                    title: 'Status Cadangan',
+                    label: reserveMeta.label,
+                    meta: getFinancialIndicatorMeta(reserveMeta.status),
+                },
+                {
+                    key: 'coverage',
+                    title: 'Coverage Wajib',
+                    label: coverageMeta.label,
+                    meta: getFinancialIndicatorMeta(coverageMeta.status),
+                },
+            ],
+        };
+    }, [
+        cashPosition?.reserve_status,
+        monthlyBudget?.status,
+        monthlyBudgetSummary?.status,
+        projectionSummary?.coverage_status_now,
+        systemCashGuardrail?.drivers,
+        systemCashGuardrail?.health_status,
+    ]);
+
+    const handleBudgetItemChange = (categoryKey, value) => {
+        setMonthlyBudgetForm((prev) => prev.map((item) => (
+            item.category_key === categoryKey
+                ? {
+                    ...item,
+                    target_amount: value.replace(/[^0-9]/g, ''),
+                    is_overridden: Number(value.replace(/[^0-9]/g, '') || 0) !== Number(item.system_recommended_amount || 0),
+                    source: Number(value.replace(/[^0-9]/g, '') || 0) !== Number(item.system_recommended_amount || 0) ? 'manual_override' : 'system',
+                }
+                : item
+        )));
+    };
+
+    const handleSaveMonthlyBudget = async () => {
+        if (!monthlyBudget) {
+            return;
+        }
+
+        try {
+            setMonthlyBudgetSaving(true);
+            setMonthlyBudgetMessage(null);
+
+            const payload = {
+                month: monthlyBudget.month,
+                notes: monthlyBudgetNotes || null,
+                items: monthlyBudgetForm.map((item) => ({
+                    category_key: item.category_key,
+                    target_amount: Number(item.target_amount || 0),
+                    final_active_amount: Number(item.target_amount || 0),
+                    system_recommended_amount: Number(item.system_recommended_amount || 0),
+                    is_overridden: Boolean(item.is_overridden),
+                    source: item.is_overridden ? 'manual_override' : 'system',
+                })),
+            };
+
+            if (monthlyBudget.id) {
+                await monthlyBudgetService.update(monthlyBudget.id, payload);
+            } else {
+                await monthlyBudgetService.create(payload);
+            }
+
+            setMonthlyBudgetMessage({
+                type: 'success',
+                text: 'Budget bulanan berhasil disimpan.',
+            });
+            await fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live' });
+        } catch (err) {
+            setMonthlyBudgetMessage({
+                type: 'error',
+                text: err.response?.data?.message || 'Gagal menyimpan budget bulanan.',
+            });
+        } finally {
+            setMonthlyBudgetSaving(false);
+        }
+    };
 
     const scoreSummary = useMemo(() => {
         const modelAccuracyScore = clampScore(
@@ -656,11 +1005,13 @@ function DashboardPredictionPage() {
 
     const predictionBundleStatus = useMemo(() => {
         const status = String(bundleMeta?.snapshot_status || '');
+        const sourceMode = String(bundleMeta?.source_mode || '');
+        const availabilityStatus = String(bundleMeta?.availability_status || '');
         const warnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
         const completeness = bundleMeta?.section_completeness || null;
         const missing = Array.isArray(completeness?.missing_sections) ? completeness.missing_sections : [];
 
-        if (status === 'ready_complete' && warnings.length === 0) {
+        if ((status === 'ready_complete' || availabilityStatus === 'healthy') && sourceMode === 'snapshot' && warnings.length === 0) {
             return {
                 label: 'Data lengkap',
                 className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -668,12 +1019,28 @@ function DashboardPredictionPage() {
             };
         }
 
+        if (sourceMode === 'stale_snapshot' || availabilityStatus === 'degraded') {
+            return {
+                label: 'Snapshot stale',
+                className: 'border-amber-200 bg-amber-50 text-amber-700',
+                detail: 'Snapshot tersedia tetapi sudah tidak fresh, sehingga halaman memakai cache lama sambil menunggu regenerate.',
+            };
+        }
+
+        if (sourceMode === 'live_fallback' || availabilityStatus === 'fallback_live') {
+            return {
+                label: 'Live fallback aktif',
+                className: 'border-blue-200 bg-blue-50 text-blue-700',
+                detail: 'Snapshot belum tersedia, tetapi halaman tetap berjalan dengan perhitungan live lokal.',
+            };
+        }
+
         return {
-            label: 'Model belum siap',
-            className: 'border-rose-200 bg-rose-50 text-rose-700',
+            label: 'Data prediksi memakai fallback',
+            className: 'border-blue-200 bg-blue-50 text-blue-700',
             detail: missing.length > 0
-                ? `Section model belum lengkap: ${missing.join(', ')}`
-                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Snapshot model tidak tersedia.'),
+                ? `Beberapa section model belum lengkap: ${missing.join(', ')}`
+                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Snapshot belum tersedia, halaman tetap memakai sumber live.'),
         };
     }, [bundleMeta]);
 
@@ -775,20 +1142,42 @@ function DashboardPredictionPage() {
                 order: 1,
             },
             {
-                label: 'Saldo Proyeksi',
+                label: 'Saldo Ledger',
                 data: projectionDailyRows.map((row) => Number(
                     row.chart_balance ?? row.projected_balance ?? 0
                 )),
                 borderColor: '#94a3b8',
                 backgroundColor: 'rgba(148, 163, 184, 0.15)',
-                fill: true,
+                fill: false,
                 borderWidth: 2,
                 tension: 0.3,
             },
             {
-                label: 'Saldo Bebas',
+                label: 'Kas Riil Tersedia',
+                data: projectionDailyRows.map((row) => Number(
+                    row.available_cash ?? 0
+                )),
+                borderColor: '#0f766e',
+                backgroundColor: 'rgba(15, 118, 110, 0.12)',
+                fill: true,
+                borderWidth: 3,
+                tension: 0.25,
+            },
+            {
+                label: 'Kas Setelah Cadangan',
                 data: projectionDailyRows.map((row) => Math.max(0, Number(
-                    row.discretionary_balance_display ?? 0
+                    row.available_cash_after_reserve ?? 0
+                ))),
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.08)',
+                fill: false,
+                borderWidth: 2,
+                tension: 0.2,
+            },
+            {
+                label: 'Saldo Bebas Keputusan',
+                data: projectionDailyRows.map((row) => Math.max(0, Number(
+                    row.discretionary_balance_available_cash ?? row.discretionary_balance_display ?? 0
                 ))),
                 borderColor: '#0ea5e9',
                 backgroundColor: 'rgba(14, 165, 233, 0.1)',
@@ -1120,13 +1509,13 @@ function DashboardPredictionPage() {
         <div className="space-y-6 min-w-0">
             <div className="app-section-header flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Prediksi Multi-Aspek</h1>
+                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Cash Control & Prediksi Keuangan</h1>
                     <p className="text-gray-500 mt-1 flex items-center gap-2">
                         <Calendar size={16} />
                         {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                     </p>
                     <p className="text-sm text-gray-500 mt-2">
-                        Fokus halaman ini hanya untuk analitik prediksi operasional dan keuangan, tanpa tombol operasional dashboard.
+                        Halaman ini difokuskan untuk keputusan kas, budgeting, dan kontrol belanja, lalu dilanjutkan dengan analitik pendukung di bawahnya.
                     </p>
                     {bundleMeta?.snapshot_generated_at && (
                         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
@@ -1210,17 +1599,39 @@ function DashboardPredictionPage() {
                 </div>
             )}
 
-            {modelUnavailableMeta && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    <p className="font-semibold">Model prediksi belum siap</p>
-                    <p className="mt-1">
-                        Snapshot/model belum lengkap. Coba lagi setelah scheduler snapshot mingguan berjalan.
-                    </p>
-                    {latestModelMeta && (
-                        <p className="mt-1 text-xs">
-                            Snapshot: {latestModelMeta.snapshot_generated_at || '-'} | Model: {latestModelMeta.model_version || '-'}
-                        </p>
-                    )}
+            {projectionSummary && (
+                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                    <div className="flex flex-col gap-3">
+                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Indikator Keuangan Saat Ini</p>
+                                <div className="mt-2 flex flex-wrap items-center gap-3">
+                                    <span className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-base font-semibold shadow-sm ${financialStatusIndicator.main.className}`}>
+                                        <span className={`h-3 w-3 rounded-full ${financialStatusIndicator.main.dotClassName}`} />
+                                        {financialStatusIndicator.main.label}
+                                    </span>
+                                    <span className="text-sm text-slate-600">
+                                        Health Score: <span className="font-semibold text-slate-900">{Number(systemCashGuardrail?.health_score || 0)}/100</span>
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 border border-slate-200 max-w-xl">
+                                {financialStatusIndicator.reason}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {financialStatusIndicator.subIndicators.map((item) => (
+                                <span
+                                    key={item.key}
+                                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${item.meta.className}`}
+                                >
+                                    <span className={`h-2 w-2 rounded-full ${item.meta.dotClassName}`} />
+                                    {item.title}: {item.label}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -1309,345 +1720,765 @@ function DashboardPredictionPage() {
                 </div>
             </Modal>
 
-            <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
-                    <div>
-                        <h2 className="text-xl font-bold flex items-center gap-2">
-                            <Brain size={20} className="text-cyan-300" />
-                            Ringkasan Prediksi Menyeluruh
-                        </h2>
-                        <p className="text-sm text-slate-200 mt-1">Skor gabungan dari akurasi model, stabilitas pendapatan, kesehatan pelanggan, collection, dan kesiapan kas.</p>
-                    </div>
-                    <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${
-                        scoreSummary.overallScore >= 80
-                            ? 'bg-emerald-300/20 text-emerald-200'
-                            : scoreSummary.overallScore >= 65
-                                ? 'bg-amber-300/20 text-amber-200'
-                                : 'bg-red-300/20 text-red-200'
-                    }`}>
-                        Skor Menyeluruh: {scoreSummary.overallScore}/100
-                    </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Akurasi Model</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.modelAccuracyScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Stabilitas Pendapatan</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.revenueStabilityScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Collection</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.collectionScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Kesehatan Pelanggan</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.customerHealthScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Kesiapan Kas</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.liquidityScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Volatilitas</p>
-                        <p className="text-2xl font-bold mt-1">{formatPercent(forecastContext?.volatility_index || projectionForecastContext?.volatility_index || 0, 1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Skor Operasional ISP</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.ispOperationalScore.toFixed(1)}</p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div className="app-card p-5 space-y-3">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <ShieldAlert size={16} className="text-rose-600" />
-                        Risk Alarm 24h
-                    </h3>
-                    {!riskAlarm24h ? (
-                        <p className="text-sm text-gray-500">Risk alarm belum tersedia.</p>
-                    ) : (
-                        <>
-                            <div className="flex items-center gap-2">
-                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
-                                    riskAlarm24h.risk_level === 'critical'
-                                        ? 'bg-rose-100 text-rose-700'
-                                        : riskAlarm24h.risk_level === 'warning'
-                                            ? 'bg-amber-100 text-amber-700'
-                                            : 'bg-emerald-100 text-emerald-700'
-                                }`}>
-                                    {riskAlarm24h.risk_level || 'normal'}
-                                </span>
-                                <span className="text-sm text-gray-700">Score: {Number(riskAlarm24h.risk_score || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                                <div className="rounded-lg bg-gray-50 p-2">Overdue rate: {formatPercent(riskAlarm24h?.top_drivers?.overdue_rate || 0, 1)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">Overdue amount: {formatCurrency(riskAlarm24h?.top_drivers?.overdue_amount || 0)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">Waiting confirm: {formatCurrency(riskAlarm24h?.top_drivers?.waiting_confirmation_amount || 0)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">
-                                    Prediksi 24h: {formatCurrency(
-                                        riskAlarm24h?.top_drivers?.predicted_revenue_24h
-                                        ?? riskAlarm24h?.top_drivers?.predicted_net_24h
-                                        ?? 0
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </div>
-
-                <div className="app-card p-5 space-y-3">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <DollarSign size={16} className="text-teal-600" />
-                        What-if Simulator
-                    </h3>
-                    {!whatIfSimulator ? (
-                        <p className="text-sm text-gray-500">Data simulasi belum tersedia.</p>
-                    ) : (
-                        <>
-                            <p className="text-sm text-gray-600">
-                                Baseline net bulan: <span className="font-semibold text-gray-900">{formatCurrency(whatIfSimulator.baseline_month_net || 0)}</span>
-                            </p>
-                            <div className="space-y-2">
-                                {(whatIfSimulator.scenarios || []).map((scenario) => (
-                                    <div key={scenario.key} className="rounded-lg border border-gray-200 p-3 flex items-center justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">{scenario.label}</p>
-                                            <p className="text-xs text-gray-500">Net baru: {formatCurrency(scenario.new_net_estimate || 0)}</p>
-                                        </div>
-                                        <span className={`text-sm font-semibold ${(scenario.estimated_delta_net || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                            {(scenario.estimated_delta_net || 0) >= 0 ? '+' : ''}{formatCurrency(scenario.estimated_delta_net || 0)}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                        <Target size={18} className="text-amber-600" />
-                        Rekomendasi Prioritas
-                    </h2>
-                    <span className="text-xs text-gray-500">Diambil dari seluruh aspek prediksi</span>
-                </div>
-                {smartRecommendations.length === 0 ? (
-                    <p className="text-sm text-gray-500">Rekomendasi akan muncul setelah data prediksi tersedia.</p>
-                ) : (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                        {smartRecommendations.map((item, index) => (
-                            <div key={`smart-reco-${index}`} className="border border-gray-200 rounded-xl p-3 bg-gray-50/60">
-                                <div className="flex items-start justify-between gap-2">
-                                    <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                                        item.priority === 'tinggi'
-                                            ? 'bg-red-100 text-red-700'
-                                            : item.priority === 'menengah'
-                                                ? 'bg-amber-100 text-amber-700'
-                                                : 'bg-emerald-100 text-emerald-700'
-                                    }`}>
-                                        {item.priority}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-gray-600 mt-1">{item.detail}</p>
-                                <p className="text-[11px] text-gray-500 mt-2">Sumber: {item.source}</p>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div className="app-card p-5 space-y-3 min-w-0">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <Users size={16} className="text-blue-600" />
-                        Collection Probability per Pelanggan
-                    </h3>
-                    <div className="border border-gray-100 rounded-lg p-2">
-                        <ResponsiveDataView
-                            rows={collectionProbability.slice(0, 10)}
-                            keyField="customer_id"
-                            priorityFields={['name', 'collection_probability_pct', 'open_invoice_amount']}
-                            emptyMessage="Data collection probability belum tersedia."
-                            tableClassName="w-full text-sm md:min-w-[620px]"
-                            columns={[
-                                { key: 'name', label: 'Pelanggan', cellClassName: 'px-3 py-2 text-gray-900 font-medium' },
-                                {
-                                    key: 'collection_probability_pct',
-                                    label: 'Probabilitas',
-                                    headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-                                    cellClassName: 'px-3 py-2 text-right',
-                                    render: (row) => (
-                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            Number(row.collection_probability_pct || 0) < 45
-                                                ? 'bg-rose-100 text-rose-700'
-                                                : Number(row.collection_probability_pct || 0) < 70
-                                                    ? 'bg-amber-100 text-amber-700'
-                                                    : 'bg-emerald-100 text-emerald-700'
-                                        }`}>
-                                            {Number(row.collection_probability_pct || 0).toFixed(1)}%
-                                        </span>
-                                    ),
-                                },
-                                { key: 'open_invoice_amount', label: 'Open Amount', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.open_invoice_amount || 0) },
-                                { key: 'days_overdue', label: 'Overdue (hari)', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => row.days_overdue || 0 },
-                            ]}
-                        />
-                    </div>
-                </div>
-
-                <div className="app-card p-5 space-y-3 min-w-0">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <Wallet size={16} className="text-violet-600" />
-                        Forecast Bulanan (Pelanggan + Pendapatan)
-                    </h3>
-                    <div className="border border-gray-100 rounded-lg p-2">
-                        <ResponsiveDataView
-                            rows={monthlyTotalRevenueForecast?.months || []}
-                            keyField="month"
-                            priorityFields={['month', 'net_total', 'billing_recurring']}
-                            emptyMessage="Forecast bulanan belum tersedia."
-                            tableClassName="w-full text-sm md:min-w-[740px]"
-                            columns={[
-                                { key: 'month', label: 'Bulan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                { key: 'predicted_total_customers', label: 'Total Pelanggan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => ((customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month)?.predicted_total_customers ?? '-') },
-                                { key: 'billing_recurring', label: 'Billing', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.billing_recurring || 0) },
-                                { key: 'installation', label: 'Pemasangan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.installation || 0) },
-                                { key: 'other_financial_income', label: 'Pendapatan Lain', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.other_financial_income || 0) },
-                                { key: 'net_total', label: 'Total Netto', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(row.net_total || 0)}</span> },
-                            ]}
-                        />
-                    </div>
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-5">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+            <div className="flex flex-col gap-6">
+            <div className="app-card p-6 space-y-5 order-1">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <Activity size={18} className="text-cyan-700" />
-                            Intelijen Operasional ISP
+                            <Wallet size={18} className="text-violet-600" />
+                            Cash Control & Proyeksi Keuangan
                         </h2>
-                        <p className="text-sm text-gray-500 mt-1">Analisis gabungan data pelanggan, invoice, aduan, gangguan, transaksi, dan API MikroTik untuk kebutuhan operasional ISP.</p>
+                        <p className="text-sm text-gray-500 mt-1">Pusat keputusan kas bulanan untuk membaca posisi kas riil, tekanan pinjaman, cadangan, dan ruang belanja aman.</p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(ispSectionSource).className}`}>
-                                Sumber: {getSectionSourceMeta(ispSectionSource).label}
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(projectionSectionSource).className}`}>
+                                Sumber: {getSectionSourceMeta(projectionSectionSource).label}
                             </span>
-                            {ispSectionWarning && (
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${
+                                financialProjectionSourceMode === 'live'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                            }`}>
+                                Proyeksi: {financialProjectionSourceMode === 'live' ? 'Live' : 'Snapshot'}
+                            </span>
+                            {projectionSectionWarning && (
                                 <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                    Warning: {ispSectionWarning}
+                                    Warning: {projectionSectionWarning}
                                 </span>
                             )}
                         </div>
                     </div>
-                    <span className="text-xs text-gray-500">
-                        Periode analisis: {kpiRange.start_date} s.d. {kpiRange.end_date}
-                    </span>
+                    <div className="flex flex-wrap items-end gap-2">
+                        <div>
+                            <label className="block text-xs text-gray-600 mb-1">Bulan</label>
+                            <input
+                                type="month"
+                                value={financialProjectionMonth}
+                                onChange={(e) => setFinancialProjectionMonth(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleApplyFinancialProjectionRange}
+                            disabled={financialProjectionLoading}
+                            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
+                        >
+                            {financialProjectionLoading ? 'Memproses...' : 'Terapkan'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleResetFinancialProjectionRange}
+                            disabled={financialProjectionLoading}
+                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold disabled:opacity-60"
+                        >
+                            Bulan Ini
+                        </button>
+                    </div>
                 </div>
 
-                {ispIntelligenceError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{ispIntelligenceError}</div>
+                <div className="text-xs text-gray-500">
+                    Periode aktif: {financialProjectionRange.start_date} s.d. {financialProjectionRange.end_date} ({formatMonthLabel(financialProjectionMonth)})
+                </div>
+
+                {financialProjectionError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{financialProjectionError}</div>
                 )}
 
-                {ispIntelligenceLoading && !ispSummary && (
+                {financialProjectionLoading && !projectionSummary && (
                     <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Memproses intelijen operasional ISP...
+                        Memproses proyeksi keuangan...
                     </div>
                 )}
 
-                {!ispIntelligenceLoading && !ispIntelligenceError && !ispSummary && (
+                {!financialProjectionLoading && !financialProjectionError && !projectionSummary && (
                     <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Data intelijen operasional ISP belum tersedia.
+                        Data proyeksi keuangan belum tersedia.
                     </div>
                 )}
 
-                {ispSummary && (
+                {projectionSummary && (
                     <>
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div className="rounded-xl bg-white border border-emerald-200 p-4">
+                                <p className="text-xs font-medium text-emerald-700">Kas Riil Tersedia</p>
+                                <p className="text-3xl font-bold text-emerald-900 mt-1">{formatCurrency(cashPosition?.available_cash || 0)}</p>
+                                <p className="text-xs text-emerald-700 mt-1">Angka keputusan utama setelah dikurangi outstanding pinjaman aktif.</p>
+                            </div>
+                            <div className="rounded-xl bg-white border border-cyan-200 p-4">
+                                <p className="text-xs font-medium text-cyan-700">Kas Setelah Cadangan</p>
+                                <p className={`text-3xl font-bold mt-1 ${Number(cashPosition?.available_cash_after_reserve || 0) >= 0 ? 'text-cyan-900' : 'text-rose-700'}`}>
+                                    {formatCurrency(cashPosition?.available_cash_after_reserve || 0)}
+                                </p>
+                                <p className="text-xs text-cyan-700 mt-1">Rumus: Kas Riil - Cadangan Kas Minimum.</p>
+                                <p className="text-[11px] text-cyan-700 mt-1">{cashPosition?.reserve_message || 'Kas setelah reserve aktif.'}</p>
+                            </div>
+                            <div className="rounded-xl bg-white border border-emerald-300 p-4">
+                                <p className="text-xs font-medium text-emerald-700">Saldo Akhir Proyeksi Kas Riil</p>
+                                <p className={`text-3xl font-bold mt-1 ${Number(projectionSummary?.projected_ending_balance_available_cash || 0) >= 0 ? 'text-emerald-900' : 'text-rose-700'}`}>
+                                    {formatCurrency(projectionSummary?.projected_ending_balance_available_cash || 0)}
+                                </p>
+                                <p className="text-xs text-emerald-700 mt-1">Posisi kas riil akhir periode sebelum dikurangi reserve aktif.</p>
+                            </div>
+                            <div className="rounded-xl bg-white border border-indigo-200 p-4">
+                                <p className="text-xs font-medium text-indigo-700">Sisa Budget Aman</p>
+                                <p className={`text-3xl font-bold mt-1 ${Number(monthlyBudgetSummary?.remaining_safe_budget || 0) >= 0 ? 'text-indigo-900' : 'text-rose-700'}`}>
+                                    {formatCurrency(monthlyBudgetSummary?.remaining_safe_budget || 0)}
+                                </p>
+                                <p className="text-xs text-indigo-700 mt-1">
+                                    Ruang aman terhadap budget outflow dan reserve aktif.
+                                </p>
+                                <p className="text-[11px] text-indigo-700 mt-1">Butuh pemasukan tambahan: {formatCurrency(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0)}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+                                <p className="text-xs font-medium text-slate-600">Saldo Ledger</p>
+                                <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(cashPosition?.ledger_balance || projectionSummary.opening_balance || 0)}</p>
+                                <p className="text-xs text-slate-600 mt-1">Angka referensi akuntansi, bukan ruang belanja.</p>
+                            </div>
+                            <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
+                                <p className="text-xs font-medium text-rose-700">Outstanding Pinjaman</p>
+                                <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(cashPosition?.loan_outstanding || 0)}</p>
+                                <p className="text-xs text-rose-700 mt-1">Tekanan langsung terhadap kas riil tersedia.</p>
+                            </div>
+                            <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
+                                <p className="text-xs font-medium text-amber-700">Cadangan Kas Minimum</p>
+                                <p className="text-2xl font-bold text-amber-900 mt-1">{formatCurrency(cashPosition?.minimum_cash_reserve_target || 0)}</p>
+                                <p className="text-xs text-amber-700 mt-1">{reserveFormulaLabel}</p>
+                                <p className="text-[11px] text-amber-700 mt-1">{reserveBasisLabel}</p>
+                            </div>
+                            <div className="rounded-xl bg-white border border-slate-300 p-4">
+                                <p className="text-xs font-medium text-slate-700">Saldo Akhir Proyeksi Ledger</p>
+                                <p className={`text-2xl font-bold mt-1 ${Number(projectionSummary?.projected_ending_balance_ledger || projectionSummary?.projected_ending_balance || 0) >= 0 ? 'text-slate-900' : 'text-rose-700'}`}>
+                                    {formatCurrency(projectionSummary?.projected_ending_balance_ledger || projectionSummary?.projected_ending_balance || 0)}
+                                </p>
+                                <p className="text-xs text-slate-700 mt-1">Tetap dipertahankan sebagai baseline ledger.</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                            <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
+                                <p className="text-xs font-medium text-rose-700">Pengeluaran Wajib</p>
+                                <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(projectionSummary.mandatory_expense)}</p>
+                                <p className="text-xs text-rose-700 mt-1">Shortfall: {formatCurrency(projectionSummary.mandatory_shortfall_total)}</p>
+                            </div>
                             <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
-                                <p className="text-xs font-medium text-cyan-700">Skor Operasional ISP</p>
-                                <p className="text-2xl font-bold text-cyan-900 mt-1">{ispSummary.isp_operational_score || 0}</p>
-                                <p className="text-xs text-cyan-700 mt-1">Network {ispSummary.network_readiness_score || 0} | Finance {ispSummary.finance_readiness_score || 0} | Service {ispSummary.service_readiness_score || 0}</p>
+                                <p className="text-xs font-medium text-cyan-700">Coverage Wajib</p>
+                                <p className="text-2xl font-bold text-cyan-900 mt-1">{formatPercent(projectionSummary.mandatory_coverage_amount_rate || 0, 1)}</p>
+                                <p className="text-xs text-cyan-700 mt-1">
+                                    Event ter-cover: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
+                                </p>
                             </div>
-                            <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-                                <p className="text-xs font-medium text-blue-700">Konektivitas Aktif</p>
-                                <p className="text-2xl font-bold text-blue-900 mt-1">{formatPercent(ispSummary.online_ratio || 0, 1)}</p>
-                                <p className="text-xs text-blue-700 mt-1">Online {ispSummary.online_active_customers || 0}/{ispSummary.active_customers || 0}</p>
-                            </div>
-                            <div className="rounded-xl bg-violet-50 border border-violet-100 p-4">
-                                <p className="text-xs font-medium text-violet-700">Prediksi Tiket 7 Hari</p>
-                                <p className="text-2xl font-bold text-violet-900 mt-1">{ispSummary.predicted_tickets_next_7d || 0}</p>
-                                <p className="text-xs text-violet-700 mt-1">Prioritas tinggi: {ispSummary.predicted_high_priority_tickets_next_7d || 0}</p>
-                            </div>
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Prediksi Pemasukan 7 Hari</p>
-                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(ispSummary.predicted_income_next_7d || 0)}</p>
-                                <p className="text-xs text-emerald-700 mt-1">Collection: {formatPercent(ispSummary.collection_rate || 0, 1)}</p>
+                            <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+                                <p className="text-xs font-medium text-gray-700">Konteks Model</p>
+                                <p className="text-sm text-gray-700 mt-2">Mode: {projectionSummary.calculation_mode === 'hybrid_actual_forecast' ? 'Hybrid aktual + forecast' : 'Forecast penuh'}</p>
+                                <p className="text-sm text-gray-700 mt-1">Confidence: {formatPercent(projectionForecastContext?.average_confidence || 0, 0)}</p>
+                                <p className="text-sm text-gray-700 mt-1">Volatilitas: {formatPercent(projectionForecastContext?.volatility_index || 0, 1)}</p>
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">MikroTik Live Signals</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Router: <span className="font-semibold">{ispMikrotik?.identity || '-'}</span></p>
-                                    <p>Status data live: <span className="font-semibold">{ispMikrotik?.available ? 'Tersedia' : 'Tidak tersedia'}</span></p>
-                                    <p>CPU Load: <span className="font-semibold">{formatPercent(ispMikrotik?.cpu_load || 0, 1)}</span></p>
-                                    <p>Memory Usage: <span className="font-semibold">{ispMikrotik?.memory_usage_ratio === null ? '-' : formatPercent(ispMikrotik?.memory_usage_ratio || 0, 1)}</span></p>
-                                    <p>Interface Running: <span className="font-semibold">{ispMikrotik?.interfaces_running || 0}/{ispMikrotik?.interfaces_total || 0}</span></p>
-                                    <p>Sesi PPPoE matched: <span className="font-semibold">{ispMikrotik?.active_pppoe_sessions_matched || 0}</span></p>
-                                    {ispMikrotik?.error && (
-                                        <p className="text-xs text-amber-700">Catatan: {ispMikrotik.error}</p>
-                                    )}
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 space-y-4">
+                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                                <div>
+                                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                                        <Wallet size={17} className="text-emerald-700" />
+                                        Kontrol Budget Bulanan
+                                    </h3>
+                                    <p className="text-sm text-gray-600 mt-1">
+                                        Ringkas posisi kas, warning reserve, dan budget aktif sebelum Anda mengambil keputusan belanja.
+                                    </p>
+                                </div>
+                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${getBudgetStatusClass(monthlyBudgetSummary?.status || monthlyBudget?.status)}`}>
+                                    Status Budget: {monthlyBudgetSummary?.status || monthlyBudget?.status || 'unconfigured'}
+                                </span>
+                            </div>
+
+                            {monthlyBudgetMessage && (
+                                <Alert
+                                    type={monthlyBudgetMessage.type}
+                                    message={monthlyBudgetMessage.text}
+                                    onClose={() => setMonthlyBudgetMessage(null)}
+                                />
+                            )}
+
+                            {cashPosition?.reserve_status === 'unconfigured' && (
+                                <Alert
+                                    type="info"
+                                    message={cashPosition?.reserve_message || 'Kas Setelah Cadangan masih sama dengan Kas Riil karena cadangan minimum belum aktif.'}
+                                />
+                            )}
+
+                            <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1.35fr] gap-4">
+                                <div className="rounded-xl border border-emerald-200 bg-white p-4 space-y-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Status & Warning</p>
+                                            <p className="text-xs text-gray-500">Status kesehatan kas, reserve, dan tekanan keuangan aktif bulan ini.</p>
+                                        </div>
+                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${getBudgetStatusClass(systemCashGuardrail?.health_status)}`}>
+                                            {systemCashGuardrail?.health_status || 'unconfigured'}
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div className="rounded-xl border border-gray-100 bg-emerald-50 p-4">
+                                            <p className="text-xs text-emerald-700">Health Score</p>
+                                            <p className="mt-2 text-3xl font-bold text-emerald-900">{Number(systemCashGuardrail?.health_score || 0)}/100</p>
+                                        </div>
+                                        <div className="rounded-xl border border-gray-100 bg-slate-50 p-4">
+                                            <p className="text-xs text-slate-700">Confidence Sistem</p>
+                                            <p className="mt-2 text-3xl font-bold text-slate-900">{Number(systemCashGuardrail?.confidence || 0)}%</p>
+                                        </div>
+                                        <div className="rounded-xl border border-gray-100 bg-amber-50 p-4 md:col-span-2">
+                                            <p className="text-xs text-amber-700">Status Cadangan</p>
+                                            <p className="mt-2 text-sm font-semibold text-amber-900">
+                                                {cashPosition?.reserve_status === 'unconfigured'
+                                                    ? 'Cadangan belum aktif, jadi Kas Setelah Cadangan masih sama dengan Kas Riil.'
+                                                    : cashPosition?.reserve_message || 'Cadangan kas minimum sudah aktif.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-900">Action Center</p>
+                                        <p className="text-xs text-gray-500">Prioritas keputusan yang paling relevan untuk menjaga cash flow tetap aman.</p>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {(systemCashGuardrail?.action_center || []).map((item) => (
+                                            <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                                                <p className="text-xs text-gray-500">{item.title}</p>
+                                                <p className="mt-2 text-xl font-bold text-gray-900">{formatCurrency(item.value || 0)}</p>
+                                                <p className="mt-1 text-xs text-gray-500">{item.note}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {(systemCashGuardrail?.drivers || []).length === 0 ? (
+                                            <p className="rounded-lg border border-dashed border-gray-200 px-4 py-3 text-sm text-gray-500">Belum ada faktor risiko dominan yang terdeteksi dari data bulan ini.</p>
+                                        ) : (
+                                            (systemCashGuardrail?.drivers || []).map((driver) => (
+                                                <div key={driver.key} className="rounded-lg border border-gray-100 px-4 py-3">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <p className="text-sm font-semibold text-gray-900">{driver.title}</p>
+                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getBudgetStatusClass(driver.impact === 'tinggi' ? 'defisit' : driver.impact === 'menengah' ? 'waspada' : 'aman')}`}>
+                                                            {driver.impact}
+                                                        </span>
+                                                    </div>
+                                                    <p className="mt-1 text-xs text-gray-500">{driver.detail}</p>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">Pressure Forecast (7 Hari)</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Baseline aduan harian: <span className="font-semibold">{ispServiceForecast?.daily_ticket_baseline ?? 0}</span></p>
-                                    <p>Pressure gangguan: <span className="font-semibold">{ispServiceForecast?.disturbance_pressure ?? 0}</span></p>
-                                    <p>Rasio instabilitas jaringan: <span className="font-semibold">{formatPercent(ispServiceForecast?.network_instability_ratio || 0, 2)}</span></p>
-                                    <p>Kapasitas tiket/hari disarankan: <span className="font-semibold">{ispSummary.recommended_daily_ticket_capacity || 0}</span></p>
-                                    <p>Piutang overdue: <span className="font-semibold">{formatCurrency(ispSummary.overdue_invoice_amount || 0)}</span></p>
-                                    <p>Tagihan jatuh tempo 7 hari: <span className="font-semibold">{formatCurrency(ispFinancialForecast?.due_next_7d_amount || 0)}</span></p>
+                            <div className="grid grid-cols-1 gap-4">
+                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Input Budget {formatMonthLabel(financialProjectionMonth)}</p>
+                                            <p className="text-xs text-gray-500">
+                                                {monthlyBudget?.status === 'manual_override'
+                                                    ? 'Budget sudah dioverride manual dan bisa diperbarui lagi.'
+                                                    : monthlyBudget?.status === 'configured'
+                                                        ? 'Budget aktif mengikuti nilai tersimpan.'
+                                                        : monthlyBudget?.status === 'system_generated'
+                                                            ? 'Budget bulan ini dihasilkan otomatis dari data sistem dan bisa Anda override.'
+                                                            : 'Budget bulan ini belum memiliki baseline yang cukup.'}
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveMonthlyBudget}
+                                            disabled={monthlyBudgetSaving || monthlyBudgetForm.length === 0}
+                                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                                        >
+                                            {monthlyBudgetSaving ? 'Menyimpan...' : monthlyBudget?.id ? 'Update Budget' : 'Buat Budget'}
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        {monthlyBudgetForm.map((item) => (
+                                            <label key={item.category_key} className="block">
+                                                <span className="block text-xs font-medium text-gray-600 mb-1">
+                                                    {item.label}
+                                                    <span className="ml-2 text-[11px] text-gray-400">
+                                                        Rekomendasi: {formatCurrency(item.system_recommended_amount || 0)}
+                                                    </span>
+                                                </span>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={item.target_amount}
+                                                    onChange={(event) => handleBudgetItemChange(item.category_key, event.target.value)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                                />
+                                            </label>
+                                        ))}
+                                    </div>
+
+                                    <label className="block">
+                                        <span className="block text-xs font-medium text-gray-600 mb-1">Catatan Budget</span>
+                                        <textarea
+                                            value={monthlyBudgetNotes}
+                                            onChange={(event) => setMonthlyBudgetNotes(event.target.value)}
+                                            rows={3}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                            placeholder="Catatan target bulan ini..."
+                                        />
+                                    </label>
+                                </div>
+
+                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                                    <div className="flex flex-col gap-2">
+                                        <div>
+                                            <p className="text-sm font-semibold text-gray-900">Budget vs Forecast</p>
+                                            <p className="text-xs text-gray-500">Pemasukan dipisah dari pengeluaran dan cadangan agar pembacaan budget bulanan lebih cepat.</p>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 space-y-2">
+                                            <div className="flex flex-col gap-1">
+                                                <p className="text-sm font-semibold text-emerald-900">Pemasukan</p>
+                                                <p className="text-xs text-emerald-700">Pantau apakah invoice dan non-invoice cukup untuk menutup budget bulan berjalan.</p>
+                                            </div>
+                                            <div className="text-xs text-emerald-800">
+                                                Forecast pemasukan: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.total_forecast_inflows || 0)}</span>
+                                                {' · '}
+                                                Budget pemasukan: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.total_budget_inflows || 0)}</span>
+                                            </div>
+                                            <div className="border border-emerald-100 rounded-lg bg-white p-2">
+                                                <ResponsiveDataView
+                                                    rows={budgetInflowRows}
+                                                    keyField="category_key"
+                                                    priorityFields={['label', 'budget_amount', 'forecast_amount', 'status']}
+                                                    emptyMessage="Belum ada pos pemasukan untuk bulan ini."
+                                                    tableClassName="w-full text-sm md:min-w-[860px]"
+                                                    columns={budgetBreakdownColumns}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-3 space-y-2">
+                                            <div className="flex flex-col gap-1">
+                                                <p className="text-sm font-semibold text-amber-900">Pengeluaran & Cadangan</p>
+                                                <p className="text-xs text-amber-700">Cadangan ditampilkan sebagai buffer kebijakan agar tidak terbaca sama seperti outflow operasional biasa.</p>
+                                            </div>
+                                            <div className="text-xs text-amber-800">
+                                                Operasional tersisa: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.remaining_operational_budget || 0)}</span>
+                                                {' · '}
+                                                Purchase tersisa: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.remaining_purchase_budget || 0)}</span>
+                                                {' · '}
+                                                Reserve target: <span className="font-semibold">{formatCurrency(cashPosition?.minimum_cash_reserve_target || 0)}</span>
+                                            </div>
+                                            <div className="border border-amber-100 rounded-lg bg-white p-2">
+                                                <ResponsiveDataView
+                                                    rows={budgetOutflowRows}
+                                                    keyField="category_key"
+                                                    priorityFields={['label', 'budget_amount', 'forecast_amount', 'status']}
+                                                    emptyMessage="Belum ada pos pengeluaran untuk bulan ini."
+                                                    tableClassName="w-full text-sm md:min-w-[860px]"
+                                                    columns={budgetBreakdownColumns}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                                    <p className="text-xs font-medium text-gray-600">Sisa Budget Operasional</p>
+                                    <p className={`text-xl font-bold mt-1 ${Number(budgetOperationalRow?.budget_amount || 0) - Number(budgetOperationalRow?.forecast_amount || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                        {formatCurrency(monthlyBudgetSummary?.remaining_operational_budget || 0)}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                                    <p className="text-xs font-medium text-gray-600">Sisa Budget Pembelian</p>
+                                    <p className={`text-xl font-bold mt-1 ${Number(budgetPurchaseRow?.budget_amount || 0) - Number(budgetPurchaseRow?.forecast_amount || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                        {formatCurrency(monthlyBudgetSummary?.remaining_purchase_budget || 0)}
+                                    </p>
+                                </div>
+                                <div className="rounded-xl border border-gray-200 bg-white p-4">
+                                    <p className="text-xs font-medium text-gray-600">Minimal Pemasukan Tambahan</p>
+                                    <p className={`text-xl font-bold mt-1 ${Number(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0) > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                        {formatCurrency(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0)}
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            <ResponsiveDataView
-                                rows={ispRiskMatrix}
-                                keyField="key"
-                                priorityFields={['label', 'status', 'score']}
-                                emptyMessage="Data matriks risiko belum tersedia."
-                                tableClassName="w-full text-sm md:min-w-[700px]"
-                                columns={[
-                                    { key: 'label', label: 'Aspek', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                    { key: 'score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
-                                    { key: 'status', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>{row.status}</span> },
-                                    { key: 'reason', label: 'Alasan', cellClassName: 'px-3 py-2 text-gray-700' },
-                                ]}
-                            />
+                        {projectionAssistant && (
+                            <div className="rounded-xl border border-gray-200 bg-gradient-to-r from-slate-50 to-blue-50 p-4">
+                                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                            <Brain size={16} className="text-indigo-700" />
+                                            Asisten AI Proyeksi Keuangan
+                                        </p>
+                                        <p className="text-xs text-gray-600 mt-1">{projectionAssistant.headline}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2 flex-wrap lg:justify-end">
+                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(projectionAssistant.risk_level)}`}>
+                                            Risiko {projectionAssistant.risk_level}
+                                        </span>
+                                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
+                                            Skor {projectionAssistant.score}/100
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-semibold text-gray-900">Tren Harian Kas</p>
+                                    <p className="text-xs text-gray-500">Garis ledger tetap ada sebagai referensi, tetapi kas riil dan kas setelah cadangan adalah konteks keputusan utama.</p>
+                                </div>
+                            </div>
+                            <div className="h-[320px]">
+                                <Line data={projectionChartData} options={projectionChartOptions} />
+                            </div>
+                        </div>
+
+                        <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
+                                <p className="text-sm font-semibold text-gray-900">Timeline Kas Harian ({formatMonthLabel(financialProjectionMonth)})</p>
+                                <div className="flex items-end gap-2">
+                                    <div>
+                                        <label className="block text-xs text-gray-600 mb-1">Bulan Riwayat</label>
+                                        <input
+                                            type="month"
+                                            value={financialProjectionMonth}
+                                            onChange={(e) => setFinancialProjectionMonth(e.target.value)}
+                                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleApplyFinancialProjectionRange}
+                                        disabled={financialProjectionLoading}
+                                        className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold disabled:opacity-60"
+                                    >
+                                        Terapkan
+                                    </button>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-500">Kolom keputusan diletakkan di depan agar perubahan kas riil lebih cepat terbaca.</p>
+                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
+                                {financialProjectionLoading && projectionDailyRows.length === 0 ? (
+                                    <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat riwayat saldo...</div>
+                                ) : financialProjectionError ? (
+                                    <div className="px-3 py-4 text-center text-red-700 text-sm">{financialProjectionError}</div>
+                                ) : (
+                                    <ResponsiveDataView
+                                        rows={projectionDailyRows}
+                                        keyField="date"
+                                        priorityFields={['date', 'available_cash', 'available_cash_after_reserve', 'discretionary_balance_display']}
+                                        emptyMessage={`Belum ada data riwayat saldo di bulan ${formatMonthLabel(financialProjectionMonth)}.`}
+                                        tableClassName="w-full text-sm md:min-w-[1220px]"
+                                        columns={[
+                                            { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
+                                            { key: 'available_cash', label: 'Kas Riil', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-emerald-700', render: (row) => formatCurrency(row.available_cash || 0) },
+                                            {
+                                                key: 'available_cash_after_reserve',
+                                                label: 'Kas Setelah Cadangan',
+                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                                                cellClassName: 'px-3 py-2 text-right font-semibold text-cyan-700',
+                                                render: (row) => (
+                                                    <div>
+                                                        <div>{formatCurrency(row.available_cash_after_reserve || 0)}</div>
+                                                        {Number(row.available_cash || 0) === Number(row.available_cash_after_reserve || 0) && (
+                                                            <div className="text-[11px] text-cyan-600">Reserve belum menekan kas aktif</div>
+                                                        )}
+                                                    </div>
+                                                ),
+                                            },
+                                            { key: 'discretionary_balance_display', label: 'Saldo Bebas Keputusan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(Math.max(0, Number(row.discretionary_balance_available_cash ?? row.discretionary_balance_display ?? 0))) },
+                                            { key: 'loan_outstanding', label: 'Outstanding Pinjaman', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-rose-700', render: (row) => formatCurrency(row.loan_outstanding || 0) },
+                                            { key: 'predicted_income', label: 'Prediksi Pemasukan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.predicted_income || 0) },
+                                            { key: 'mandatory_expense', label: 'Pengeluaran Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.mandatory_expense || 0) },
+                                            {
+                                                key: 'chart_balance',
+                                                label: 'Saldo Ledger',
+                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                                                cellClassName: 'px-3 py-2 text-right font-semibold',
+                                                render: (row) => {
+                                                    const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
+                                                    return <span className={totalSaldo >= 0 ? 'text-slate-900' : 'text-red-700'}>{formatCurrency(totalSaldo)}</span>;
+                                                },
+                                            },
+                                            {
+                                                key: 'chart_balance_source',
+                                                label: 'Sumber',
+                                                render: (row) => {
+                                                    const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
+                                                    return (
+                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sourceMeta.className}`}>
+                                                            {sourceMeta.label}
+                                                        </span>
+                                                    );
+                                                },
+                                            },
+                                        ]}
+                                    />
+                                )}
+                            </div>
                         </div>
                     </>
                 )}
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                        <div className="flex flex-col gap-2">
+                            <p className="text-sm font-semibold text-gray-900">Kontrol Pengeluaran Wajib</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('all')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'all'
+                                            ? 'bg-slate-800 text-white'
+                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                    }`}
+                                >
+                                    Semua ({mandatoryProjectionCounters.total})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('confirmed')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'confirmed'
+                                            ? 'bg-indigo-700 text-white'
+                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                                    }`}
+                                >
+                                    Sudah Terlaksana ({mandatoryProjectionCounters.confirmed})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMandatoryProjectionFilter('pending')}
+                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
+                                        mandatoryProjectionFilter === 'pending'
+                                            ? 'bg-emerald-700 text-white'
+                                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                    }`}
+                                >
+                                    Belum Terlaksana ({mandatoryProjectionCounters.pending})
+                                </button>
+                            </div>
+                        </div>
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi pengeluaran wajib...</div>
+                            ) : mandatoryProjectionRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada kejadian pengeluaran wajib pada periode ini.</div>
+                            ) : filteredMandatoryRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada data untuk filter yang dipilih.</div>
+                            ) : (
+                                <ResponsiveDataView
+                                    rows={filteredMandatoryRows}
+                                    keyField="event_id"
+                                    priorityFields={['name', 'due_date', 'amount', 'indicator', 'shortfall']}
+                                    tableClassName="w-full text-sm md:min-w-[860px]"
+                                    columns={[
+                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                        { key: 'due_date', label: 'Jatuh Tempo', cellClassName: 'px-3 py-2 text-gray-700' },
+                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
+                                        { key: 'coverage_ratio', label: 'Coverage', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.coverage_ratio || 0, 1) },
+                                        { key: 'shortfall', label: 'Shortfall', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}>{formatCurrency(row.shortfall || 0)}</span> },
+                                        { key: 'indicator', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>{row.indicator || '-'}</span> },
+                                    ]}
+                                    actions={(row) => (
+                                        <div className="flex flex-col items-center gap-1">
+                                            {row.is_confirmed ? (
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        disabled
+                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
+                                                    >
+                                                        Sudah Terlaksana
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRevokeMandatoryExecution(row)}
+                                                        disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
+                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
+                                                    >
+                                                        {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleConfirmMandatoryExecution(row)}
+                                                    disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
+                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                                                >
+                                                    {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                />
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                        <p className="text-sm font-semibold text-gray-900">Kontrol Target Pembelian</p>
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi target pembelian...</div>
+                            ) : (
+                                <ResponsiveDataView
+                                    rows={purchaseGoalRows}
+                                    keyField="id"
+                                    priorityFields={['name', 'amount', 'predicted_buy_date', 'indicator']}
+                                    emptyMessage="Belum ada target pembelian aktif."
+                                    tableClassName="w-full text-sm md:min-w-[700px]"
+                                    columns={[
+                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
+                                        { key: 'desired_date', label: 'Target Tanggal', render: (row) => row.desired_date || '-' },
+                                        { key: 'predicted_buy_date', label: 'Prediksi Bisa Dibeli', render: (row) => row.predicted_buy_date || 'Belum tercapai di rentang' },
+                                        {
+                                            key: 'indicator',
+                                            label: 'Status',
+                                            render: (row) => (
+                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                    row.indicator === 'siap'
+                                                        ? 'bg-emerald-100 text-emerald-700'
+                                                        : row.indicator === 'menunggu'
+                                                            ? 'bg-amber-100 text-amber-700'
+                                                            : row.indicator === 'tertahan_wajib'
+                                                                ? 'bg-rose-100 text-rose-700'
+                                                                : 'bg-gray-200 text-gray-700'
+                                                }`}>
+                                                    {row.indicator || '-'}
+                                                </span>
+                                            ),
+                                        },
+                                    ]}
+                                    actions={(row) => (
+                                        <div className="flex flex-col items-center gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleFulfillPurchaseGoal(row)}
+                                                disabled={purchaseActionLoadingId === Number(row.id)}
+                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                                            >
+                                                {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
+                                            </button>
+                                            {row.can_execute_now !== true && (
+                                                <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
+                                            )}
+                                        </div>
+                                    )}
+                                />
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <p className="text-sm font-semibold text-gray-900">Simulasi Pembelian vs Coverage Wajib</p>
+                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                            projectionSummary?.coverage_status_now === false
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                            {projectionSummary?.coverage_status_now === false ? 'Coverage Saat Ini: Tidak Aman' : 'Coverage Saat Ini: Aman'}
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <div className="md:col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Tanggal Simulasi</label>
+                            <input
+                                type="date"
+                                value={purchaseSimulationDate}
+                                onChange={(e) => setPurchaseSimulationDate(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className="block text-xs text-gray-600 mb-1">Nominal Pembelian</label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={purchaseSimulationAmount}
+                                onChange={(e) => setPurchaseSimulationAmount(e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                placeholder="Contoh: 1500000"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            onClick={handleSimulatePurchase}
+                            disabled={purchaseSimulationLoading}
+                            className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
+                        >
+                            {purchaseSimulationLoading ? 'Memproses...' : 'Simulasikan'}
+                        </button>
+                    </div>
+
+                    {purchaseSimulationError && (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
+                            {purchaseSimulationError}
+                        </div>
+                    )}
+
+                    {purchaseSimulationResult && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Status</p>
+                                <p className={`text-sm font-bold mt-1 ${
+                                    purchaseSimulationResult?.is_covered ? 'text-emerald-700' : 'text-rose-700'
+                                }`}>
+                                    {purchaseSimulationResult?.is_covered ? 'Aman' : 'Tidak Aman'}
+                                </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Tanggal Gagal Pertama</p>
+                                <p className="text-sm font-semibold text-gray-900 mt-1">
+                                    {purchaseSimulationResult?.first_failure_date || '-'}
+                                </p>
+                            </div>
+                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                                <p className="text-xs text-gray-600">Minimum Saldo</p>
+                                <p className="text-sm font-semibold text-gray-900 mt-1">
+                                    {formatCurrency(purchaseSimulationResult?.minimum_balance || 0)}
+                                </p>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
-            <div className="app-card p-6 space-y-5">
+            <div className="order-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-white p-5">
+                <div className="flex flex-col gap-1">
+                    <p className="text-sm font-semibold text-slate-900">Analitik Pendukung</p>
+                    <p className="text-sm text-slate-500">Section di bawah ini tetap lengkap, tetapi posisinya sekunder setelah kontrol kas dan budgeting.</p>
+                </div>
+            </div>
+
+            <div className="app-card p-6 space-y-5 order-3">
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                     <div>
                         <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                             <TrendingUp size={18} className="text-blue-600" />
-                            Prediksi Pendapatan Harian
+                            Forecast Pendapatan Harian
                         </h2>
-                        <p className="text-sm text-gray-500 mt-1">Model ensemble seasonal + momentum + smoothing dengan kalibrasi otomatis.</p>
+                        <p className="text-sm text-gray-500 mt-1">Analitik pemasukan diletakkan paling dekat dengan cash planning karena langsung memengaruhi ruang kas bulan berjalan.</p>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(forecastSectionSource).className}`}>
                                 Sumber: {getSectionSourceMeta(forecastSectionSource).label}
@@ -1784,459 +2615,338 @@ function DashboardPredictionPage() {
                 )}
             </div>
 
-            <div className="app-card p-6 space-y-5">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white shadow-lg order-7">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
                     <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <Wallet size={18} className="text-violet-600" />
-                            Proyeksi Keuangan Bulanan
+                        <h2 className="text-xl font-bold flex items-center gap-2">
+                            <Brain size={20} className="text-cyan-300" />
+                            Ringkasan Prediksi Menyeluruh
                         </h2>
-                        <p className="text-sm text-gray-500 mt-1">Prediksi pendapatan vs kewajiban wajib, termasuk peluang eksekusi target pembelian.</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(projectionSectionSource).className}`}>
-                                Sumber: {getSectionSourceMeta(projectionSectionSource).label}
-                            </span>
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${
-                                financialProjectionSourceMode === 'live'
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                            }`}>
-                                Proyeksi: {financialProjectionSourceMode === 'live' ? 'Live' : 'Snapshot'}
-                            </span>
-                            {projectionSectionWarning && (
-                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                    Warning: {projectionSectionWarning}
-                                </span>
-                            )}
-                        </div>
+                        <p className="text-sm text-slate-200 mt-1">Skor gabungan dari akurasi model, stabilitas pendapatan, kesehatan pelanggan, collection, dan kesiapan kas.</p>
                     </div>
-                    <div className="flex flex-wrap items-end gap-2">
-                        <div>
-                            <label className="block text-xs text-gray-600 mb-1">Bulan</label>
-                            <input
-                                type="month"
-                                value={financialProjectionMonth}
-                                onChange={(e) => setFinancialProjectionMonth(e.target.value)}
-                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleApplyFinancialProjectionRange}
-                            disabled={financialProjectionLoading}
-                            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            {financialProjectionLoading ? 'Memproses...' : 'Terapkan'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleResetFinancialProjectionRange}
-                            disabled={financialProjectionLoading}
-                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            Bulan Ini
-                        </button>
-                    </div>
+                    <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${
+                        scoreSummary.overallScore >= 80
+                            ? 'bg-emerald-300/20 text-emerald-200'
+                            : scoreSummary.overallScore >= 65
+                                ? 'bg-amber-300/20 text-amber-200'
+                                : 'bg-red-300/20 text-red-200'
+                    }`}>
+                        Skor Menyeluruh: {scoreSummary.overallScore}/100
+                    </span>
                 </div>
 
-                <div className="text-xs text-gray-500">
-                    Periode aktif: {financialProjectionRange.start_date} s.d. {financialProjectionRange.end_date} ({formatMonthLabel(financialProjectionMonth)})
-                </div>
-
-                {financialProjectionError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{financialProjectionError}</div>
-                )}
-
-                {financialProjectionLoading && !projectionSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Memproses proyeksi keuangan...
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Akurasi Model</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.modelAccuracyScore.toFixed(1)}</p>
                     </div>
-                )}
-
-                {!financialProjectionLoading && !financialProjectionError && !projectionSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Data proyeksi keuangan belum tersedia.
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Stabilitas Pendapatan</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.revenueStabilityScore.toFixed(1)}</p>
                     </div>
-                )}
-
-                {projectionSummary && (
-                    <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
-                                <p className="text-xs font-medium text-slate-600">Saldo Awal</p>
-                                <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(projectionSummary.opening_balance)}</p>
-                            </div>
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Prediksi Pemasukan</p>
-                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(projectionSummary.predicted_income)}</p>
-                                <p className="text-xs text-emerald-700 mt-1">Aktual: {formatCurrency(projectionSummary.income_actual_to_date)} | Sisa: {formatCurrency(projectionSummary.income_forecast_remaining)}</p>
-                            </div>
-                            <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
-                                <p className="text-xs font-medium text-rose-700">Pengeluaran Wajib</p>
-                                <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(projectionSummary.mandatory_expense)}</p>
-                                <p className="text-xs text-rose-700 mt-1">Shortfall: {formatCurrency(projectionSummary.mandatory_shortfall_total)}</p>
-                            </div>
-                            <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
-                                <p className="text-xs font-medium text-amber-700">Saldo Akhir Proyeksi</p>
-                                <p className={`text-2xl font-bold mt-1 ${Number(projectionSummary.projected_ending_balance || 0) >= 0 ? 'text-amber-900' : 'text-red-700'}`}>
-                                    {formatCurrency(projectionSummary.projected_ending_balance)}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                            <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
-                                <p className="text-xs font-medium text-cyan-700">Coverage Wajib (Nominal)</p>
-                                <p className="text-2xl font-bold text-cyan-900 mt-1">{formatPercent(projectionSummary.mandatory_coverage_amount_rate || 0, 1)}</p>
-                                <p className="text-xs text-cyan-700 mt-1">
-                                    Event ter-cover: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
-                                </p>
-                            </div>
-                            <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
-                                <p className="text-xs font-medium text-indigo-700">Budget Operasional Aman</p>
-                                <p className="text-2xl font-bold text-indigo-900 mt-1">{formatCurrency(projectionSummary.operational_spending_budget)}</p>
-                                <p className="text-xs text-indigo-700 mt-1">Saran pakai: {formatCurrency(projectionSummary.recommended_operational_spending_budget)}</p>
-                            </div>
-                            <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
-                                <p className="text-xs font-medium text-gray-700">Konteks Model</p>
-                                <p className="text-sm text-gray-700 mt-2">Mode: {projectionSummary.calculation_mode === 'hybrid_actual_forecast' ? 'Hybrid aktual + forecast' : 'Forecast penuh'}</p>
-                                <p className="text-sm text-gray-700 mt-1">Confidence: {formatPercent(projectionForecastContext?.average_confidence || 0, 0)}</p>
-                                <p className="text-sm text-gray-700 mt-1">Volatilitas: {formatPercent(projectionForecastContext?.volatility_index || 0, 1)}</p>
-                            </div>
-                        </div>
-
-                        {projectionAssistant && (
-                            <div className="rounded-xl border border-gray-200 bg-gradient-to-r from-slate-50 to-blue-50 p-4">
-                                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                                    <div>
-                                        <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                                            <Brain size={16} className="text-indigo-700" />
-                                            Asisten AI Proyeksi Keuangan
-                                        </p>
-                                        <p className="text-xs text-gray-600 mt-1">{projectionAssistant.headline}</p>
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-wrap lg:justify-end">
-                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(projectionAssistant.risk_level)}`}>
-                                            Risiko {projectionAssistant.risk_level}
-                                        </span>
-                                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
-                                            Skor {projectionAssistant.score}/100
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="h-[320px]">
-                            <Line data={projectionChartData} options={projectionChartOptions} />
-                        </div>
-
-                        <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
-                                <p className="text-sm font-semibold text-gray-900">Riwayat Total Saldo (Harian - {formatMonthLabel(financialProjectionMonth)})</p>
-                                <div className="flex items-end gap-2">
-                                    <div>
-                                        <label className="block text-xs text-gray-600 mb-1">Bulan Riwayat</label>
-                                        <input
-                                            type="month"
-                                            value={financialProjectionMonth}
-                                            onChange={(e) => setFinancialProjectionMonth(e.target.value)}
-                                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                        />
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleApplyFinancialProjectionRange}
-                                        disabled={financialProjectionLoading}
-                                        className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold disabled:opacity-60"
-                                    >
-                                        Terapkan
-                                    </button>
-                                </div>
-                            </div>
-                            <p className="text-xs text-gray-500">Pemilih bulan ini sinkron dengan filter Proyeksi Keuangan Bulanan.</p>
-                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                {financialProjectionLoading && projectionDailyRows.length === 0 ? (
-                                    <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat riwayat saldo...</div>
-                                ) : financialProjectionError ? (
-                                    <div className="px-3 py-4 text-center text-red-700 text-sm">{financialProjectionError}</div>
-                                ) : (
-                                    <ResponsiveDataView
-                                        rows={projectionDailyRows}
-                                        keyField="date"
-                                        priorityFields={['date', 'chart_balance', 'chart_balance_source', 'discretionary_balance_display']}
-                                        emptyMessage={`Belum ada data riwayat saldo di bulan ${formatMonthLabel(financialProjectionMonth)}.`}
-                                        tableClassName="w-full text-sm md:min-w-[980px]"
-                                        columns={[
-                                            { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
-                                            {
-                                                key: 'chart_balance',
-                                                label: 'Total Saldo',
-                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-                                                cellClassName: 'px-3 py-2 text-right font-semibold',
-                                                render: (row) => {
-                                                    const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
-                                                    return <span className={totalSaldo >= 0 ? 'text-gray-900' : 'text-red-700'}>{formatCurrency(totalSaldo)}</span>;
-                                                },
-                                            },
-                                            {
-                                                key: 'chart_balance_source',
-                                                label: 'Sumber',
-                                                render: (row) => {
-                                                    const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
-                                                    return (
-                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sourceMeta.className}`}>
-                                                            {sourceMeta.label}
-                                                        </span>
-                                                    );
-                                                },
-                                            },
-                                            { key: 'predicted_income', label: 'Prediksi Pemasukan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.predicted_income || 0) },
-                                            { key: 'mandatory_expense', label: 'Pengeluaran Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.mandatory_expense || 0) },
-                                            { key: 'discretionary_balance_display', label: 'Saldo Bebas', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(Math.max(0, Number(row.discretionary_balance_display ?? 0))) },
-                                        ]}
-                                    />
-                                )}
-                            </div>
-                        </div>
-
-                    </>
-                )}
-
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                        <div className="flex flex-col gap-2">
-                            <p className="text-sm font-semibold text-gray-900">Prediksi Pengeluaran Wajib</p>
-                            <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('all')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'all'
-                                            ? 'bg-slate-800 text-white'
-                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                                    }`}
-                                >
-                                    Semua ({mandatoryProjectionCounters.total})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('confirmed')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'confirmed'
-                                            ? 'bg-indigo-700 text-white'
-                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                                    }`}
-                                >
-                                    Sudah Terlaksana ({mandatoryProjectionCounters.confirmed})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('pending')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'pending'
-                                            ? 'bg-emerald-700 text-white'
-                                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                    }`}
-                                >
-                                    Belum Terlaksana ({mandatoryProjectionCounters.pending})
-                                </button>
-                            </div>
-                        </div>
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi pengeluaran wajib...</div>
-                            ) : mandatoryProjectionRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada kejadian pengeluaran wajib pada periode ini.</div>
-                            ) : filteredMandatoryRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada data untuk filter yang dipilih.</div>
-                            ) : (
-                                <ResponsiveDataView
-                                    rows={filteredMandatoryRows}
-                                    keyField="event_id"
-                                    priorityFields={['name', 'due_date', 'amount', 'indicator', 'shortfall']}
-                                    tableClassName="w-full text-sm md:min-w-[860px]"
-                                    columns={[
-                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                        { key: 'due_date', label: 'Jatuh Tempo', cellClassName: 'px-3 py-2 text-gray-700' },
-                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
-                                        { key: 'coverage_ratio', label: 'Coverage', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.coverage_ratio || 0, 1) },
-                                        { key: 'shortfall', label: 'Shortfall', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}>{formatCurrency(row.shortfall || 0)}</span> },
-                                        { key: 'indicator', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>{row.indicator || '-'}</span> },
-                                    ]}
-                                    actions={(row) => (
-                                        <div className="flex flex-col items-center gap-1">
-                                            {row.is_confirmed ? (
-                                                <>
-                                                    <button
-                                                        type="button"
-                                                        disabled
-                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
-                                                    >
-                                                        Sudah Terlaksana
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRevokeMandatoryExecution(row)}
-                                                        disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
-                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                                                    >
-                                                        {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleConfirmMandatoryExecution(row)}
-                                                    disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
-                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-                                                >
-                                                    {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                />
-                            )}
-                        </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Collection</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.collectionScore.toFixed(1)}</p>
                     </div>
-
-                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                        <p className="text-sm font-semibold text-gray-900">Prediksi Kesiapan Target Pembelian</p>
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi target pembelian...</div>
-                            ) : (
-                                <ResponsiveDataView
-                                    rows={purchaseGoalRows}
-                                    keyField="id"
-                                    priorityFields={['name', 'amount', 'predicted_buy_date', 'indicator']}
-                                    emptyMessage="Belum ada target pembelian aktif."
-                                    tableClassName="w-full text-sm md:min-w-[700px]"
-                                    columns={[
-                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
-                                        { key: 'desired_date', label: 'Target Tanggal', render: (row) => row.desired_date || '-' },
-                                        { key: 'predicted_buy_date', label: 'Prediksi Bisa Dibeli', render: (row) => row.predicted_buy_date || 'Belum tercapai di rentang' },
-                                        {
-                                            key: 'indicator',
-                                            label: 'Status',
-                                            render: (row) => (
-                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                    row.indicator === 'siap'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : row.indicator === 'menunggu'
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : row.indicator === 'tertahan_wajib'
-                                                                ? 'bg-rose-100 text-rose-700'
-                                                                : 'bg-gray-200 text-gray-700'
-                                                }`}>
-                                                    {row.indicator || '-'}
-                                                </span>
-                                            ),
-                                        },
-                                    ]}
-                                    actions={(row) => (
-                                        <div className="flex flex-col items-center gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleFulfillPurchaseGoal(row)}
-                                                disabled={purchaseActionLoadingId === Number(row.id)}
-                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                                            >
-                                                {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
-                                            </button>
-                                            {row.can_execute_now !== true && (
-                                                <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
-                                            )}
-                                        </div>
-                                    )}
-                                />
-                            )}
-                        </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Kesehatan Pelanggan</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.customerHealthScore.toFixed(1)}</p>
+                    </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Kesiapan Kas</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.liquidityScore.toFixed(1)}</p>
+                    </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Volatilitas</p>
+                        <p className="text-2xl font-bold mt-1">{formatPercent(forecastContext?.volatility_index || projectionForecastContext?.volatility_index || 0, 1)}</p>
+                    </div>
+                    <div className="bg-white/10 rounded-xl p-3">
+                        <p className="text-xs text-slate-200">Skor Operasional ISP</p>
+                        <p className="text-2xl font-bold mt-1">{scoreSummary.ispOperationalScore.toFixed(1)}</p>
                     </div>
                 </div>
+            </div>
 
-                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                        <p className="text-sm font-semibold text-gray-900">Simulasi Pembelian vs Coverage Wajib</p>
-                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            projectionSummary?.coverage_status_now === false
-                                ? 'bg-rose-100 text-rose-700'
-                                : 'bg-emerald-100 text-emerald-700'
-                        }`}>
-                            {projectionSummary?.coverage_status_now === false ? 'Coverage Saat Ini: Tidak Aman' : 'Coverage Saat Ini: Aman'}
-                        </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <div className="md:col-span-2">
-                            <label className="block text-xs text-gray-600 mb-1">Tanggal Simulasi</label>
-                            <input
-                                type="date"
-                                value={purchaseSimulationDate}
-                                onChange={(e) => setPurchaseSimulationDate(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <div className="md:col-span-2">
-                            <label className="block text-xs text-gray-600 mb-1">Nominal Pembelian</label>
-                            <input
-                                type="number"
-                                min="1"
-                                value={purchaseSimulationAmount}
-                                onChange={(e) => setPurchaseSimulationAmount(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                placeholder="Contoh: 1500000"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={handleSimulatePurchase}
-                            disabled={purchaseSimulationLoading}
-                            className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                        >
-                            {purchaseSimulationLoading ? 'Memproses...' : 'Simulasikan'}
-                        </button>
-                    </div>
-
-                    {purchaseSimulationError && (
-                        <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
-                            {purchaseSimulationError}
-                        </div>
-                    )}
-
-                    {purchaseSimulationResult && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Status</p>
-                                <p className={`text-sm font-bold mt-1 ${
-                                    purchaseSimulationResult?.is_covered ? 'text-emerald-700' : 'text-rose-700'
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 order-8">
+                <div className="app-card p-5 space-y-3">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <ShieldAlert size={16} className="text-rose-600" />
+                        Risk Alarm 24h
+                    </h3>
+                    {!riskAlarm24h ? (
+                        <p className="text-sm text-gray-500">Risk alarm belum tersedia.</p>
+                    ) : (
+                        <>
+                            <div className="flex items-center gap-2">
+                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                    riskAlarm24h.risk_level === 'critical'
+                                        ? 'bg-rose-100 text-rose-700'
+                                        : riskAlarm24h.risk_level === 'warning'
+                                            ? 'bg-amber-100 text-amber-700'
+                                            : 'bg-emerald-100 text-emerald-700'
                                 }`}>
-                                    {purchaseSimulationResult?.is_covered ? 'Aman' : 'Tidak Aman'}
-                                </p>
+                                    {riskAlarm24h.risk_level || 'normal'}
+                                </span>
+                                <span className="text-sm text-gray-700">Score: {Number(riskAlarm24h.risk_score || 0).toFixed(1)}</span>
                             </div>
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Tanggal Gagal Pertama</p>
-                                <p className="text-sm font-semibold text-gray-900 mt-1">
-                                    {purchaseSimulationResult?.first_failure_date || '-'}
-                                </p>
+                            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                                <div className="rounded-lg bg-gray-50 p-2">Overdue rate: {formatPercent(riskAlarm24h?.top_drivers?.overdue_rate || 0, 1)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">Overdue amount: {formatCurrency(riskAlarm24h?.top_drivers?.overdue_amount || 0)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">Waiting confirm: {formatCurrency(riskAlarm24h?.top_drivers?.waiting_confirmation_amount || 0)}</div>
+                                <div className="rounded-lg bg-gray-50 p-2">
+                                    Prediksi 24h: {formatCurrency(
+                                        riskAlarm24h?.top_drivers?.predicted_revenue_24h
+                                        ?? riskAlarm24h?.top_drivers?.predicted_net_24h
+                                        ?? 0
+                                    )}
+                                </div>
                             </div>
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Minimum Saldo</p>
-                                <p className="text-sm font-semibold text-gray-900 mt-1">
-                                    {formatCurrency(purchaseSimulationResult?.minimum_balance || 0)}
-                                </p>
+                        </>
+                    )}
+                </div>
+
+                <div className="app-card p-5 space-y-3">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <DollarSign size={16} className="text-teal-600" />
+                        What-if Simulator
+                    </h3>
+                    {!whatIfSimulator ? (
+                        <p className="text-sm text-gray-500">Data simulasi belum tersedia.</p>
+                    ) : (
+                        <>
+                            <p className="text-sm text-gray-600">
+                                Baseline net bulan: <span className="font-semibold text-gray-900">{formatCurrency(whatIfSimulator.baseline_month_net || 0)}</span>
+                            </p>
+                            <div className="space-y-2">
+                                {(whatIfSimulator.scenarios || []).map((scenario) => (
+                                    <div key={scenario.key} className="rounded-lg border border-gray-200 p-3 flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <p className="text-sm font-medium text-gray-900 truncate">{scenario.label}</p>
+                                            <p className="text-xs text-gray-500">Net baru: {formatCurrency(scenario.new_net_estimate || 0)}</p>
+                                        </div>
+                                        <span className={`text-sm font-semibold ${(scenario.estimated_delta_net || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                            {(scenario.estimated_delta_net || 0) >= 0 ? '+' : ''}{formatCurrency(scenario.estimated_delta_net || 0)}
+                                        </span>
+                                    </div>
+                                ))}
                             </div>
-                        </div>
+                        </>
                     )}
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="app-card p-6 space-y-4 order-9">
+                <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <Target size={18} className="text-amber-600" />
+                        Rekomendasi Prioritas
+                    </h2>
+                    <span className="text-xs text-gray-500">Diambil dari seluruh aspek prediksi</span>
+                </div>
+                {smartRecommendations.length === 0 ? (
+                    <p className="text-sm text-gray-500">Rekomendasi akan muncul setelah data prediksi tersedia.</p>
+                ) : (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                        {smartRecommendations.map((item, index) => (
+                            <div key={`smart-reco-${index}`} className="border border-gray-200 rounded-xl p-3 bg-gray-50/60">
+                                <div className="flex items-start justify-between gap-2">
+                                    <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                                        item.priority === 'tinggi'
+                                            ? 'bg-red-100 text-red-700'
+                                            : item.priority === 'menengah'
+                                                ? 'bg-amber-100 text-amber-700'
+                                                : 'bg-emerald-100 text-emerald-700'
+                                    }`}>
+                                        {item.priority}
+                                    </span>
+                                </div>
+                                <p className="text-xs text-gray-600 mt-1">{item.detail}</p>
+                                <p className="text-[11px] text-gray-500 mt-2">Sumber: {item.source}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 order-4">
+                <div className="app-card p-5 space-y-3 min-w-0">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <Users size={16} className="text-blue-600" />
+                        Collection Probability per Pelanggan
+                    </h3>
+                    <div className="border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={collectionProbability.slice(0, 10)}
+                            keyField="customer_id"
+                            priorityFields={['name', 'collection_probability_pct', 'open_invoice_amount']}
+                            emptyMessage="Data collection probability belum tersedia."
+                            tableClassName="w-full text-sm md:min-w-[620px]"
+                            columns={[
+                                { key: 'name', label: 'Pelanggan', cellClassName: 'px-3 py-2 text-gray-900 font-medium' },
+                                {
+                                    key: 'collection_probability_pct',
+                                    label: 'Probabilitas',
+                                    headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
+                                    cellClassName: 'px-3 py-2 text-right',
+                                    render: (row) => (
+                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                            Number(row.collection_probability_pct || 0) < 45
+                                                ? 'bg-rose-100 text-rose-700'
+                                                : Number(row.collection_probability_pct || 0) < 70
+                                                    ? 'bg-amber-100 text-amber-700'
+                                                    : 'bg-emerald-100 text-emerald-700'
+                                        }`}>
+                                            {Number(row.collection_probability_pct || 0).toFixed(1)}%
+                                        </span>
+                                    ),
+                                },
+                                { key: 'open_invoice_amount', label: 'Open Amount', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.open_invoice_amount || 0) },
+                                { key: 'days_overdue', label: 'Overdue (hari)', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => row.days_overdue || 0 },
+                            ]}
+                        />
+                    </div>
+                </div>
+
+                <div className="app-card p-5 space-y-3 min-w-0">
+                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <Wallet size={16} className="text-violet-600" />
+                        Forecast Bulanan (Pelanggan + Pendapatan)
+                    </h3>
+                    <div className="border border-gray-100 rounded-lg p-2">
+                        <ResponsiveDataView
+                            rows={monthlyTotalRevenueForecast?.months || []}
+                            keyField="month"
+                            priorityFields={['month', 'net_total', 'billing_recurring']}
+                            emptyMessage="Forecast bulanan belum tersedia."
+                            tableClassName="w-full text-sm md:min-w-[740px]"
+                            columns={[
+                                { key: 'month', label: 'Bulan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                { key: 'predicted_total_customers', label: 'Total Pelanggan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => ((customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month)?.predicted_total_customers ?? '-') },
+                                { key: 'billing_recurring', label: 'Billing', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.billing_recurring || 0) },
+                                { key: 'installation', label: 'Pemasangan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.installation || 0) },
+                                { key: 'other_financial_income', label: 'Pendapatan Lain', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.other_financial_income || 0) },
+                                { key: 'net_total', label: 'Total Netto', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(row.net_total || 0)}</span> },
+                            ]}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            <div className="app-card p-6 space-y-5 order-11">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <Activity size={18} className="text-cyan-700" />
+                            Intelijen Operasional ISP
+                        </h2>
+                        <p className="text-sm text-gray-500 mt-1">Analisis gabungan data pelanggan, invoice, aduan, gangguan, transaksi, dan API MikroTik untuk kebutuhan operasional ISP.</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(ispSectionSource).className}`}>
+                                Sumber: {getSectionSourceMeta(ispSectionSource).label}
+                            </span>
+                            {ispSectionWarning && (
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Warning: {ispSectionWarning}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                        Periode analisis: {kpiRange.start_date} s.d. {kpiRange.end_date}
+                    </span>
+                </div>
+
+                {ispIntelligenceError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{ispIntelligenceError}</div>
+                )}
+
+                {ispIntelligenceLoading && !ispSummary && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                        Memproses intelijen operasional ISP...
+                    </div>
+                )}
+
+                {!ispIntelligenceLoading && !ispIntelligenceError && !ispSummary && (
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
+                        Data intelijen operasional ISP belum tersedia.
+                    </div>
+                )}
+
+                {ispSummary && (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                            <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
+                                <p className="text-xs font-medium text-cyan-700">Skor Operasional ISP</p>
+                                <p className="text-2xl font-bold text-cyan-900 mt-1">{ispSummary.isp_operational_score || 0}</p>
+                                <p className="text-xs text-cyan-700 mt-1">Network {ispSummary.network_readiness_score || 0} | Finance {ispSummary.finance_readiness_score || 0} | Service {ispSummary.service_readiness_score || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
+                                <p className="text-xs font-medium text-blue-700">Konektivitas Aktif</p>
+                                <p className="text-2xl font-bold text-blue-900 mt-1">{formatPercent(ispSummary.online_ratio || 0, 1)}</p>
+                                <p className="text-xs text-blue-700 mt-1">Online {ispSummary.online_active_customers || 0}/{ispSummary.active_customers || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-violet-50 border border-violet-100 p-4">
+                                <p className="text-xs font-medium text-violet-700">Prediksi Tiket 7 Hari</p>
+                                <p className="text-2xl font-bold text-violet-900 mt-1">{ispSummary.predicted_tickets_next_7d || 0}</p>
+                                <p className="text-xs text-violet-700 mt-1">Prioritas tinggi: {ispSummary.predicted_high_priority_tickets_next_7d || 0}</p>
+                            </div>
+                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                                <p className="text-xs font-medium text-emerald-700">Prediksi Pemasukan 7 Hari</p>
+                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(ispSummary.predicted_income_next_7d || 0)}</p>
+                                <p className="text-xs text-emerald-700 mt-1">Collection: {formatPercent(ispSummary.collection_rate || 0, 1)}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                                <p className="text-sm font-semibold text-gray-900 mb-2">MikroTik Live Signals</p>
+                                <div className="space-y-1 text-sm text-gray-700">
+                                    <p>Router: <span className="font-semibold">{ispMikrotik?.identity || '-'}</span></p>
+                                    <p>Status data live: <span className="font-semibold">{ispMikrotik?.available ? 'Tersedia' : 'Tidak tersedia'}</span></p>
+                                    <p>CPU Load: <span className="font-semibold">{formatPercent(ispMikrotik?.cpu_load || 0, 1)}</span></p>
+                                    <p>Memory Usage: <span className="font-semibold">{ispMikrotik?.memory_usage_ratio === null ? '-' : formatPercent(ispMikrotik?.memory_usage_ratio || 0, 1)}</span></p>
+                                    <p>Interface Running: <span className="font-semibold">{ispMikrotik?.interfaces_running || 0}/{ispMikrotik?.interfaces_total || 0}</span></p>
+                                    <p>Sesi PPPoE matched: <span className="font-semibold">{ispMikrotik?.active_pppoe_sessions_matched || 0}</span></p>
+                                    {ispMikrotik?.error && (
+                                        <p className="text-xs text-amber-700">Catatan: {ispMikrotik.error}</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
+                                <p className="text-sm font-semibold text-gray-900 mb-2">Pressure Forecast (7 Hari)</p>
+                                <div className="space-y-1 text-sm text-gray-700">
+                                    <p>Baseline aduan harian: <span className="font-semibold">{ispServiceForecast?.daily_ticket_baseline ?? 0}</span></p>
+                                    <p>Pressure gangguan: <span className="font-semibold">{ispServiceForecast?.disturbance_pressure ?? 0}</span></p>
+                                    <p>Rasio instabilitas jaringan: <span className="font-semibold">{formatPercent(ispServiceForecast?.network_instability_ratio || 0, 2)}</span></p>
+                                    <p>Kapasitas tiket/hari disarankan: <span className="font-semibold">{ispSummary.recommended_daily_ticket_capacity || 0}</span></p>
+                                    <p>Piutang overdue: <span className="font-semibold">{formatCurrency(ispSummary.overdue_invoice_amount || 0)}</span></p>
+                                    <p>Tagihan jatuh tempo 7 hari: <span className="font-semibold">{formatCurrency(ispFinancialForecast?.due_next_7d_amount || 0)}</span></p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="border border-gray-100 rounded-lg p-2">
+                            <ResponsiveDataView
+                                rows={ispRiskMatrix}
+                                keyField="key"
+                                priorityFields={['label', 'status', 'score']}
+                                emptyMessage="Data matriks risiko belum tersedia."
+                                tableClassName="w-full text-sm md:min-w-[700px]"
+                                columns={[
+                                    { key: 'label', label: 'Aspek', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
+                                    { key: 'score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
+                                    { key: 'status', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>{row.status}</span> },
+                                    { key: 'reason', label: 'Alasan', cellClassName: 'px-3 py-2 text-gray-700' },
+                                ]}
+                            />
+                        </div>
+                    </>
+                )}
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 order-5">
                 <div className="app-card p-6 space-y-5">
                     <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                         <div>
@@ -2432,7 +3142,7 @@ function DashboardPredictionPage() {
                 </div>
             </div>
 
-            <div className="app-card p-6">
+            <div className="app-card p-6 order-12">
                 <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                     <AlertTriangle size={18} className="text-red-500" />
                     Ringkasan Risiko Cepat
@@ -2464,6 +3174,7 @@ function DashboardPredictionPage() {
                     </div>
                 </div>
             </div>
+        </div>
         </div>
     );
 }

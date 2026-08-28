@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Hash;
 
 class CustomerMobilePasswordController extends Controller
 {
-    private const DEFAULT_PASSWORD = '12345678';
+    private const DEFAULT_PASSWORD = 'user123';
 
     public function __construct(private MobileCustomerAuthLogService $authLogService)
     {

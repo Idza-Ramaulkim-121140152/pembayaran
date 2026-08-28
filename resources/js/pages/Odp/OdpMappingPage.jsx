@@ -51,6 +51,7 @@ function OdpMappingPage() {
     const [selectedIds, setSelectedIds] = useState([]);
     const [selectedOdpId, setSelectedOdpId] = useState('');
     const [stats, setStats] = useState({ assigned: 0, unassigned: 0, mismatch: 0 });
+    const [qualityAudit, setQualityAudit] = useState(null);
     const [filters, setFilters] = useState({ search: '', status: '', odp_id: '' });
     const [searchInput, setSearchInput] = useState('');
     const [kecamatanOptions, setKecamatanOptions] = useState([]);
@@ -84,10 +85,20 @@ function OdpMappingPage() {
             setRows(pageRows);
             setStats(customersRes?.data?.meta?.stats || { assigned: 0, unassigned: 0, mismatch: 0 });
             setOdps(optionsRes?.data?.data || []);
+            fetchQualityAudit();
         } catch (err) {
             setError('Gagal memuat data pemetaan ODP.');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchQualityAudit = async () => {
+        try {
+            const response = await odpMappingService.qualityAudit();
+            setQualityAudit(response?.data?.data || null);
+        } catch (err) {
+            setQualityAudit(null);
         }
     };
 
@@ -469,6 +480,40 @@ function OdpMappingPage() {
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
+
+            {qualityAudit && (
+                <section className="bg-white border border-gray-100 rounded-lg p-4 shadow-sm">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-orange-500">ODP Quality Score</p>
+                            <h2 className="mt-1 text-2xl font-bold text-gray-900">{qualityAudit.score}/100</h2>
+                            <p className="text-sm text-gray-500">
+                                {qualityAudit.summary?.customers_total || 0} pelanggan · {qualityAudit.summary?.odps_total || 0} ODP · {qualityAudit.summary?.issue_total || 0} issue
+                            </p>
+                        </div>
+                        <div className={`rounded-2xl px-4 py-3 text-sm font-semibold ${
+                            qualityAudit.status === 'healthy'
+                                ? 'bg-green-50 text-green-700'
+                                : qualityAudit.status === 'degraded'
+                                    ? 'bg-amber-50 text-amber-700'
+                                    : 'bg-red-50 text-red-700'
+                        }`}>
+                            Status: {qualityAudit.status}
+                        </div>
+                    </div>
+                    {qualityAudit.priority_actions?.length > 0 && (
+                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                            {qualityAudit.priority_actions.slice(0, 6).map((issue) => (
+                                <div key={issue.key} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                                    <p className="text-sm font-semibold text-gray-900">{issue.label}</p>
+                                    <p className="mt-1 text-2xl font-bold text-gray-800">{issue.count}</p>
+                                    <p className="text-xs text-gray-500">Bobot dampak: {issue.weight}</p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
+            )}
 
             <form onSubmit={handleQuickCreate} className="bg-white border border-gray-100 rounded-lg p-4 space-y-3">
                 <div>

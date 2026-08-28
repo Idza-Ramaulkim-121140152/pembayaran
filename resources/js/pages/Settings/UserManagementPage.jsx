@@ -32,6 +32,8 @@ function UserManagementPage() {
         role: 'admin',
         can_confirm_payments: false,
         can_edit_mutations: false,
+        can_choose_payment_mutation: false,
+        can_choose_payment_receiver: false,
         is_employee: false,
         payroll_member_id: '',
     });
@@ -92,6 +94,8 @@ function UserManagementPage() {
             role: 'admin',
             can_confirm_payments: false,
             can_edit_mutations: false,
+            can_choose_payment_mutation: false,
+            can_choose_payment_receiver: false,
             is_employee: false,
             payroll_member_id: '',
         });
@@ -109,6 +113,8 @@ function UserManagementPage() {
             role: user.role,
             can_confirm_payments: !!user.can_confirm_payments,
             can_edit_mutations: !!user.can_edit_mutations,
+            can_choose_payment_mutation: !!user.can_choose_payment_mutation,
+            can_choose_payment_receiver: !!user.can_choose_payment_receiver,
             is_employee: !!user.is_employee,
             payroll_member_id: user.payroll_member_id ? String(user.payroll_member_id) : '',
         });
@@ -445,6 +451,30 @@ function UserManagementPage() {
                                 <div>
                                     <p className="text-sm font-medium text-gray-800">Izinkan Edit Mutasi</p>
                                     <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat tambah/edit/hapus mutasi.</p>
+                                </div>
+                            </label>
+                            <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={!!formData.can_choose_payment_mutation}
+                                    onChange={e => setFormData({ ...formData, can_choose_payment_mutation: e.target.checked })}
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-800">Izinkan Pilih Masuk Mutasi</p>
+                                    <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat memilih pembayaran invoice masuk mutasi atau tidak.</p>
+                                </div>
+                            </label>
+                            <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
+                                <input
+                                    type="checkbox"
+                                    checked={!!formData.can_choose_payment_receiver}
+                                    onChange={e => setFormData({ ...formData, can_choose_payment_receiver: e.target.checked })}
+                                    className="mt-1"
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-gray-800">Izinkan Pilih Penerima Pembayaran</p>
+                                    <p className="text-xs text-gray-500">Hanya user yang dicentang (dan superadmin) dapat memilih akun penerima saat konfirmasi pembayaran.</p>
                                 </div>
                             </label>
                             <label className="flex items-start gap-3 p-3 rounded-lg border border-gray-200">
