@@ -88,7 +88,7 @@ class GoogleSheetsService
     {
         $credentials = json_decode(file_get_contents($credentialsPath), true);
         
-        $scope = 'https://www.googleapis.com/auth/spreadsheets.readonly';
+        $scope = 'https://www.googleapis.com/auth/spreadsheets';
         
         $serviceAccount = new ServiceAccountCredentials($scope, $credentials);
         if ($this->shouldUseInsecureSsl()) {
@@ -366,5 +366,55 @@ class GoogleSheetsService
         ];
 
         return $mapping[$header] ?? strtolower(str_replace(' ', '_', $header));
+    }
+
+    /**
+     * Append a new customer registration row directly to Google Sheets
+     */
+    public function appendCustomerRow(array $data): bool
+    {
+        try {
+            $sheetName = explode('!', $this->range)[0] ?? 'Sheet1';
+            $url = "https://sheets.googleapis.com/v4/spreadsheets/{$this->spreadsheetId}/values/{$sheetName}:append?valueInputOption=USER_ENTERED";
+
+            $timestamp = $data['timestamp'] ?? now()->format('d/m/Y H:i:s');
+
+            $row = [
+                $timestamp,
+                $data['nama'] ?? '',
+                $data['tanggal_aktivasi'] ?? '',
+                $data['no_telp'] ?? '',
+                $data['nik'] ?? '',
+                $data['jenis_kelamin'] ?? 'Laki-laki',
+                $data['paket'] ?? '',
+                $data['alamat'] ?? '',
+                $data['desa'] ?? '',
+                $data['dusun'] ?? '',
+                $data['paket_custom'] ?? '',
+                $data['foto_depan_rumah'] ?? '',
+                $data['foto_ktp'] ?? '',
+                $data['foto_modem'] ?? '',
+                $data['foto_opm'] ?? '',
+                $data['harga'] ?? ($data['biaya_pemasangan'] ?? '0'),
+                $data['odp'] ?? '',
+                $data['mac_address'] ?? '',
+            ];
+
+            $response = $this->httpClient->post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $this->accessToken,
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
+                'json' => [
+                    'values' => [$row],
+                ],
+            ]);
+
+            return in_array($response->getStatusCode(), [200, 201], true);
+        } catch (Exception $e) {
+            \Log::warning('Google Sheets appendCustomerRow error: ' . $e->getMessage());
+            return false;
+        }
     }
 }

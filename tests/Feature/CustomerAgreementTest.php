@@ -45,10 +45,9 @@ class CustomerAgreementTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.customer_data.ktp_number', '1471020810010001')
+            ->assertJsonPath('data.customer_data.ktp_number', '147XXXXXXXXXX001')
             ->assertJsonPath('data.customer_data.photo_links.0.label', 'Poto Depan Rumah')
             ->assertJsonPath('data.customer_data.photo_links.1.label', 'Poto Modem')
-            ->assertJsonPath('data.customer_data.photo_links.2.label', 'Poto KTP')
             ->assertJsonPath('data.device_data.router_mac_address', 'AA:BB:CC:DD:EE:FF');
 
         $agreement = CustomerAgreement::firstOrFail();

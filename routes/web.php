@@ -86,6 +86,15 @@ Route::post('/invoice/{invoice}/konfirmasi', [\App\Http\Controllers\BillingContr
 // Public payment methods API (for invoice page)
 Route::get('/api/payment-methods/active', [PaymentMethodController::class, 'activeList'])->name('api.payment-methods.active');
 
+// Public Customer Prospect Registration (Tanpa Login)
+Route::get('/registrasi', fn() => view('app'))->name('public.register');
+Route::get('/daftar', fn() => view('app'))->name('public.register.alias');
+Route::post('/api/public/register-prospect', [\App\Http\Controllers\CustomerProspectController::class, 'publicStore'])->name('api.public.register-prospect');
+Route::get('/api/public/wilayah/kecamatan', [\App\Http\Controllers\MasterWilayahController::class, 'kecamatanOptions'])->name('api.public.wilayah.kecamatan');
+Route::get('/api/public/wilayah/desa', [\App\Http\Controllers\MasterWilayahController::class, 'desaOptions'])->name('api.public.wilayah.desa');
+Route::get('/api/public/wilayah/dusun', [\App\Http\Controllers\MasterWilayahController::class, 'dusunOptions'])->name('api.public.wilayah.dusun');
+Route::get('/api/public/packages', [\App\Http\Controllers\PackageController::class, 'active'])->name('api.public.packages');
+
 // Landing Page Public API
 Route::get('/api/landing-page', [LandingPageController::class, 'getData'])->name('api.landing-page');
 
@@ -258,18 +267,31 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::delete('/pelanggan/{customerId}/delete', [CustomerController::class, 'destroy'])->name('customers.destroy');
 
         // Customer Verification (Google Sheets Integration)
+        // Customer Verification (Google Sheets Integration)
         Route::prefix('api/customer-verification')->group(function () {
             Route::get('/form-url', [\App\Http\Controllers\CustomerVerificationController::class, 'getFormUrl'])->name('customer-verification.form-url');
             Route::get('/pending', [\App\Http\Controllers\CustomerVerificationController::class, 'fetchPendingCustomers'])->name('customer-verification.pending');
+            Route::post('/register', [\App\Http\Controllers\CustomerVerificationController::class, 'registerCustomer'])->name('customer-verification.register');
+            Route::post('/analyze-mac', [\App\Http\Controllers\CustomerVerificationController::class, 'analyzeMacPhoto'])->name('customer-verification.analyze-mac');
             Route::get('/get/{timestamp}', [\App\Http\Controllers\CustomerVerificationController::class, 'getCustomerForVerification'])->name('customer-verification.get');
             Route::get('/odps/options', [\App\Http\Controllers\CustomerVerificationController::class, 'odpOptions'])->name('customer-verification.odps.options');
             Route::post('/verify', [\App\Http\Controllers\CustomerVerificationController::class, 'verifyCustomer'])->name('customer-verification.verify');
             Route::get('/verified', [\App\Http\Controllers\CustomerVerificationController::class, 'getVerifiedTimestamps'])->name('customer-verification.verified');
         });
 
-        // Customer Verification Pages (React SPA)
+        // Customer Prospects (Verifikasi Calon Pelanggan Publik/Internal)
+        Route::prefix('api/customer-prospects')->group(function () {
+            Route::get('/', [\App\Http\Controllers\CustomerProspectController::class, 'index'])->name('customer-prospects.index');
+            Route::get('/recommendations', [\App\Http\Controllers\CustomerProspectController::class, 'recommendations'])->name('customer-prospects.recommendations');
+            Route::post('/{id}/status', [\App\Http\Controllers\CustomerProspectController::class, 'updateStatus'])->name('customer-prospects.status');
+            Route::delete('/{id}', [\App\Http\Controllers\CustomerProspectController::class, 'destroy'])->name('customer-prospects.destroy');
+        });
+
+        // Customer Verification & Prospect Pages (React SPA)
         Route::get('/customer-verification', fn() => view('app'))->name('customer-verification.index');
+        Route::get('/customer-verification/register', fn() => view('app'))->name('customer-verification.register');
         Route::get('/customer-verification/verify/{timestamp}', fn() => view('app'))->name('customer-verification.form');
+        Route::get('/customer-prospects', fn() => view('app'))->name('customer-prospects.index');
 
         // Distribution Route Page (React SPA)
         Route::get('/jalur-distribusi', fn() => view('app'))->name('distribution.route');

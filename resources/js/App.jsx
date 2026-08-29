@@ -31,6 +31,9 @@ const CustomerLoginPage = lazy(() => import('./pages/Customer/CustomerLoginPage'
 const CustomerDashboard = lazy(() => import('./pages/Customer/CustomerDashboard'));
 const CustomerVerificationPage = lazy(() => import('./pages/Customers/CustomerVerificationPage'));
 const CustomerVerificationForm = lazy(() => import('./pages/Customers/CustomerVerificationForm'));
+const CustomerRegistrationForm = lazy(() => import('./pages/Customers/CustomerRegistrationForm'));
+const CustomerProspectsPage = lazy(() => import('./pages/Customers/CustomerProspectsPage'));
+const PublicCustomerRegistrationPage = lazy(() => import('./pages/Public/PublicCustomerRegistrationPage'));
 const ComplaintsPage = lazy(() => import('./pages/Complaints/ComplaintsPage'));
 const NetworkNoticePage = lazy(() => import('./pages/Settings/NetworkNoticePage'));
 const SendNotificationPage = lazy(() => import('./pages/Settings/SendNotificationPage'));
@@ -329,9 +332,15 @@ function App() {
                     <Route path="/customers/:id/edit" element={<GuardedRoute permissionKey="customer.view" element={<CustomerForm />} />} />
                     <Route path="/pelanggan" element={<GuardedRoute permissionKey="customer.view" element={<CustomersPage />} />} />
                     
-                    {/* Customer Verification (Google Sheets) */}
+                    {/* Public Registration (Calon Pelanggan Tanpa Login) */}
+                    <Route path="/registrasi" element={<RouteSuspense><PublicCustomerRegistrationPage /></RouteSuspense>} />
+                    <Route path="/daftar" element={<RouteSuspense><PublicCustomerRegistrationPage /></RouteSuspense>} />
+
+                    {/* Customer Verification & Prospects */}
                     <Route path="/customer-verification" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerVerificationPage />} />} />
+                    <Route path="/customer-verification/register" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerRegistrationForm />} />} />
                     <Route path="/customer-verification/verify/:timestamp" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerVerificationForm />} />} />
+                    <Route path="/customer-prospects" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerProspectsPage />} />} />
                     
                     {/* ODP */}
                     <Route path="/odp" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage />} />} />

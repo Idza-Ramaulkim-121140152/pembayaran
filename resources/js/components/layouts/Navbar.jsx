@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     DollarSign,
     Menu,
@@ -147,7 +147,7 @@ const MENU_GROUPS = [
             { key: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: Home, match: (p) => p === '/dashboard' },
             { key: 'dashboardPrediction', label: 'Prediksi', to: '/dashboard/prediksi', icon: Brain, match: (p) => p === '/dashboard/prediksi' },
             { key: 'pelanggan', label: 'Pelanggan', to: '/customers', icon: Users, match: (p) => p.startsWith('/customers') || p.startsWith('/pelanggan') },
-            { key: 'verifikasi', label: 'Verifikasi', to: '/customer-verification', icon: ClipboardList, match: (p) => p.startsWith('/customer-verification') },
+            { key: 'verifikasi', label: 'Verifikasi', to: '/customer-verification', icon: ClipboardList, match: (p) => p.startsWith('/customer-verification') || p.startsWith('/customer-prospects') },
             { key: 'odpMapping', label: 'Pemetaan ODP', to: '/odp-mapping', icon: MapPin, match: (p) => p.startsWith('/odp-mapping') },
             { key: 'odp', label: 'Kelola ODP', to: '/odp', icon: FolderKanban, match: (p) => p.startsWith('/odp') && !p.startsWith('/odp-mapping') },
             { key: 'distributionRoute', label: 'Jalur Distribusi', to: '/jalur-distribusi', icon: GitBranch, match: (p) => p.startsWith('/jalur-distribusi') },

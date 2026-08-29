@@ -64,9 +64,7 @@ function CustomerVerificationPage() {
     };
 
     const handleRegisterClick = () => {
-        if (formUrl) {
-            window.open(formUrl, '_blank');
-        }
+        navigate('/customer-verification/register');
     };
 
     const handleVerifyClick = () => {
@@ -120,64 +118,97 @@ function CustomerVerificationPage() {
                 )}
 
                 {/* Action Cards - Only show if list not displayed */}
+                {/* Action Cards - Only show if list not displayed */}
                 {!showList && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                         {/* Daftarkan Pelanggan Card */}
-                        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg p-8 text-white hover:shadow-xl transition-shadow">
-                            <div className="flex items-center gap-4 mb-4">
-                                <div className="p-4 bg-white/20 rounded-full">
-                                    <Users size={32} />
+                        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg p-6 text-white hover:shadow-xl transition-shadow flex flex-col justify-between">
+                            <div>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="p-3 bg-white/20 rounded-xl">
+                                        <Users size={26} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold">Daftarkan Pelanggan</h2>
+                                        <p className="text-blue-100 text-xs">Formulir pendaftaran baru</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h2 className="text-2xl font-bold">Daftarkan Pelanggan</h2>
-                                    <p className="text-blue-100">Formulir pendaftaran baru</p>
-                                </div>
+                                
+                                <p className="text-blue-50 text-xs mb-6 leading-relaxed">
+                                    Formulir pendaftaran baru native dalam sistem. Data (Nama, NIK, foto KTP, foto Modem, MAC Address) otomatis tersimpan dan disinkronkan ke Google Sheets.
+                                </p>
                             </div>
-                            
-                            <p className="text-blue-50 mb-6">
-                                Buka Google Form untuk pendaftaran pelanggan baru. Data pelanggan (NIK, foto KTP, dll) akan tersimpan aman di Google Sheets.
-                            </p>
 
                             <Button
                                 variant="secondary"
                                 onClick={handleRegisterClick}
-                                className="w-full bg-white text-blue-600 hover:bg-blue-50"
+                                className="w-full bg-white text-blue-600 hover:bg-blue-50 font-semibold text-xs py-2.5"
                             >
-                                <ExternalLink className="mr-2" size={18} />
+                                <Users className="mr-2" size={16} />
                                 Buka Form Pendaftaran
                             </Button>
                         </div>
 
-                        {/* Verifikasi User Card */}
-                        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-8 text-white hover:shadow-xl transition-shadow">
-                            <div className="flex items-center gap-4 mb-4">
-                                <div className="p-4 bg-white/20 rounded-full">
-                                    <FileCheck size={32} />
+                        {/* Verifikasi Calon Pelanggan Card */}
+                        <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl shadow-lg p-6 text-white hover:shadow-xl transition-shadow flex flex-col justify-between">
+                            <div>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="p-3 bg-white/20 rounded-xl">
+                                        <UserCheck size={26} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold">Calon Pelanggan</h2>
+                                        <p className="text-amber-100 text-xs">Registrasi publik & lapangan</p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <h2 className="text-2xl font-bold">Verifikasi User</h2>
-                                    <p className="text-green-100">Verifikasi & aktivasi</p>
-                                </div>
+                                
+                                <p className="text-amber-50 text-xs mb-6 leading-relaxed">
+                                    Verifikasi pendaftaran calon pelanggan dari website publik / teknisi lapangan. Setujui untuk siap pasang atau batalkan agar antrean tidak menumpuk.
+                                </p>
                             </div>
-                            
-                            <p className="text-green-50 mb-6">
-                                Lihat daftar pelanggan yang sudah mendaftar melalui Google Form dan belum diverifikasi. Pilih pelanggan untuk melengkapi data dan mengaktifkan layanan.
-                            </p>
+
+                            <Button
+                                variant="secondary"
+                                onClick={() => navigate('/customer-prospects')}
+                                className="w-full bg-white text-orange-600 hover:bg-orange-50 font-semibold text-xs py-2.5"
+                            >
+                                <UserCheck className="mr-2" size={16} />
+                                Kelola Calon Pelanggan
+                            </Button>
+                        </div>
+
+                        {/* Verifikasi User Card */}
+                        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-2xl shadow-lg p-6 text-white hover:shadow-xl transition-shadow flex flex-col justify-between">
+                            <div>
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="p-3 bg-white/20 rounded-xl">
+                                        <FileCheck size={26} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold">Verifikasi User</h2>
+                                        <p className="text-green-100 text-xs">Verifikasi & aktivasi</p>
+                                    </div>
+                                </div>
+                                
+                                <p className="text-green-50 text-xs mb-6 leading-relaxed">
+                                    Lihat daftar pelanggan yang sudah mendaftar dan belum diverifikasi. Lengkapi konfigurasi teknis (PPPoE / tim) dan buat surat kontrak berlangganan.
+                                </p>
+                            </div>
 
                             <Button
                                 variant="secondary"
                                 onClick={handleVerifyClick}
                                 disabled={loading}
-                                className="w-full bg-white text-green-600 hover:bg-green-50"
+                                className="w-full bg-white text-green-600 hover:bg-green-50 font-semibold text-xs py-2.5"
                             >
                                 {loading ? (
                                     <>
-                                        <Loader className="mr-2 animate-spin" size={18} />
+                                        <Loader className="mr-2 animate-spin" size={16} />
                                         Memuat...
                                     </>
                                 ) : (
                                     <>
-                                        <FileCheck className="mr-2" size={18} />
+                                        <FileCheck className="mr-2" size={16} />
                                         Lihat Pelanggan Pending
                                     </>
                                 )}

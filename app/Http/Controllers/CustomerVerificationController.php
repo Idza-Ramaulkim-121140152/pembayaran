@@ -25,13 +25,16 @@ use App\Services\FinancialLedgerService;
 use App\Services\GoogleSheetsService;
 use App\Services\InstallationPricingService;
 use App\Services\InventoryService;
+use App\Services\MacAddressScannerService;
 use App\Services\MikroTikService;
 use App\Services\PaymentReceiverService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Exception;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
@@ -77,54 +80,183 @@ class CustomerVerificationController extends Controller
     }
 
     /**
-     * Fetch pending customers from Google Sheets
+     * Analyze modem photo to extract MAC address and device info
+     */
+    public function analyzeMacPhoto(Request $request)
+    {
+        $request->validate([
+            'photo' => 'required|image|max:10240',
+        ]);
+
+        $file = $request->file('photo');
+        $result = app(MacAddressScannerService::class)->analyzePhoto($file);
+
+        return response()->json($result);
+    }
+
+    /**
+     * Register a new customer in-app and sync to Google Sheets
+     */
+    public function registerCustomer(Request $request)
+    {
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
+            'tanggal_aktivasi' => 'required|date',
+            'no_telp' => 'required|string|max:20',
+            'nik' => 'required|string|max:32',
+            'jenis_kelamin' => 'required|string|in:Laki-laki,Perempuan,male,female',
+            'kecamatan_id' => 'required|integer|exists:master_wilayah_kecamatans,id',
+            'desa_id' => 'required|integer|exists:master_wilayah_desas,id',
+            'dusun_id' => 'required|integer|exists:master_wilayah_dusuns,id',
+            'alamat' => 'nullable|string',
+            'paket' => 'required|string|max:100',
+            'paket_custom' => 'nullable|string|max:100',
+            'biaya_pemasangan' => 'required|numeric|min:0',
+            'odp' => 'nullable|string|max:64',
+            'mac_address' => 'required|string|max:64',
+            'foto_depan_rumah' => 'nullable|file|image|max:10240',
+            'foto_ktp' => 'nullable|file|image|max:10240',
+            'foto_modem' => 'nullable|file|image|max:10240',
+            'foto_opm' => 'nullable|file|image|max:10240',
+        ]);
+
+        $timestamp = now()->format('d/m/Y H:i:s');
+        $slug = Str::slug($validated['nama'] . '-' . time());
+
+        $photoUrls = [];
+        $photoFields = ['foto_depan_rumah', 'foto_ktp', 'foto_modem', 'foto_opm'];
+        foreach ($photoFields as $field) {
+            if ($request->hasFile($field) && $request->file($field)->isValid()) {
+                $path = $request->file($field)->store('customer-registrations/' . $slug, 'public');
+                $photoUrls[$field] = url(Storage::url($path));
+            } else {
+                $photoUrls[$field] = '';
+            }
+        }
+
+        $kecamatan = MasterWilayahKecamatan::find($validated['kecamatan_id']);
+        $desa = MasterWilayahDesa::find($validated['desa_id']);
+        $dusun = MasterWilayahDusun::find($validated['dusun_id']);
+
+        $address = $validated['alamat'] ?? '';
+        if (empty($address)) {
+            $address = trim(($dusun?->name ?? '') . ', ' . ($desa?->name ?? '') . ', ' . ($kecamatan?->name ?? ''), ', ');
+        }
+
+        $normalizedMac = app(MacAddressScannerService::class)->normalizeMac($validated['mac_address']) ?: strtoupper(trim($validated['mac_address']));
+
+        $registrationPayload = [
+            'timestamp' => $timestamp,
+            'nama' => $validated['nama'],
+            'tanggal_aktivasi' => $validated['tanggal_aktivasi'],
+            'no_telp' => $validated['no_telp'],
+            'nik' => $validated['nik'],
+            'jenis_kelamin' => in_array($validated['jenis_kelamin'], ['Perempuan', 'female']) ? 'Perempuan' : 'Laki-laki',
+            'paket' => $validated['paket'],
+            'paket_custom' => $validated['paket_custom'] ?? '',
+            'alamat' => $address,
+            'desa' => $desa?->name ?? '',
+            'dusun' => $dusun?->name ?? '',
+            'kecamatan_id' => (int) $validated['kecamatan_id'],
+            'desa_id' => (int) $validated['desa_id'],
+            'dusun_id' => (int) $validated['dusun_id'],
+            'foto_depan_rumah' => $photoUrls['foto_depan_rumah'],
+            'foto_ktp' => $photoUrls['foto_ktp'],
+            'foto_modem' => $photoUrls['foto_modem'],
+            'foto_opm' => $photoUrls['foto_opm'],
+            'harga' => (string) $validated['biaya_pemasangan'],
+            'biaya_pemasangan' => (string) $validated['biaya_pemasangan'],
+            'odp' => $validated['odp'] ?? '',
+            'mac_address' => $normalizedMac,
+        ];
+
+        // 1. Simpan di local pending registry agar verifikasi bisa langsung membacanya
+        $allLocalRegs = Cache::get('customer_registrations_pending', []);
+        $allLocalRegs[$timestamp] = $registrationPayload;
+        Cache::put('customer_registrations_pending', $allLocalRegs, now()->addDays(30));
+
+        // 2. Sinkronkan ke Google Sheets via REST API
+        $sheetsSynced = false;
+        if ($this->sheetsService) {
+            try {
+                $sheetsSynced = $this->sheetsService->appendCustomerRow($registrationPayload);
+            } catch (\Throwable $e) {
+                Log::warning('Failed appending customer registration to Google Sheets', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pelanggan berhasil didaftarkan' . ($sheetsSynced ? ' dan disinkronkan ke Google Sheets.' : '.'),
+            'timestamp' => $timestamp,
+            'encoded_timestamp' => base64_encode($timestamp),
+            'sheets_synced' => $sheetsSynced,
+            'data' => $registrationPayload,
+        ]);
+    }
+
+    /**
+     * Fetch pending customers from Google Sheets & Local in-app registrations
      * 
      * @return \Illuminate\Http\JsonResponse
      */
     public function fetchPendingCustomers()
     {
-        if (!$this->sheetsService) {
-            return response()->json([
-                'error' => 'Google Sheets integration is not configured',
-                'message' => 'Please setup Google Sheets API credentials',
-                'details' => $this->sheetsError,
-            ], 503);
+        $verifiedTimestamps = Customer::whereNotNull('google_sheets_timestamp')
+            ->pluck('google_sheets_timestamp')
+            ->map(fn($t) => trim((string)$t))
+            ->toArray();
+
+        $pendingCustomers = [];
+        $seenTimestamps = [];
+
+        // 1. Ambil pendaftaran in-app lokal
+        $localRegistrations = Cache::get('customer_registrations_pending', []);
+        foreach ($localRegistrations as $timestamp => $regData) {
+            $normalizedTime = trim((string)$timestamp);
+            if (!in_array($normalizedTime, $verifiedTimestamps, true) && !isset($seenTimestamps[$normalizedTime])) {
+                $pendingCustomers[] = $regData;
+                $seenTimestamps[$normalizedTime] = true;
+            }
         }
 
-        try {
-            $pendingCustomers = $this->sheetsService->fetchPendingCustomers();
-            
-            return response()->json([
-                'success' => true,
-                'data' => $pendingCustomers,
-                'count' => count($pendingCustomers)
-            ]);
-        } catch (Exception $e) {
-            \Log::error('Failed to fetch pending customers: ' . $e->getMessage());
-            
-            return response()->json([
-                'error' => 'Failed to fetch customers from Google Sheets',
-                'message' => $e->getMessage()
-            ], 500);
+        // 2. Ambil pendaftaran dari Google Sheets jika aktif
+        if ($this->sheetsService) {
+            try {
+                $sheetsPending = $this->sheetsService->fetchPendingCustomers();
+                foreach ($sheetsPending as $cust) {
+                    $normalizedTime = trim((string)($cust['timestamp'] ?? ''));
+                    if ($normalizedTime !== '' && !isset($seenTimestamps[$normalizedTime]) && !in_array($normalizedTime, $verifiedTimestamps, true)) {
+                        $pendingCustomers[] = $cust;
+                        $seenTimestamps[$normalizedTime] = true;
+                    }
+                }
+            } catch (Exception $e) {
+                \Log::warning('Failed to fetch pending customers from Google Sheets: ' . $e->getMessage());
+            }
         }
+
+        // Urutkan dari yang terbaru
+        usort($pendingCustomers, function ($a, $b) {
+            return strcmp((string)($b['timestamp'] ?? ''), (string)($a['timestamp'] ?? ''));
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $pendingCustomers,
+            'count' => count($pendingCustomers)
+        ]);
     }
 
     /**
-     * Get customer detail by timestamp for verification
+     * Get customer detail by timestamp for verification with auto-populated relations
      * 
      * @param string $timestamp (base64 encoded)
      * @return \Illuminate\Http\JsonResponse
      */
     public function getCustomerForVerification($timestamp)
     {
-        if (!$this->sheetsService) {
-            return response()->json([
-                'error' => 'Google Sheets integration is not configured'
-            ], 503);
-        }
-
         try {
-            // Decode base64 timestamp
             $decodedTimestamp = base64_decode($timestamp);
             
             if (!$decodedTimestamp) {
@@ -132,28 +264,77 @@ class CustomerVerificationController extends Controller
                     'error' => 'Invalid timestamp format'
                 ], 400);
             }
-            
-            $sheetsData = $this->sheetsService->getCustomerByTimestamp($decodedTimestamp);
+
+            $sheetsData = null;
+
+            // 1. Cek registry in-app lokal terlebih dahulu
+            $localRegistrations = Cache::get('customer_registrations_pending', []);
+            if (isset($localRegistrations[$decodedTimestamp])) {
+                $sheetsData = $localRegistrations[$decodedTimestamp];
+            }
+
+            // 2. Jika tidak ada di lokal, cari di Google Sheets
+            if (!$sheetsData && $this->sheetsService) {
+                $sheetsData = $this->sheetsService->getCustomerByTimestamp($decodedTimestamp);
+            }
             
             if (!$sheetsData) {
                 return response()->json([
-                    'error' => 'Customer not found in Google Sheets'
+                    'error' => 'Data pendaftaran pelanggan tidak ditemukan'
                 ], 404);
             }
 
-            // Convert to customer format with pre-filled data
-            $customerData = $this->sheetsService->convertToCustomerData($sheetsData);
+            // Konversi data ke format form pelanggan
+            $customerData = $this->sheetsService ? $this->sheetsService->convertToCustomerData($sheetsData) : $sheetsData;
+
+            // Resolusi Wilayah (Kecamatan, Desa, Dusun) secara otomatis jika belum terisi ID
+            $kecamatanId = $sheetsData['kecamatan_id'] ?? null;
+            $desaId = $sheetsData['desa_id'] ?? null;
+            $dusunId = $sheetsData['dusun_id'] ?? null;
+
+            if (!$desaId && !empty($sheetsData['desa'])) {
+                $desaMatch = MasterWilayahDesa::whereRaw('LOWER(name) = ?', [strtolower(trim((string)$sheetsData['desa']))])->first();
+                if ($desaMatch) {
+                    $desaId = $desaMatch->id;
+                    $kecamatanId = $desaMatch->kecamatan_id;
+
+                    if (!$dusunId && !empty($sheetsData['dusun'])) {
+                        $dusunMatch = MasterWilayahDusun::where('desa_id', $desaId)
+                            ->whereRaw('LOWER(name) LIKE ?', ['%' . strtolower(trim((string)$sheetsData['dusun'])) . '%'])
+                            ->first();
+                        if ($dusunMatch) {
+                            $dusunId = $dusunMatch->id;
+                        }
+                    }
+                }
+            }
+
+            $customerData['kecamatan_id'] = $kecamatanId ? (string)$kecamatanId : '';
+            $customerData['desa_id'] = $desaId ? (string)$desaId : '';
+            $customerData['dusun_id'] = $dusunId ? (string)$dusunId : '';
+            $customerData['contract_router_mac'] = $sheetsData['mac_address'] ?? ($sheetsData['mac'] ?? '');
+            $customerData['contract_ktp_number'] = $sheetsData['nik'] ?? '';
+
+            $photoFront = $sheetsData['foto_depan_rumah'] ?? ($sheetsData['photo_front_url'] ?? '');
+            $photoModem = $sheetsData['foto_modem'] ?? ($sheetsData['photo_modem_url'] ?? '');
+            $photoKtp = $sheetsData['foto_ktp'] ?? ($sheetsData['photo_ktp_url'] ?? '');
+            $photoOpm = $sheetsData['foto_opm'] ?? ($sheetsData['photo_opm_url'] ?? '');
+
+            $customerData['contract_photo_front_url'] = $photoFront;
+            $customerData['contract_photo_modem_url'] = $photoModem;
+            $customerData['contract_photo_ktp_url'] = $photoKtp;
+            $customerData['contract_photo_opm_url'] = $photoOpm;
             
-            // Also include original sheets data for reference (NIK, photos, etc.)
             $response = [
                 'success' => true,
                 'customer_data' => $customerData,
                 'sheets_reference' => [
                     'nik' => $sheetsData['nik'] ?? '',
-                    'photo_front_url' => $sheetsData['foto_depan_rumah'] ?? '',
-                    'photo_modem_url' => $sheetsData['foto_modem'] ?? '',
-                    'photo_ktp_url' => $sheetsData['foto_ktp'] ?? '',
-                    'photo_opm_url' => $sheetsData['foto_opm'] ?? '',
+                    'photo_front_url' => $photoFront,
+                    'photo_modem_url' => $photoModem,
+                    'photo_ktp_url' => $photoKtp,
+                    'photo_opm_url' => $photoOpm,
+                    'mac_address' => $sheetsData['mac_address'] ?? '',
                 ]
             ];
 
@@ -538,7 +719,7 @@ class CustomerVerificationController extends Controller
             'installation_cable_rate' => 'nullable|numeric|min:0',
             'installation_notes' => 'nullable|string|max:500',
             'contract_ktp_number' => 'nullable|string|max:32',
-            'contract_router_mac' => 'nullable|string|max:64',
+            'contract_router_mac' => 'required|string|max:64',
             'contract_device_serial' => 'nullable|string|max:128',
             'contract_device_notes' => 'nullable|string|max:1000',
             'contract_photo_front_url' => 'nullable|string|max:1000',

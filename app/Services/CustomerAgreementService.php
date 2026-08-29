@@ -87,6 +87,8 @@ class CustomerAgreementService
 
     private function customerSnapshot(Customer $customer, array $input): array
     {
+        $rawNik = $this->stringInput($input, 'contract_ktp_number') ?: ($customer->nik ?? '');
+
         return [
             'company_name' => SiteSetting::get('contract_company_name', self::DEFAULT_COMPANY_NAME),
             'company_address' => SiteSetting::get('contract_company_address', self::DEFAULT_COMPANY_ADDRESS),
@@ -95,7 +97,7 @@ class CustomerAgreementService
             'company_email' => SiteSetting::get('company_email', 'info@rumahkitanet.com'),
             'director_name' => 'Idza Ramaulkim',
             'customer_name' => $customer->name,
-            'ktp_number' => $this->stringInput($input, 'contract_ktp_number'),
+            'ktp_number' => $this->maskNik($rawNik),
             'phone' => $customer->phone,
             'email' => $customer->email,
             'address' => $customer->address,
@@ -105,6 +107,29 @@ class CustomerAgreementService
             'due_date' => optional($customer->due_date)->format('Y-m-d'),
             'photo_links' => $this->photoLinks($input),
         ];
+    }
+
+    /**
+     * Mask NIK showing only first 3 and last 3 digits, e.g. 180XXXXXXXXXX002
+     */
+    public function maskNik(?string $nik): ?string
+    {
+        $clean = trim((string) $nik);
+        if ($clean === '') {
+            return null;
+        }
+
+        $length = strlen($clean);
+        if ($length <= 6) {
+            return $clean;
+        }
+
+        $start = substr($clean, 0, 3);
+        $end = substr($clean, -3);
+        $maskedLength = $length - 6;
+        $maskedMiddle = str_repeat('X', $maskedLength);
+
+        return $start . $maskedMiddle . $end;
     }
 
     private function deviceSnapshot(Customer $customer, array $input): array
@@ -230,10 +255,11 @@ class CustomerAgreementService
 
     private function photoLinks(array $input): array
     {
+        // Poto KTP dikecualikan dari kontrak PDF untuk privasi pelanggan
         $items = [
             ['key' => 'contract_photo_front_url', 'label' => 'Poto Depan Rumah'],
             ['key' => 'contract_photo_modem_url', 'label' => 'Poto Modem'],
-            ['key' => 'contract_photo_ktp_url', 'label' => 'Poto KTP'],
+            ['key' => 'contract_photo_opm_url', 'label' => 'Poto Redaman OPM'],
         ];
 
         $links = [];

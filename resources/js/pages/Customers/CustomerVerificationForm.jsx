@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle, Upload } from 'lucide-react';
+import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle, Upload, Scan, Sparkles, Check, X, Loader2 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -90,6 +90,9 @@ function CustomerVerificationForm() {
     const [odpDropdownOpen, setOdpDropdownOpen] = useState(false);
     const [odpSearch, setOdpSearch] = useState('');
     const [showExpandOdp, setShowExpandOdp] = useState(false);
+    const [analyzingMac, setAnalyzingMac] = useState(false);
+    const [detectedMac, setDetectedMac] = useState(null);
+    const [macAnalysisMeta, setMacAnalysisMeta] = useState(null);
     const [installInventoryOptions, setInstallInventoryOptions] = useState({
         all_items: [],
         router_items: [],
@@ -675,6 +678,43 @@ function CustomerVerificationForm() {
         return `${receiver.name || receiver.email || receiver.id}${role}${companyTag}`;
     };
 
+    const handleAnalyzeMacFromModemPhoto = async (file) => {
+        if (!file) return;
+        setAnalyzingMac(true);
+        setDetectedMac(null);
+        setMacAnalysisMeta(null);
+
+        const body = new FormData();
+        body.append('photo', file);
+
+        try {
+            const res = await fetch('/api/customer-verification/analyze-mac', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body,
+            });
+
+            const json = await res.json();
+            if (json.mac_address) {
+                setDetectedMac(json.mac_address);
+                setMacAnalysisMeta(json);
+            }
+        } catch (err) {
+            console.error('MAC analysis failed', err);
+        } finally {
+            setAnalyzingMac(false);
+        }
+    };
+
+    const handleApplyDetectedMac = () => {
+        if (detectedMac) {
+            setFormData((prev) => ({ ...prev, contract_router_mac: detectedMac }));
+            setDetectedMac(null);
+        }
+    };
+
     const closeInstallationPaymentFlow = () => {
         setInstallationPaymentModal({ open: false });
         setOtherReceiverModal({ open: false, selectedReceiver: null });
@@ -688,6 +728,10 @@ function CustomerVerificationForm() {
         setErrorModalMessage('');
 
         try {
+            if (!formData.contract_router_mac || !formData.contract_router_mac.trim()) {
+                throw new Error('MAC Address Router/Modem wajib diisi untuk verifikasi dan aktivasi.');
+            }
+
             const payload = {
                 ...formData,
                 kecamatan_id: formData.kecamatan_id ? Number(formData.kecamatan_id) : null,
@@ -1440,18 +1484,71 @@ function CustomerVerificationForm() {
                                     placeholder="Nomor KTP pelanggan"
                                 />
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    MAC Address Router/ONU
-                                </label>
+                            <div className="md:col-span-2 bg-purple-50/60 p-4 rounded-xl border border-purple-200 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <label className="block text-sm font-semibold text-purple-900">
+                                        MAC Address Router/Modem <span className="text-red-500">*</span>
+                                    </label>
+                                    <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-semibold hover:bg-purple-200 cursor-pointer transition">
+                                        <Scan size={14} />
+                                        Scan dari Foto Modem
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="sr-only"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) handleAnalyzeMacFromModemPhoto(file);
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
                                 <input
                                     type="text"
                                     name="contract_router_mac"
+                                    required
                                     value={formData.contract_router_mac}
                                     onChange={handleChange}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Contoh: AA:BB:CC:DD:EE:FF"
+                                    className="w-full px-4 py-2.5 bg-white border border-purple-300 font-mono text-sm uppercase rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent tracking-wider"
+                                    placeholder="Contoh: BC:54:51:7A:B2:90"
                                 />
+
+                                {analyzingMac && (
+                                    <div className="flex items-center gap-2 p-2.5 bg-white rounded-lg border border-purple-200 text-purple-700 text-xs">
+                                        <Loader2 size={15} className="animate-spin text-purple-600" />
+                                        Menganalisis foto modem...
+                                    </div>
+                                )}
+
+                                {detectedMac && (
+                                    <div className="p-3 bg-white rounded-xl border-2 border-purple-400 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                        <div className="flex items-center gap-2">
+                                            <Sparkles size={18} className="text-purple-600 shrink-0" />
+                                            <div>
+                                                <p className="text-xs text-gray-500">MAC Address Terdeteksi:</p>
+                                                <p className="text-sm font-bold font-mono text-purple-900">{detectedMac}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 w-full sm:w-auto">
+                                            <button
+                                                type="button"
+                                                onClick={handleApplyDetectedMac}
+                                                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition"
+                                            >
+                                                <Check size={14} />
+                                                Gunakan MAC Ini
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setDetectedMac(null)}
+                                                className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-gray-600"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
