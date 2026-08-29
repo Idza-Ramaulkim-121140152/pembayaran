@@ -10,6 +10,7 @@ use App\Models\Package;
 use App\Services\AuditLogService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
@@ -41,15 +42,18 @@ class CustomerController extends Controller
             $isolatedUsernameMap = [];
             $today = Carbon::today()->startOfDay();
 
-            $includeLiveStatus = request()->boolean('include_live_status', true);
+            $includeLiveStatus = request()->boolean('include_live_status', false);
 
-            // Sinkronisasi status realtime hanya saat diminta agar list pelanggan bisa tampil lebih cepat.
+            // Sinkronisasi status realtime hanya saat diminta dan menggunakan cache
             if ($includeLiveStatus) {
                 try {
-                    $mikrotik = new \App\Services\MikroTikService();
-                    $mikrotik->connect();
-                    $secrets = $mikrotik->getAllPPPoESecrets();
-                    $mikrotik->disconnect();
+                    $secrets = Cache::remember('mikrotik:all_pppoe_secrets', 45, function () {
+                        $mikrotik = new \App\Services\MikroTikService();
+                        $mikrotik->connect();
+                        $data = $mikrotik->getAllPPPoESecrets();
+                        $mikrotik->disconnect();
+                        return $data;
+                    });
 
                     if ($secrets !== null) {
                         foreach ($secrets as $secretUsername => $secretData) {
@@ -60,23 +64,35 @@ class CustomerController extends Controller
                             }
                         }
 
+                        $idsToActivate = [];
+                        $idsToDeactivate = [];
+
                         foreach ($customers as $customer) {
                             if (!empty($customer->pppoe_username)) {
                                 $secret = $secrets[$customer->pppoe_username] ?? null;
-                                // Active = secret exists AND disabled=no
                                 $isActive = $secret && !$this->isMikrotikSecretDisabled($secret['disabled'] ?? null);
 
                                 if ($customer->is_active != $isActive) {
                                     $customer->is_active = $isActive;
-                                    $customer->saveQuietly();
+                                    if ($isActive) {
+                                        $idsToActivate[] = $customer->id;
+                                    } else {
+                                        $idsToDeactivate[] = $customer->id;
+                                    }
                                 }
                             } else {
-                                // No PPPoE username = inactive
                                 if ($customer->is_active) {
                                     $customer->is_active = false;
-                                    $customer->saveQuietly();
+                                    $idsToDeactivate[] = $customer->id;
                                 }
                             }
+                        }
+
+                        if (!empty($idsToActivate)) {
+                            Customer::whereIn('id', $idsToActivate)->update(['is_active' => true]);
+                        }
+                        if (!empty($idsToDeactivate)) {
+                            Customer::whereIn('id', $idsToDeactivate)->update(['is_active' => false]);
                         }
                     }
                 } catch (\Exception $e) {
@@ -151,10 +167,13 @@ class CustomerController extends Controller
         $statusMap = [];
 
         try {
-            $mikrotik = new \App\Services\MikroTikService();
-            $mikrotik->connect();
-            $secrets = $mikrotik->getAllPPPoESecrets();
-            $mikrotik->disconnect();
+            $secrets = Cache::remember('mikrotik:all_pppoe_secrets', 45, function () {
+                $mikrotik = new \App\Services\MikroTikService();
+                $mikrotik->connect();
+                $data = $mikrotik->getAllPPPoESecrets();
+                $mikrotik->disconnect();
+                return $data;
+            });
 
             $secrets = is_array($secrets) ? $secrets : [];
             $normalizedSecrets = [];
@@ -164,6 +183,9 @@ class CustomerController extends Controller
                     $normalizedSecrets[$normalizedUsername] = $secret;
                 }
             }
+
+            $idsToActivate = [];
+            $idsToDeactivate = [];
 
             foreach ($customers as $customer) {
                 $normalizedUsername = strtolower(trim((string) ($customer->pppoe_username ?? '')));
@@ -179,7 +201,11 @@ class CustomerController extends Controller
 
                 if ($customer->is_active != $isActive) {
                     $customer->is_active = $isActive;
-                    $customer->saveQuietly();
+                    if ($isActive) {
+                        $idsToActivate[] = $customer->id;
+                    } else {
+                        $idsToDeactivate[] = $customer->id;
+                    }
                 }
 
                 $statusMap[$customer->id] = [
@@ -189,6 +215,13 @@ class CustomerController extends Controller
                     'is_service_inactive' => $isServiceInactive,
                     'is_service_active' => !$isServiceInactive,
                 ];
+            }
+
+            if (!empty($idsToActivate)) {
+                Customer::whereIn('id', $idsToActivate)->update(['is_active' => true]);
+            }
+            if (!empty($idsToDeactivate)) {
+                Customer::whereIn('id', $idsToDeactivate)->update(['is_active' => false]);
             }
 
             return response()->json([

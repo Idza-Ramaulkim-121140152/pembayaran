@@ -51,10 +51,9 @@ class MonitoringController extends Controller
         $errorMessage = null;
 
         try {
-            // Get server information with new instance
-            $mikrotikResources = new MikroTikService();
-            $resources = $mikrotikResources->getSystemResources();
-            $identity = $mikrotikResources->getIdentity();
+            // Get server information with single reusable instance
+            $resources = $this->mikrotik->getSystemResources();
+            $identity = $this->mikrotik->getIdentity();
             
             if ($resources) {
                 // Calculate memory usage percentage
@@ -96,11 +95,9 @@ class MonitoringController extends Controller
         $activeConnections = [];
         $isolatedUsernameMap = [];
         try {
-            // Get active PPPoE connections from MikroTik
-            $mikrotikPPP = new MikroTikService();
-            $activeConnections = $mikrotikPPP->getActivePPPoEConnections();
-
-            $isolatedSecrets = $mikrotikPPP->getIsolatedSecrets();
+            // Get active PPPoE connections from MikroTik using existing instance
+            $activeConnections = $this->mikrotik->getActivePPPoEConnections();
+            $isolatedSecrets = $this->mikrotik->getIsolatedSecrets();
             foreach ($isolatedSecrets as $secret) {
                 $username = strtolower(trim((string) ($secret['name'] ?? '')));
                 if ($username !== '') {
@@ -391,6 +388,7 @@ class MonitoringController extends Controller
     public function refresh()
     {
         Cache::forget('monitoring_data');
+        Cache::forget('monitoring_data_api');
         return response()->json(['message' => 'Data monitoring berhasil diperbarui']);
     }
 
@@ -400,7 +398,10 @@ class MonitoringController extends Controller
     public function getData()
     {
         try {
-            $data = $this->getMonitoringData();
+            $data = Cache::remember('monitoring_data_api', 20, function () {
+                return $this->getMonitoringData();
+            });
+
             return response()->json([
                 'success' => true,
                 'data' => $data,

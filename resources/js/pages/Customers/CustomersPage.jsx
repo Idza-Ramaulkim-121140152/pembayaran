@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { 
     Plus, Edit2, Trash2, Search, Phone, Eye, X, 
     User, Calendar, MapPin, Wifi, CreditCard,
-    MessageCircle, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, History,
+    MessageCircle, ChevronRight, ChevronLeft, ArrowUpDown, ArrowUp, ArrowDown, History,
     CheckCircle, Clock, XCircle, Router, Gift, Download, MoreVertical,
     RefreshCw, FileText, Upload, KeyRound, EyeOff
 } from 'lucide-react';
@@ -43,6 +43,8 @@ function CustomersPage() {
     const [loadingHistory, setLoadingHistory] = useState(false);
     const [sortBy, setSortBy] = useState('name'); // name, due_date
     const [sortOrder, setSortOrder] = useState('asc'); // asc, desc
+    const [currentPage, setCurrentPage] = useState(1);
+    const [perPage, setPerPage] = useState(30);
     const [showSecretModal, setShowSecretModal] = useState(false);
     const [secretData, setSecretData] = useState(null);
     const [loadingSecret, setLoadingSecret] = useState(false);
@@ -193,6 +195,17 @@ function CustomersPage() {
         
         setFilteredCustomers(filtered);
     }, [search, customers, filterStatus, sortBy, sortOrder]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [search, filterStatus, sortBy, sortOrder]);
+
+    const totalPages = perPage === 'all' ? 1 : Math.max(1, Math.ceil(filteredCustomers.length / perPage));
+    const paginatedCustomers = useMemo(() => {
+        if (perPage === 'all') return filteredCustomers;
+        const start = (currentPage - 1) * perPage;
+        return filteredCustomers.slice(start, start + perPage);
+    }, [filteredCustomers, currentPage, perPage]);
 
     const fetchActiveStatusBulk = async (customerList = []) => {
         const customerIds = (customerList || [])
@@ -1311,10 +1324,37 @@ function CustomersPage() {
                 </div>
             </div>
 
+            {/* Customers Pagination & Info Bar */}
+            {filteredCustomers.length > 0 && (
+                <div className="mb-4 flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-xl border border-gray-200 text-sm">
+                    <div className="text-gray-600">
+                        Menampilkan <span className="font-semibold text-gray-900">{perPage === 'all' ? 1 : Math.min((currentPage - 1) * perPage + 1, filteredCustomers.length)}</span> - <span className="font-semibold text-gray-900">{perPage === 'all' ? filteredCustomers.length : Math.min(currentPage * perPage, filteredCustomers.length)}</span> dari <span className="font-semibold text-gray-900">{filteredCustomers.length}</span> pelanggan
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-gray-500 text-xs">Tampilkan:</span>
+                        <select
+                            value={perPage}
+                            onChange={(e) => {
+                                const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
+                                setPerPage(val);
+                                setCurrentPage(1);
+                            }}
+                            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 focus:border-blue-500 focus:outline-none"
+                        >
+                            <option value={30}>30 / hal</option>
+                            <option value={60}>60 / hal</option>
+                            <option value={90}>90 / hal</option>
+                            <option value="all">Semua</option>
+                        </select>
+                    </div>
+                </div>
+            )}
+
             {/* Customers Grid */}
             {filteredCustomers.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredCustomers.map((customer) => (
+                <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {paginatedCustomers.map((customer) => (
                         <div 
                             key={customer.id} 
                             className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-visible hover:shadow-md transition"
@@ -1510,6 +1550,61 @@ function CustomersPage() {
                         </div>
                     ))}
                 </div>
+
+                {/* Bottom Pagination Controls */}
+                {totalPages > 1 && (
+                    <div className="mt-6 flex flex-wrap items-center justify-center gap-1.5 bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
+                        <button
+                            type="button"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                            <ChevronLeft size={14} />
+                            Prev
+                        </button>
+
+                        {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter((p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2)
+                            .reduce((acc, p, idx, arr) => {
+                                if (idx > 0 && p - arr[idx - 1] > 1) {
+                                    acc.push('ellipsis-' + p);
+                                }
+                                acc.push(p);
+                                return acc;
+                            }, [])
+                            .map((item) => {
+                                if (typeof item === 'string') {
+                                    return <span key={item} className="px-2 text-gray-400 text-xs">...</span>;
+                                }
+                                return (
+                                    <button
+                                        key={item}
+                                        type="button"
+                                        onClick={() => setCurrentPage(item)}
+                                        className={`min-w-[32px] px-2.5 py-1.5 rounded-lg text-xs font-medium transition ${
+                                            currentPage === item
+                                                ? 'bg-blue-600 text-white shadow-sm font-semibold'
+                                                : 'text-gray-700 hover:bg-gray-100 border border-transparent'
+                                        }`}
+                                    >
+                                        {item}
+                                    </button>
+                                );
+                            })}
+
+                        <button
+                            type="button"
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                            Next
+                            <ChevronRight size={14} />
+                        </button>
+                    </div>
+                )}
+            </>
             ) : (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
                     <User size={48} className="mx-auto text-gray-300 mb-4" />

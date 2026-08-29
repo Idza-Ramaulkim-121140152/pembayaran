@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\MikroTikService;
 use App\Models\Customer;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Exception;
 
 class IsolirController extends Controller
@@ -15,24 +16,36 @@ class IsolirController extends Controller
     public function index(Request $request)
     {
         try {
-            $mikrotik = new MikroTikService();
-            $isolatedSecrets = $mikrotik->getIsolatedSecrets();
-            
+            $isolatedSecrets = Cache::remember('mikrotik:isolated_secrets_raw', 45, function () {
+                $mikrotik = new MikroTikService();
+                return $mikrotik->getIsolatedSecrets();
+            });
+
+            $usernames = collect($isolatedSecrets)
+                ->pluck('name')
+                ->map(fn ($name) => trim((string) $name))
+                ->filter()
+                ->values()
+                ->all();
+
+            $customersByUsername = Customer::whereIn('pppoe_username', $usernames)
+                ->get()
+                ->keyBy(fn ($c) => strtolower(trim((string) $c->pppoe_username)));
+
             // Enrich with customer data if available
             $enrichedData = [];
             foreach ($isolatedSecrets as $secret) {
-                $username = $secret['name'];
-                
-                // Find customer by pppoe_username
-                $customer = Customer::where('pppoe_username', $username)->first();
-                
+                $username = (string) ($secret['name'] ?? '');
+                $normalizedUsername = strtolower(trim($username));
+                $customer = $customersByUsername->get($normalizedUsername);
+
                 $enrichedData[] = [
                     'username' => $username,
-                    'password' => $secret['password'],
-                    'profile' => $secret['profile'],
-                    'remote_address' => $secret['remote_address'],
-                    'service' => $secret['service'],
-                    'disabled' => $secret['disabled'],
+                    'password' => $secret['password'] ?? '',
+                    'profile' => $secret['profile'] ?? '',
+                    'remote_address' => $secret['remote_address'] ?? null,
+                    'service' => $secret['service'] ?? null,
+                    'disabled' => $secret['disabled'] ?? null,
                     'customer' => $customer ? [
                         'id' => $customer->id,
                         'name' => $customer->name,
@@ -40,7 +53,7 @@ class IsolirController extends Controller
                         'address' => $customer->address,
                         'package_type' => $customer->package_type,
                         'due_date' => $customer->due_date,
-                    ] : null
+                    ] : null,
                 ];
             }
             

@@ -334,18 +334,20 @@ class DashboardController extends Controller
     private function fetchIsolatedUsernameMap(): array
     {
         try {
-            $mikrotik = new \App\Services\MikroTikService();
-            $isolatedSecrets = $mikrotik->getIsolatedSecrets();
+            return Cache::remember('mikrotik:isolated_username_map', 60, function () {
+                $mikrotik = new \App\Services\MikroTikService();
+                $isolatedSecrets = $mikrotik->getIsolatedSecrets();
 
-            $isolatedUsernameMap = [];
-            foreach ($isolatedSecrets as $secret) {
-                $username = strtolower(trim((string) ($secret['name'] ?? '')));
-                if ($username !== '') {
-                    $isolatedUsernameMap[$username] = true;
+                $isolatedUsernameMap = [];
+                foreach ($isolatedSecrets as $secret) {
+                    $username = strtolower(trim((string) ($secret['name'] ?? '')));
+                    if ($username !== '') {
+                        $isolatedUsernameMap[$username] = true;
+                    }
                 }
-            }
 
-            return $isolatedUsernameMap;
+                return $isolatedUsernameMap;
+            });
         } catch (\Exception $e) {
             \Log::warning('Failed to fetch isolated usernames from MikroTik', [
                 'error' => $e->getMessage(),

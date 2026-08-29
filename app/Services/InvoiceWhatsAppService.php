@@ -44,7 +44,7 @@ class InvoiceWhatsAppService
         ], true);
 
         try {
-            $response = Http::timeout(60)->post($this->gatewayUrl() . '/send-media', [
+            $response = Http::connectTimeout(5)->timeout(15)->post($this->gatewayUrl() . '/send-media', [
                 'phone' => $phone,
                 'message' => $message,
                 'file_url' => $fileUrl,

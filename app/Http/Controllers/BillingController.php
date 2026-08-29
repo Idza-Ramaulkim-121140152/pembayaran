@@ -1216,19 +1216,21 @@ class BillingController extends Controller
         }
 
         try {
-            $mikrotik = $this->makeMikroTik();
-            
-            // Get all isolated secrets in ONE MikroTik call
-            $isolatedSecrets = $mikrotik->getIsolatedSecrets();
-            
-            // Create map of isolated usernames
-            $isolatedUsernames = [];
-            foreach ($isolatedSecrets as $secret) {
-                $username = strtolower(trim((string) ($secret['name'] ?? '')));
-                if ($username !== '') {
-                    $isolatedUsernames[$username] = $secret['profile'] ?? 'isolir';
+            // Get all isolated secrets in ONE cached MikroTik call
+            $isolatedUsernames = Cache::remember('mikrotik:isolated_usernames_profile_map', 60, function () {
+                $mikrotik = $this->makeMikroTik();
+                $isolatedSecrets = $mikrotik->getIsolatedSecrets();
+
+                $map = [];
+                foreach ($isolatedSecrets as $secret) {
+                    $username = strtolower(trim((string) ($secret['name'] ?? '')));
+                    if ($username !== '') {
+                        $map[$username] = $secret['profile'] ?? 'isolir';
+                    }
                 }
-            }
+
+                return $map;
+            });
             
             // Build isolation status map by customer ID
             foreach ($lateCustomers as $item) {

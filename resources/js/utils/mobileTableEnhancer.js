@@ -64,6 +64,8 @@ export function enhanceMobileTables(rootNode) {
     });
 }
 
+let debounceTimer = null;
+
 export function setupMobileTableObserver(rootNode) {
     const root = rootNode || document.body;
     enhanceMobileTables(root);
@@ -71,13 +73,33 @@ export function setupMobileTableObserver(rootNode) {
     const observer = new MutationObserver((mutations) => {
         let shouldEnhance = false;
         for (const mutation of mutations) {
-            if (mutation.addedNodes?.length) {
-                shouldEnhance = true;
+            if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                for (let i = 0; i < mutation.addedNodes.length; i++) {
+                    const node = mutation.addedNodes[i];
+                    if (node.nodeType === 1) { // ELEMENT_NODE
+                        if (
+                            node.tagName === 'TABLE' ||
+                            node.tagName === 'TR' ||
+                            (node.querySelector && node.querySelector('table'))
+                        ) {
+                            shouldEnhance = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (shouldEnhance) {
                 break;
             }
         }
+
         if (shouldEnhance) {
-            enhanceMobileTables(root);
+            if (debounceTimer) {
+                cancelAnimationFrame(debounceTimer);
+            }
+            debounceTimer = requestAnimationFrame(() => {
+                enhanceMobileTables(root);
+            });
         }
     });
 
@@ -86,5 +108,10 @@ export function setupMobileTableObserver(rootNode) {
         subtree: true,
     });
 
-    return () => observer.disconnect();
+    return () => {
+        if (debounceTimer) {
+            cancelAnimationFrame(debounceTimer);
+        }
+        observer.disconnect();
+    };
 }

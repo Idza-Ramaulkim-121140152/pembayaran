@@ -4,62 +4,62 @@ import AppErrorBoundary from './components/common/AppErrorBoundary';
 import LoadingSpinner from './components/common/LoadingSpinner';
 import Navbar from './components/layouts/Navbar';
 import WhatsAppDisconnectedPopup from './components/WhatsAppDisconnectedPopup';
-import Dashboard from './pages/Dashboard';
-import DashboardPredictionPage from './pages/DashboardPredictionPage';
-import CustomersPage from './pages/Customers/CustomersPage';
-import CustomerForm from './pages/Customers/CustomerForm';
-import OdpPage from './pages/Odp/OdpPage';
-import OdpMappingPage from './pages/Odp/OdpMappingPage';
-import PengeluaranPage from './pages/Pengeluaran/PengeluaranPage';
-import ProfilePage from './pages/Profile/ProfilePage';
-import BillingPage from './pages/Billing/BillingPage';
-import InvoicePage from './pages/Invoice/InvoicePage';
-import LoginPage from './pages/Auth/LoginPage';
-import NotFoundPage from './pages/NotFoundPage';
-import PaymentMethodsPage from './pages/Settings/PaymentMethodsPage';
-import PaymentReceiptsPage from './pages/Settings/PaymentReceiptsPage';
-import ExpenseCategoriesPage from './pages/Settings/ExpenseCategoriesPage';
-import BorrowersPage from './pages/Settings/BorrowersPage';
-import CompanyFinanceReceiversPage from './pages/Settings/CompanyFinanceReceiversPage';
-import PaymentReceiverMappingsPage from './pages/Settings/PaymentReceiverMappingsPage';
-import PackageManagementPage from './pages/Settings/PackageManagementPage';
-import UserManagementPage from './pages/Settings/UserManagementPage';
-import InvoiceManagementPage from './pages/Settings/InvoiceManagementPage';
-import PromoManagementPage from './pages/Settings/PromoManagementPage';
-import FinancialTargetsPage from './pages/Settings/FinancialTargetsPage';
-import CustomerLoginPage from './pages/Customer/CustomerLoginPage';
-import CustomerDashboard from './pages/Customer/CustomerDashboard';
-import CustomerVerificationPage from './pages/Customers/CustomerVerificationPage';
-import CustomerVerificationForm from './pages/Customers/CustomerVerificationForm';
-import ComplaintsPage from './pages/Complaints/ComplaintsPage';
-import NetworkNoticePage from './pages/Settings/NetworkNoticePage';
-import SendNotificationPage from './pages/Settings/SendNotificationPage';
-import MasterWilayahPage from './pages/Settings/MasterWilayahPage';
-import MasterMikrotikPage from './pages/Settings/MasterMikrotikPage';
-import MasterDataPage from './pages/Settings/MasterDataPage';
-import AccessPolicyPage from './pages/Settings/AccessPolicyPage';
-import CustomerPackageManagementPage from './pages/Settings/CustomerPackageManagementPage';
-import CustomerPackageMigrationPage from './pages/Settings/CustomerPackageMigrationPage';
-import CustomerAccountsPage from './pages/Settings/CustomerAccountsPage';
-import SystemHealthPage from './pages/Settings/SystemHealthPage';
-import SystemActivityLogsPage from './pages/Settings/SystemActivityLogsPage';
-import PaymentVerificationPage from './pages/Settings/PaymentVerificationPage';
-import NetworkStatusPage from './pages/NetworkStatusPage';
-import Monitoring from './pages/Monitoring';
-import IsolirPage from './pages/Isolir/IsolirPage';
-import MonitoringMaps from './pages/MonitoringMaps';
-import PayrollPage from './pages/Payroll/PayrollPage';
-import MutasiPage from './pages/Finance/MutasiPage';
-import CashObligationCalendarPage from './pages/Finance/CashObligationCalendarPage';
-import ReconciliationCenterPage from './pages/Finance/ReconciliationCenterPage';
-import ReportsPage from './pages/Reports/ReportsPage';
-import DistributionRoutePage from './pages/DistributionRoute/DistributionRoutePage';
-import InventoryPage from './pages/Inventory/InventoryPage';
-import InventoryMasterPage from './pages/Inventory/InventoryMasterPage';
-import InstallationPage from './pages/Installation/InstallationPage';
-import IncidentCommandPage from './pages/IncidentCommandPage';
-import BorrowerLoansPage from './pages/BorrowerLoansPage';
-import PaymentReceiverApprovalPopup from './components/PaymentReceiverApprovalPopup';
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const DashboardPredictionPage = lazy(() => import('./pages/DashboardPredictionPage'));
+const CustomersPage = lazy(() => import('./pages/Customers/CustomersPage'));
+const CustomerForm = lazy(() => import('./pages/Customers/CustomerForm'));
+const OdpPage = lazy(() => import('./pages/Odp/OdpPage'));
+const OdpMappingPage = lazy(() => import('./pages/Odp/OdpMappingPage'));
+const PengeluaranPage = lazy(() => import('./pages/Pengeluaran/PengeluaranPage'));
+const ProfilePage = lazy(() => import('./pages/Profile/ProfilePage'));
+const BillingPage = lazy(() => import('./pages/Billing/BillingPage'));
+const InvoicePage = lazy(() => import('./pages/Invoice/InvoicePage'));
+const LoginPage = lazy(() => import('./pages/Auth/LoginPage'));
+const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
+const PaymentMethodsPage = lazy(() => import('./pages/Settings/PaymentMethodsPage'));
+const PaymentReceiptsPage = lazy(() => import('./pages/Settings/PaymentReceiptsPage'));
+const ExpenseCategoriesPage = lazy(() => import('./pages/Settings/ExpenseCategoriesPage'));
+const BorrowersPage = lazy(() => import('./pages/Settings/BorrowersPage'));
+const CompanyFinanceReceiversPage = lazy(() => import('./pages/Settings/CompanyFinanceReceiversPage'));
+const PaymentReceiverMappingsPage = lazy(() => import('./pages/Settings/PaymentReceiverMappingsPage'));
+const PackageManagementPage = lazy(() => import('./pages/Settings/PackageManagementPage'));
+const UserManagementPage = lazy(() => import('./pages/Settings/UserManagementPage'));
+const InvoiceManagementPage = lazy(() => import('./pages/Settings/InvoiceManagementPage'));
+const PromoManagementPage = lazy(() => import('./pages/Settings/PromoManagementPage'));
+const FinancialTargetsPage = lazy(() => import('./pages/Settings/FinancialTargetsPage'));
+const CustomerLoginPage = lazy(() => import('./pages/Customer/CustomerLoginPage'));
+const CustomerDashboard = lazy(() => import('./pages/Customer/CustomerDashboard'));
+const CustomerVerificationPage = lazy(() => import('./pages/Customers/CustomerVerificationPage'));
+const CustomerVerificationForm = lazy(() => import('./pages/Customers/CustomerVerificationForm'));
+const ComplaintsPage = lazy(() => import('./pages/Complaints/ComplaintsPage'));
+const NetworkNoticePage = lazy(() => import('./pages/Settings/NetworkNoticePage'));
+const SendNotificationPage = lazy(() => import('./pages/Settings/SendNotificationPage'));
+const MasterWilayahPage = lazy(() => import('./pages/Settings/MasterWilayahPage'));
+const MasterMikrotikPage = lazy(() => import('./pages/Settings/MasterMikrotikPage'));
+const MasterDataPage = lazy(() => import('./pages/Settings/MasterDataPage'));
+const AccessPolicyPage = lazy(() => import('./pages/Settings/AccessPolicyPage'));
+const CustomerPackageManagementPage = lazy(() => import('./pages/Settings/CustomerPackageManagementPage'));
+const CustomerPackageMigrationPage = lazy(() => import('./pages/Settings/CustomerPackageMigrationPage'));
+const CustomerAccountsPage = lazy(() => import('./pages/Settings/CustomerAccountsPage'));
+const SystemHealthPage = lazy(() => import('./pages/Settings/SystemHealthPage'));
+const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivityLogsPage'));
+const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
+const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
+const Monitoring = lazy(() => import('./pages/Monitoring'));
+const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
+const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
+const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
+const MutasiPage = lazy(() => import('./pages/Finance/MutasiPage'));
+const CashObligationCalendarPage = lazy(() => import('./pages/Finance/CashObligationCalendarPage'));
+const ReconciliationCenterPage = lazy(() => import('./pages/Finance/ReconciliationCenterPage'));
+const ReportsPage = lazy(() => import('./pages/Reports/ReportsPage'));
+const DistributionRoutePage = lazy(() => import('./pages/DistributionRoute/DistributionRoutePage'));
+const InventoryPage = lazy(() => import('./pages/Inventory/InventoryPage'));
+const InventoryMasterPage = lazy(() => import('./pages/Inventory/InventoryMasterPage'));
+const InstallationPage = lazy(() => import('./pages/Installation/InstallationPage'));
+const IncidentCommandPage = lazy(() => import('./pages/IncidentCommandPage'));
+const BorrowerLoansPage = lazy(() => import('./pages/BorrowerLoansPage'));
+const PaymentReceiverApprovalPopup = lazy(() => import('./components/PaymentReceiverApprovalPopup'));
 import { enhanceMobileTables, setupMobileTableObserver } from './utils/mobileTableEnhancer';
 
 const InstallationPricingPage = lazy(() => import('./pages/Settings/InstallationPricingPage'));
@@ -133,7 +133,7 @@ function hasRoutePermission(permissionKey) {
 
 function GuardedRoute({ permissionKey, element }) {
     if (hasRoutePermission(permissionKey)) {
-        return element;
+        return <RouteSuspense>{element}</RouteSuspense>;
     }
 
     return <Navigate to="/dashboard" replace />;
@@ -302,26 +302,26 @@ function App() {
                     <Route path="/" element={<Navigate to="/customer/login" replace />} />
                     
                     {/* Network Status Page (Public) */}
-                    <Route path="/status-jaringan" element={<NetworkStatusPage />} />
+                    <Route path="/status-jaringan" element={<RouteSuspense><NetworkStatusPage /></RouteSuspense>} />
                     
                     {/* Auth Routes */}
-                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/login" element={<RouteSuspense><LoginPage /></RouteSuspense>} />
                     
                     {/* Dashboard */}
                     <Route path="/dashboard" element={<GuardedRoute permissionKey="dashboard.view" element={<Dashboard />} />} />
                     <Route path="/dashboard/prediksi" element={<GuardedRoute permissionKey="dashboard.prediction.view" element={<DashboardPredictionPage />} />} />
                     <Route path="/laporan" element={<GuardedRoute permissionKey="report.view" element={<ReportsPage />} />} />
-                    <Route path="/laporan/income-pelanggan" element={<GuardedRoute permissionKey="report.view" element={<RouteSuspense><CustomerIncomeReportPage /></RouteSuspense>} />} />
-                    <Route path="/laporan/pemasangan" element={<GuardedRoute permissionKey="report.view" element={<RouteSuspense><InstallationReportPage /></RouteSuspense>} />} />
-                    <Route path="/laporan/pelanggan-nonaktif" element={<GuardedRoute permissionKey="report.view" element={<RouteSuspense><InactiveCustomerReportPage /></RouteSuspense>} />} />
-                    <Route path="/laporan/project" element={<GuardedRoute permissionKey="report.view" element={<RouteSuspense><ProjectReportPage /></RouteSuspense>} />} />
+                    <Route path="/laporan/income-pelanggan" element={<GuardedRoute permissionKey="report.view" element={<CustomerIncomeReportPage />} />} />
+                    <Route path="/laporan/pemasangan" element={<GuardedRoute permissionKey="report.view" element={<InstallationReportPage />} />} />
+                    <Route path="/laporan/pelanggan-nonaktif" element={<GuardedRoute permissionKey="report.view" element={<InactiveCustomerReportPage />} />} />
+                    <Route path="/laporan/project" element={<GuardedRoute permissionKey="report.view" element={<ProjectReportPage />} />} />
                     
                     {/* Billing/Penagihan */}
                     <Route path="/penagihan" element={<GuardedRoute permissionKey="billing.invoice.view" element={<BillingPage />} />} />
                     <Route path="/billing" element={<GuardedRoute permissionKey="billing.invoice.view" element={<BillingPage />} />} />
                     
                     {/* Public Invoice */}
-                    <Route path="/invoice/:invoiceLink" element={<InvoicePage />} />
+                    <Route path="/invoice/:invoiceLink" element={<RouteSuspense><InvoicePage /></RouteSuspense>} />
                     
                     {/* Customers */}
                     <Route path="/customers" element={<GuardedRoute permissionKey="customer.view" element={<CustomersPage />} />} />
@@ -341,7 +341,7 @@ function App() {
                     <Route path="/pengeluaran" element={<GuardedRoute permissionKey="finance.expense.manage" element={<PengeluaranPage />} />} />
                     
                     {/* Profile */}
-                    <Route path="/profile" element={<ProfilePage />} />
+                    <Route path="/profile" element={<RouteSuspense><ProfilePage /></RouteSuspense>} />
                     
                     {/* Settings */}
                     <Route path="/settings/payment-methods" element={<GuardedRoute permissionKey="master.payment.manage" element={<PaymentMethodsPage />} />} />
@@ -355,13 +355,13 @@ function App() {
                     <Route path="/settings/invoice-management" element={<GuardedRoute permissionKey="billing.invoice.manage" element={<InvoiceManagementPage />} />} />
                     <Route path="/settings/payment-verification" element={<GuardedRoute permissionKey="billing.payment_capture.review" element={<PaymentVerificationPage />} />} />
                     <Route path="/settings/financial-targets" element={<GuardedRoute permissionKey="financial_target.manage" element={<FinancialTargetsPage />} />} />
-                    <Route path="/settings/installation-pricing" element={<GuardedRoute permissionKey="inventory.master.manage" element={<RouteSuspense><InstallationPricingPage /></RouteSuspense>} />} />
+                    <Route path="/settings/installation-pricing" element={<GuardedRoute permissionKey="inventory.master.manage" element={<InstallationPricingPage />} />} />
                     <Route path="/settings/promo" element={<GuardedRoute permissionKey="master.promo.manage" element={<PromoManagementPage />} />} />
                     <Route path="/settings/network-notices" element={<GuardedRoute permissionKey="master.network_notice.manage" element={<NetworkNoticePage />} />} />
                     <Route path="/settings/send-notification" element={<GuardedRoute permissionKey="master.network_notice.manage" element={<SendNotificationPage />} />} />
                     <Route path="/settings/master-wilayah" element={<GuardedRoute permissionKey="master.wilayah.manage" element={<MasterWilayahPage />} />} />
                     <Route path="/settings/master-mikrotik" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterMikrotikPage />} />} />
-                    <Route path="/settings/customer-wifi-links" element={<GuardedRoute permissionKey="master.customer_wifi_links.manage" element={<RouteSuspense><CustomerWifiLinksPage /></RouteSuspense>} />} />
+                    <Route path="/settings/customer-wifi-links" element={<GuardedRoute permissionKey="master.customer_wifi_links.manage" element={<CustomerWifiLinksPage />} />} />
                     <Route path="/settings/master-data" element={<GuardedRoute permissionKey="masterdata.view" element={<MasterDataPage />} />} />
                     <Route path="/settings/access-policy" element={<GuardedRoute permissionKey="access_policy.manage" element={<AccessPolicyPage />} />} />
                     <Route path="/settings/system-logs" element={<GuardedRoute permissionKey="access_policy.manage" element={<SystemActivityLogsPage />} />} />
@@ -404,11 +404,11 @@ function App() {
                     <Route path="/incidents" element={<GuardedRoute permissionKey="incident.view" element={<IncidentCommandPage />} />} />
                     
                     {/* Customer Portal */}
-                    <Route path="/customer/login" element={<CustomerLoginPage />} />
-                    <Route path="/customer/dashboard" element={<CustomerDashboard />} />
+                    <Route path="/customer/login" element={<RouteSuspense><CustomerLoginPage /></RouteSuspense>} />
+                    <Route path="/customer/dashboard" element={<RouteSuspense><CustomerDashboard /></RouteSuspense>} />
                     
                     {/* 404 */}
-                    <Route path="*" element={<NotFoundPage />} />
+                    <Route path="*" element={<RouteSuspense><NotFoundPage /></RouteSuspense>} />
                 </Routes>
             </AppLayout>
         </Router>

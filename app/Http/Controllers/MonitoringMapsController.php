@@ -7,6 +7,7 @@ use App\Models\Odp;
 use App\Services\MikroTikService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
 class MonitoringMapsController extends Controller
 {
@@ -42,11 +43,17 @@ class MonitoringMapsController extends Controller
             $isolatedUsernameMap = [];
             $today = Carbon::today()->startOfDay();
 
-            // Check online and isolated status from MikroTik
-            $mikrotik = new MikroTikService();
+            // Check online and isolated status from MikroTik (cached for 30s)
             try {
-                $activeUsers = $mikrotik->getActivePPPoEConnections();
-                $isolatedSecrets = $mikrotik->getIsolatedSecrets();
+                $activeUsers = Cache::remember('mikrotik:maps_active_pppoe_connections', 30, function () {
+                    $mikrotik = new MikroTikService();
+                    return $mikrotik->getActivePPPoEConnections();
+                });
+
+                $isolatedSecrets = Cache::remember('mikrotik:maps_isolated_secrets', 60, function () {
+                    $mikrotik = new MikroTikService();
+                    return $mikrotik->getIsolatedSecrets();
+                });
 
                 // Map active users by username
                 $activeUsernames = [];
