@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, FileCheck, ExternalLink, Loader, Calendar, MapPin, Phone, User as UserIcon } from 'lucide-react';
+import { Users, FileCheck, ExternalLink, Loader, Calendar, MapPin, Phone, User as UserIcon, UserCheck } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
