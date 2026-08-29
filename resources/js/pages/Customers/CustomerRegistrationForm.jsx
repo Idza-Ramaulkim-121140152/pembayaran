@@ -190,9 +190,6 @@ function CustomerRegistrationForm() {
             const res = await fetch('/api/packages/active');
             const json = await res.json();
             setPackageList(json.data || []);
-            if (json.data?.length > 0 && !formData.paket) {
-                setFormData((prev) => ({ ...prev, paket: json.data[0].name }));
-            }
         } catch (e) {
             console.error('Failed to fetch packages', e);
         }
@@ -203,9 +200,6 @@ function CustomerRegistrationForm() {
             const res = await fetch('/api/master-wilayah/kecamatan');
             const json = await res.json();
             setKecamatanList(json.data || []);
-            if (json.data?.length > 0 && !formData.kecamatan_id) {
-                setFormData((prev) => ({ ...prev, kecamatan_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch kecamatan', e);
         }
@@ -216,9 +210,6 @@ function CustomerRegistrationForm() {
             const res = await fetch(`/api/master-wilayah/desa?kecamatan_id=${encodeURIComponent(kecamatanId)}`);
             const json = await res.json();
             setDesaList(json.data || []);
-            if (json.data?.length > 0 && !formData.desa_id) {
-                setFormData((prev) => ({ ...prev, desa_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch desa', e);
         }
@@ -229,9 +220,6 @@ function CustomerRegistrationForm() {
             const res = await fetch(`/api/master-wilayah/dusun?desa_id=${encodeURIComponent(desaId)}`);
             const json = await res.json();
             setDusunList(json.data || []);
-            if (json.data?.length > 0 && !formData.dusun_id) {
-                setFormData((prev) => ({ ...prev, dusun_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch dusun', e);
         }
@@ -318,6 +306,14 @@ function CustomerRegistrationForm() {
         }
         if (!formData.no_telp.trim()) {
             setError('Nomor WhatsApp pelanggan wajib diisi.');
+            return;
+        }
+        if (!formData.kecamatan_id || !formData.desa_id || !formData.dusun_id) {
+            setError('Silakan pilih wilayah Kecamatan, Desa, dan Dusun.');
+            return;
+        }
+        if (!formData.paket) {
+            setError('Silakan pilih salah satu Paket Layanan.');
             return;
         }
         if (!formData.mac_address.trim()) {
@@ -702,6 +698,7 @@ function CustomerRegistrationForm() {
                                         onChange={handleInputChange}
                                         className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                     >
+                                        <option value="">Pilih Jenis Paket</option>
                                         {packageList.map((p) => (
                                             <option key={p.id} value={p.name}>
                                                 {p.name} {p.speed ? `(${p.speed})` : ''} - Rp {Number(p.price || 0).toLocaleString('id-ID')}

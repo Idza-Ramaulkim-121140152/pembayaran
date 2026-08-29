@@ -69,9 +69,6 @@ function PublicCustomerRegistrationPage() {
             const res = await fetch('/api/public/packages');
             const json = await res.json();
             setPackageList(json.data || []);
-            if (json.data?.length > 0 && !formData.paket) {
-                setFormData((prev) => ({ ...prev, paket: json.data[0].name }));
-            }
         } catch (e) {
             console.error('Failed to fetch packages', e);
         }
@@ -82,9 +79,6 @@ function PublicCustomerRegistrationPage() {
             const res = await fetch('/api/public/wilayah/kecamatan');
             const json = await res.json();
             setKecamatanList(json.data || []);
-            if (json.data?.length > 0 && !formData.kecamatan_id) {
-                setFormData((prev) => ({ ...prev, kecamatan_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch kecamatan', e);
         }
@@ -95,9 +89,6 @@ function PublicCustomerRegistrationPage() {
             const res = await fetch(`/api/public/wilayah/desa?kecamatan_id=${encodeURIComponent(kecamatanId)}`);
             const json = await res.json();
             setDesaList(json.data || []);
-            if (json.data?.length > 0) {
-                setFormData((prev) => ({ ...prev, desa_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch desa', e);
         }
@@ -108,9 +99,6 @@ function PublicCustomerRegistrationPage() {
             const res = await fetch(`/api/public/wilayah/dusun?desa_id=${encodeURIComponent(desaId)}`);
             const json = await res.json();
             setDusunList(json.data || []);
-            if (json.data?.length > 0) {
-                setFormData((prev) => ({ ...prev, dusun_id: String(json.data[0].id) }));
-            }
         } catch (e) {
             console.error('Failed to fetch dusun', e);
         }
@@ -173,6 +161,10 @@ function PublicCustomerRegistrationPage() {
         }
         if (!formData.kecamatan_id || !formData.desa_id || !formData.dusun_id) {
             setError('Silakan pilih wilayah Kecamatan, Desa, dan Dusun.');
+            return;
+        }
+        if (!formData.paket) {
+            setError('Silakan pilih salah satu Paket Internet.');
             return;
         }
         if (!fotoDepanRumah) {
