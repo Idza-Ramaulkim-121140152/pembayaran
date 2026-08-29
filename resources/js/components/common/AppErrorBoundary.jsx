@@ -19,6 +19,19 @@ class AppErrorBoundary extends Component {
 
     componentDidCatch(error, errorInfo) {
         console.error('App runtime error captured by boundary:', error, errorInfo);
+        const msg = String(error?.message || '');
+        const isChunkLoadError = msg.includes('dynamically imported module') ||
+            msg.includes('Loading chunk') ||
+            msg.includes('Failed to fetch');
+
+        if (isChunkLoadError && !sessionStorage.getItem('chunk_reload_triggered')) {
+            sessionStorage.setItem('chunk_reload_triggered', 'true');
+            window.location.reload();
+        }
+    }
+
+    componentDidMount() {
+        sessionStorage.removeItem('chunk_reload_triggered');
     }
 
     handleReload = () => {

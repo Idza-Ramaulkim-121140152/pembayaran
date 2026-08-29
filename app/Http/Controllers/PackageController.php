@@ -30,6 +30,34 @@ class PackageController extends Controller
     }
 
     /**
+     * GET /api/public/packages
+     * List only active packages configured for public registration
+     */
+    public function publicPackages()
+    {
+        $packages = Package::publicRegistration()->get();
+        return response()->json(['data' => $packages]);
+    }
+
+    /**
+     * POST /api/packages/{package}/toggle-public
+     * Quick toggle for public registration visibility
+     */
+    public function togglePublic(Package $package)
+    {
+        $package->show_in_public_registration = !($package->show_in_public_registration ?? true);
+        $package->save();
+
+        return response()->json([
+            'success' => true,
+            'data' => $package,
+            'message' => $package->show_in_public_registration
+                ? 'Paket sekarang TAMPIL di formulir pendaftaran publik.'
+                : 'Paket DISEMBUNYIKAN dari formulir pendaftaran publik.',
+        ]);
+    }
+
+    /**
      * POST /api/packages
      */
     public function store(Request $request)
@@ -44,6 +72,7 @@ class PackageController extends Controller
             'description' => 'nullable|string|max:500',
             'is_popular' => 'boolean',
             'is_active' => 'boolean',
+            'show_in_public_registration' => 'boolean',
             'sort_order' => 'integer',
         ]);
 
@@ -70,6 +99,7 @@ class PackageController extends Controller
             'description' => 'nullable|string|max:500',
             'is_popular' => 'boolean',
             'is_active' => 'boolean',
+            'show_in_public_registration' => 'boolean',
             'sort_order' => 'integer',
         ]);
 

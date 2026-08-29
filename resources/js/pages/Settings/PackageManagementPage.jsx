@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
     Package, Plus, Edit2, Trash2, Save, X, Wifi, RefreshCw,
     Check, AlertCircle, ChevronDown, ChevronUp, Star, Eye, EyeOff,
-    Zap, Server
+    Zap, Server, Globe
 } from 'lucide-react';
 
 const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
@@ -17,6 +17,7 @@ const defaultForm = {
     description: '',
     is_popular: false,
     is_active: true,
+    show_in_public_registration: true,
     sort_order: 0,
 };
 
@@ -118,11 +119,30 @@ function PackageManagementPage() {
             description: pkg.description || '',
             is_popular: pkg.is_popular || false,
             is_active: pkg.is_active ?? true,
+            show_in_public_registration: pkg.show_in_public_registration ?? true,
             sort_order: pkg.sort_order || 0,
         });
         setEditingId(pkg.id);
         setShowForm(true);
         setFeatureInput('');
+    };
+
+    const handleTogglePublic = async (pkg) => {
+        try {
+            const res = await fetch(`/api/packages/${pkg.id}/toggle-public`, {
+                method: 'POST',
+                headers,
+            });
+            const json = await res.json();
+            if (json.success) {
+                showAlert(json.message);
+                fetchPackages();
+            } else {
+                showAlert(json.message || 'Gagal mengubah status tampil', 'error');
+            }
+        } catch (err) {
+            showAlert('Terjadi kesalahan saat mengubah status tampil', 'error');
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -235,8 +255,27 @@ function PackageManagementPage() {
                         <div key={pkg.id} className={`bg-white rounded-xl shadow-sm border p-5 transition ${!pkg.is_active ? 'opacity-60' : ''}`}>
                             <div className="flex items-start justify-between">
                                 <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1">
+                                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
                                         <h3 className="font-semibold text-gray-900 text-lg">{pkg.name}</h3>
+                                        {pkg.show_in_public_registration !== false ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleTogglePublic(pkg)}
+                                                className="px-2.5 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-full text-xs font-semibold flex items-center gap-1 transition"
+                                                title="Klik untuk menyembunyikan dari form registrasi publik"
+                                            >
+                                                <Globe size={11} /> Tampil di Form Publik
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleTogglePublic(pkg)}
+                                                className="px-2.5 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-300 rounded-full text-xs font-semibold flex items-center gap-1 transition"
+                                                title="Klik untuk menampilkan di form registrasi publik"
+                                            >
+                                                <EyeOff size={11} /> Sembunyi dari Publik
+                                            </button>
+                                        )}
                                         {pkg.is_popular && (
                                             <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full text-xs font-medium flex items-center gap-1">
                                                 <Star size={12} /> Populer
@@ -461,36 +500,60 @@ function PackageManagementPage() {
                                 </div>
 
                                 {/* Options */}
-                                <div className="flex items-center gap-6 pt-2">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            name="is_active"
-                                            checked={form.is_active}
-                                            onChange={handleChange}
-                                            className="text-orange-500 focus:ring-orange-500 rounded"
-                                        />
-                                        <span className="text-sm text-gray-700">Aktif</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            name="is_popular"
-                                            checked={form.is_popular}
-                                            onChange={handleChange}
-                                            className="text-orange-500 focus:ring-orange-500 rounded"
-                                        />
-                                        <span className="text-sm text-gray-700">Populer</span>
-                                    </label>
-                                    <div className="flex items-center gap-2">
-                                        <label className="text-sm text-gray-700">Urutan:</label>
-                                        <input
-                                            type="number"
-                                            name="sort_order"
-                                            value={form.sort_order}
-                                            onChange={handleChange}
-                                            className="w-16 border rounded-lg px-2 py-1 text-sm text-center focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-                                        />
+                                <div className="space-y-3 pt-2">
+                                    <div className="flex items-center gap-6">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                name="is_active"
+                                                checked={form.is_active}
+                                                onChange={handleChange}
+                                                className="text-orange-500 focus:ring-orange-500 rounded"
+                                            />
+                                            <span className="text-sm text-gray-700">Aktif</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                name="is_popular"
+                                                checked={form.is_popular}
+                                                onChange={handleChange}
+                                                className="text-orange-500 focus:ring-orange-500 rounded"
+                                            />
+                                            <span className="text-sm text-gray-700">Populer</span>
+                                        </label>
+                                        <div className="flex items-center gap-2">
+                                            <label className="text-sm text-gray-700">Urutan:</label>
+                                            <input
+                                                type="number"
+                                                name="sort_order"
+                                                value={form.sort_order}
+                                                onChange={handleChange}
+                                                className="w-16 border rounded-lg px-2 py-1 text-sm text-center focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Public Registration Visibility */}
+                                    <div className="pt-2 border-t border-gray-100">
+                                        <label className="flex items-start gap-2.5 cursor-pointer bg-orange-50/60 p-3 rounded-xl border border-orange-100">
+                                            <input
+                                                type="checkbox"
+                                                name="show_in_public_registration"
+                                                checked={form.show_in_public_registration !== false}
+                                                onChange={handleChange}
+                                                className="mt-0.5 text-orange-500 focus:ring-orange-500 rounded"
+                                            />
+                                            <div>
+                                                <span className="text-xs font-bold text-gray-800 flex items-center gap-1">
+                                                    <Globe size={14} className="text-orange-600" />
+                                                    Tampilkan di Formulir Pendaftaran Publik (/registrasi)
+                                                </span>
+                                                <p className="text-[11px] text-gray-500 mt-0.5">
+                                                    Hilangkan centang jika paket ini khusus internal (seperti Paket Aparat, DED PT, dll) agar tidak tampil di web pendaftaran publik.
+                                                </p>
+                                            </div>
+                                        </label>
                                     </div>
                                 </div>
 

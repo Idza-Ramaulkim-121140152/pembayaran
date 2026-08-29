@@ -93,7 +93,7 @@ Route::post('/api/public/register-prospect', [\App\Http\Controllers\CustomerPros
 Route::get('/api/public/wilayah/kecamatan', [\App\Http\Controllers\MasterWilayahController::class, 'kecamatanOptions'])->name('api.public.wilayah.kecamatan');
 Route::get('/api/public/wilayah/desa', [\App\Http\Controllers\MasterWilayahController::class, 'desaOptions'])->name('api.public.wilayah.desa');
 Route::get('/api/public/wilayah/dusun', [\App\Http\Controllers\MasterWilayahController::class, 'dusunOptions'])->name('api.public.wilayah.dusun');
-Route::get('/api/public/packages', [\App\Http\Controllers\PackageController::class, 'active'])->name('api.public.packages');
+Route::get('/api/public/packages', [\App\Http\Controllers\PackageController::class, 'publicPackages'])->name('api.public.packages');
 
 // Landing Page Public API
 Route::get('/api/landing-page', [LandingPageController::class, 'getData'])->name('api.landing-page');
@@ -592,6 +592,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/packages', [PackageController::class, 'index'])->name('api.packages.index');
         Route::post('/api/packages', [PackageController::class, 'store'])->name('api.packages.store');
         Route::put('/api/packages/{package}', [PackageController::class, 'update'])->name('api.packages.update');
+        Route::post('/api/packages/{package}/toggle-public', [PackageController::class, 'togglePublic'])->name('api.packages.toggle-public');
         Route::delete('/api/packages/{package}', [PackageController::class, 'destroy'])->name('api.packages.destroy');
 
         // MikroTik Profiles API

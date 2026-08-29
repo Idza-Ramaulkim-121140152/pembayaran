@@ -27,7 +27,7 @@ const MASTER_MENU = [
     },
     {
         title: 'Paket Layanan',
-        description: 'Kelola paket internet dan profil MikroTik.',
+        description: 'Kelola paket internet, profil MikroTik, dan visibilitas di form registrasi publik.',
         icon: Package,
         path: '/settings/packages',
         roles: ['superadmin', 'admin'],
