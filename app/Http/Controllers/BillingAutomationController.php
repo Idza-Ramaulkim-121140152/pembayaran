@@ -215,6 +215,91 @@ class BillingAutomationController extends Controller
         ]);
     }
 
+    public function captures(Request $request)
+    {
+        $validated = $request->validate([
+            'status' => 'nullable|string|in:needs_review,approved,unmatched,rejected,pending,all',
+            'search' => 'nullable|string|max:100',
+            'per_page' => 'nullable|integer|min:1|max:200',
+        ]);
+
+        $paginator = $this->paymentMatchingService->captures($validated, (int) ($validated['per_page'] ?? 25));
+
+        return response()->json([
+            'data' => $this->capturePresenter->presentPaginator($paginator),
+        ]);
+    }
+
+    public function uploadAndAnalyze(
+        Request $request,
+        \App\Services\PaymentProofAnalysisService $analysisService,
+        \App\Services\PaymentProofValidationService $validationService
+    ) {
+        $validated = $request->validate([
+            'file' => 'required|file|mimes:jpeg,png,webp,pdf,jpg|max:10240',
+            'invoice_id' => 'nullable|integer|exists:invoices,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
+            'caption' => 'nullable|string|max:1000',
+        ]);
+
+        $file = $request->file('file');
+        $path = $file->store('bukti_pembayaran', 'public');
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'admin_upload',
+            'invoice_id' => $validated['invoice_id'] ?? null,
+            'customer_id' => $validated['customer_id'] ?? null,
+            'amount' => 0,
+            'paid_date' => now()->toDateString(),
+            'reference_code' => null,
+            'fingerprint' => hash('sha256', 'admin_upload:' . $path . ':' . microtime(true)),
+            'match_status' => 'pending',
+            'meta' => [
+                'media' => [
+                    'path' => $path,
+                    'mime_type' => $file->getMimeType(),
+                    'file_name' => $file->getClientOriginalName(),
+                    'file_size' => $file->getSize(),
+                ],
+                'source' => [
+                    'type' => 'admin_upload',
+                    'caption' => $validated['caption'] ?? '',
+                    'uploader_id' => auth()->id(),
+                ],
+            ],
+        ]);
+
+        $analysis = $analysisService->analyze($capture);
+        $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);
+
+        $meta = array_merge((array) ($capture->meta ?? []), [
+            'analysis' => $analysis,
+            'validation' => [
+                'status' => $validation['status'],
+                'failure_reason' => $validation['failure_reason'],
+                'flags' => $validation['validation_flags'],
+                'destination_match' => $validation['destination_match'],
+                'normalized' => $validation['normalized'],
+            ],
+        ]);
+
+        $capture->amount = max(0, (float) ($validation['normalized']['amount'] ?? 0));
+        $capture->paid_date = (string) ($validation['normalized']['paid_date'] ?? now()->toDateString());
+        $capture->reference_code = (string) ($validation['normalized']['reference_code'] ?? $capture->reference_code);
+        $capture->match_confidence = (float) ($analysis['confidence_overall'] ?? 0);
+        $capture->meta = $meta;
+        $capture->match_status = $validation['status'] === 'approved' ? 'matched' : ($validation['status'] === 'unmatched' ? 'unmatched' : 'needs_review');
+        $capture->save();
+
+        $this->paymentMatchingService->runMatching($capture->id, $validation['status'] === 'approved', auth()->id());
+        $capture->refresh();
+
+        return response()->json([
+            'message' => 'Bukti pembayaran berhasil diunggah dan dianalisis.',
+            'data' => $this->capturePresenter->present($capture->load(['customer', 'invoice', 'matchReviews.candidateInvoice'])),
+        ]);
+    }
+
     public function unmatched(Request $request)
     {
         $validated = $request->validate([

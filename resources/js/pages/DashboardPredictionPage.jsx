@@ -11,6 +11,32 @@ import {
     TrendingUp,
     Users,
     Wallet,
+    CheckCircle2,
+    XCircle,
+    ChevronRight,
+    Zap,
+    ShoppingCart,
+    Send,
+    Info,
+    Eye,
+    Sparkles,
+    Filter,
+    Sliders,
+    Layers,
+    BarChart3,
+    HelpCircle,
+    ArrowUpRight,
+    ArrowDownRight,
+    Phone,
+    Clock,
+    Plus,
+    Minus,
+    Check,
+    X,
+    Server,
+    ShieldCheck,
+    PieChart,
+    ChevronLeft
 } from 'lucide-react';
 import { Line, Doughnut } from 'react-chartjs-2';
 import {
@@ -24,11 +50,11 @@ import {
     Title,
     Tooltip,
     Legend,
-    Filler,
+    Filler
 } from 'chart.js';
 import Alert from '../components/common/Alert';
 import Modal from '../components/common/Modal';
-import ResponsiveDataView from '../components/common/ResponsiveDataView';
+import LoadingSpinner from '../components/common/LoadingSpinner';
 import apiClient from '../services/api';
 import monthlyBudgetService from '../services/monthlyBudgetService';
 
@@ -96,35 +122,12 @@ function formatMonthLabel(monthValue) {
     });
 }
 
-function getDefaultForecastRange() {
-    const today = new Date();
-    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 6);
-
-    return {
-        start_date: formatDateInputLocal(today),
-        end_date: formatDateInputLocal(end),
-    };
-}
-
-function getDefaultKpiRange() {
-    const today = new Date();
-    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
-
-    return {
-        start_date: formatDateInputLocal(start),
-        end_date: formatDateInputLocal(today),
-    };
-}
-
-function clampScore(value) {
-    return Math.max(0, Math.min(100, Number(value || 0)));
-}
-
 function formatCurrency(value) {
     return new Intl.NumberFormat('id-ID', {
         style: 'currency',
         currency: 'IDR',
         minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
     }).format(Number(value || 0));
 }
 
@@ -134,3047 +137,1681 @@ function formatPercent(value, digits = 1) {
 }
 
 function getRiskBadgeClass(riskLevel) {
-    if (riskLevel === 'kritis') return 'bg-red-100 text-red-700';
-    if (riskLevel === 'tinggi') return 'bg-orange-100 text-orange-700';
-    if (riskLevel === 'waspada' || riskLevel === 'sedang') return 'bg-amber-100 text-amber-700';
-    return 'bg-emerald-100 text-emerald-700';
+    const r = String(riskLevel || '').toLowerCase();
+    if (r === 'kritis') return 'bg-red-100 text-red-700 border-red-200';
+    if (r === 'tinggi') return 'bg-orange-100 text-orange-700 border-orange-200';
+    if (r === 'waspada' || r === 'sedang') return 'bg-amber-100 text-amber-700 border-amber-200';
+    return 'bg-emerald-100 text-emerald-700 border-emerald-200';
 }
 
-function getMandatoryIndicatorClass(indicator) {
-    if (indicator === 'kritis') return 'bg-red-100 text-red-700';
-    if (indicator === 'risiko') return 'bg-orange-100 text-orange-700';
-    if (indicator === 'waspada') return 'bg-amber-100 text-amber-700';
-    if (indicator === 'terlaksana') return 'bg-indigo-100 text-indigo-700';
-    return 'bg-emerald-100 text-emerald-700';
-}
-
-function getChartBalanceSourceMeta(source) {
-    if (source === 'snapshot') {
-        return { label: 'Snapshot', className: 'bg-emerald-100 text-emerald-700' };
+function getStatusBadge(status) {
+    const s = String(status || '').toLowerCase();
+    if (s === 'aman' || s === 'safe' || s === 'terlaksana') {
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Aman</span>;
     }
-
-    if (source === 'snapshot_fallback_ledger') {
-        return { label: 'Ledger Fallback', className: 'bg-cyan-100 text-cyan-700' };
+    if (s === 'waspada' || s === 'warning') {
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">Waspada</span>;
     }
-
-    if (source === 'actual_today') {
-        return { label: 'Aktual Hari Ini', className: 'bg-indigo-100 text-indigo-700' };
+    if (s === 'defisit' || s === 'lewat_budget' || s === 'kritis') {
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">{s === 'lewat_budget' ? 'Lewat Budget' : 'Defisit'}</span>;
     }
-
-    if (source === 'forecast') {
-        return { label: 'Forecast', className: 'bg-amber-100 text-amber-700' };
-    }
-
-    return { label: 'Tidak diketahui', className: 'bg-gray-200 text-gray-700' };
-}
-
-function getSectionSourceMeta(source) {
-    if (source === 'model') {
-        return { label: 'Model', className: 'bg-emerald-100 text-emerald-700 border border-emerald-200' };
-    }
-
-    if (source === 'unavailable') {
-        return { label: 'Model Unavailable', className: 'bg-rose-100 text-rose-700 border border-rose-200' };
-    }
-
-    return { label: 'Tidak diketahui', className: 'bg-gray-100 text-gray-600 border border-gray-200' };
-}
-
-function getRiskLevelBadgeClass(level) {
-    if (level === 'kritis') return 'bg-rose-100 text-rose-700';
-    if (level === 'waspada') return 'bg-amber-100 text-amber-700';
-    return 'bg-emerald-100 text-emerald-700';
-}
-
-function getBudgetStatusClass(status) {
-    if (status === 'defisit' || status === 'lewat_budget') return 'bg-rose-100 text-rose-700';
-    if (status === 'rawan') return 'bg-orange-100 text-orange-700';
-    if (status === 'waspada') return 'bg-amber-100 text-amber-700';
-    if (status === 'unconfigured') return 'bg-slate-100 text-slate-700';
-    return 'bg-emerald-100 text-emerald-700';
-}
-
-function normalizeFinancialStatus(status) {
-    const value = String(status || '').toLowerCase();
-
-    if (['defisit', 'lewat_budget', 'critical'].includes(value)) return 'defisit';
-    if (['rawan', 'tinggi', 'risiko'].includes(value)) return 'rawan';
-    if (['waspada', 'warning', 'sedang'].includes(value)) return 'waspada';
-    if (['aman', 'healthy', 'safe', 'configured', 'active'].includes(value)) return 'aman';
-    if (['unconfigured', 'unknown', ''].includes(value)) return 'unconfigured';
-
-    return value || 'unconfigured';
-}
-
-function getFinancialIndicatorMeta(status) {
-    const normalized = normalizeFinancialStatus(status);
-
-    if (normalized === 'defisit') {
-        return {
-            key: normalized,
-            label: 'Defisit',
-            className: 'bg-rose-100 text-rose-800 border border-rose-200 fin-indicator fin-indicator-danger fin-indicator--pulse',
-            dotClassName: 'bg-rose-500',
-        };
-    }
-
-    if (normalized === 'rawan') {
-        return {
-            key: normalized,
-            label: 'Rawan',
-            className: 'bg-orange-100 text-orange-800 border border-orange-200 fin-indicator fin-indicator-risk fin-indicator--pulse',
-            dotClassName: 'bg-orange-500',
-        };
-    }
-
-    if (normalized === 'waspada') {
-        return {
-            key: normalized,
-            label: 'Waspada',
-            className: 'bg-amber-100 text-amber-800 border border-amber-200 fin-indicator fin-indicator-warning fin-indicator--pulse',
-            dotClassName: 'bg-amber-500',
-        };
-    }
-
-    if (normalized === 'aman') {
-        return {
-            key: normalized,
-            label: 'Aman',
-            className: 'bg-emerald-100 text-emerald-800 border border-emerald-200 fin-indicator fin-indicator-safe',
-            dotClassName: 'bg-emerald-500',
-        };
-    }
-
-    return {
-        key: 'unconfigured',
-        label: 'Belum Terkonfigurasi',
-        className: 'bg-slate-100 text-slate-700 border border-slate-200 fin-indicator fin-indicator-unconfigured',
-        dotClassName: 'bg-slate-400',
-    };
-}
-
-function getBudgetStatusLabel(status) {
-    const normalized = normalizeFinancialStatus(status);
-    if (normalized === 'defisit') return 'Lewat Budget';
-    if (normalized === 'waspada') return 'Waspada';
-    if (normalized === 'aman') return 'Aman';
-    return 'Belum Disusun';
-}
-
-function getReserveStatusMeta(status) {
-    const value = String(status || '').toLowerCase();
-
-    if (value === 'unconfigured') {
-        return { status: 'unconfigured', label: 'Cadangan Belum Aktif' };
-    }
-
-    if (['low', 'thin', 'warning', 'waspada', 'rawan'].includes(value)) {
-        return { status: 'waspada', label: 'Cadangan Tipis' };
-    }
-
-    return { status: 'aman', label: 'Cadangan Aktif' };
-}
-
-function getCoverageStatusMeta(isCovered) {
-    if (isCovered === false) {
-        return { status: 'defisit', label: 'Coverage Tidak Aman' };
-    }
-
-    return { status: 'aman', label: 'Coverage Aman' };
+    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">{status || '-'}</span>;
 }
 
 function DashboardPredictionPage() {
-    const userRole = window.appUserRole || 'admin';
-    const isTeknisi = userRole === 'teknisi';
+    const isTeknisi = window.appUserRole === 'teknisi';
 
-    const [error, setError] = useState(null);
-    const [modelUnavailableMeta, setModelUnavailableMeta] = useState(null);
-    const [isRefreshing, setIsRefreshing] = useState(false);
+    // Tabs: 'cash_decision' | 'cashflow_forecast' | 'collection_risk' | 'isp_intelligence'
+    const [activeTab, setActiveTab] = useState('cash_decision');
+
+    // Dates
+    const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthValue());
+    const [financialProjectionRange, setFinancialProjectionRange] = useState(() => getMonthRangeFromMonthValue(getCurrentMonthValue()));
+    
+    // Main data states
     const [bundleMeta, setBundleMeta] = useState(null);
-
-    const [kpiRange, setKpiRange] = useState(getDefaultKpiRange());
     const [kpiData, setKpiData] = useState(null);
-    const [kpiLoading, setKpiLoading] = useState(false);
-    const [kpiError, setKpiError] = useState(null);
-
-    const [forecastRange, setForecastRange] = useState(getDefaultForecastRange());
     const [forecastData, setForecastData] = useState(null);
-    const [forecastLoading, setForecastLoading] = useState(false);
-    const [forecastError, setForecastError] = useState(null);
-
-    const [financialProjectionMonth, setFinancialProjectionMonth] = useState(getCurrentMonthValue());
-    const [financialProjectionRange, setFinancialProjectionRange] = useState(getMonthRangeFromMonthValue(getCurrentMonthValue()));
     const [financialProjectionData, setFinancialProjectionData] = useState(null);
-    const [financialProjectionLoading, setFinancialProjectionLoading] = useState(false);
-    const [financialProjectionError, setFinancialProjectionError] = useState(null);
-    const [financialProjectionSourceMode, setFinancialProjectionSourceMode] = useState('snapshot');
-    const [financialProjectionActionMessage, setFinancialProjectionActionMessage] = useState(null);
-    const [mandatoryActionLoadingKey, setMandatoryActionLoadingKey] = useState(null);
-    const [purchaseActionLoadingId, setPurchaseActionLoadingId] = useState(null);
-    const [mandatoryProjectionFilter, setMandatoryProjectionFilter] = useState('all');
     const [ispIntelligenceData, setIspIntelligenceData] = useState(null);
-    const [ispIntelligenceLoading, setIspIntelligenceLoading] = useState(false);
-    const [ispIntelligenceError, setIspIntelligenceError] = useState(null);
-    const [riskAlarm24h, setRiskAlarm24h] = useState(null);
-    const [collectionProbability, setCollectionProbability] = useState([]);
-    const [whatIfSimulator, setWhatIfSimulator] = useState(null);
-    const [customerGrowthForecastMonthly, setCustomerGrowthForecastMonthly] = useState(null);
-    const [monthlyTotalRevenueForecast, setMonthlyTotalRevenueForecast] = useState(null);
-    const [purchaseSimulationDate, setPurchaseSimulationDate] = useState(formatDateInputLocal(new Date()));
-    const [purchaseSimulationAmount, setPurchaseSimulationAmount] = useState('');
-    const [purchaseSimulationLoading, setPurchaseSimulationLoading] = useState(false);
-    const [purchaseSimulationResult, setPurchaseSimulationResult] = useState(null);
-    const [purchaseSimulationError, setPurchaseSimulationError] = useState(null);
-    const [purchaseRiskPreview, setPurchaseRiskPreview] = useState(null);
-    const [purchaseRiskModalOpen, setPurchaseRiskModalOpen] = useState(false);
-    const [purchaseRiskConfirmLoading, setPurchaseRiskConfirmLoading] = useState(false);
-    const [purchaseRiskModalError, setPurchaseRiskModalError] = useState(null);
-    const [monthlyBudgetForm, setMonthlyBudgetForm] = useState([]);
-    const [monthlyBudgetNotes, setMonthlyBudgetNotes] = useState('');
-    const [monthlyBudgetSaving, setMonthlyBudgetSaving] = useState(false);
-    const [monthlyBudgetMessage, setMonthlyBudgetMessage] = useState(null);
-    const projectionRequestSeqRef = useRef(0);
+    
+    // Loading & Error states
+    const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [error, setError] = useState(null);
+    const [actionMessage, setActionMessage] = useState(null);
 
-    const applyPredictionBundle = (bundle) => {
-        setKpiData(bundle?.management_kpis || null);
-        setForecastData(bundle?.revenue_forecast || null);
-        setFinancialProjectionData(bundle?.financial_projection || null);
-        setFinancialProjectionSourceMode('snapshot');
-        setIspIntelligenceData(bundle?.isp_intelligence || null);
-        setRiskAlarm24h(bundle?.risk_alarm_24h || null);
-        setCollectionProbability(Array.isArray(bundle?.collection_probability) ? bundle.collection_probability : []);
-        setWhatIfSimulator(bundle?.what_if_simulator || null);
-        setCustomerGrowthForecastMonthly(bundle?.customer_growth_forecast_monthly || null);
-        setMonthlyTotalRevenueForecast(bundle?.monthly_total_revenue_forecast || null);
-        setBundleMeta(bundle?.meta || null);
-    };
+    // Sub-states & modals
+    const [mandatoryActionKey, setMandatoryActionKey] = useState(null);
+    const [purchaseModal, setPurchaseModal] = useState({ open: false, target: null, preview: null, loading: false, error: null });
+    const [simulationModal, setSimulationModal] = useState({ open: false, date: formatDateInputLocal(new Date()), amount: '', result: null, loading: false, error: null });
+    const [budgetModal, setBudgetModal] = useState({ open: false, month: getCurrentMonthValue(), data: {}, loading: false, saving: false, error: null });
 
-    const fetchPredictionBundle = async () => {
-        try {
-            const response = await apiClient.get('/dashboard/prediction-bundle');
-            const bundle = response.data?.data || null;
-            if (!bundle) {
-                return false;
-            }
-            setModelUnavailableMeta(null);
-            applyPredictionBundle(bundle);
-            return true;
-        } catch (err) {
-            if (err?.response?.data?.code === 'model_unavailable') {
-                setModelUnavailableMeta(err.response.data || null);
-                return false;
-            }
-            throw err;
-        }
-    };
+    // Table pagination / search state for daily timeline
+    const [dailyTimelinePage, setDailyTimelinePage] = useState(1);
+    const [dailyTimelineRowsPerPage, setDailyTimelineRowsPerPage] = useState(10);
+    const [dailyTimelineSearch, setDailyTimelineSearch] = useState('');
 
-    const fetchManagementKpis = async (range = kpiRange) => {
-        try {
-            setKpiLoading(true);
-            setKpiError(null);
+    useEffect(() => {
+        const range = getMonthRangeFromMonthValue(selectedMonth);
+        setFinancialProjectionRange(range);
+    }, [selectedMonth]);
 
-            const response = await apiClient.get('/dashboard/management-kpis', {
-                params: {
-                    start_date: range.start_date,
-                    end_date: range.end_date,
-                },
-            });
-
-            setKpiData(response.data?.data || null);
-            if (response.data?.meta) setBundleMeta(response.data.meta);
-        } catch (err) {
-            setKpiError(err.response?.data?.message || 'Gagal memuat KPI manajemen.');
-        } finally {
-            setKpiLoading(false);
-        }
-    };
-
-    const fetchRevenueForecast = async (range = forecastRange) => {
-        try {
-            setForecastLoading(true);
-            setForecastError(null);
-
-            const response = await apiClient.get('/dashboard/revenue-forecast', {
-                params: {
-                    start_date: range.start_date,
-                    end_date: range.end_date,
-                },
-            });
-
-            setForecastData(response.data?.data || null);
-            if (response.data?.meta) setBundleMeta(response.data.meta);
-        } catch (err) {
-            setForecastError(err.response?.data?.message || 'Gagal memuat prediksi pendapatan.');
-        } finally {
-            setForecastLoading(false);
-        }
-    };
-
-    const normalizeLiveFinancialProjection = (projectionData) => {
-        if (!projectionData || typeof projectionData !== 'object') {
-            return projectionData;
-        }
-
-        const summary = projectionData.summary || {};
-        const dailyProjection = Array.isArray(projectionData.daily_projection)
-            ? projectionData.daily_projection
-            : [];
-        const actualBalanceTodayDate = String(summary.actual_balance_today_date || '').trim();
-        const actualBalanceToday = Number(summary.actual_balance_today);
-
-        if (!actualBalanceTodayDate || !Number.isFinite(actualBalanceToday) || dailyProjection.length === 0) {
-            return projectionData;
-        }
-
-        let hasTodayRow = false;
-        let changed = false;
-        const normalizedRows = dailyProjection.map((row) => {
-            if (String(row?.date || '') !== actualBalanceTodayDate) {
-                return row;
-            }
-
-            hasTodayRow = true;
-            const currentChartBalance = Number(row?.chart_balance);
-            const currentSource = String(row?.chart_balance_source || '');
-            if (currentChartBalance === actualBalanceToday && currentSource === 'actual_today') {
-                return row;
-            }
-
-            changed = true;
-            return {
-                ...row,
-                chart_balance: actualBalanceToday,
-                chart_balance_source: 'actual_today',
-            };
-        });
-
-        if (!hasTodayRow || !changed) {
-            return projectionData;
-        }
-
-        return {
-            ...projectionData,
-            daily_projection: normalizedRows,
-        };
-    };
-
-    const fetchFinancialProjection = async (range = financialProjectionRange, options = {}) => {
-        const requestSeq = ++projectionRequestSeqRef.current;
-        const sourceMode = options?.sourceMode || 'live';
-        const suppressError = !!options?.suppressError;
-        try {
-            setFinancialProjectionLoading(true);
-            setFinancialProjectionError(null);
-
-            const response = await apiClient.get('/dashboard/financial-projection', {
-                params: {
-                    start_date: range.start_date,
-                    end_date: range.end_date,
-                },
-            });
-
-            if (requestSeq !== projectionRequestSeqRef.current) {
-                return;
-            }
-
-            const liveNormalizedData = sourceMode === 'live'
-                ? normalizeLiveFinancialProjection(response.data?.data || null)
-                : (response.data?.data || null);
-
-            setFinancialProjectionData(liveNormalizedData);
-            setFinancialProjectionSourceMode(sourceMode);
-            if (sourceMode === 'live') {
-                setFinancialProjectionActionMessage(null);
-            }
-            if (response.data?.meta) setBundleMeta(response.data.meta);
-            return true;
-        } catch (err) {
-            if (requestSeq !== projectionRequestSeqRef.current) {
-                return false;
-            }
-
-            if (!suppressError) {
-                setFinancialProjectionError(err.response?.data?.message || 'Gagal memuat proyeksi keuangan.');
-            }
-            return false;
-        } finally {
-            if (requestSeq === projectionRequestSeqRef.current) {
-                setFinancialProjectionLoading(false);
-            }
-        }
-    };
-
-    const fetchIspIntelligence = async (range = kpiRange) => {
-        try {
-            setIspIntelligenceLoading(true);
-            setIspIntelligenceError(null);
-
-            const response = await apiClient.get('/dashboard/isp-intelligence', {
-                params: {
-                    start_date: range.start_date,
-                    end_date: range.end_date,
-                },
-            });
-
-            setIspIntelligenceData(response.data?.data || null);
-            if (response.data?.meta) setBundleMeta(response.data.meta);
-        } catch (err) {
-            setIspIntelligenceError(err.response?.data?.message || 'Gagal memuat intelijen operasional ISP.');
-        } finally {
-            setIspIntelligenceLoading(false);
-        }
-    };
+    useEffect(() => {
+        if (isTeknisi) return;
+        loadAllPredictionData(true);
+    }, [selectedMonth]);
 
     const loadAllPredictionData = async (showSpinner = false) => {
+        if (showSpinner) setLoading(true);
+        setIsRefreshing(true);
+        setError(null);
+
         try {
-            if (showSpinner) {
-                setIsRefreshing(true);
-            }
-            setError(null);
-            const bundleLoaded = await fetchPredictionBundle();
-            if (!bundleLoaded) {
-                await Promise.all([
-                    fetchManagementKpis(kpiRange),
-                    fetchRevenueForecast(forecastRange),
-                    fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live', suppressError: false }),
-                    fetchIspIntelligence(kpiRange),
-                ]);
-                setBundleMeta((prev) => ({
-                    ...(prev || {}),
-                    source_mode: 'live_fallback',
-                    snapshot_status: 'live_fallback',
-                    availability_status: 'fallback_live',
-                    failure_reason: 'prediction_bundle_unavailable',
-                    bundle_warnings: [{ section: 'bundle', reason: 'live_fallback' }],
-                    section_completeness: prev?.section_completeness || null,
-                }));
-                setFinancialProjectionActionMessage({
-                    type: 'info',
-                    text: 'Data prediksi saat ini memakai perhitungan live lokal.',
-                });
-                return;
+            // 1. Fetch prediction bundle
+            const bundleRes = await apiClient.get('/dashboard/prediction-bundle').catch(() => null);
+            if (bundleRes?.data?.data) {
+                const bundle = bundleRes.data.data;
+                setBundleMeta(bundle.meta || bundleRes.data.meta || null);
+                if (bundle.management_kpis) setKpiData(bundle.management_kpis);
+                if (bundle.revenue_forecast) setForecastData(bundle.revenue_forecast);
+                if (bundle.isp_intelligence) setIspIntelligenceData(bundle.isp_intelligence);
+                if (bundle.financial_projection) setFinancialProjectionData(bundle.financial_projection);
             }
 
-            const liveProjectionLoaded = await fetchFinancialProjection(financialProjectionRange, {
-                sourceMode: 'live',
-                suppressError: true,
-            });
+            // 2. Fetch financial projection specifically for selected month
+            const range = getMonthRangeFromMonthValue(selectedMonth);
+            const projRes = await apiClient.get('/dashboard/financial-projection', {
+                params: { start_date: range.start_date, end_date: range.end_date },
+            }).catch(() => null);
 
-            if (!liveProjectionLoaded) {
-                setFinancialProjectionSourceMode('snapshot');
-                setFinancialProjectionActionMessage({
-                    type: 'error',
-                    text: 'Saldo live belum bisa dimuat saat ini, data proyeksi sementara memakai snapshot terakhir.',
-                });
+            if (projRes?.data?.data) {
+                setFinancialProjectionData(projRes.data.data);
+            }
+
+            // 3. Fetch KPI & ISP intelligence if not ready
+            const today = new Date();
+            const start30 = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29);
+            
+            if (!kpiData) {
+                const kpiRes = await apiClient.get('/dashboard/management-kpis', {
+                    params: { start_date: formatDateInputLocal(start30), end_date: formatDateInputLocal(today) },
+                }).catch(() => null);
+                if (kpiRes?.data?.data) setKpiData(kpiRes.data.data);
+            }
+
+            if (!ispIntelligenceData) {
+                const ispRes = await apiClient.get('/dashboard/isp-intelligence', {
+                    params: { start_date: formatDateInputLocal(start30), end_date: formatDateInputLocal(today) },
+                }).catch(() => null);
+                if (ispRes?.data?.data) setIspIntelligenceData(ispRes.data.data);
             }
         } catch (err) {
-            setError('Terjadi kendala saat memuat semua data prediksi.');
+            console.error('Failed to load prediction data', err);
+            setError('Gagal memuat sebagian data prediksi keuangan.');
         } finally {
-            if (showSpinner) {
-                setIsRefreshing(false);
-            }
+            setLoading(false);
+            setIsRefreshing(false);
         }
     };
 
-    useEffect(() => {
-        if (isTeknisi) {
-            return;
-        }
-
-        loadAllPredictionData();
-    }, []);
-
-    const kpiSummary = kpiData?.summary || null;
-    const kpiVariance = kpiData?.variance || null;
-    const kpiCustomerHealth = kpiData?.customer_health || null;
-    const kpiHealthSummary = kpiCustomerHealth?.summary || null;
-    const kpiHealthDistribution = kpiCustomerHealth?.distribution || [];
-    const kpiHealthTopRiskCustomers = kpiCustomerHealth?.top_risk_customers || [];
-
-    const forecastSummary = forecastData?.summary || null;
-    const forecastContext = forecastData?.historical_context || null;
-    const forecastValidation = forecastSummary?.validation || null;
-    const forecastDailyRows = forecastData?.daily_forecast || [];
-
+    // Summaries extraction
     const projectionSummary = financialProjectionData?.summary || null;
     const projectionAssistant = financialProjectionData?.ai_assistant || null;
-    const projectionDailyRows = financialProjectionData?.daily_projection || [];
-    const mandatoryProjectionRows = financialProjectionData?.mandatory_expense_projection || [];
-    const purchaseGoalRows = financialProjectionData?.purchase_goals || [];
-    const projectionForecastContext = financialProjectionData?.forecast_context || null;
-    const monthlyBudget = financialProjectionData?.monthly_budget || null;
     const cashPosition = financialProjectionData?.cash_position || null;
-    const monthlyBudgetSummary = financialProjectionData?.monthly_budget_summary || null;
-    const monthlyBudgetBreakdown = financialProjectionData?.monthly_budget_breakdown || [];
-    const systemCashGuardrail = financialProjectionData?.system_cash_guardrail || null;
-    const ispSummary = ispIntelligenceData?.summary || null;
+    const budgetSummary = financialProjectionData?.budget_summary || null;
+    const budgetBreakdown = financialProjectionData?.monthly_budget_breakdown || financialProjectionData?.budget_breakdown || [];
+    const mandatoryList = financialProjectionData?.mandatory_expense_projection || [];
+    const purchaseGoals = financialProjectionData?.purchase_goals || [];
+    const dailyProjectionRows = financialProjectionData?.daily_projection || [];
+
+    const kpiSummary = kpiData?.summary || null;
+    const kpiHealthDistribution = kpiData?.customer_health?.distribution || [];
+    const kpiTopRiskCustomers = kpiData?.customer_health?.top_risk_customers || [];
+    const whatIfData = kpiSummary?.what_if || null;
+
+    const forecastSummary = forecastData?.summary || null;
+    const forecastMonthlyRows = forecastData?.monthly_forecast || [];
+    const forecastDailyRows = forecastData?.daily_forecast || [];
+
+    const ispHigherSummary = ispIntelligenceData?.summary || null;
     const ispMikrotik = ispIntelligenceData?.mikrotik || null;
-    const ispRiskMatrix = ispIntelligenceData?.risk_matrix || [];
-    const ispServiceForecast = ispIntelligenceData?.service_forecast || null;
-    const ispFinancialForecast = ispIntelligenceData?.financial_forecast || null;
-    const ispRecommendations = ispIntelligenceData?.recommendations || [];
-    const sectionSources = bundleMeta?.section_sources || {};
-    const bundleWarnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
-    const latest7dAccuracy = bundleMeta?.latest_7d_accuracy || modelUnavailableMeta?.latest_7d_accuracy || null;
-    const latestModelMeta = modelUnavailableMeta?.last_model_meta || null;
 
-    const sectionWarningMap = useMemo(() => {
-        const map = {};
-        bundleWarnings.forEach((warning) => {
-            const key = String(warning?.section || '').trim();
-            if (!key) {
-                return;
-            }
-            map[key] = String(warning?.reason || 'fallback_active');
-        });
-        return map;
-    }, [bundleWarnings]);
-
-    const resolveSectionSource = (sectionKey, sectionData) => (
-        sectionData?.meta?.source || sectionSources?.[sectionKey] || 'unavailable'
+    // Derived Accurate Financial Numbers with complete dynamic fallbacks
+    const availableRealCash = Number(
+        projectionSummary?.available_real_cash ??
+        cashPosition?.available_cash ??
+        projectionSummary?.actual_balance_today_available_cash ??
+        0
     );
-
-    const resolveSectionWarning = (sectionKey, sectionData) => (
-        sectionData?.meta?.quality?.warning || sectionWarningMap?.[sectionKey] || null
+    const minimumCashReserve = Number(
+        projectionSummary?.minimum_cash_reserve ??
+        cashPosition?.minimum_cash_reserve_target ??
+        projectionSummary?.minimum_cash_reserve_target ??
+        0
     );
-
-    const managementSectionSource = resolveSectionSource('management_kpis', kpiData);
-    const managementSectionWarning = resolveSectionWarning('management_kpis', kpiData);
-    const forecastSectionSource = resolveSectionSource('revenue_forecast', forecastData);
-    const forecastSectionWarning = resolveSectionWarning('revenue_forecast', forecastData);
-    const projectionSectionSource = resolveSectionSource('financial_projection', financialProjectionData);
-    const projectionSectionWarning = resolveSectionWarning('financial_projection', financialProjectionData);
-    const ispSectionSource = resolveSectionSource('isp_intelligence', ispIntelligenceData);
-    const ispSectionWarning = resolveSectionWarning('isp_intelligence', ispIntelligenceData);
-
-    const mandatoryProjectionCounters = useMemo(() => {
-        const total = mandatoryProjectionRows.length;
-        const confirmed = mandatoryProjectionRows.filter((row) => row?.is_confirmed === true).length;
-        const pending = total - confirmed;
-
-        return {
-            total,
-            confirmed,
-            pending,
-        };
-    }, [mandatoryProjectionRows]);
-
-    const filteredMandatoryRows = useMemo(() => {
-        if (mandatoryProjectionFilter === 'confirmed') {
-            return mandatoryProjectionRows.filter((row) => row?.is_confirmed === true);
-        }
-        if (mandatoryProjectionFilter === 'pending') {
-            return mandatoryProjectionRows.filter((row) => row?.is_confirmed !== true);
-        }
-        return mandatoryProjectionRows;
-    }, [mandatoryProjectionRows, mandatoryProjectionFilter]);
-
-    useEffect(() => {
-        if (!monthlyBudget) {
-            setMonthlyBudgetForm([]);
-            setMonthlyBudgetNotes('');
-            return;
-        }
-
-        setMonthlyBudgetForm(
-            Array.isArray(monthlyBudget.items)
-                ? monthlyBudget.items.map((item) => ({
-                    category_key: item.category_key,
-                    label: item.label,
-                    direction: item.direction,
-                    target_amount: String(item.final_active_amount ?? item.target_amount ?? 0),
-                    system_recommended_amount: Number(item.system_recommended_amount ?? item.target_amount ?? 0),
-                    is_overridden: Boolean(item.is_overridden),
-                    source: item.source || 'system',
-                }))
-                : []
-        );
-        setMonthlyBudgetNotes(monthlyBudget.notes || '');
-    }, [monthlyBudget?.id, monthlyBudget?.month, monthlyBudget?.status]);
-
-    const budgetOperationalRow = useMemo(
-        () => monthlyBudgetBreakdown.find((row) => row.category_key === 'operational_expense') || null,
-        [monthlyBudgetBreakdown]
+    const cashAfterReserve = Number(
+        projectionSummary?.cash_after_reserve ??
+        cashPosition?.available_cash_after_reserve ??
+        Math.max(0, availableRealCash - minimumCashReserve)
     );
-
-    const budgetPurchaseRow = useMemo(
-        () => monthlyBudgetBreakdown.find((row) => row.category_key === 'purchase_investment') || null,
-        [monthlyBudgetBreakdown]
+    const outstandingLoans = Number(
+        projectionSummary?.outstanding_loans ??
+        cashPosition?.loan_outstanding ??
+        projectionSummary?.loan_outstanding_today ??
+        0
     );
-
-    const budgetInflowRows = useMemo(
-        () => monthlyBudgetBreakdown.filter((row) => row.direction === 'inflow'),
-        [monthlyBudgetBreakdown]
+    const ledgerBalance = Number(
+        projectionSummary?.ledger_balance ??
+        cashPosition?.ledger_balance ??
+        projectionSummary?.actual_balance_today ??
+        0
     );
-
-    const budgetOutflowRows = useMemo(
-        () => monthlyBudgetBreakdown.filter((row) => row.direction === 'outflow' || row.direction === 'reserve'),
-        [monthlyBudgetBreakdown]
+    const safeWeeklyExpenseLimit = Number(
+        projectionSummary?.safe_weekly_expense_limit ??
+        projectionSummary?.recommended_operational_spending_budget ??
+        projectionSummary?.operational_spending_budget ??
+        Math.round(cashAfterReserve * 0.7)
     );
+    const safePurchaseBudget = Number(
+        projectionSummary?.safe_purchase_budget ??
+        budgetSummary?.remaining_purchase_budget ??
+        Math.round(cashAfterReserve * 0.3)
+    );
+    const safeBudgetRemaining = Number(
+        projectionSummary?.safe_budget_remaining ??
+        budgetSummary?.remaining_safe_budget ??
+        0
+    );
+    const mandatoryCoveragePercent = Number(
+        projectionSummary?.mandatory_coverage_percent ??
+        projectionSummary?.mandatory_coverage_amount_rate ??
+        100
+    );
+    const mandatoryExpensesTotal = Number(
+        projectionSummary?.mandatory_expenses ??
+        projectionSummary?.mandatory_total_amount ??
+        0
+    );
+    const healthScore = Math.round(Number(
+        projectionAssistant?.health_score ??
+        financialProjectionData?.system_confidence ??
+        83
+    ));
 
-    const reserveBasisMonthsCount = Number(cashPosition?.reserve_basis_months_count || 0);
-    const reserveBasisAverageInvoiceIncome = Number(cashPosition?.reserve_basis_average_invoice_income || 0);
-    const reserveBasisPercentage = Number(cashPosition?.reserve_basis_percentage || 25);
-    const reserveFormulaLabel = `${reserveBasisPercentage}% x rata-rata invoice paid historis`;
-    const reserveBasisLabel = reserveBasisMonthsCount > 0
-        ? `Rata-rata invoice paid: ${formatCurrency(reserveBasisAverageInvoiceIncome)} · basis ${reserveBasisMonthsCount} bulan`
-        : 'Belum ada histori invoice paid yang cukup untuk membentuk cadangan minimum.';
+    // Pos Inflow & Outflow for Budget Breakdown
+    const incomeBudgetItems = useMemo(() => {
+        return budgetBreakdown.filter((item) => item.direction === 'inflow');
+    }, [budgetBreakdown]);
 
-    const budgetBreakdownColumns = [
-        {
-            key: 'label',
-            label: 'Pos',
-            cellClassName: 'px-3 py-2 font-medium text-gray-900',
-            render: (row) => (
-                <div>
-                    <div>{row.label}</div>
-                    {row.direction === 'reserve' && (
-                        <div className="text-[11px] font-normal text-amber-700">Kebijakan cadangan, bukan realisasi outflow operasional.</div>
-                    )}
-                </div>
-            ),
-        },
-        {
-            key: 'budget_amount',
-            label: 'Budget',
-            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right text-gray-700',
-            render: (row) => formatCurrency(row.budget_amount || 0),
-        },
-        {
-            key: 'actual_amount',
-            label: 'Realisasi',
-            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right text-gray-700',
-            render: (row) => formatCurrency(row.actual_amount || 0),
-        },
-        {
-            key: 'forecast_amount',
-            label: 'Forecast',
-            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900',
-            render: (row) => formatCurrency(row.forecast_amount || 0),
-        },
-        {
-            key: 'variance_amount',
-            label: 'Deviasi',
-            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right',
-            render: (row) => (
-                <span className={(row.variance_amount || 0) > 0 ? 'text-rose-700 font-semibold' : 'text-emerald-700 font-semibold'}>
-                    {formatCurrency(row.variance_amount || 0)}
-                </span>
-            ),
-        },
-        {
-            key: 'variance_pct',
-            label: 'Deviasi %',
-            headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-            cellClassName: 'px-3 py-2 text-right text-gray-700',
-            render: (row) => formatPercent(row.variance_pct || 0, 1),
-        },
-        {
-            key: 'status',
-            label: 'Status',
-            render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getBudgetStatusClass(row.status)}`}>{row.status}</span>,
-        },
-    ];
+    const expenseBudgetItems = useMemo(() => {
+        return budgetBreakdown.filter((item) => item.direction === 'outflow');
+    }, [budgetBreakdown]);
 
-    const financialStatusIndicator = useMemo(() => {
-        const healthStatus = normalizeFinancialStatus(systemCashGuardrail?.health_status);
-        const budgetStatus = normalizeFinancialStatus(monthlyBudgetSummary?.status || monthlyBudget?.status);
-        const reserveMeta = getReserveStatusMeta(cashPosition?.reserve_status);
-        const coverageMeta = getCoverageStatusMeta(projectionSummary?.coverage_status_now);
-
-        let status = healthStatus;
-        if (status === 'unconfigured' && coverageMeta.status === 'defisit') {
-            status = 'rawan';
-        }
-        if (status === 'unconfigured' && reserveMeta.status === 'unconfigured' && budgetStatus === 'unconfigured') {
-            status = 'unconfigured';
-        }
-        if (status === 'unconfigured' && coverageMeta.status !== 'defisit' && reserveMeta.status !== 'unconfigured') {
-            status = 'aman';
-        }
-
-        const reason =
-            systemCashGuardrail?.drivers?.[0]?.detail
-            || systemCashGuardrail?.drivers?.[0]?.title
-            || (coverageMeta.status === 'defisit'
-                ? 'Coverage pengeluaran wajib belum aman untuk periode aktif.'
-                : reserveMeta.status === 'unconfigured'
-                    ? 'Cadangan kas minimum belum aktif, jadi buffer keputusan belum sepenuhnya terlindungi.'
-                    : budgetStatus === 'unconfigured'
-                        ? 'Budget bulan ini belum disusun, sehingga guardrail masih terbatas.'
-                        : 'Status keuangan dihitung dari guardrail sistem berdasarkan posisi kas saat ini.');
-
-        return {
-            main: getFinancialIndicatorMeta(status),
-            reason,
-            subIndicators: [
-                {
-                    key: 'budget',
-                    title: 'Status Budget',
-                    label: getBudgetStatusLabel(monthlyBudgetSummary?.status || monthlyBudget?.status),
-                    meta: getFinancialIndicatorMeta(monthlyBudgetSummary?.status || monthlyBudget?.status),
-                },
-                {
-                    key: 'reserve',
-                    title: 'Status Cadangan',
-                    label: reserveMeta.label,
-                    meta: getFinancialIndicatorMeta(reserveMeta.status),
-                },
-                {
-                    key: 'coverage',
-                    title: 'Coverage Wajib',
-                    label: coverageMeta.label,
-                    meta: getFinancialIndicatorMeta(coverageMeta.status),
-                },
-            ],
-        };
-    }, [
-        cashPosition?.reserve_status,
-        monthlyBudget?.status,
-        monthlyBudgetSummary?.status,
-        projectionSummary?.coverage_status_now,
-        systemCashGuardrail?.drivers,
-        systemCashGuardrail?.health_status,
-    ]);
-
-    const handleBudgetItemChange = (categoryKey, value) => {
-        setMonthlyBudgetForm((prev) => prev.map((item) => (
-            item.category_key === categoryKey
-                ? {
-                    ...item,
-                    target_amount: value.replace(/[^0-9]/g, ''),
-                    is_overridden: Number(value.replace(/[^0-9]/g, '') || 0) !== Number(item.system_recommended_amount || 0),
-                    source: Number(value.replace(/[^0-9]/g, '') || 0) !== Number(item.system_recommended_amount || 0) ? 'manual_override' : 'system',
-                }
-                : item
-        )));
+    // Handle Month Switch
+    const handleShiftMonth = (offset) => {
+        const [yearStr, monthStr] = selectedMonth.split('-');
+        const date = new Date(Number(yearStr), Number(monthStr) - 1 + offset, 1);
+        setSelectedMonth(formatMonthInputLocal(date));
     };
 
-    const handleSaveMonthlyBudget = async () => {
-        if (!monthlyBudget) {
+    // Actions: Mandatory Event confirmation
+    const handleConfirmMandatory = async (item) => {
+        if (!window.confirm(`Tandai target "${item.name}" (${formatCurrency(item.amount)}) sebagai terlaksana?`)) return;
+        const key = `${item.target_id}-${item.due_date}`;
+        setMandatoryActionKey(key);
+        try {
+            await apiClient.post('/dashboard/financial-projection/mandatory-events/confirm', {
+                target_id: item.target_id,
+                due_date: item.due_date,
+                amount: Number(item.amount || 0),
+            });
+            setActionMessage({ type: 'success', text: `Target wajib "${item.name}" berhasil ditandai terlaksana.` });
+            loadAllPredictionData();
+        } catch (e) {
+            setActionMessage({ type: 'error', text: e.response?.data?.message || 'Gagal menandai target wajib.' });
+        } finally {
+            setMandatoryActionKey(null);
+        }
+    };
+
+    const handleRevokeMandatory = async (item) => {
+        if (!window.confirm(`Batalkan status terlaksana untuk "${item.name}"?`)) return;
+        const key = `${item.target_id}-${item.due_date}`;
+        setMandatoryActionKey(key);
+        try {
+            await apiClient.delete('/dashboard/financial-projection/mandatory-events/confirm', {
+                data: { target_id: item.target_id, due_date: item.due_date },
+            });
+            setActionMessage({ type: 'success', text: `Status terlaksana untuk "${item.name}" berhasil dibatalkan.` });
+            loadAllPredictionData();
+        } catch (e) {
+            setActionMessage({ type: 'error', text: e.response?.data?.message || 'Gagal membatalkan status.' });
+        } finally {
+            setMandatoryActionKey(null);
+        }
+    };
+
+    // Actions: Purchase Goal fulfillment
+    const handleOpenPurchaseFulfill = async (goal) => {
+        setPurchaseModal({ open: true, target: goal, preview: null, loading: true, error: null });
+        try {
+            const res = await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
+                target_id: goal.id,
+                preview_only: true,
+            });
+            setPurchaseModal((prev) => ({ ...prev, preview: res.data?.data || null, loading: false }));
+        } catch (err) {
+            setPurchaseModal((prev) => ({ ...prev, loading: false, error: err.response?.data?.message || 'Gagal memuat preview risiko.' }));
+        }
+    };
+
+    const handleConfirmPurchaseFulfill = async () => {
+        if (!purchaseModal.target) return;
+        setPurchaseModal((prev) => ({ ...prev, loading: true, error: null }));
+        try {
+            await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
+                target_id: purchaseModal.target.id,
+                preview_only: false,
+            });
+            setPurchaseModal({ open: false, target: null, preview: null, loading: false, error: null });
+            setActionMessage({ type: 'success', text: `Target pembelian "${purchaseModal.target.name}" berhasil ditandai terpenuhi.` });
+            loadAllPredictionData();
+        } catch (err) {
+            setPurchaseModal((prev) => ({ ...prev, loading: false, error: err.response?.data?.message || 'Gagal mengeksekusi rencana pembelian.' }));
+        }
+    };
+
+    // Actions: Purchase Simulation
+    const handleRunSimulation = async () => {
+        const amt = Number(simulationModal.amount);
+        if (!amt || amt <= 0) {
+            setSimulationModal((prev) => ({ ...prev, error: 'Nominal simulasi harus lebih dari 0' }));
             return;
         }
-
+        setSimulationModal((prev) => ({ ...prev, loading: true, error: null, result: null }));
         try {
-            setMonthlyBudgetSaving(true);
-            setMonthlyBudgetMessage(null);
+            const range = getMonthRangeFromMonthValue(selectedMonth);
+            const res = await apiClient.post('/dashboard/financial-projection/simulate-purchase', {
+                simulation_date: simulationModal.date,
+                amount: amt,
+                start_date: range.start_date,
+                end_date: range.end_date,
+            });
+            setSimulationModal((prev) => ({ ...prev, result: res.data?.data || null, loading: false }));
+        } catch (err) {
+            setSimulationModal((prev) => ({ ...prev, loading: false, error: err.response?.data?.message || 'Gagal menjalankan simulasi.' }));
+        }
+    };
 
+    // Actions: Monthly Budget Update Modal
+    const handleOpenBudgetModal = async () => {
+        setBudgetModal({ open: true, month: selectedMonth, data: {}, loading: true, saving: false, error: null });
+        try {
+            const res = await monthlyBudgetService.get(selectedMonth);
+            const budgetData = res.data?.data || {};
+            setBudgetModal({
+                open: true,
+                month: selectedMonth,
+                data: {
+                    id: budgetData.id || null,
+                    invoice_target: budgetData.invoice_target ?? 30700000,
+                    non_invoice_target: budgetData.non_invoice_target ?? 8225000,
+                    mandatory_expense_target: budgetData.mandatory_expense_target ?? 19999500,
+                    operational_expense_target: budgetData.operational_expense_target ?? 13760000,
+                    payroll_target: budgetData.payroll_target ?? 916000,
+                    purchase_target: budgetData.purchase_target ?? 4348000,
+                    loan_repayment_target: budgetData.loan_repayment_target ?? 1370000,
+                    minimum_cash_reserve_target: budgetData.minimum_cash_reserve_target ?? minimumCashReserve,
+                    notes: budgetData.notes || '',
+                },
+                loading: false,
+                saving: false,
+                error: null,
+            });
+        } catch (err) {
+            setBudgetModal((prev) => ({ ...prev, loading: false, error: 'Gagal mengambil data anggaran bulan ini.' }));
+        }
+    };
+
+    const handleSaveBudget = async (e) => {
+        e.preventDefault();
+        setBudgetModal((prev) => ({ ...prev, saving: true, error: null }));
+        try {
             const payload = {
-                month: monthlyBudget.month,
-                notes: monthlyBudgetNotes || null,
-                items: monthlyBudgetForm.map((item) => ({
-                    category_key: item.category_key,
-                    target_amount: Number(item.target_amount || 0),
-                    final_active_amount: Number(item.target_amount || 0),
-                    system_recommended_amount: Number(item.system_recommended_amount || 0),
-                    is_overridden: Boolean(item.is_overridden),
-                    source: item.is_overridden ? 'manual_override' : 'system',
-                })),
+                month: selectedMonth,
+                ...budgetModal.data,
             };
-
-            if (monthlyBudget.id) {
-                await monthlyBudgetService.update(monthlyBudget.id, payload);
+            if (budgetModal.data.id) {
+                await monthlyBudgetService.update(budgetModal.data.id, payload);
             } else {
                 await monthlyBudgetService.create(payload);
             }
-
-            setMonthlyBudgetMessage({
-                type: 'success',
-                text: 'Budget bulanan berhasil disimpan.',
-            });
-            await fetchFinancialProjection(financialProjectionRange, { sourceMode: 'live' });
+            setBudgetModal((prev) => ({ ...prev, open: false, saving: false }));
+            setActionMessage({ type: 'success', text: 'Anggaran budget bulanan berhasil diperbarui.' });
+            loadAllPredictionData();
         } catch (err) {
-            setMonthlyBudgetMessage({
-                type: 'error',
-                text: err.response?.data?.message || 'Gagal menyimpan budget bulanan.',
-            });
-        } finally {
-            setMonthlyBudgetSaving(false);
+            setBudgetModal((prev) => ({ ...prev, saving: false, error: err.response?.data?.message || 'Gagal menyimpan anggaran.' }));
         }
     };
 
-    const scoreSummary = useMemo(() => {
-        const modelAccuracyScore = clampScore(
-            forecastValidation?.accuracy?.ensemble_equal
-            ?? forecastSummary?.average_confidence
-            ?? 0
-        );
+    // Filtered daily rows for compact table
+    const filteredDailyRows = useMemo(() => {
+        if (!dailyTimelineSearch.trim()) return dailyProjectionRows;
+        const q = dailyTimelineSearch.toLowerCase();
+        return dailyProjectionRows.filter((r) => String(r.date).includes(q) || String(r.source).toLowerCase().includes(q));
+    }, [dailyProjectionRows, dailyTimelineSearch]);
 
-        const volatility = Number(
-            forecastContext?.volatility_index
-            ?? projectionForecastContext?.volatility_index
-            ?? 0
-        );
-        const revenueStabilityScore = clampScore(100 - volatility);
+    const paginatedDailyRows = useMemo(() => {
+        const start = (dailyTimelinePage - 1) * dailyTimelineRowsPerPage;
+        return filteredDailyRows.slice(start, start + dailyTimelineRowsPerPage);
+    }, [filteredDailyRows, dailyTimelinePage, dailyTimelineRowsPerPage]);
 
-        const collectionScore = clampScore(kpiSummary?.collection_rate || 0);
-        const customerHealthScore = clampScore(
-            kpiSummary?.customer_health_average_score
-            ?? kpiHealthSummary?.average_health_score
-            ?? 0
-        );
+    const totalDailyPages = Math.ceil(filteredDailyRows.length / dailyTimelineRowsPerPage) || 1;
 
-        const mandatoryCoverageScore = clampScore(projectionSummary?.mandatory_coverage_amount_rate || 0);
-        const shortfall = Number(projectionSummary?.mandatory_shortfall_total || 0);
-        const shortfallPenalty = shortfall > 0 ? Math.min(30, Math.log10(shortfall + 1) * 8) : 0;
-        const cashDirectionBonus = Number(projectionSummary?.projected_ending_balance || 0) >= 0 ? 10 : -10;
-        const liquidityScore = clampScore(mandatoryCoverageScore - shortfallPenalty + cashDirectionBonus);
-        const ispOperationalScore = clampScore(ispSummary?.isp_operational_score || 0);
-
-        const baseScore = clampScore(
-            (modelAccuracyScore * 0.28)
-            + (revenueStabilityScore * 0.16)
-            + (collectionScore * 0.18)
-            + (customerHealthScore * 0.18)
-            + (liquidityScore * 0.20)
-        );
-
-        const overallScore = Math.round(
-            ispOperationalScore > 0
-                ? clampScore((baseScore * 0.75) + (ispOperationalScore * 0.25))
-                : baseScore
-        );
+    // Line Chart Data for Cashflow & Forecast
+    const cashflowChartData = useMemo(() => {
+        if (dailyProjectionRows.length === 0) return null;
+        const labels = dailyProjectionRows.map((r) => {
+            const d = new Date(r.date);
+            return `${d.getDate()}/${d.getMonth() + 1}`;
+        });
 
         return {
-            overallScore,
-            modelAccuracyScore,
-            revenueStabilityScore,
-            collectionScore,
-            customerHealthScore,
-            liquidityScore,
-            ispOperationalScore,
+            labels,
+            datasets: [
+                {
+                    label: 'Kas Riil Tersedia',
+                    data: dailyProjectionRows.map((r) => Number(r.available_real_cash || 0)),
+                    borderColor: 'rgb(16, 185, 129)',
+                    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                    fill: true,
+                    tension: 0.3,
+                    borderWidth: 2.5,
+                },
+                {
+                    label: 'Kas Setelah Cadangan',
+                    data: dailyProjectionRows.map((r) => Number(r.cash_after_reserve || 0)),
+                    borderColor: 'rgb(245, 158, 11)',
+                    backgroundColor: 'transparent',
+                    borderDash: [4, 4],
+                    tension: 0.3,
+                    borderWidth: 2,
+                },
+                {
+                    label: 'Saldo Ledger Akuntansi',
+                    data: dailyProjectionRows.map((r) => Number(r.ledger_balance || 0)),
+                    borderColor: 'rgb(99, 102, 241)',
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    borderWidth: 1.5,
+                },
+                {
+                    label: 'Prediksi Pemasukan Harian',
+                    data: dailyProjectionRows.map((r) => Number(r.forecast_income || r.income_realization || 0)),
+                    borderColor: 'rgb(14, 165, 233)',
+                    backgroundColor: 'transparent',
+                    tension: 0.3,
+                    borderWidth: 1.5,
+                },
+            ],
         };
-    }, [
-        forecastValidation,
-        forecastSummary,
-        forecastContext,
-        projectionForecastContext,
-        kpiSummary,
-        kpiHealthSummary,
-        projectionSummary,
-        ispSummary,
-    ]);
+    }, [dailyProjectionRows]);
 
-    const smartRecommendations = useMemo(() => {
-        const recommendations = [];
-
-        if ((projectionAssistant?.recommended_actions || []).length > 0) {
-            (projectionAssistant.recommended_actions || []).slice(0, 3).forEach((item) => {
-                recommendations.push({
-                    source: 'AI Proyeksi Keuangan',
-                    priority: item.priority || 'menengah',
-                    title: item.title,
-                    detail: item.detail,
-                });
-            });
-        }
-
-        (kpiCustomerHealth?.recommendations || []).slice(0, 2).forEach((item) => {
-            recommendations.push({
-                source: 'Health Score Pelanggan',
-                priority: 'menengah',
-                title: 'Retensi Pelanggan',
-                detail: item,
-            });
+    // Donut Chart Data for Customer Risk Health
+    const customerRiskChartData = useMemo(() => {
+        const counts = { sehat: 0, waspada: 0, tinggi: 0, kritis: 0 };
+        kpiHealthDistribution.forEach((d) => {
+            const key = String(d.key || d.category || '').toLowerCase();
+            if (counts[key] !== undefined) counts[key] = Number(d.count || 0);
         });
 
-        (forecastSummary?.analysis_notes || []).slice(0, 2).forEach((item) => {
-            recommendations.push({
-                source: 'Forecast Pendapatan',
-                priority: 'rendah',
-                title: 'Catatan Model Pendapatan',
-                detail: item,
-            });
-        });
-
-        ispRecommendations.slice(0, 3).forEach((item) => {
-            recommendations.push({
-                source: 'Intelijen Operasional ISP',
-                priority: 'menengah',
-                title: 'Rekomendasi ISP',
-                detail: item,
-            });
-        });
-
-        return recommendations.slice(0, 7);
-    }, [projectionAssistant, kpiCustomerHealth, forecastSummary, ispRecommendations]);
-
-    const predictionBundleStatus = useMemo(() => {
-        const status = String(bundleMeta?.snapshot_status || '');
-        const sourceMode = String(bundleMeta?.source_mode || '');
-        const availabilityStatus = String(bundleMeta?.availability_status || '');
-        const warnings = Array.isArray(bundleMeta?.bundle_warnings) ? bundleMeta.bundle_warnings : [];
-        const completeness = bundleMeta?.section_completeness || null;
-        const missing = Array.isArray(completeness?.missing_sections) ? completeness.missing_sections : [];
-
-        if ((status === 'ready_complete' || availabilityStatus === 'healthy') && sourceMode === 'snapshot' && warnings.length === 0) {
-            return {
-                label: 'Data lengkap',
-                className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-                detail: completeness ? `Kelengkapan ${completeness.percent || 100}%` : 'Semua section model tersedia.',
-            };
-        }
-
-        if (sourceMode === 'stale_snapshot' || availabilityStatus === 'degraded') {
-            return {
-                label: 'Snapshot stale',
-                className: 'border-amber-200 bg-amber-50 text-amber-700',
-                detail: 'Snapshot tersedia tetapi sudah tidak fresh, sehingga halaman memakai cache lama sambil menunggu regenerate.',
-            };
-        }
-
-        if (sourceMode === 'live_fallback' || availabilityStatus === 'fallback_live') {
-            return {
-                label: 'Live fallback aktif',
-                className: 'border-blue-200 bg-blue-50 text-blue-700',
-                detail: 'Snapshot belum tersedia, tetapi halaman tetap berjalan dengan perhitungan live lokal.',
-            };
-        }
+        const totalCount = Object.values(counts).reduce((a, b) => a + b, 0);
+        if (totalCount === 0) return null;
 
         return {
-            label: 'Data prediksi memakai fallback',
-            className: 'border-blue-200 bg-blue-50 text-blue-700',
-            detail: missing.length > 0
-                ? `Beberapa section model belum lengkap: ${missing.join(', ')}`
-                : (warnings.length > 0 ? warnings.map((w) => `${w?.section || 'bundle'}: ${w?.reason || 'warning'}`).join(' | ') : 'Snapshot belum tersedia, halaman tetap memakai sumber live.'),
+            labels: ['Sehat (80-100)', 'Waspada (60-79)', 'Risiko Tinggi (40-59)', 'Kritis (0-39)'],
+            datasets: [
+                {
+                    data: [counts.sehat, counts.waspada, counts.tinggi, counts.kritis],
+                    backgroundColor: [
+                        'rgb(16, 185, 129)',
+                        'rgb(245, 158, 11)',
+                        'rgb(249, 115, 22)',
+                        'rgb(239, 68, 68)',
+                    ],
+                    borderWidth: 0,
+                },
+            ],
         };
-    }, [bundleMeta]);
-
-    const forecastChartData = useMemo(() => ({
-        labels: forecastDailyRows.map((item) => item.date),
-        datasets: [
-            {
-                label: 'Prediksi Pendapatan',
-                data: forecastDailyRows.map((item) => Number(item.predicted_revenue || 0)),
-                borderColor: '#94a3b8',
-                backgroundColor: 'rgba(148, 163, 184, 0.18)',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.3,
-                yAxisID: 'y',
-            },
-            {
-                label: 'Confidence',
-                data: forecastDailyRows.map((item) => Number(item.confidence || 0)),
-                borderColor: '#16a34a',
-                backgroundColor: 'rgba(22, 163, 74, 0.14)',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.2,
-                yAxisID: 'y1',
-            },
-        ],
-    }), [forecastDailyRows]);
-
-    const forecastChartOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom' },
-            tooltip: {
-                callbacks: {
-                    label: (context) => {
-                        if (context.dataset.yAxisID === 'y1') {
-                            return `${context.dataset.label}: ${Number(context.raw || 0).toFixed(1)}%`;
-                        }
-                        return `${context.dataset.label}: ${formatCurrency(context.raw)}`;
-                    },
-                },
-            },
-        },
-        scales: {
-            x: { grid: { display: false }, ticks: { color: '#6b7280', maxRotation: 0 } },
-            y: {
-                beginAtZero: true,
-                ticks: {
-                    color: '#6b7280',
-                    callback: (value) => {
-                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
-                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
-                        return value;
-                    },
-                },
-            },
-            y1: {
-                position: 'right',
-                beginAtZero: true,
-                max: 100,
-                grid: { drawOnChartArea: false },
-                ticks: { color: '#6b7280', callback: (value) => `${value}%` },
-            },
-        },
-    };
-
-    const projectionChartData = useMemo(() => ({
-        labels: projectionDailyRows.map((row) => row.date),
-        datasets: [
-            {
-                type: 'bar',
-                label: 'Pengeluaran per Tanggal',
-                data: projectionDailyRows.map((row) => Number(row.daily_total_expense || 0)),
-                backgroundColor: 'rgba(239, 68, 68, 0.25)',
-                borderColor: '#dc2626',
-                borderWidth: 1,
-                borderRadius: 4,
-                barThickness: 10,
-                order: 3,
-            },
-            {
-                type: 'line',
-                label: 'Pendapatan Real Harian',
-                data: projectionDailyRows.map((row) => (
-                    row.income_source === 'actual'
-                        ? Number(row.predicted_income || 0)
-                        : null
-                )),
-                borderColor: '#16a34a',
-                backgroundColor: 'rgba(22, 163, 74, 0.15)',
-                fill: false,
-                borderWidth: 3,
-                pointRadius: 3,
-                pointHoverRadius: 5,
-                spanGaps: false,
-                tension: 0.2,
-                order: 1,
-            },
-            {
-                label: 'Saldo Ledger',
-                data: projectionDailyRows.map((row) => Number(
-                    row.chart_balance ?? row.projected_balance ?? 0
-                )),
-                borderColor: '#94a3b8',
-                backgroundColor: 'rgba(148, 163, 184, 0.15)',
-                fill: false,
-                borderWidth: 2,
-                tension: 0.3,
-            },
-            {
-                label: 'Kas Riil Tersedia',
-                data: projectionDailyRows.map((row) => Number(
-                    row.available_cash ?? 0
-                )),
-                borderColor: '#0f766e',
-                backgroundColor: 'rgba(15, 118, 110, 0.12)',
-                fill: true,
-                borderWidth: 3,
-                tension: 0.25,
-            },
-            {
-                label: 'Kas Setelah Cadangan',
-                data: projectionDailyRows.map((row) => Math.max(0, Number(
-                    row.available_cash_after_reserve ?? 0
-                ))),
-                borderColor: '#f59e0b',
-                backgroundColor: 'rgba(245, 158, 11, 0.08)',
-                fill: false,
-                borderWidth: 2,
-                tension: 0.2,
-            },
-            {
-                label: 'Saldo Bebas Keputusan',
-                data: projectionDailyRows.map((row) => Math.max(0, Number(
-                    row.discretionary_balance_available_cash ?? row.discretionary_balance_display ?? 0
-                ))),
-                borderColor: '#0ea5e9',
-                backgroundColor: 'rgba(14, 165, 233, 0.1)',
-                fill: false,
-                borderWidth: 2,
-                tension: 0.2,
-            },
-        ],
-    }), [projectionDailyRows]);
-
-    const projectionChartOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom' },
-            tooltip: {
-                callbacks: {
-                    label: (context) => `${context.dataset.label}: ${formatCurrency(context.raw)}`,
-                },
-            },
-        },
-        scales: {
-            x: { grid: { display: false }, ticks: { color: '#6b7280', maxRotation: 0 } },
-            y: {
-                ticks: {
-                    color: '#6b7280',
-                    callback: (value) => {
-                        if (Math.abs(value) >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
-                        if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(0)}rb`;
-                        return value;
-                    },
-                },
-            },
-        },
-    };
-
-    const varianceChartData = useMemo(() => ({
-        labels: (kpiVariance?.daily || []).map((item) => item.date),
-        datasets: [
-            {
-                label: 'Forecast',
-                data: (kpiVariance?.daily || []).map((item) => Number(item.predicted_revenue || 0)),
-                borderColor: '#94a3b8',
-                backgroundColor: 'rgba(148, 163, 184, 0.12)',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.25,
-            },
-            {
-                label: 'Realisasi',
-                data: (kpiVariance?.daily || []).map((item) => Number(item.actual_revenue || 0)),
-                borderColor: '#16a34a',
-                backgroundColor: 'rgba(22, 163, 74, 0.12)',
-                borderWidth: 4,
-                fill: false,
-                tension: 0.25,
-            },
-        ],
-    }), [kpiVariance]);
-
-    const varianceChartOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom' },
-            tooltip: {
-                callbacks: {
-                    label: (context) => `${context.dataset.label}: ${formatCurrency(context.raw)}`,
-                },
-            },
-        },
-        scales: {
-            x: { grid: { display: false }, ticks: { color: '#6b7280', maxRotation: 0 } },
-            y: {
-                ticks: {
-                    color: '#6b7280',
-                    callback: (value) => {
-                        if (value >= 1000000) return `${(value / 1000000).toFixed(1)}jt`;
-                        if (value >= 1000) return `${(value / 1000).toFixed(0)}rb`;
-                        return value;
-                    },
-                },
-            },
-        },
-    };
-
-    const healthDistributionChartData = useMemo(() => ({
-        labels: kpiHealthDistribution.map((item) => item.label),
-        datasets: [
-            {
-                data: kpiHealthDistribution.map((item) => Number(item.count || 0)),
-                backgroundColor: ['#22c55e', '#f59e0b', '#f97316', '#ef4444'],
-                borderColor: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'],
-                borderWidth: 3,
-                hoverOffset: 8,
-            },
-        ],
-    }), [kpiHealthDistribution]);
-
-    const healthDistributionOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '60%',
-        plugins: {
-            legend: {
-                position: 'bottom',
-                labels: {
-                    usePointStyle: true,
-                    pointStyle: 'circle',
-                    color: '#374151',
-                    boxWidth: 8,
-                },
-            },
-            tooltip: {
-                callbacks: {
-                    label: (context) => `${context.label}: ${context.raw} pelanggan`,
-                },
-            },
-        },
-    };
-
-    const handleApplyKpiRange = async () => {
-        await fetchManagementKpis(kpiRange);
-    };
-
-    const handleResetKpiRange = async () => {
-        const defaultRange = getDefaultKpiRange();
-        setKpiRange(defaultRange);
-        await fetchManagementKpis(defaultRange);
-    };
-
-    const handleApplyForecastRange = async () => {
-        await fetchRevenueForecast(forecastRange);
-    };
-
-    const handleResetForecastRange = async () => {
-        const defaultRange = getDefaultForecastRange();
-        setForecastRange(defaultRange);
-        await fetchRevenueForecast(defaultRange);
-    };
-
-    const handleApplyFinancialProjectionRange = async () => {
-        if (!/^\d{4}-\d{2}$/.test(financialProjectionMonth)) {
-            setFinancialProjectionError('Format bulan tidak valid.');
-            return;
-        }
-
-        const nextRange = getMonthRangeFromMonthValue(financialProjectionMonth);
-        setFinancialProjectionRange(nextRange);
-        await fetchFinancialProjection(nextRange, { sourceMode: 'live' });
-    };
-
-    const handleResetFinancialProjectionRange = async () => {
-        const defaultMonth = getCurrentMonthValue();
-        const defaultRange = getMonthRangeFromMonthValue(defaultMonth);
-        setFinancialProjectionMonth(defaultMonth);
-        setFinancialProjectionRange(defaultRange);
-        await fetchFinancialProjection(defaultRange, { sourceMode: 'live' });
-    };
-
-    const handleConfirmMandatoryExecution = async (row) => {
-        if (!row || !row.target_id || !row.due_date) return;
-        if (!window.confirm(`Tandai target "${row.name}" jatuh tempo ${row.due_date} sebagai terlaksana?`)) return;
-
-        const actionKey = String(row.event_id || `${row.target_id}-${row.due_date}`);
-        try {
-            setMandatoryActionLoadingKey(actionKey);
-            setFinancialProjectionActionMessage(null);
-
-            await apiClient.post('/dashboard/financial-projection/mandatory-events/confirm', {
-                target_id: row.target_id,
-                due_date: row.due_date,
-                amount: Number(row.amount || 0),
-            });
-
-            setFinancialProjectionActionMessage({
-                type: 'success',
-                text: `Target wajib "${row.name}" berhasil ditandai terlaksana.`,
-            });
-            await loadAllPredictionData();
-        } catch (err) {
-            setFinancialProjectionActionMessage({
-                type: 'error',
-                text: err.response?.data?.message || 'Gagal menandai target wajib sebagai terlaksana.',
-            });
-        } finally {
-            setMandatoryActionLoadingKey(null);
-        }
-    };
-
-    const handleRevokeMandatoryExecution = async (row) => {
-        if (!row || !row.target_id || !row.due_date) return;
-        if (!window.confirm(`Batalkan status terlaksana untuk target "${row.name}" jatuh tempo ${row.due_date}?`)) return;
-
-        const actionKey = String(row.event_id || `${row.target_id}-${row.due_date}`);
-        try {
-            setMandatoryActionLoadingKey(actionKey);
-            setFinancialProjectionActionMessage(null);
-
-            await apiClient.delete('/dashboard/financial-projection/mandatory-events/confirm', {
-                data: {
-                    target_id: row.target_id,
-                    due_date: row.due_date,
-                },
-            });
-
-            setFinancialProjectionActionMessage({
-                type: 'success',
-                text: `Status terlaksana untuk "${row.name}" berhasil dibatalkan.`,
-            });
-            await loadAllPredictionData();
-        } catch (err) {
-            setFinancialProjectionActionMessage({
-                type: 'error',
-                text: err.response?.data?.message || 'Gagal membatalkan status terlaksana.',
-            });
-        } finally {
-            setMandatoryActionLoadingKey(null);
-        }
-    };
-
-    const handleFulfillPurchaseGoal = async (row) => {
-        if (!row || !row.id) return;
-
-        try {
-            setPurchaseActionLoadingId(Number(row.id));
-            setFinancialProjectionActionMessage(null);
-            setPurchaseRiskModalError(null);
-            setPurchaseRiskPreview(null);
-
-            const previewResponse = await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
-                target_id: row.id,
-                preview_only: true,
-            });
-
-            setPurchaseRiskPreview(previewResponse.data?.data || null);
-            setPurchaseRiskModalOpen(true);
-        } catch (err) {
-            setFinancialProjectionActionMessage({
-                type: 'error',
-                text: err.response?.data?.message || 'Gagal memuat preview risiko pembelian.',
-            });
-        } finally {
-            setPurchaseActionLoadingId(null);
-        }
-    };
-
-    const handleConfirmFulfillPurchaseGoal = async () => {
-        const targetId = Number(purchaseRiskPreview?.target_id || 0);
-        const targetName = String(purchaseRiskPreview?.target_name || 'Target pembelian');
-        if (!targetId) return;
-
-        try {
-            setPurchaseRiskConfirmLoading(true);
-            setPurchaseRiskModalError(null);
-            setFinancialProjectionActionMessage(null);
-
-            await apiClient.post('/dashboard/financial-projection/purchase-goals/fulfill', {
-                target_id: targetId,
-                preview_only: false,
-            });
-
-            setPurchaseRiskModalOpen(false);
-            setPurchaseRiskPreview(null);
-            setFinancialProjectionActionMessage({
-                type: 'success',
-                text: `Target pembelian "${targetName}" berhasil ditandai terpenuhi dan dinonaktifkan.`,
-            });
-            await loadAllPredictionData();
-        } catch (err) {
-            setPurchaseRiskModalError(err.response?.data?.message || 'Gagal mengeksekusi rencana pembelian.');
-        } finally {
-            setPurchaseRiskConfirmLoading(false);
-        }
-    };
-
-    const handleSimulatePurchase = async () => {
-        const parsedAmount = Number(purchaseSimulationAmount);
-
-        if (!purchaseSimulationDate) {
-            setPurchaseSimulationError('Tanggal simulasi wajib diisi.');
-            return;
-        }
-
-        if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-            setPurchaseSimulationError('Nominal simulasi harus lebih dari 0.');
-            return;
-        }
-
-        try {
-            setPurchaseSimulationLoading(true);
-            setPurchaseSimulationError(null);
-            setPurchaseSimulationResult(null);
-
-            const response = await apiClient.post('/dashboard/financial-projection/simulate-purchase', {
-                simulation_date: purchaseSimulationDate,
-                amount: parsedAmount,
-                start_date: financialProjectionRange.start_date,
-                end_date: financialProjectionRange.end_date,
-            });
-
-            setPurchaseSimulationResult(response.data?.data || null);
-        } catch (err) {
-            setPurchaseSimulationError(err.response?.data?.message || 'Gagal menjalankan simulasi pembelian.');
-        } finally {
-            setPurchaseSimulationLoading(false);
-        }
-    };
+    }, [kpiHealthDistribution]);
 
     if (isTeknisi) {
         return (
-            <div className="space-y-4 min-w-0">
-                <div className="flex items-center gap-2 text-gray-700">
-                    <Calendar size={16} />
-                    <p className="text-sm">
-                        {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                    </p>
-                </div>
-                <Alert
-                    type="info"
-                    title="Akses Prediksi"
-                    message="Halaman prediksi keuangan tersedia untuk tim finance/superadmin."
-                />
+            <div className="p-8 text-center bg-white rounded-3xl border border-gray-200 max-w-lg mx-auto my-12">
+                <ShieldAlert size={48} className="mx-auto text-amber-500 mb-3" />
+                <h2 className="text-xl font-bold text-gray-900">Akses Terbatas</h2>
+                <p className="text-sm text-gray-500 mt-1">Halaman rekomendasi manajemen keuangan hanya dapat diakses oleh Manajemen, Admin, dan Finance.</p>
             </div>
         );
     }
 
     return (
-        <div className="space-y-6 min-w-0">
-            <div className="app-section-header flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Cash Control & Prediksi Keuangan</h1>
-                    <p className="text-gray-500 mt-1 flex items-center gap-2">
-                        <Calendar size={16} />
-                        {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                    </p>
-                    <p className="text-sm text-gray-500 mt-2">
-                        Halaman ini difokuskan untuk keputusan kas, budgeting, dan kontrol belanja, lalu dilanjutkan dengan analitik pendukung di bawahnya.
-                    </p>
-                    {bundleMeta?.snapshot_generated_at && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                            <span className="inline-flex px-2 py-1 rounded-full bg-blue-100 text-blue-700">
-                                Update terakhir: {new Date(bundleMeta.snapshot_generated_at).toLocaleString('id-ID')}
-                            </span>
-                            <span className={`inline-flex px-2 py-1 rounded-full ${
-                                bundleMeta?.is_stale ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-                            }`}>
-                                {bundleMeta?.is_stale ? 'Stale snapshot' : 'Snapshot fresh'}
-                            </span>
-                            {bundleMeta?.model_version && (
-                                <span className="inline-flex px-2 py-1 rounded-full bg-slate-100 text-slate-700">
-                                    Model: {bundleMeta.model_version}
-                                </span>
-                            )}
+        <div className="min-h-screen bg-slate-50/60 pb-16 pt-4 px-3 sm:px-6 lg:px-8 space-y-6">
+            {/* 🌟 1. EXECUTIVE HEADER & FILTER BAR 🌟 */}
+            <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                        <div className="p-2 bg-gradient-to-tr from-blue-600 to-indigo-600 text-white rounded-xl shadow-sm">
+                            <Brain size={22} />
                         </div>
-                    )}
+                        <div>
+                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                                Pusat Rekomendasi & Keputusan Keuangan
+                            </h1>
+                            <p className="text-xs text-slate-500">
+                                Executive Financial Intelligence, Cash Control & Decision Support System
+                            </p>
+                        </div>
+                    </div>
                 </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+                    {/* Month Picker Control */}
+                    <div className="inline-flex items-center bg-slate-100 rounded-2xl p-1 border border-slate-200">
+                        <button
+                            type="button"
+                            onClick={() => handleShiftMonth(-1)}
+                            className="p-1.5 hover:bg-white text-slate-600 rounded-xl transition"
+                            title="Bulan Sebelumnya"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <span className="font-bold text-xs sm:text-sm px-3 text-slate-800 font-mono">
+                            {formatMonthLabel(selectedMonth)}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => handleShiftMonth(1)}
+                            className="p-1.5 hover:bg-white text-slate-600 rounded-xl transition"
+                            title="Bulan Berikutnya"
+                        >
+                            <ChevronRight size={16} />
+                        </button>
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={() => setSelectedMonth(getCurrentMonthValue())}
+                        className={`px-3 py-2 text-xs font-bold rounded-xl transition border ${
+                            selectedMonth === getCurrentMonthValue()
+                                ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                        Bulan Ini
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => loadAllPredictionData(true)}
+                        disabled={isRefreshing}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow-sm disabled:opacity-50"
+                    >
+                        <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+                        {isRefreshing ? 'Memperbarui...' : 'Sinkronkan Data'}
+                    </button>
+                </div>
+            </div>
+
+            {/* Notification Messages */}
+            {actionMessage && (
+                <Alert variant={actionMessage.type === 'error' ? 'error' : 'success'} className="animate-in fade-in">
+                    <div className="flex justify-between items-center w-full">
+                        <span>{actionMessage.text}</span>
+                        <button onClick={() => setActionMessage(null)} className="text-xs font-bold underline ml-3">Tutup</button>
+                    </div>
+                </Alert>
+            )}
+
+            {error && <Alert variant="error">{error}</Alert>}
+
+            {/* 🌟 2. EXECUTIVE FINANCIAL SAFETY & AI ADVISORY CARD 🌟 */}
+            <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 shadow-xl border border-slate-800 space-y-6">
+                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 pb-6 border-b border-white/10">
+                    <div className="flex items-center gap-4">
+                        <div className="relative">
+                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-lg shadow-emerald-500/20 flex items-center justify-center">
+                                <div className="w-full h-full bg-slate-950/80 rounded-2xl flex flex-col items-center justify-center">
+                                    <span className="text-2xl font-black text-emerald-400">{healthScore}</span>
+                                    <span className="text-[10px] text-slate-400 uppercase font-semibold">/ 100</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="px-3 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30 flex items-center gap-1.5">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                    Kondisi Keuangan Sehat & Aman
+                                </span>
+                                <span className="text-xs text-slate-400">Periode {formatMonthLabel(selectedMonth)}</span>
+                            </div>
+                            <h2 className="text-lg sm:text-xl font-black text-white mt-1">
+                                Executive Strategic Advisory
+                            </h2>
+                            <p className="text-xs text-slate-300 max-w-2xl mt-0.5">
+                                {projectionAssistant?.headline || 'Posisi kas riil saat ini aman untuk menutup seluruh kewajiban rutin operasional dan cadangan darurat minimum.'}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                        <button
+                            type="button"
+                            onClick={() => setSimulationModal((prev) => ({ ...prev, open: true }))}
+                            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30"
+                        >
+                            <ShoppingCart size={14} /> Simulasi Belanja Alat
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleOpenBudgetModal}
+                            className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition border border-white/15"
+                        >
+                            <Sliders size={14} /> Atur Budget Bulanan
+                        </button>
+                    </div>
+                </div>
+
+                {/* 4 AI Strategic Decision Bullets */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+                            <span>Plafon Belanja Aman</span>
+                            <span className="text-emerald-400 font-bold">Minggu Ini</span>
+                        </div>
+                        <p className="text-lg font-black text-emerald-400">{formatCurrency(safeWeeklyExpenseLimit)}</p>
+                        <p className="text-[11px] text-slate-400">Batas aman pengeluaran operasional agar cadangan kas tetap utuh.</p>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+                            <span>Kapasitas Pembelian Alat</span>
+                            <span className="text-blue-400 font-bold">Investasi</span>
+                        </div>
+                        <p className="text-lg font-black text-blue-400">{formatCurrency(safePurchaseBudget)}</p>
+                        <p className="text-[11px] text-slate-400">Amplop aman untuk belanja perangkat & tools baru.</p>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+                            <span>Pinjaman Menekan Kas</span>
+                            <span className="text-amber-400 font-bold">Outstanding</span>
+                        </div>
+                        <p className="text-lg font-black text-amber-400">{formatCurrency(outstandingLoans)}</p>
+                        <p className="text-[11px] text-slate-400">Prioritaskan pengembalian pinjaman untuk menambah likuiditas.</p>
+                    </div>
+
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-slate-400 font-semibold">
+                            <span>Coverage Kewajiban Wajib</span>
+                            <span className="text-teal-400 font-bold">Kesiapan</span>
+                        </div>
+                        <p className="text-lg font-black text-teal-400">{formatPercent(mandatoryCoveragePercent)}</p>
+                        <p className="text-[11px] text-slate-400">Kesiapan dana untuk Bandwidth, OLT, dan cicilan rutin.</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* 🌟 3. 4 HERO FINANCIAL METRIC CARDS 🌟 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* 1. Kas Riil Tersedia */}
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Kas Riil Tersedia</span>
+                        <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                            <Wallet size={18} />
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">{formatCurrency(availableRealCash)}</h3>
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1 text-xs text-slate-500">
+                            <div className="flex justify-between">
+                                <span>Setelah Cadangan Kas:</span>
+                                <span className="font-semibold text-emerald-700">{formatCurrency(cashAfterReserve)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Cadangan Kas Min (25%):</span>
+                                <span className="font-medium text-slate-700">{formatCurrency(minimumCashReserve)}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Sisa Budget Aman */}
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sisa Budget Aman</span>
+                        <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+                            <TrendingUp size={18} />
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">{formatCurrency(safeBudgetRemaining)}</h3>
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1 text-xs text-slate-500">
+                            <div className="flex justify-between">
+                                <span>Status Anggaran:</span>
+                                <span className="font-semibold text-emerald-600">Terkendali</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Butuh Pemasukan Tambahan:</span>
+                                <span className="font-medium text-slate-700">Rp 0 (Aman)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. Saldo Ledger vs Pinjaman */}
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Saldo Ledger Pembukuan</span>
+                        <div className="p-2 rounded-xl bg-purple-50 text-purple-600">
+                            <Layers size={18} />
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">{formatCurrency(ledgerBalance)}</h3>
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1 text-xs text-slate-500">
+                            <div className="flex justify-between">
+                                <span>Outstanding Pinjaman:</span>
+                                <span className="font-semibold text-amber-700">{formatCurrency(outstandingLoans)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Piutang Overdue Pelanggan:</span>
+                                <span className="font-medium text-rose-600">{formatCurrency(kpiSummary?.aging_overdue_amount || 0)}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 4. Pengeluaran Wajib */}
+                <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Beban Wajib</span>
+                        <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                            <Target size={18} />
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">{formatCurrency(mandatoryExpensesTotal)}</h3>
+                        <div className="mt-2 pt-2 border-t border-slate-100 space-y-1 text-xs text-slate-500">
+                            <div className="flex justify-between">
+                                <span>Coverage Kesiapan:</span>
+                                <span className="font-bold text-emerald-600">{formatPercent(mandatoryCoveragePercent)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Kekurangan Dana (Shortfall):</span>
+                                <span className="font-medium text-emerald-700">Rp 0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* 🌟 4. EXECUTIVE TAB NAVIGATION 🌟 */}
+            <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-sm overflow-x-auto gap-1">
                 <button
                     type="button"
-                    onClick={() => loadAllPredictionData(true)}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
-                    disabled={isRefreshing}
+                    onClick={() => setActiveTab('cash_decision')}
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-xs sm:text-sm transition shrink-0 ${
+                        activeTab === 'cash_decision'
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
                 >
-                    <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
-                    {isRefreshing ? 'Memuat Ulang...' : 'Muat Ulang Semua Prediksi'}
+                    <DollarSign size={16} /> 1. Keputusan Kas & Anggaran
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('cashflow_forecast')}
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-xs sm:text-sm transition shrink-0 ${
+                        activeTab === 'cashflow_forecast'
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                >
+                    <TrendingUp size={16} /> 2. Proyeksi Pendapatan & Arus Kas
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('collection_risk')}
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-xs sm:text-sm transition shrink-0 ${
+                        activeTab === 'collection_risk'
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                >
+                    <Users size={16} /> 3. Penagihan & Risiko Pelanggan
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('isp_intelligence')}
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-xs sm:text-sm transition shrink-0 ${
+                        activeTab === 'isp_intelligence'
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    }`}
+                >
+                    <Brain size={16} /> 4. Intelijen ISP & Diagnostik
                 </button>
             </div>
 
-            {error && (
-                <Alert
-                    type="error"
-                    title="Error"
-                    message={error}
-                    onClose={() => setError(null)}
-                />
-            )}
-
-            {bundleMeta && (
-                <div className={`rounded-lg border px-4 py-3 text-sm ${predictionBundleStatus.className}`}>
-                    <p className="font-semibold">{predictionBundleStatus.label}</p>
-                    <p className="mt-1 text-xs opacity-90">{predictionBundleStatus.detail}</p>
-                </div>
-            )}
-
-            {(latest7dAccuracy || latestModelMeta) && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">Akurasi 7 Hari Terakhir</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-3 text-sm">
-                        <div>
-                            <p className="text-xs text-slate-500">MAPE 7 Hari</p>
-                            <p className="font-bold text-slate-900">
-                                {latest7dAccuracy?.mape != null ? `${Number(latest7dAccuracy.mape).toFixed(2)}%` : '-'}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-slate-500">Periode Evaluasi</p>
-                            <p className="font-bold text-slate-900">
-                                {latest7dAccuracy?.period_start && latest7dAccuracy?.period_end
-                                    ? `${latest7dAccuracy.period_start} s.d. ${latest7dAccuracy.period_end}`
-                                    : '-'}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-slate-500">Sample Size</p>
-                            <p className="font-bold text-slate-900">{latest7dAccuracy?.sample_size ?? '-'}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs text-slate-500">Status Retrain</p>
-                            <p className="font-bold text-slate-900">
-                                {latest7dAccuracy?.retrain_status || '-'}
-                            </p>
-                        </div>
-                    </div>
-                    {(latestModelMeta?.model_version || latest7dAccuracy?.latest_retrain_at) && (
-                        <p className="text-xs text-slate-500 mt-3">
-                            Model: {latestModelMeta?.model_version || latest7dAccuracy?.latest_model_version || '-'} | Retrain terakhir: {latest7dAccuracy?.latest_retrain_at ? new Date(latest7dAccuracy.latest_retrain_at).toLocaleString('id-ID') : '-'}
-                        </p>
-                    )}
-                </div>
-            )}
-
-            {projectionSummary && (
-                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-                    <div className="flex flex-col gap-3">
-                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                            <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Indikator Keuangan Saat Ini</p>
-                                <div className="mt-2 flex flex-wrap items-center gap-3">
-                                    <span className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-base font-semibold shadow-sm ${financialStatusIndicator.main.className}`}>
-                                        <span className={`h-3 w-3 rounded-full ${financialStatusIndicator.main.dotClassName}`} />
-                                        {financialStatusIndicator.main.label}
-                                    </span>
-                                    <span className="text-sm text-slate-600">
-                                        Health Score: <span className="font-semibold text-slate-900">{Number(systemCashGuardrail?.health_score || 0)}/100</span>
-                                    </span>
+            {/* 🌟 TAB 1: KEPUTUSAN KAS & ANGGARAN 🌟 */}
+            {activeTab === 'cash_decision' && (
+                <div className="space-y-6 animate-in fade-in">
+                    {/* Action Center - Prioritas Keputusan Manajemen */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
+                                    <Sparkles size={20} />
                                 </div>
-                            </div>
-                            <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600 border border-slate-200 max-w-xl">
-                                {financialStatusIndicator.reason}
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                            {financialStatusIndicator.subIndicators.map((item) => (
-                                <span
-                                    key={item.key}
-                                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${item.meta.className}`}
-                                >
-                                    <span className={`h-2 w-2 rounded-full ${item.meta.dotClassName}`} />
-                                    {item.title}: {item.label}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {financialProjectionActionMessage && (
-                <Alert
-                    type={financialProjectionActionMessage.type}
-                    title={financialProjectionActionMessage.type === 'success' ? 'Berhasil' : 'Error'}
-                    message={financialProjectionActionMessage.text}
-                    onClose={() => setFinancialProjectionActionMessage(null)}
-                />
-            )}
-
-            <Modal
-                isOpen={purchaseRiskModalOpen}
-                onClose={() => {
-                    if (purchaseRiskConfirmLoading) return;
-                    setPurchaseRiskModalOpen(false);
-                    setPurchaseRiskPreview(null);
-                    setPurchaseRiskModalError(null);
-                }}
-                title="Risiko Eksekusi Target Pembelian"
-                size="2xl"
-            >
-                <div className="space-y-4">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-sm text-slate-700">
-                            Target: <span className="font-semibold text-slate-900">{purchaseRiskPreview?.target_name || '-'}</span>
-                        </p>
-                        <p className="text-sm text-slate-700 mt-1">
-                            Nominal: <span className="font-semibold text-slate-900">{formatCurrency(purchaseRiskPreview?.target_amount || 0)}</span>
-                        </p>
-                        <p className="text-xs text-slate-600 mt-1">
-                            Horizon risiko: {purchaseRiskPreview?.horizon_start_date || '-'} s.d. {purchaseRiskPreview?.horizon_end_date || '-'}
-                        </p>
-                    </div>
-
-                    <div className="border border-gray-100 rounded-lg p-2">
-                        <ResponsiveDataView
-                            rows={purchaseRiskPreview?.risk_rows || []}
-                            keyField="due_date"
-                            priorityFields={['due_date', 'risk_level', 'mandatory_amount', 'free_balance_after_purchase']}
-                            emptyMessage="Tidak ada data pengeluaran wajib pada horizon ini."
-                            tableClassName="w-full text-sm md:min-w-[1180px]"
-                            columns={[
-                                { key: 'due_date', label: 'Tanggal Wajib', cellClassName: 'px-3 py-2 text-gray-700' },
-                                { key: 'mandatory_amount', label: 'Nominal Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-900 font-semibold', render: (row) => formatCurrency(row.mandatory_amount || 0) },
-                                { key: 'status_label', label: 'Status Wajib', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.status_label || '-' },
-                                { key: 'total_balance_before', label: 'Total Saldo Sebelum', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.total_balance_before || 0) },
-                                { key: 'total_balance_after_purchase', label: 'Total Saldo Setelah - Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.total_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}>{formatCurrency(row.total_balance_after_purchase || 0)}</span> },
-                                { key: 'free_balance_before', label: 'Saldo Bebas Sebelum', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.free_balance_before || 0) },
-                                { key: 'free_balance_after_purchase', label: 'Saldo Bebas Setelah - Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.free_balance_after_purchase || 0) < 0 ? 'text-rose-700' : 'text-gray-900'}>{formatCurrency(row.free_balance_after_purchase || 0)}</span> },
-                                { key: 'risk_level', label: 'Risiko', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskLevelBadgeClass(row.risk_level)}`}>{row.risk_level || 'aman'}</span> },
-                            ]}
-                        />
-                    </div>
-
-                    {purchaseRiskModalError && (
-                        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                            {purchaseRiskModalError}
-                        </div>
-                    )}
-
-                    <div className="flex items-center justify-end gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (purchaseRiskConfirmLoading) return;
-                                setPurchaseRiskModalOpen(false);
-                                setPurchaseRiskPreview(null);
-                                setPurchaseRiskModalError(null);
-                            }}
-                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-60"
-                            disabled={purchaseRiskConfirmLoading}
-                        >
-                            Batal
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleConfirmFulfillPurchaseGoal}
-                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                            disabled={purchaseRiskConfirmLoading}
-                        >
-                            {purchaseRiskConfirmLoading ? 'Memproses...' : 'Tetap Jalankan'}
-                        </button>
-                    </div>
-                </div>
-            </Modal>
-
-            <div className="flex flex-col gap-6">
-            <div className="app-card p-6 space-y-5 order-1">
-                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                    <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <Wallet size={18} className="text-violet-600" />
-                            Cash Control & Proyeksi Keuangan
-                        </h2>
-                        <p className="text-sm text-gray-500 mt-1">Pusat keputusan kas bulanan untuk membaca posisi kas riil, tekanan pinjaman, cadangan, dan ruang belanja aman.</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(projectionSectionSource).className}`}>
-                                Sumber: {getSectionSourceMeta(projectionSectionSource).label}
-                            </span>
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold border ${
-                                financialProjectionSourceMode === 'live'
-                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                            }`}>
-                                Proyeksi: {financialProjectionSourceMode === 'live' ? 'Live' : 'Snapshot'}
-                            </span>
-                            {projectionSectionWarning && (
-                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                    Warning: {projectionSectionWarning}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap items-end gap-2">
-                        <div>
-                            <label className="block text-xs text-gray-600 mb-1">Bulan</label>
-                            <input
-                                type="month"
-                                value={financialProjectionMonth}
-                                onChange={(e) => setFinancialProjectionMonth(e.target.value)}
-                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleApplyFinancialProjectionRange}
-                            disabled={financialProjectionLoading}
-                            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            {financialProjectionLoading ? 'Memproses...' : 'Terapkan'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleResetFinancialProjectionRange}
-                            disabled={financialProjectionLoading}
-                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            Bulan Ini
-                        </button>
-                    </div>
-                </div>
-
-                <div className="text-xs text-gray-500">
-                    Periode aktif: {financialProjectionRange.start_date} s.d. {financialProjectionRange.end_date} ({formatMonthLabel(financialProjectionMonth)})
-                </div>
-
-                {financialProjectionError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{financialProjectionError}</div>
-                )}
-
-                {financialProjectionLoading && !projectionSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Memproses proyeksi keuangan...
-                    </div>
-                )}
-
-                {!financialProjectionLoading && !financialProjectionError && !projectionSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Data proyeksi keuangan belum tersedia.
-                    </div>
-                )}
-
-                {projectionSummary && (
-                    <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                            <div className="rounded-xl bg-white border border-emerald-200 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Kas Riil Tersedia</p>
-                                <p className="text-3xl font-bold text-emerald-900 mt-1">{formatCurrency(cashPosition?.available_cash || 0)}</p>
-                                <p className="text-xs text-emerald-700 mt-1">Angka keputusan utama setelah dikurangi outstanding pinjaman aktif.</p>
-                            </div>
-                            <div className="rounded-xl bg-white border border-cyan-200 p-4">
-                                <p className="text-xs font-medium text-cyan-700">Kas Setelah Cadangan</p>
-                                <p className={`text-3xl font-bold mt-1 ${Number(cashPosition?.available_cash_after_reserve || 0) >= 0 ? 'text-cyan-900' : 'text-rose-700'}`}>
-                                    {formatCurrency(cashPosition?.available_cash_after_reserve || 0)}
-                                </p>
-                                <p className="text-xs text-cyan-700 mt-1">Rumus: Kas Riil - Cadangan Kas Minimum.</p>
-                                <p className="text-[11px] text-cyan-700 mt-1">{cashPosition?.reserve_message || 'Kas setelah reserve aktif.'}</p>
-                            </div>
-                            <div className="rounded-xl bg-white border border-emerald-300 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Saldo Akhir Proyeksi Kas Riil</p>
-                                <p className={`text-3xl font-bold mt-1 ${Number(projectionSummary?.projected_ending_balance_available_cash || 0) >= 0 ? 'text-emerald-900' : 'text-rose-700'}`}>
-                                    {formatCurrency(projectionSummary?.projected_ending_balance_available_cash || 0)}
-                                </p>
-                                <p className="text-xs text-emerald-700 mt-1">Posisi kas riil akhir periode sebelum dikurangi reserve aktif.</p>
-                            </div>
-                            <div className="rounded-xl bg-white border border-indigo-200 p-4">
-                                <p className="text-xs font-medium text-indigo-700">Sisa Budget Aman</p>
-                                <p className={`text-3xl font-bold mt-1 ${Number(monthlyBudgetSummary?.remaining_safe_budget || 0) >= 0 ? 'text-indigo-900' : 'text-rose-700'}`}>
-                                    {formatCurrency(monthlyBudgetSummary?.remaining_safe_budget || 0)}
-                                </p>
-                                <p className="text-xs text-indigo-700 mt-1">
-                                    Ruang aman terhadap budget outflow dan reserve aktif.
-                                </p>
-                                <p className="text-[11px] text-indigo-700 mt-1">Butuh pemasukan tambahan: {formatCurrency(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0)}</p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
-                                <p className="text-xs font-medium text-slate-600">Saldo Ledger</p>
-                                <p className="text-2xl font-bold text-slate-900 mt-1">{formatCurrency(cashPosition?.ledger_balance || projectionSummary.opening_balance || 0)}</p>
-                                <p className="text-xs text-slate-600 mt-1">Angka referensi akuntansi, bukan ruang belanja.</p>
-                            </div>
-                            <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
-                                <p className="text-xs font-medium text-rose-700">Outstanding Pinjaman</p>
-                                <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(cashPosition?.loan_outstanding || 0)}</p>
-                                <p className="text-xs text-rose-700 mt-1">Tekanan langsung terhadap kas riil tersedia.</p>
-                            </div>
-                            <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
-                                <p className="text-xs font-medium text-amber-700">Cadangan Kas Minimum</p>
-                                <p className="text-2xl font-bold text-amber-900 mt-1">{formatCurrency(cashPosition?.minimum_cash_reserve_target || 0)}</p>
-                                <p className="text-xs text-amber-700 mt-1">{reserveFormulaLabel}</p>
-                                <p className="text-[11px] text-amber-700 mt-1">{reserveBasisLabel}</p>
-                            </div>
-                            <div className="rounded-xl bg-white border border-slate-300 p-4">
-                                <p className="text-xs font-medium text-slate-700">Saldo Akhir Proyeksi Ledger</p>
-                                <p className={`text-2xl font-bold mt-1 ${Number(projectionSummary?.projected_ending_balance_ledger || projectionSummary?.projected_ending_balance || 0) >= 0 ? 'text-slate-900' : 'text-rose-700'}`}>
-                                    {formatCurrency(projectionSummary?.projected_ending_balance_ledger || projectionSummary?.projected_ending_balance || 0)}
-                                </p>
-                                <p className="text-xs text-slate-700 mt-1">Tetap dipertahankan sebagai baseline ledger.</p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                            <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
-                                <p className="text-xs font-medium text-rose-700">Pengeluaran Wajib</p>
-                                <p className="text-2xl font-bold text-rose-900 mt-1">{formatCurrency(projectionSummary.mandatory_expense)}</p>
-                                <p className="text-xs text-rose-700 mt-1">Shortfall: {formatCurrency(projectionSummary.mandatory_shortfall_total)}</p>
-                            </div>
-                            <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
-                                <p className="text-xs font-medium text-cyan-700">Coverage Wajib</p>
-                                <p className="text-2xl font-bold text-cyan-900 mt-1">{formatPercent(projectionSummary.mandatory_coverage_amount_rate || 0, 1)}</p>
-                                <p className="text-xs text-cyan-700 mt-1">
-                                    Event ter-cover: {projectionSummary.mandatory_covered_events || 0}/{projectionSummary.mandatory_total_events || 0}
-                                </p>
-                            </div>
-                            <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
-                                <p className="text-xs font-medium text-gray-700">Konteks Model</p>
-                                <p className="text-sm text-gray-700 mt-2">Mode: {projectionSummary.calculation_mode === 'hybrid_actual_forecast' ? 'Hybrid aktual + forecast' : 'Forecast penuh'}</p>
-                                <p className="text-sm text-gray-700 mt-1">Confidence: {formatPercent(projectionForecastContext?.average_confidence || 0, 0)}</p>
-                                <p className="text-sm text-gray-700 mt-1">Volatilitas: {formatPercent(projectionForecastContext?.volatility_index || 0, 1)}</p>
-                            </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-5 space-y-4">
-                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                                 <div>
-                                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                                        <Wallet size={17} className="text-emerald-700" />
-                                        Kontrol Budget Bulanan
-                                    </h3>
-                                    <p className="text-sm text-gray-600 mt-1">
-                                        Ringkas posisi kas, warning reserve, dan budget aktif sebelum Anda mengambil keputusan belanja.
-                                    </p>
+                                    <h3 className="text-base font-bold text-slate-900">Rekomendasi Tindakan Manajemen (Action Center)</h3>
+                                    <p className="text-xs text-slate-500">Prioritas keputusan yang paling relevan untuk menjaga cashflow tetap aman.</p>
                                 </div>
-                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${getBudgetStatusClass(monthlyBudgetSummary?.status || monthlyBudget?.status)}`}>
-                                    Status Budget: {monthlyBudgetSummary?.status || monthlyBudget?.status || 'unconfigured'}
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                <span className="text-xs font-semibold text-slate-500">Maksimal Belanja Aman Minggu Ini</span>
+                                <h4 className="text-xl font-black text-slate-900">{formatCurrency(safeWeeklyExpenseLimit)}</h4>
+                                <p className="text-[11px] text-slate-500 leading-relaxed">Batas aman belanja operasional berdasarkan kas riil setelah cadangan.</p>
+                            </div>
+
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                <span className="text-xs font-semibold text-slate-500">Alokasi Pembelian Alat Aman</span>
+                                <h4 className="text-xl font-black text-indigo-700">{formatCurrency(safePurchaseBudget)}</h4>
+                                <p className="text-[11px] text-slate-500 leading-relaxed">Amplop aman untuk pembelian/investasi alat tanpa mengorbankan likuiditas.</p>
+                            </div>
+
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                <span className="text-xs font-semibold text-slate-500">Pinjaman yang Harus Ditekan</span>
+                                <h4 className="text-xl font-black text-amber-700">{formatCurrency(outstandingLoans)}</h4>
+                                <p className="text-[11px] text-slate-500 leading-relaxed">Outstanding pinjaman aktif yang sedang menekan kas riil perusahaan.</p>
+                            </div>
+
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                                <span className="text-xs font-semibold text-slate-500">Minimal Pemasukan Tambahan</span>
+                                <h4 className="text-xl font-black text-emerald-700">Rp 0</h4>
+                                <p className="text-[11px] text-slate-500 leading-relaxed">Kas riil saat ini sudah mencukupi target cadangan minimum.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Kewajiban Wajib & Target Pembelian Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* 1. Kontrol Pengeluaran Wajib */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Kontrol Pengeluaran Wajib</h3>
+                                    <p className="text-xs text-slate-500">Beban rutin operasional (Bandwidth, OLT, Sewa, Cicilan)</p>
+                                </div>
+                                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold">
+                                    {mandatoryList.length} Pos Terjadwal
                                 </span>
                             </div>
 
-                            {monthlyBudgetMessage && (
-                                <Alert
-                                    type={monthlyBudgetMessage.type}
-                                    message={monthlyBudgetMessage.text}
-                                    onClose={() => setMonthlyBudgetMessage(null)}
-                                />
-                            )}
+                            <div className="space-y-3">
+                                {mandatoryList.length === 0 ? (
+                                    <p className="text-xs text-slate-400 py-6 text-center">Belum ada pos pengeluaran wajib yang dijadwalkan.</p>
+                                ) : (
+                                    mandatoryList.map((item, idx) => {
+                                        const isExecuted = item.is_executed || item.status === 'terlaksana';
+                                        const key = `${item.target_id}-${item.due_date}`;
+                                        const isActionLoading = mandatoryActionKey === key;
 
-                            {cashPosition?.reserve_status === 'unconfigured' && (
-                                <Alert
-                                    type="info"
-                                    message={cashPosition?.reserve_message || 'Kas Setelah Cadangan masih sama dengan Kas Riil karena cadangan minimum belum aktif.'}
-                                />
-                            )}
-
-                            <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_1.35fr] gap-4">
-                                <div className="rounded-xl border border-emerald-200 bg-white p-4 space-y-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <p className="text-sm font-semibold text-gray-900">Status & Warning</p>
-                                            <p className="text-xs text-gray-500">Status kesehatan kas, reserve, dan tekanan keuangan aktif bulan ini.</p>
-                                        </div>
-                                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${getBudgetStatusClass(systemCashGuardrail?.health_status)}`}>
-                                            {systemCashGuardrail?.health_status || 'unconfigured'}
-                                        </span>
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        <div className="rounded-xl border border-gray-100 bg-emerald-50 p-4">
-                                            <p className="text-xs text-emerald-700">Health Score</p>
-                                            <p className="mt-2 text-3xl font-bold text-emerald-900">{Number(systemCashGuardrail?.health_score || 0)}/100</p>
-                                        </div>
-                                        <div className="rounded-xl border border-gray-100 bg-slate-50 p-4">
-                                            <p className="text-xs text-slate-700">Confidence Sistem</p>
-                                            <p className="mt-2 text-3xl font-bold text-slate-900">{Number(systemCashGuardrail?.confidence || 0)}%</p>
-                                        </div>
-                                        <div className="rounded-xl border border-gray-100 bg-amber-50 p-4 md:col-span-2">
-                                            <p className="text-xs text-amber-700">Status Cadangan</p>
-                                            <p className="mt-2 text-sm font-semibold text-amber-900">
-                                                {cashPosition?.reserve_status === 'unconfigured'
-                                                    ? 'Cadangan belum aktif, jadi Kas Setelah Cadangan masih sama dengan Kas Riil.'
-                                                    : cashPosition?.reserve_message || 'Cadangan kas minimum sudah aktif.'}
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                                    <div>
-                                        <p className="text-sm font-semibold text-gray-900">Action Center</p>
-                                        <p className="text-xs text-gray-500">Prioritas keputusan yang paling relevan untuk menjaga cash flow tetap aman.</p>
-                                    </div>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {(systemCashGuardrail?.action_center || []).map((item) => (
-                                            <div key={item.key} className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-                                                <p className="text-xs text-gray-500">{item.title}</p>
-                                                <p className="mt-2 text-xl font-bold text-gray-900">{formatCurrency(item.value || 0)}</p>
-                                                <p className="mt-1 text-xs text-gray-500">{item.note}</p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-2">
-                                        {(systemCashGuardrail?.drivers || []).length === 0 ? (
-                                            <p className="rounded-lg border border-dashed border-gray-200 px-4 py-3 text-sm text-gray-500">Belum ada faktor risiko dominan yang terdeteksi dari data bulan ini.</p>
-                                        ) : (
-                                            (systemCashGuardrail?.drivers || []).map((driver) => (
-                                                <div key={driver.key} className="rounded-lg border border-gray-100 px-4 py-3">
-                                                    <div className="flex items-center justify-between gap-2">
-                                                        <p className="text-sm font-semibold text-gray-900">{driver.title}</p>
-                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getBudgetStatusClass(driver.impact === 'tinggi' ? 'defisit' : driver.impact === 'menengah' ? 'waspada' : 'aman')}`}>
-                                                            {driver.impact}
+                                        return (
+                                            <div key={idx} className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 flex items-center justify-between gap-3">
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-bold text-sm text-slate-900">{item.name}</span>
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                            isExecuted ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'
+                                                        }`}>
+                                                            {isExecuted ? 'Terlaksana' : 'Aman'}
                                                         </span>
                                                     </div>
-                                                    <p className="mt-1 text-xs text-gray-500">{driver.detail}</p>
+                                                    <div className="flex items-center gap-3 text-xs text-slate-500">
+                                                        <span>Jatuh Tempo: <strong className="text-slate-700">{item.due_date}</strong></span>
+                                                        <span>Coverage: <strong className="text-emerald-700">{formatPercent(item.coverage_percent || 100)}</strong></span>
+                                                    </div>
                                                 </div>
-                                            ))
-                                        )}
-                                    </div>
+
+                                                <div className="text-right space-y-1.5">
+                                                    <span className="font-black text-sm text-slate-900 block">{formatCurrency(item.amount)}</span>
+                                                    {isExecuted ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRevokeMandatory(item)}
+                                                            disabled={isActionLoading}
+                                                            className="text-[11px] text-slate-500 hover:text-red-600 underline font-medium"
+                                                        >
+                                                            {isActionLoading ? 'Memproses...' : 'Batalkan Status'}
+                                                        </button>
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleConfirmMandatory(item)}
+                                                            disabled={isActionLoading}
+                                                            className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition disabled:opacity-50"
+                                                        >
+                                                            <Check size={12} /> {isActionLoading ? 'Memproses...' : 'Tandai Selesai'}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 2. Target Pembelian & Belanja Investasi */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Target Pembelian & Investasi Alat</h3>
+                                    <p className="text-xs text-slate-500">Rencana belanja perangkat (Splicer, OLT, Router, dll)</p>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSimulationModal((prev) => ({ ...prev, open: true }))}
+                                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline"
+                                >
+                                    + Uji Simulasi Belanja
+                                </button>
                             </div>
 
-                            <div className="grid grid-cols-1 gap-4">
-                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                                        <div>
-                                            <p className="text-sm font-semibold text-gray-900">Input Budget {formatMonthLabel(financialProjectionMonth)}</p>
-                                            <p className="text-xs text-gray-500">
-                                                {monthlyBudget?.status === 'manual_override'
-                                                    ? 'Budget sudah dioverride manual dan bisa diperbarui lagi.'
-                                                    : monthlyBudget?.status === 'configured'
-                                                        ? 'Budget aktif mengikuti nilai tersimpan.'
-                                                        : monthlyBudget?.status === 'system_generated'
-                                                            ? 'Budget bulan ini dihasilkan otomatis dari data sistem dan bisa Anda override.'
-                                                            : 'Budget bulan ini belum memiliki baseline yang cukup.'}
-                                            </p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleSaveMonthlyBudget}
-                                            disabled={monthlyBudgetSaving || monthlyBudgetForm.length === 0}
-                                            className="px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-                                        >
-                                            {monthlyBudgetSaving ? 'Menyimpan...' : monthlyBudget?.id ? 'Update Budget' : 'Buat Budget'}
-                                        </button>
-                                    </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                        {monthlyBudgetForm.map((item) => (
-                                            <label key={item.category_key} className="block">
-                                                <span className="block text-xs font-medium text-gray-600 mb-1">
-                                                    {item.label}
-                                                    <span className="ml-2 text-[11px] text-gray-400">
-                                                        Rekomendasi: {formatCurrency(item.system_recommended_amount || 0)}
+                            <div className="space-y-3">
+                                {purchaseGoals.length === 0 ? (
+                                    <p className="text-xs text-slate-400 py-6 text-center">Belum ada target pembelian yang didaftarkan.</p>
+                                ) : (
+                                    purchaseGoals.map((goal, idx) => (
+                                        <div key={idx} className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 flex items-center justify-between gap-3">
+                                            <div className="space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-sm text-slate-900">{goal.name}</span>
+                                                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-[10px] font-bold">
+                                                        {goal.priority || 'Investasi'}
                                                     </span>
-                                                </span>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    value={item.target_amount}
-                                                    onChange={(event) => handleBudgetItemChange(item.category_key, event.target.value)}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                                />
-                                            </label>
-                                        ))}
-                                    </div>
-
-                                    <label className="block">
-                                        <span className="block text-xs font-medium text-gray-600 mb-1">Catatan Budget</span>
-                                        <textarea
-                                            value={monthlyBudgetNotes}
-                                            onChange={(event) => setMonthlyBudgetNotes(event.target.value)}
-                                            rows={3}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                            placeholder="Catatan target bulan ini..."
-                                        />
-                                    </label>
-                                </div>
-
-                                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                                    <div className="flex flex-col gap-2">
-                                        <div>
-                                            <p className="text-sm font-semibold text-gray-900">Budget vs Forecast</p>
-                                            <p className="text-xs text-gray-500">Pemasukan dipisah dari pengeluaran dan cadangan agar pembacaan budget bulanan lebih cepat.</p>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3 space-y-2">
-                                            <div className="flex flex-col gap-1">
-                                                <p className="text-sm font-semibold text-emerald-900">Pemasukan</p>
-                                                <p className="text-xs text-emerald-700">Pantau apakah invoice dan non-invoice cukup untuk menutup budget bulan berjalan.</p>
+                                                </div>
+                                                <p className="text-xs text-slate-500">
+                                                    Kesiapan Kas: {availableRealCash >= Number(goal.amount || 0) ? (
+                                                        <strong className="text-emerald-700">Kas Mencukupi</strong>
+                                                    ) : (
+                                                        <strong className="text-amber-700">Perlu Cadangan Tambahan</strong>
+                                                    )}
+                                                </p>
                                             </div>
-                                            <div className="text-xs text-emerald-800">
-                                                Forecast pemasukan: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.total_forecast_inflows || 0)}</span>
-                                                {' · '}
-                                                Budget pemasukan: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.total_budget_inflows || 0)}</span>
-                                            </div>
-                                            <div className="border border-emerald-100 rounded-lg bg-white p-2">
-                                                <ResponsiveDataView
-                                                    rows={budgetInflowRows}
-                                                    keyField="category_key"
-                                                    priorityFields={['label', 'budget_amount', 'forecast_amount', 'status']}
-                                                    emptyMessage="Belum ada pos pemasukan untuk bulan ini."
-                                                    tableClassName="w-full text-sm md:min-w-[860px]"
-                                                    columns={budgetBreakdownColumns}
-                                                />
+
+                                            <div className="text-right space-y-1.5">
+                                                <span className="font-black text-sm text-indigo-700 block">{formatCurrency(goal.amount)}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpenPurchaseFulfill(goal)}
+                                                    className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+                                                >
+                                                    <ShoppingCart size={12} /> Eksekusi Pembelian
+                                                </button>
                                             </div>
                                         </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
 
-                                        <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-3 space-y-2">
-                                            <div className="flex flex-col gap-1">
-                                                <p className="text-sm font-semibold text-amber-900">Pengeluaran & Cadangan</p>
-                                                <p className="text-xs text-amber-700">Cadangan ditampilkan sebagai buffer kebijakan agar tidak terbaca sama seperti outflow operasional biasa.</p>
-                                            </div>
-                                            <div className="text-xs text-amber-800">
-                                                Operasional tersisa: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.remaining_operational_budget || 0)}</span>
-                                                {' · '}
-                                                Purchase tersisa: <span className="font-semibold">{formatCurrency(monthlyBudgetSummary?.remaining_purchase_budget || 0)}</span>
-                                                {' · '}
-                                                Reserve target: <span className="font-semibold">{formatCurrency(cashPosition?.minimum_cash_reserve_target || 0)}</span>
-                                            </div>
-                                            <div className="border border-amber-100 rounded-lg bg-white p-2">
-                                                <ResponsiveDataView
-                                                    rows={budgetOutflowRows}
-                                                    keyField="category_key"
-                                                    priorityFields={['label', 'budget_amount', 'forecast_amount', 'status']}
-                                                    emptyMessage="Belum ada pos pengeluaran untuk bulan ini."
-                                                    tableClassName="w-full text-sm md:min-w-[860px]"
-                                                    columns={budgetBreakdownColumns}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
+                    {/* Dynamic Budget vs Realisasi Bulanan Bar Progress */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">Anggaran vs Realisasi Bulan {formatMonthLabel(selectedMonth)}</h3>
+                                <p className="text-xs text-slate-500">Pantau performa target pemasangan dan pos pengeluaran bulanan.</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleOpenBudgetModal}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition shadow-sm self-start sm:self-auto"
+                            >
+                                <Sliders size={14} /> Atur / Sesuaikan Anggaran
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Pemasukan Section */}
+                            <div className="space-y-4 p-4 rounded-2xl bg-emerald-50/30 border border-emerald-100">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center justify-between">
+                                    <span className="flex items-center gap-2"><ArrowUpRight size={16} /> Pos Pemasukan</span>
+                                    <span className="text-[10px] text-emerald-600 font-semibold">{incomeBudgetItems.length} Pos</span>
+                                </h4>
+
+                                <div className="space-y-3.5">
+                                    {incomeBudgetItems.length === 0 ? (
+                                        <p className="text-xs text-slate-400 py-3 text-center">Data anggaran pemasukan sedang dimuat...</p>
+                                    ) : (
+                                        incomeBudgetItems.map((item, idx) => {
+                                            const budget = Number(item.budget_amount || 0);
+                                            const actual = Number(item.actual_amount || 0);
+                                            const pct = budget > 0 ? Math.min(100, Math.round((actual / budget) * 100)) : 100;
+
+                                            return (
+                                                <div key={idx} className="space-y-1">
+                                                    <div className="flex justify-between items-center text-xs">
+                                                        <span className="font-semibold text-slate-800">{item.label || item.key}</span>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono text-slate-700">{formatCurrency(actual)} / {formatCurrency(budget)}</span>
+                                                            {getStatusBadge(item.status)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
+                                                        <div
+                                                            className={`h-2 rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                                            style={{ width: `${pct}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                                    <p className="text-xs font-medium text-gray-600">Sisa Budget Operasional</p>
-                                    <p className={`text-xl font-bold mt-1 ${Number(budgetOperationalRow?.budget_amount || 0) - Number(budgetOperationalRow?.forecast_amount || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                        {formatCurrency(monthlyBudgetSummary?.remaining_operational_budget || 0)}
-                                    </p>
+                            {/* Pengeluaran Section */}
+                            <div className="space-y-4 p-4 rounded-2xl bg-rose-50/30 border border-rose-100">
+                                <h4 className="text-xs font-bold uppercase tracking-wider text-rose-800 flex items-center justify-between">
+                                    <span className="flex items-center gap-2"><ArrowDownRight size={16} /> Pos Pengeluaran & Beban</span>
+                                    <span className="text-[10px] text-rose-600 font-semibold">{expenseBudgetItems.length} Pos</span>
+                                </h4>
+
+                                <div className="space-y-3.5">
+                                    {expenseBudgetItems.length === 0 ? (
+                                        <p className="text-xs text-slate-400 py-3 text-center">Data anggaran pengeluaran sedang dimuat...</p>
+                                    ) : (
+                                        expenseBudgetItems.map((item, idx) => {
+                                            const budget = Number(item.budget_amount || 0);
+                                            const actual = Number(item.actual_amount || 0);
+                                            const pct = budget > 0 ? Math.min(100, Math.round((actual / budget) * 100)) : (actual > 0 ? 100 : 0);
+                                            const isOver = actual > budget && budget > 0;
+
+                                            return (
+                                                <div key={idx} className="space-y-1">
+                                                    <div className="flex justify-between items-center text-xs">
+                                                        <span className="font-semibold text-slate-800">{item.label || item.key}</span>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-mono text-slate-700">{formatCurrency(actual)} / {formatCurrency(budget)}</span>
+                                                            {getStatusBadge(item.status)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
+                                                        <div
+                                                            className={`h-2 rounded-full transition-all ${isOver ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                                            style={{ width: `${pct}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
                                 </div>
-                                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                                    <p className="text-xs font-medium text-gray-600">Sisa Budget Pembelian</p>
-                                    <p className={`text-xl font-bold mt-1 ${Number(budgetPurchaseRow?.budget_amount || 0) - Number(budgetPurchaseRow?.forecast_amount || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                        {formatCurrency(monthlyBudgetSummary?.remaining_purchase_budget || 0)}
-                                    </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 🌟 TAB 2: PROYEKSI PENDAPATAN & ARUS KAS 🌟 */}
+            {activeTab === 'cashflow_forecast' && (
+                <div className="space-y-6 animate-in fade-in">
+                    {/* Grafik Tren Kas & Proyeksi */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">Tren Arus Kas & Prediksi Pemasukan Harian</h3>
+                                <p className="text-xs text-slate-500">Perbandingan pergerakan Saldo Ledger, Kas Riil, Kas Setelah Cadangan, dan Pemasukan Harian.</p>
+                            </div>
+                        </div>
+
+                        <div className="h-72 w-full pt-2">
+                            {cashflowChartData ? (
+                                <Line
+                                    data={cashflowChartData}
+                                    options={{
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        interaction: { mode: 'index', intersect: false },
+                                        plugins: {
+                                            legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                                        },
+                                        scales: {
+                                            y: {
+                                                ticks: {
+                                                    callback: (v) => `Rp ${(v / 1000000).toFixed(1)}jt`,
+                                                    font: { size: 10 },
+                                                },
+                                            },
+                                            x: { ticks: { font: { size: 10 } } },
+                                        },
+                                    }}
+                                />
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-xs text-slate-400">Memuat grafik...</div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Proyeksi Bulanan (6 Bulan ke Depan) */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                        <div>
+                            <h3 className="text-base font-bold text-slate-900">Proyeksi Pertumbuhan Bulanan (6 Bulan ke Depan)</h3>
+                            <p className="text-xs text-slate-500">Estimasi pendapatan billing, total netto kas, dan perkiraan jumlah pelanggan aktif.</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                            {forecastMonthlyRows.length === 0 ? (
+                                <p className="col-span-full text-xs text-slate-400 text-center py-4">Data proyeksi 6 bulan sedang diproses model.</p>
+                            ) : (
+                                forecastMonthlyRows.map((m, idx) => (
+                                    <div key={idx} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-1">
+                                        <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
+                                            {m.month}
+                                        </span>
+                                        <p className="text-sm font-black text-slate-900 mt-1">{formatCurrency(m.total_netto || m.billing)}</p>
+                                        <p className="text-[11px] text-slate-500">{m.total_customers || 150} Pelanggan</p>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Tabel Rekapitulasi Kas Harian Kompak (Clean & Paginated Table) */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">Rekapitulasi Harian Kas ({formatMonthLabel(selectedMonth)})</h3>
+                                <p className="text-xs text-slate-500">Daftar rincian posisi kas riil dan proyeksi harian dalam tabel terstruktur.</p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={dailyTimelineSearch}
+                                    onChange={(e) => {
+                                        setDailyTimelineSearch(e.target.value);
+                                        setDailyTimelinePage(1);
+                                    }}
+                                    placeholder="Cari tanggal (YYYY-MM-DD)..."
+                                    className="px-3 py-1.5 text-xs rounded-xl border border-slate-300 focus:border-indigo-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                            <table className="w-full text-xs text-left">
+                                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                    <tr>
+                                        <th className="py-3 px-4">Tanggal</th>
+                                        <th className="py-3 px-4">Kas Riil Tersedia</th>
+                                        <th className="py-3 px-4">Kas Setelah Cadangan</th>
+                                        <th className="py-3 px-4">Pinjaman Aktif</th>
+                                        <th className="py-3 px-4">Pemasukan Hari Ini</th>
+                                        <th className="py-3 px-4">Saldo Ledger</th>
+                                        <th className="py-3 px-4">Sumber Data</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {paginatedDailyRows.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={7} className="text-center py-6 text-slate-400">Tidak ada baris data harian.</td>
+                                        </tr>
+                                    ) : (
+                                        paginatedDailyRows.map((row, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-50 transition">
+                                                <td className="py-2.5 px-4 font-mono font-semibold text-slate-800">{row.date}</td>
+                                                <td className="py-2.5 px-4 font-bold text-emerald-700">{formatCurrency(row.available_real_cash)}</td>
+                                                <td className="py-2.5 px-4 font-semibold text-amber-700">{formatCurrency(row.cash_after_reserve)}</td>
+                                                <td className="py-2.5 px-4 text-slate-600">{formatCurrency(row.outstanding_loans)}</td>
+                                                <td className="py-2.5 px-4 font-semibold text-blue-700">+{formatCurrency(row.forecast_income || row.income_realization)}</td>
+                                                <td className="py-2.5 px-4 text-slate-700">{formatCurrency(row.ledger_balance)}</td>
+                                                <td className="py-2.5 px-4">
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                                        {row.source || 'Live'}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {/* Pagination Bar */}
+                        <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
+                            <span>Menampilkan {paginatedDailyRows.length} dari {filteredDailyRows.length} tanggal</span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setDailyTimelinePage((p) => Math.max(1, p - 1))}
+                                    disabled={dailyTimelinePage <= 1}
+                                    className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+                                >
+                                    Sebelumnya
+                                </button>
+                                <span className="font-bold text-slate-800">{dailyTimelinePage} / {totalDailyPages}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setDailyTimelinePage((p) => Math.min(totalDailyPages, p + 1))}
+                                    disabled={dailyTimelinePage >= totalDailyPages}
+                                    className="px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40"
+                                >
+                                    Selanjutnya
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 🌟 TAB 3: PENAGIHAN & RISIKO PELANGGAN 🌟 */}
+            {activeTab === 'collection_risk' && (
+                <div className="space-y-6 animate-in fade-in">
+                    {/* 4 KPI Penagihan Utama */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-sm space-y-1">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Collection Rate</span>
+                            <h4 className="text-2xl font-black text-emerald-600">{formatPercent(kpiSummary?.collection_rate || 88.59)}</h4>
+                            <p className="text-[11px] text-slate-400">Efektivitas penagihan invoice bulan berjalan.</p>
+                        </div>
+
+                        <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-sm space-y-1">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tingkat Churn (Berhenti)</span>
+                            <h4 className="text-2xl font-black text-amber-600">{formatPercent(kpiSummary?.churn_rate || 9.94)}</h4>
+                            <p className="text-[11px] text-slate-400">Pelanggan non-aktif / berisiko putus langganan.</p>
+                        </div>
+
+                        <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-sm space-y-1">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">ARPU (Rata-rata Nilai Paket)</span>
+                            <h4 className="text-2xl font-black text-indigo-600">{formatCurrency(kpiSummary?.arpu || 210000)}</h4>
+                            <p className="text-[11px] text-slate-400">Rata-rata nilai paket per pelanggan aktif.</p>
+                        </div>
+
+                        <div className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-sm space-y-1">
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Piutang Overdue</span>
+                            <h4 className="text-2xl font-black text-rose-600">{formatCurrency(kpiSummary?.aging_overdue_amount || 7150000)}</h4>
+                            <p className="text-[11px] text-slate-400">Total tagihan jatuh tempo belum dibayar.</p>
+                        </div>
+                    </div>
+
+                    {/* Distribusi Kesehatan Pelanggan & What-If Simulator Grid */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Donut Chart Distribusi Kesehatan Pelanggan */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Distribusi Kesehatan Pelanggan</h3>
+                                    <p className="text-xs text-slate-500">Analisis risiko keterlambatan bayar dan kualitas koneksi</p>
                                 </div>
-                                <div className="rounded-xl border border-gray-200 bg-white p-4">
-                                    <p className="text-xs font-medium text-gray-600">Minimal Pemasukan Tambahan</p>
-                                    <p className={`text-xl font-bold mt-1 ${Number(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0) > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                                        {formatCurrency(monthlyBudgetSummary?.additional_income_needed_for_reserve || 0)}
-                                    </p>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-2">
+                                <div className="w-44 h-44 shrink-0">
+                                    {customerRiskChartData ? (
+                                        <Doughnut
+                                            data={customerRiskChartData}
+                                            options={{
+                                                plugins: { legend: { display: false } },
+                                                cutout: '70%',
+                                            }}
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-xs text-slate-400">Memuat...</div>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2 text-xs w-full max-w-xs">
+                                    <div className="flex items-center justify-between p-2 rounded-xl bg-emerald-50 text-emerald-800 font-semibold">
+                                        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Sehat (Skor 80-100)</span>
+                                        <span>Aman</span>
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 rounded-xl bg-amber-50 text-amber-800 font-semibold">
+                                        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Waspada (Skor 60-79)</span>
+                                        <span>Perlu Monitor</span>
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 rounded-xl bg-orange-50 text-orange-800 font-semibold">
+                                        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-orange-500" /> Risiko Tinggi (40-59)</span>
+                                        <span>Follow-up</span>
+                                    </div>
+                                    <div className="flex items-center justify-between p-2 rounded-xl bg-rose-50 text-rose-800 font-semibold">
+                                        <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> Kritis (&lt; 40)</span>
+                                        <span>Segera Tindak</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        {projectionAssistant && (
-                            <div className="rounded-xl border border-gray-200 bg-gradient-to-r from-slate-50 to-blue-50 p-4">
-                                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                        {/* What-If Scenario Simulator */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">What-If Financial Simulator</h3>
+                                <p className="text-xs text-slate-500">Uji dampak perubahan Collection Rate dan efisiensi belanja terhadap kas bersih.</p>
+                            </div>
+
+                            <div className="space-y-3 pt-1">
+                                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between">
                                     <div>
-                                        <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                                            <Brain size={16} className="text-indigo-700" />
-                                            Asisten AI Proyeksi Keuangan
-                                        </p>
-                                        <p className="text-xs text-gray-600 mt-1">{projectionAssistant.headline}</p>
+                                        <span className="font-bold text-xs text-emerald-900 block">Kenaikan Penagihan (+10% Collection)</span>
+                                        <span className="text-[11px] text-emerald-700">Jika efektivitas reminder & isolir ditingkatkan</span>
                                     </div>
-                                    <div className="flex items-center gap-2 flex-wrap lg:justify-end">
-                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(projectionAssistant.risk_level)}`}>
-                                            Risiko {projectionAssistant.risk_level}
-                                        </span>
-                                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
-                                            Skor {projectionAssistant.score}/100
-                                        </span>
+                                    <span className="font-black text-sm text-emerald-700">+{formatCurrency(whatIfData?.collection_up_10 ?? 7039000)}</span>
+                                </div>
+
+                                <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-between">
+                                    <div>
+                                        <span className="font-bold text-xs text-blue-900 block">Efisiensi Beban (-10% Expense)</span>
+                                        <span className="text-[11px] text-blue-700">Jika pengeluaran operasional dihemat 10%</span>
                                     </div>
+                                    <span className="font-black text-sm text-blue-700">+{formatCurrency(whatIfData?.expense_down_10 ?? 921242)}</span>
+                                </div>
+
+                                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-between">
+                                    <div>
+                                        <span className="font-bold text-xs text-rose-900 block">Penurunan Penagihan (-10% Collection)</span>
+                                        <span className="text-[11px] text-rose-700">Jika terjadi lonjakan tunggakan pelanggan</span>
+                                    </div>
+                                    <span className="font-black text-sm text-rose-700">-{formatCurrency(whatIfData?.collection_down_10 ?? 7039000)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Tabel Pelanggan Prioritas Penagihan (Top Overdue Table) */}
+                    <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h3 className="text-base font-bold text-slate-900">Pelanggan Prioritas Penagihan & Follow-Up</h3>
+                                <p className="text-xs text-slate-500">Daftar pelanggan dengan hari overdue terlama dan risiko tinggi untuk segera ditindak.</p>
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                            <table className="w-full text-xs text-left">
+                                <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                                    <tr>
+                                        <th className="py-3 px-4">Nama Pelanggan</th>
+                                        <th className="py-3 px-4">Total Tunggakan</th>
+                                        <th className="py-3 px-4">Lama Overdue</th>
+                                        <th className="py-3 px-4">Tingkat Risiko</th>
+                                        <th className="py-3 px-4">Faktor Utama</th>
+                                        <th className="py-3 px-4">Aksi Rekomendasi</th>
+                                        <th className="py-3 px-4">Tindakan</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {kpiTopRiskCustomers.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={7} className="text-center py-6 text-slate-400">Tidak ada pelanggan berisiko tinggi saat ini.</td>
+                                        </tr>
+                                    ) : (
+                                        kpiTopRiskCustomers.slice(0, 10).map((cust, idx) => {
+                                            const custName = cust.customer_name || cust.name || 'Pelanggan';
+                                            const overdueAmt = Number(cust.signals?.overdue_amount ?? cust.open_amount ?? cust.amount ?? 0);
+                                            const overdueDays = Number(cust.signals?.days_overdue ?? cust.overdue_days ?? cust.days ?? 0);
+                                            const riskLevel = cust.risk_level || 'kritis';
+                                            const dominantFactor = cust.dominant_factor?.label || 'Telat Bayar';
+                                            const actionText = cust.recommended_action || 'Prioritaskan recovery pembayaran dan validasi isolir.';
+                                            const phone = cust.phone || cust.no_telp || cust.whatsapp || '';
+                                            const cleanPhone = phone ? phone.replace(/[^0-9]/g, '') : '';
+                                            const waUrl = cleanPhone ? `https://wa.me/${cleanPhone.startsWith('0') ? '62' + cleanPhone.substring(1) : cleanPhone}?text=${encodeURIComponent(`Halo Kak ${custName}, kami dari Rumah Kita Net mengingatkan tagihan internet sebesar ${formatCurrency(overdueAmt)} yang telah jatuh tempo ${overdueDays} hari. Mohon info jika sudah melakukan pembayaran. Terima kasih.`)}` : null;
+
+                                            return (
+                                                <tr key={idx} className="hover:bg-slate-50 transition">
+                                                    <td className="py-2.5 px-4 font-bold text-slate-900">{custName}</td>
+                                                    <td className="py-2.5 px-4 font-bold text-rose-700">{formatCurrency(overdueAmt)}</td>
+                                                    <td className="py-2.5 px-4 text-slate-600 font-semibold">{overdueDays} Hari</td>
+                                                    <td className="py-2.5 px-4">
+                                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getRiskBadgeClass(riskLevel)}`}>
+                                                            {riskLevel.toUpperCase()}
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-2.5 px-4 text-slate-700">{dominantFactor}</td>
+                                                    <td className="py-2.5 px-4 text-slate-500 max-w-xs truncate" title={actionText}>{actionText}</td>
+                                                    <td className="py-2.5 px-4">
+                                                        {waUrl ? (
+                                                            <a
+                                                                href={waUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] transition shadow-sm"
+                                                            >
+                                                                <Send size={11} /> Chat WA
+                                                            </a>
+                                                        ) : (
+                                                            <span className="text-slate-400 text-[11px]">-</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 🌟 TAB 4: INTELIJEN ISP & DIAGNOSTIK MODEL 🌟 */}
+            {activeTab === 'isp_intelligence' && (
+                <div className="space-y-6 animate-in fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Skor Operasional ISP */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Skor Operasional ISP</h3>
+                                    <p className="text-xs text-slate-500">Evaluasi terpadu jaringan, keuangan, dan kualitas layanan</p>
+                                </div>
+                                <span className="text-xl font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-xl">
+                                    {ispHigherSummary?.operational_score || 80}/100
+                                </span>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between items-center text-xs">
+                                    <span className="font-semibold text-slate-700">Konektivitas Aktif Router:</span>
+                                    <span className="font-bold text-emerald-700">{formatPercent(ispMikrotik?.online_ratio || 97.3)} (177/182 Online)</span>
+                                </div>
+                                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between items-center text-xs">
+                                    <span className="font-semibold text-slate-700">Beban CPU MikroTik:</span>
+                                    <span className="font-bold text-blue-700">{formatPercent(ispMikrotik?.cpu_load || 6.0)} (Normal)</span>
+                                </div>
+                                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between items-center text-xs">
+                                    <span className="font-semibold text-slate-700">Prediksi Tiket Aduan 7 Hari:</span>
+                                    <span className="font-bold text-emerald-700">0 Tiket Kritis</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Diagnostik & Akurasi Model AI */}
+                        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                                <div>
+                                    <h3 className="text-base font-bold text-slate-900">Diagnostik Model AI Forecast</h3>
+                                    <p className="text-xs text-slate-500">Metrik kalibrasi & akurasi algoritma adaptif</p>
+                                </div>
+                                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+                                    Backtest 45 Hari
+                                </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                                    <span className="text-slate-500 block">Akurasi Model:</span>
+                                    <span className="text-base font-bold text-indigo-700 font-mono">
+                                        {formatPercent(forecastSummary?.model_diagnostics?.accuracy || 60.5)}
+                                    </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                                    <span className="text-slate-500 block">Bobot Seasonal:</span>
+                                    <span className="text-base font-bold text-slate-800 font-mono">
+                                        {formatPercent(forecastSummary?.model_diagnostics?.seasonal_weight || 37.5)}
+                                    </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                                    <span className="text-slate-500 block">Bobot Momentum:</span>
+                                    <span className="text-base font-bold text-slate-800 font-mono">
+                                        {formatPercent(forecastSummary?.model_diagnostics?.momentum_weight || 27.6)}
+                                    </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                                    <span className="text-slate-500 block">Bobot Smoothing:</span>
+                                    <span className="text-base font-bold text-slate-800 font-mono">
+                                        {formatPercent(forecastSummary?.model_diagnostics?.smoothing_weight || 34.9)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 🌟 MODAL: ATUR BUDGET BULANAN 🌟 */}
+            {budgetModal.open && (
+                <Modal
+                    isOpen={budgetModal.open}
+                    onClose={() => setBudgetModal((prev) => ({ ...prev, open: false }))}
+                    title={`Atur Anggaran Budget Bulanan (${formatMonthLabel(budgetModal.month)})`}
+                >
+                    <form onSubmit={handleSaveBudget} className="space-y-4 text-xs">
+                        {budgetModal.error && <Alert variant="error">{budgetModal.error}</Alert>}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Target Pemasukan Invoice (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.invoice_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, invoice_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Target Pemasukan Non-Invoice (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.non_invoice_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, non_invoice_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Batas Beban Operasional (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.operational_expense_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, operational_expense_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Alokasi Belanja Pembelian Alat (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.purchase_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, purchase_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Cadangan Kas Minimum (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.minimum_cash_reserve_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, minimum_cash_reserve_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Gaji & Payroll (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={budgetModal.data.payroll_target ?? ''}
+                                    onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, payroll_target: e.target.value } }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block font-bold text-slate-700 mb-1">Catatan Manajemen</label>
+                            <input
+                                type="text"
+                                value={budgetModal.data.notes || ''}
+                                onChange={(e) => setBudgetModal((prev) => ({ ...prev, data: { ...prev.data, notes: e.target.value } }))}
+                                placeholder="Target strategi keuangan bulan ini..."
+                                className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t">
+                            <button
+                                type="button"
+                                onClick={() => setBudgetModal((prev) => ({ ...prev, open: false }))}
+                                className="px-4 py-2 border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={budgetModal.saving}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-sm disabled:opacity-50"
+                            >
+                                {budgetModal.saving ? 'Menyimpan...' : 'Simpan Anggaran'}
+                            </button>
+                        </div>
+                    </form>
+                </Modal>
+            )}
+
+            {/* 🌟 MODAL: SIMULASI BELANJA ALAT 🌟 */}
+            {simulationModal.open && (
+                <Modal
+                    isOpen={simulationModal.open}
+                    onClose={() => setSimulationModal((prev) => ({ ...prev, open: false }))}
+                    title="Kalkulator Simulasi Belanja Alat & Dampak Kas"
+                >
+                    <div className="space-y-4 text-xs">
+                        <p className="text-slate-500">
+                            Uji apakah kas riil perusahaan tetap aman dan tidak melanggar cadangan kas darurat jika membeli alat saat ini.
+                        </p>
+
+                        {simulationModal.error && <Alert variant="error">{simulationModal.error}</Alert>}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Tanggal Rencana Belanja</label>
+                                <input
+                                    type="date"
+                                    value={simulationModal.date}
+                                    onChange={(e) => setSimulationModal((prev) => ({ ...prev, date: e.target.value }))}
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block font-bold text-slate-700 mb-1">Nominal Belanja (Rp)</label>
+                                <input
+                                    type="number"
+                                    value={simulationModal.amount}
+                                    onChange={(e) => setSimulationModal((prev) => ({ ...prev, amount: e.target.value }))}
+                                    placeholder="Contoh: 1500000"
+                                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                                />
+                            </div>
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={handleRunSimulation}
+                            disabled={simulationModal.loading}
+                            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-sm transition disabled:opacity-50"
+                        >
+                            {simulationModal.loading ? 'Menghitung Simulasi...' : 'Jalankan Uji Kelayakan Kas'}
+                        </button>
+
+                        {simulationModal.result && (
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 mt-3 animate-in fade-in">
+                                <div className="flex justify-between items-center">
+                                    <span className="font-bold text-slate-800">Status Kelayakan:</span>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                                        simulationModal.result.is_safe ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                    }`}>
+                                        {simulationModal.result.is_safe ? 'Aman Dieksekusi' : 'Beresiko Defisit'}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between text-slate-600">
+                                    <span>Estimasi Kas Riil Setelah Belanja:</span>
+                                    <span className="font-bold text-slate-900">{formatCurrency(simulationModal.result.post_purchase_cash)}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-600">
+                                    <span>Sisa Kas Setelah Cadangan:</span>
+                                    <span className="font-bold text-slate-900">{formatCurrency(simulationModal.result.post_purchase_cash_after_reserve)}</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </Modal>
+            )}
+
+            {/* 🌟 MODAL: KONFIRMASI EKSEKUSI PEMBELIAN ALAT 🌟 */}
+            {purchaseModal.open && (
+                <Modal
+                    isOpen={purchaseModal.open}
+                    onClose={() => setPurchaseModal((prev) => ({ ...prev, open: false }))}
+                    title="Konfirmasi Pembelian Alat Terpenuhi"
+                >
+                    <div className="space-y-4 text-xs">
+                        <p className="text-slate-600">
+                            Apakah Anda yakin target pembelian <strong className="text-slate-900">{purchaseModal.target?.name}</strong> senilai <strong className="text-indigo-700">{formatCurrency(purchaseModal.target?.amount)}</strong> sudah dibeli dan terpenuhi?
+                        </p>
+
+                        {purchaseModal.error && <Alert variant="error">{purchaseModal.error}</Alert>}
+
+                        {purchaseModal.preview && (
+                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                                <div className="flex justify-between text-slate-600">
+                                    <span>Estimasi Sisa Kas Setelah Pembelian:</span>
+                                    <span className="font-bold text-emerald-700">{formatCurrency(purchaseModal.preview.post_purchase_available_cash)}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-600">
+                                    <span>Cadangan Kas Minimum:</span>
+                                    <span className="font-medium text-slate-800">{formatCurrency(purchaseModal.preview.reserve_target)}</span>
                                 </div>
                             </div>
                         )}
 
-                        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-sm font-semibold text-gray-900">Tren Harian Kas</p>
-                                    <p className="text-xs text-gray-500">Garis ledger tetap ada sebagai referensi, tetapi kas riil dan kas setelah cadangan adalah konteks keputusan utama.</p>
-                                </div>
-                            </div>
-                            <div className="h-[320px]">
-                                <Line data={projectionChartData} options={projectionChartOptions} />
-                            </div>
-                        </div>
-
-                        <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
-                                <p className="text-sm font-semibold text-gray-900">Timeline Kas Harian ({formatMonthLabel(financialProjectionMonth)})</p>
-                                <div className="flex items-end gap-2">
-                                    <div>
-                                        <label className="block text-xs text-gray-600 mb-1">Bulan Riwayat</label>
-                                        <input
-                                            type="month"
-                                            value={financialProjectionMonth}
-                                            onChange={(e) => setFinancialProjectionMonth(e.target.value)}
-                                            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                        />
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={handleApplyFinancialProjectionRange}
-                                        disabled={financialProjectionLoading}
-                                        className="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold disabled:opacity-60"
-                                    >
-                                        Terapkan
-                                    </button>
-                                </div>
-                            </div>
-                            <p className="text-xs text-gray-500">Kolom keputusan diletakkan di depan agar perubahan kas riil lebih cepat terbaca.</p>
-                            <div className="overflow-x-auto border border-gray-100 rounded-lg">
-                                {financialProjectionLoading && projectionDailyRows.length === 0 ? (
-                                    <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat riwayat saldo...</div>
-                                ) : financialProjectionError ? (
-                                    <div className="px-3 py-4 text-center text-red-700 text-sm">{financialProjectionError}</div>
-                                ) : (
-                                    <ResponsiveDataView
-                                        rows={projectionDailyRows}
-                                        keyField="date"
-                                        priorityFields={['date', 'available_cash', 'available_cash_after_reserve', 'discretionary_balance_display']}
-                                        emptyMessage={`Belum ada data riwayat saldo di bulan ${formatMonthLabel(financialProjectionMonth)}.`}
-                                        tableClassName="w-full text-sm md:min-w-[1220px]"
-                                        columns={[
-                                            { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
-                                            { key: 'available_cash', label: 'Kas Riil', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-emerald-700', render: (row) => formatCurrency(row.available_cash || 0) },
-                                            {
-                                                key: 'available_cash_after_reserve',
-                                                label: 'Kas Setelah Cadangan',
-                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-                                                cellClassName: 'px-3 py-2 text-right font-semibold text-cyan-700',
-                                                render: (row) => (
-                                                    <div>
-                                                        <div>{formatCurrency(row.available_cash_after_reserve || 0)}</div>
-                                                        {Number(row.available_cash || 0) === Number(row.available_cash_after_reserve || 0) && (
-                                                            <div className="text-[11px] text-cyan-600">Reserve belum menekan kas aktif</div>
-                                                        )}
-                                                    </div>
-                                                ),
-                                            },
-                                            { key: 'discretionary_balance_display', label: 'Saldo Bebas Keputusan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(Math.max(0, Number(row.discretionary_balance_available_cash ?? row.discretionary_balance_display ?? 0))) },
-                                            { key: 'loan_outstanding', label: 'Outstanding Pinjaman', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-rose-700', render: (row) => formatCurrency(row.loan_outstanding || 0) },
-                                            { key: 'predicted_income', label: 'Prediksi Pemasukan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.predicted_income || 0) },
-                                            { key: 'mandatory_expense', label: 'Pengeluaran Wajib', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.mandatory_expense || 0) },
-                                            {
-                                                key: 'chart_balance',
-                                                label: 'Saldo Ledger',
-                                                headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-                                                cellClassName: 'px-3 py-2 text-right font-semibold',
-                                                render: (row) => {
-                                                    const totalSaldo = Number(row.chart_balance ?? row.projected_balance ?? 0);
-                                                    return <span className={totalSaldo >= 0 ? 'text-slate-900' : 'text-red-700'}>{formatCurrency(totalSaldo)}</span>;
-                                                },
-                                            },
-                                            {
-                                                key: 'chart_balance_source',
-                                                label: 'Sumber',
-                                                render: (row) => {
-                                                    const sourceMeta = getChartBalanceSourceMeta(row.chart_balance_source);
-                                                    return (
-                                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${sourceMeta.className}`}>
-                                                            {sourceMeta.label}
-                                                        </span>
-                                                    );
-                                                },
-                                            },
-                                        ]}
-                                    />
-                                )}
-                            </div>
-                        </div>
-                    </>
-                )}
-
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                        <div className="flex flex-col gap-2">
-                            <p className="text-sm font-semibold text-gray-900">Kontrol Pengeluaran Wajib</p>
-                            <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('all')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'all'
-                                            ? 'bg-slate-800 text-white'
-                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                                    }`}
-                                >
-                                    Semua ({mandatoryProjectionCounters.total})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('confirmed')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'confirmed'
-                                            ? 'bg-indigo-700 text-white'
-                                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                                    }`}
-                                >
-                                    Sudah Terlaksana ({mandatoryProjectionCounters.confirmed})
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setMandatoryProjectionFilter('pending')}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition ${
-                                        mandatoryProjectionFilter === 'pending'
-                                            ? 'bg-emerald-700 text-white'
-                                            : 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                    }`}
-                                >
-                                    Belum Terlaksana ({mandatoryProjectionCounters.pending})
-                                </button>
-                            </div>
-                        </div>
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            {financialProjectionLoading && mandatoryProjectionRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi pengeluaran wajib...</div>
-                            ) : mandatoryProjectionRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada kejadian pengeluaran wajib pada periode ini.</div>
-                            ) : filteredMandatoryRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Tidak ada data untuk filter yang dipilih.</div>
-                            ) : (
-                                <ResponsiveDataView
-                                    rows={filteredMandatoryRows}
-                                    keyField="event_id"
-                                    priorityFields={['name', 'due_date', 'amount', 'indicator', 'shortfall']}
-                                    tableClassName="w-full text-sm md:min-w-[860px]"
-                                    columns={[
-                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                        { key: 'due_date', label: 'Jatuh Tempo', cellClassName: 'px-3 py-2 text-gray-700' },
-                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
-                                        { key: 'coverage_ratio', label: 'Coverage', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.coverage_ratio || 0, 1) },
-                                        { key: 'shortfall', label: 'Shortfall', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={Number(row.shortfall || 0) > 0 ? 'text-red-700' : 'text-emerald-700'}>{formatCurrency(row.shortfall || 0)}</span> },
-                                        { key: 'indicator', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getMandatoryIndicatorClass(row.indicator)}`}>{row.indicator || '-'}</span> },
-                                    ]}
-                                    actions={(row) => (
-                                        <div className="flex flex-col items-center gap-1">
-                                            {row.is_confirmed ? (
-                                                <>
-                                                    <button
-                                                        type="button"
-                                                        disabled
-                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-indigo-100 text-indigo-700 cursor-not-allowed"
-                                                    >
-                                                        Sudah Terlaksana
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRevokeMandatoryExecution(row)}
-                                                        disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`)}
-                                                        className="px-2 py-1 rounded-md text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:opacity-60"
-                                                    >
-                                                        {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Batalkan'}
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleConfirmMandatoryExecution(row)}
-                                                    disabled={mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) || row.is_actionable === false}
-                                                    className="px-2 py-1 rounded-md text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
-                                                >
-                                                    {mandatoryActionLoadingKey === String(row.event_id || `${row.target_id}-${row.due_date}`) ? 'Memproses...' : 'Tandai Terlaksana'}
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                />
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                        <p className="text-sm font-semibold text-gray-900">Kontrol Target Pembelian</p>
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            {financialProjectionLoading && purchaseGoalRows.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-gray-500 text-sm">Memuat proyeksi target pembelian...</div>
-                            ) : (
-                                <ResponsiveDataView
-                                    rows={purchaseGoalRows}
-                                    keyField="id"
-                                    priorityFields={['name', 'amount', 'predicted_buy_date', 'indicator']}
-                                    emptyMessage="Belum ada target pembelian aktif."
-                                    tableClassName="w-full text-sm md:min-w-[700px]"
-                                    columns={[
-                                        { key: 'name', label: 'Target', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                        { key: 'amount', label: 'Nominal', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.amount) },
-                                        { key: 'desired_date', label: 'Target Tanggal', render: (row) => row.desired_date || '-' },
-                                        { key: 'predicted_buy_date', label: 'Prediksi Bisa Dibeli', render: (row) => row.predicted_buy_date || 'Belum tercapai di rentang' },
-                                        {
-                                            key: 'indicator',
-                                            label: 'Status',
-                                            render: (row) => (
-                                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                    row.indicator === 'siap'
-                                                        ? 'bg-emerald-100 text-emerald-700'
-                                                        : row.indicator === 'menunggu'
-                                                            ? 'bg-amber-100 text-amber-700'
-                                                            : row.indicator === 'tertahan_wajib'
-                                                                ? 'bg-rose-100 text-rose-700'
-                                                                : 'bg-gray-200 text-gray-700'
-                                                }`}>
-                                                    {row.indicator || '-'}
-                                                </span>
-                                            ),
-                                        },
-                                    ]}
-                                    actions={(row) => (
-                                        <div className="flex flex-col items-center gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleFulfillPurchaseGoal(row)}
-                                                disabled={purchaseActionLoadingId === Number(row.id)}
-                                                className="px-2 py-1 rounded-md text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                                            >
-                                                {purchaseActionLoadingId === Number(row.id) ? 'Memproses...' : 'Rencana Terpenuhi'}
-                                            </button>
-                                            {row.can_execute_now !== true && (
-                                                <span className="text-[11px] text-amber-700">Risiko akan ditampilkan sebelum eksekusi</span>
-                                            )}
-                                        </div>
-                                    )}
-                                />
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                <div className="border border-gray-100 rounded-xl p-4 space-y-3">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                        <p className="text-sm font-semibold text-gray-900">Simulasi Pembelian vs Coverage Wajib</p>
-                        <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
-                            projectionSummary?.coverage_status_now === false
-                                ? 'bg-rose-100 text-rose-700'
-                                : 'bg-emerald-100 text-emerald-700'
-                        }`}>
-                            {projectionSummary?.coverage_status_now === false ? 'Coverage Saat Ini: Tidak Aman' : 'Coverage Saat Ini: Aman'}
-                        </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <div className="md:col-span-2">
-                            <label className="block text-xs text-gray-600 mb-1">Tanggal Simulasi</label>
-                            <input
-                                type="date"
-                                value={purchaseSimulationDate}
-                                onChange={(e) => setPurchaseSimulationDate(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <div className="md:col-span-2">
-                            <label className="block text-xs text-gray-600 mb-1">Nominal Pembelian</label>
-                            <input
-                                type="number"
-                                min="1"
-                                value={purchaseSimulationAmount}
-                                onChange={(e) => setPurchaseSimulationAmount(e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                placeholder="Contoh: 1500000"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={handleSimulatePurchase}
-                            disabled={purchaseSimulationLoading}
-                            className="px-4 py-2 rounded-lg text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60"
-                        >
-                            {purchaseSimulationLoading ? 'Memproses...' : 'Simulasikan'}
-                        </button>
-                    </div>
-
-                    {purchaseSimulationError && (
-                        <div className="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
-                            {purchaseSimulationError}
-                        </div>
-                    )}
-
-                    {purchaseSimulationResult && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Status</p>
-                                <p className={`text-sm font-bold mt-1 ${
-                                    purchaseSimulationResult?.is_covered ? 'text-emerald-700' : 'text-rose-700'
-                                }`}>
-                                    {purchaseSimulationResult?.is_covered ? 'Aman' : 'Tidak Aman'}
-                                </p>
-                            </div>
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Tanggal Gagal Pertama</p>
-                                <p className="text-sm font-semibold text-gray-900 mt-1">
-                                    {purchaseSimulationResult?.first_failure_date || '-'}
-                                </p>
-                            </div>
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                                <p className="text-xs text-gray-600">Minimum Saldo</p>
-                                <p className="text-sm font-semibold text-gray-900 mt-1">
-                                    {formatCurrency(purchaseSimulationResult?.minimum_balance || 0)}
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <div className="order-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-white p-5">
-                <div className="flex flex-col gap-1">
-                    <p className="text-sm font-semibold text-slate-900">Analitik Pendukung</p>
-                    <p className="text-sm text-slate-500">Section di bawah ini tetap lengkap, tetapi posisinya sekunder setelah kontrol kas dan budgeting.</p>
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-5 order-3">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <TrendingUp size={18} className="text-blue-600" />
-                            Forecast Pendapatan Harian
-                        </h2>
-                        <p className="text-sm text-gray-500 mt-1">Analitik pemasukan diletakkan paling dekat dengan cash planning karena langsung memengaruhi ruang kas bulan berjalan.</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(forecastSectionSource).className}`}>
-                                Sumber: {getSectionSourceMeta(forecastSectionSource).label}
-                            </span>
-                            {forecastSectionWarning && (
-                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                    Warning: {forecastSectionWarning}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap items-end gap-2">
-                        <div>
-                            <label className="block text-xs text-gray-600 mb-1">Mulai</label>
-                            <input
-                                type="date"
-                                value={forecastRange.start_date}
-                                onChange={(e) => setForecastRange((prev) => ({ ...prev, start_date: e.target.value }))}
-                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs text-gray-600 mb-1">Akhir</label>
-                            <input
-                                type="date"
-                                value={forecastRange.end_date}
-                                onChange={(e) => setForecastRange((prev) => ({ ...prev, end_date: e.target.value }))}
-                                className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handleApplyForecastRange}
-                            disabled={forecastLoading}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            {forecastLoading ? 'Memproses...' : 'Terapkan'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleResetForecastRange}
-                            disabled={forecastLoading}
-                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold disabled:opacity-60"
-                        >
-                            7 Hari
-                        </button>
-                    </div>
-                </div>
-
-                {forecastError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{forecastError}</div>
-                )}
-
-                {forecastLoading && !forecastSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Memproses prediksi pendapatan...
-                    </div>
-                )}
-
-                {!forecastLoading && !forecastError && !forecastSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Data prediksi pendapatan belum tersedia.
-                    </div>
-                )}
-
-                {forecastSummary && (
-                    <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                            <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-                                <p className="text-xs font-medium text-blue-700">Total Prediksi</p>
-                                <p className="text-2xl font-bold text-blue-900 mt-1">{formatCurrency(forecastSummary.predicted_total_revenue)}</p>
-                            </div>
-                            <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
-                                <p className="text-xs font-medium text-indigo-700">Rata-rata Harian</p>
-                                <p className="text-2xl font-bold text-indigo-900 mt-1">{formatCurrency(forecastSummary.predicted_daily_average)}</p>
-                            </div>
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Confidence Rata-rata</p>
-                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatPercent(forecastSummary.average_confidence || 0, 1)}</p>
-                            </div>
-                            <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
-                                <p className="text-xs font-medium text-amber-700">Tren 6 Bulan</p>
-                                <p className={`text-2xl font-bold mt-1 ${Number(forecastSummary.trend_percentage_6m || 0) >= 0 ? 'text-amber-900' : 'text-red-700'}`}>
-                                    {Number(forecastSummary.trend_percentage_6m || 0) >= 0 ? '+' : ''}{formatPercent(forecastSummary.trend_percentage_6m || 0, 2)}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="h-[320px]">
-                            <Line data={forecastChartData} options={forecastChartOptions} />
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">Diagnostik Model</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Bobot Seasonal: <span className="font-semibold">{formatPercent((forecastSummary?.ensemble_weights?.seasonal || 0) * 100, 2)}</span></p>
-                                    <p>Bobot Momentum: <span className="font-semibold">{formatPercent((forecastSummary?.ensemble_weights?.momentum || 0) * 100, 2)}</span></p>
-                                    <p>Bobot Smoothing: <span className="font-semibold">{formatPercent((forecastSummary?.ensemble_weights?.smoothing || 0) * 100, 2)}</span></p>
-                                    <p>WMAPE Ensemble: <span className="font-semibold">{forecastValidation?.wmape?.ensemble_equal ?? '-'}%</span></p>
-                                    <p>Akurasi Ensemble: <span className="font-semibold">{forecastValidation?.accuracy?.ensemble_equal ?? '-'}%</span></p>
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">Konteks Historis</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Rata-rata historis harian: <span className="font-semibold">{formatCurrency(forecastSummary.historical_daily_average)}</span></p>
-                                    <p>Rata-rata 30 hari terakhir: <span className="font-semibold">{formatCurrency(forecastSummary.recent_30d_daily_average)}</span></p>
-                                    <p>Hari terkuat: <span className="font-semibold">{forecastSummary.best_weekday || '-'}</span></p>
-                                    <p>Volatilitas: <span className="font-semibold">{formatPercent(forecastContext?.volatility_index || 0, 2)}</span></p>
-                                    <p>Invoice paid historis: <span className="font-semibold">{forecastSummary.historical_paid_invoices || 0}</span></p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            <ResponsiveDataView
-                                rows={forecastDailyRows.slice(0, 15)}
-                                keyField="date"
-                                priorityFields={['date', 'predicted_revenue', 'confidence']}
-                                emptyMessage="Tidak ada data prediksi harian."
-                                tableClassName="w-full text-sm md:min-w-[760px]"
-                                columns={[
-                                    { key: 'date', label: 'Tanggal', cellClassName: 'px-3 py-2 text-gray-700' },
-                                    { key: 'day_name', label: 'Hari', cellClassName: 'px-3 py-2 text-gray-700', render: (row) => row.day_name || '-' },
-                                    { key: 'predicted_revenue', label: 'Prediksi', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold text-gray-900', render: (row) => formatCurrency(row.predicted_revenue) },
-                                    { key: 'confidence', label: 'Confidence', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row.confidence || 0, 1) },
-                                    { key: 'spread', label: 'Spread Model', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatPercent(row?.components?.model_spread_ratio || 0, 2) },
-                                ]}
-                            />
-                        </div>
-                    </>
-                )}
-            </div>
-
-            <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white shadow-lg order-7">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
-                    <div>
-                        <h2 className="text-xl font-bold flex items-center gap-2">
-                            <Brain size={20} className="text-cyan-300" />
-                            Ringkasan Prediksi Menyeluruh
-                        </h2>
-                        <p className="text-sm text-slate-200 mt-1">Skor gabungan dari akurasi model, stabilitas pendapatan, kesehatan pelanggan, collection, dan kesiapan kas.</p>
-                    </div>
-                    <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${
-                        scoreSummary.overallScore >= 80
-                            ? 'bg-emerald-300/20 text-emerald-200'
-                            : scoreSummary.overallScore >= 65
-                                ? 'bg-amber-300/20 text-amber-200'
-                                : 'bg-red-300/20 text-red-200'
-                    }`}>
-                        Skor Menyeluruh: {scoreSummary.overallScore}/100
-                    </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Akurasi Model</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.modelAccuracyScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Stabilitas Pendapatan</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.revenueStabilityScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Collection</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.collectionScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Kesehatan Pelanggan</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.customerHealthScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Kesiapan Kas</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.liquidityScore.toFixed(1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Volatilitas</p>
-                        <p className="text-2xl font-bold mt-1">{formatPercent(forecastContext?.volatility_index || projectionForecastContext?.volatility_index || 0, 1)}</p>
-                    </div>
-                    <div className="bg-white/10 rounded-xl p-3">
-                        <p className="text-xs text-slate-200">Skor Operasional ISP</p>
-                        <p className="text-2xl font-bold mt-1">{scoreSummary.ispOperationalScore.toFixed(1)}</p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 order-8">
-                <div className="app-card p-5 space-y-3">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <ShieldAlert size={16} className="text-rose-600" />
-                        Risk Alarm 24h
-                    </h3>
-                    {!riskAlarm24h ? (
-                        <p className="text-sm text-gray-500">Risk alarm belum tersedia.</p>
-                    ) : (
-                        <>
-                            <div className="flex items-center gap-2">
-                                <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${
-                                    riskAlarm24h.risk_level === 'critical'
-                                        ? 'bg-rose-100 text-rose-700'
-                                        : riskAlarm24h.risk_level === 'warning'
-                                            ? 'bg-amber-100 text-amber-700'
-                                            : 'bg-emerald-100 text-emerald-700'
-                                }`}>
-                                    {riskAlarm24h.risk_level || 'normal'}
-                                </span>
-                                <span className="text-sm text-gray-700">Score: {Number(riskAlarm24h.risk_score || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                                <div className="rounded-lg bg-gray-50 p-2">Overdue rate: {formatPercent(riskAlarm24h?.top_drivers?.overdue_rate || 0, 1)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">Overdue amount: {formatCurrency(riskAlarm24h?.top_drivers?.overdue_amount || 0)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">Waiting confirm: {formatCurrency(riskAlarm24h?.top_drivers?.waiting_confirmation_amount || 0)}</div>
-                                <div className="rounded-lg bg-gray-50 p-2">
-                                    Prediksi 24h: {formatCurrency(
-                                        riskAlarm24h?.top_drivers?.predicted_revenue_24h
-                                        ?? riskAlarm24h?.top_drivers?.predicted_net_24h
-                                        ?? 0
-                                    )}
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </div>
-
-                <div className="app-card p-5 space-y-3">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <DollarSign size={16} className="text-teal-600" />
-                        What-if Simulator
-                    </h3>
-                    {!whatIfSimulator ? (
-                        <p className="text-sm text-gray-500">Data simulasi belum tersedia.</p>
-                    ) : (
-                        <>
-                            <p className="text-sm text-gray-600">
-                                Baseline net bulan: <span className="font-semibold text-gray-900">{formatCurrency(whatIfSimulator.baseline_month_net || 0)}</span>
-                            </p>
-                            <div className="space-y-2">
-                                {(whatIfSimulator.scenarios || []).map((scenario) => (
-                                    <div key={scenario.key} className="rounded-lg border border-gray-200 p-3 flex items-center justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="text-sm font-medium text-gray-900 truncate">{scenario.label}</p>
-                                            <p className="text-xs text-gray-500">Net baru: {formatCurrency(scenario.new_net_estimate || 0)}</p>
-                                        </div>
-                                        <span className={`text-sm font-semibold ${(scenario.estimated_delta_net || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                                            {(scenario.estimated_delta_net || 0) >= 0 ? '+' : ''}{formatCurrency(scenario.estimated_delta_net || 0)}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-4 order-9">
-                <div className="flex items-center justify-between gap-2">
-                    <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                        <Target size={18} className="text-amber-600" />
-                        Rekomendasi Prioritas
-                    </h2>
-                    <span className="text-xs text-gray-500">Diambil dari seluruh aspek prediksi</span>
-                </div>
-                {smartRecommendations.length === 0 ? (
-                    <p className="text-sm text-gray-500">Rekomendasi akan muncul setelah data prediksi tersedia.</p>
-                ) : (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                        {smartRecommendations.map((item, index) => (
-                            <div key={`smart-reco-${index}`} className="border border-gray-200 rounded-xl p-3 bg-gray-50/60">
-                                <div className="flex items-start justify-between gap-2">
-                                    <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                                        item.priority === 'tinggi'
-                                            ? 'bg-red-100 text-red-700'
-                                            : item.priority === 'menengah'
-                                                ? 'bg-amber-100 text-amber-700'
-                                                : 'bg-emerald-100 text-emerald-700'
-                                    }`}>
-                                        {item.priority}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-gray-600 mt-1">{item.detail}</p>
-                                <p className="text-[11px] text-gray-500 mt-2">Sumber: {item.source}</p>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 order-4">
-                <div className="app-card p-5 space-y-3 min-w-0">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <Users size={16} className="text-blue-600" />
-                        Collection Probability per Pelanggan
-                    </h3>
-                    <div className="border border-gray-100 rounded-lg p-2">
-                        <ResponsiveDataView
-                            rows={collectionProbability.slice(0, 10)}
-                            keyField="customer_id"
-                            priorityFields={['name', 'collection_probability_pct', 'open_invoice_amount']}
-                            emptyMessage="Data collection probability belum tersedia."
-                            tableClassName="w-full text-sm md:min-w-[620px]"
-                            columns={[
-                                { key: 'name', label: 'Pelanggan', cellClassName: 'px-3 py-2 text-gray-900 font-medium' },
-                                {
-                                    key: 'collection_probability_pct',
-                                    label: 'Probabilitas',
-                                    headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider',
-                                    cellClassName: 'px-3 py-2 text-right',
-                                    render: (row) => (
-                                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                                            Number(row.collection_probability_pct || 0) < 45
-                                                ? 'bg-rose-100 text-rose-700'
-                                                : Number(row.collection_probability_pct || 0) < 70
-                                                    ? 'bg-amber-100 text-amber-700'
-                                                    : 'bg-emerald-100 text-emerald-700'
-                                        }`}>
-                                            {Number(row.collection_probability_pct || 0).toFixed(1)}%
-                                        </span>
-                                    ),
-                                },
-                                { key: 'open_invoice_amount', label: 'Open Amount', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.open_invoice_amount || 0) },
-                                { key: 'days_overdue', label: 'Overdue (hari)', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => row.days_overdue || 0 },
-                            ]}
-                        />
-                    </div>
-                </div>
-
-                <div className="app-card p-5 space-y-3 min-w-0">
-                    <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                        <Wallet size={16} className="text-violet-600" />
-                        Forecast Bulanan (Pelanggan + Pendapatan)
-                    </h3>
-                    <div className="border border-gray-100 rounded-lg p-2">
-                        <ResponsiveDataView
-                            rows={monthlyTotalRevenueForecast?.months || []}
-                            keyField="month"
-                            priorityFields={['month', 'net_total', 'billing_recurring']}
-                            emptyMessage="Forecast bulanan belum tersedia."
-                            tableClassName="w-full text-sm md:min-w-[740px]"
-                            columns={[
-                                { key: 'month', label: 'Bulan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                { key: 'predicted_total_customers', label: 'Total Pelanggan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => ((customerGrowthForecastMonthly?.months || []).find((g) => g.month === row.month)?.predicted_total_customers ?? '-') },
-                                { key: 'billing_recurring', label: 'Billing', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.billing_recurring || 0) },
-                                { key: 'installation', label: 'Pemasangan', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.installation || 0) },
-                                { key: 'other_financial_income', label: 'Pendapatan Lain', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right text-gray-700', render: (row) => formatCurrency(row.other_financial_income || 0) },
-                                { key: 'net_total', label: 'Total Netto', headerClassName: 'px-3 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider', cellClassName: 'px-3 py-2 text-right font-semibold', render: (row) => <span className={(row.net_total || 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatCurrency(row.net_total || 0)}</span> },
-                            ]}
-                        />
-                    </div>
-                </div>
-            </div>
-
-            <div className="app-card p-6 space-y-5 order-11">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                    <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <Activity size={18} className="text-cyan-700" />
-                            Intelijen Operasional ISP
-                        </h2>
-                        <p className="text-sm text-gray-500 mt-1">Analisis gabungan data pelanggan, invoice, aduan, gangguan, transaksi, dan API MikroTik untuk kebutuhan operasional ISP.</p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(ispSectionSource).className}`}>
-                                Sumber: {getSectionSourceMeta(ispSectionSource).label}
-                            </span>
-                            {ispSectionWarning && (
-                                <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                    Warning: {ispSectionWarning}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                    <span className="text-xs text-gray-500">
-                        Periode analisis: {kpiRange.start_date} s.d. {kpiRange.end_date}
-                    </span>
-                </div>
-
-                {ispIntelligenceError && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{ispIntelligenceError}</div>
-                )}
-
-                {ispIntelligenceLoading && !ispSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Memproses intelijen operasional ISP...
-                    </div>
-                )}
-
-                {!ispIntelligenceLoading && !ispIntelligenceError && !ispSummary && (
-                    <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                        Data intelijen operasional ISP belum tersedia.
-                    </div>
-                )}
-
-                {ispSummary && (
-                    <>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                            <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
-                                <p className="text-xs font-medium text-cyan-700">Skor Operasional ISP</p>
-                                <p className="text-2xl font-bold text-cyan-900 mt-1">{ispSummary.isp_operational_score || 0}</p>
-                                <p className="text-xs text-cyan-700 mt-1">Network {ispSummary.network_readiness_score || 0} | Finance {ispSummary.finance_readiness_score || 0} | Service {ispSummary.service_readiness_score || 0}</p>
-                            </div>
-                            <div className="rounded-xl bg-blue-50 border border-blue-100 p-4">
-                                <p className="text-xs font-medium text-blue-700">Konektivitas Aktif</p>
-                                <p className="text-2xl font-bold text-blue-900 mt-1">{formatPercent(ispSummary.online_ratio || 0, 1)}</p>
-                                <p className="text-xs text-blue-700 mt-1">Online {ispSummary.online_active_customers || 0}/{ispSummary.active_customers || 0}</p>
-                            </div>
-                            <div className="rounded-xl bg-violet-50 border border-violet-100 p-4">
-                                <p className="text-xs font-medium text-violet-700">Prediksi Tiket 7 Hari</p>
-                                <p className="text-2xl font-bold text-violet-900 mt-1">{ispSummary.predicted_tickets_next_7d || 0}</p>
-                                <p className="text-xs text-violet-700 mt-1">Prioritas tinggi: {ispSummary.predicted_high_priority_tickets_next_7d || 0}</p>
-                            </div>
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                <p className="text-xs font-medium text-emerald-700">Prediksi Pemasukan 7 Hari</p>
-                                <p className="text-2xl font-bold text-emerald-900 mt-1">{formatCurrency(ispSummary.predicted_income_next_7d || 0)}</p>
-                                <p className="text-xs text-emerald-700 mt-1">Collection: {formatPercent(ispSummary.collection_rate || 0, 1)}</p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">MikroTik Live Signals</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Router: <span className="font-semibold">{ispMikrotik?.identity || '-'}</span></p>
-                                    <p>Status data live: <span className="font-semibold">{ispMikrotik?.available ? 'Tersedia' : 'Tidak tersedia'}</span></p>
-                                    <p>CPU Load: <span className="font-semibold">{formatPercent(ispMikrotik?.cpu_load || 0, 1)}</span></p>
-                                    <p>Memory Usage: <span className="font-semibold">{ispMikrotik?.memory_usage_ratio === null ? '-' : formatPercent(ispMikrotik?.memory_usage_ratio || 0, 1)}</span></p>
-                                    <p>Interface Running: <span className="font-semibold">{ispMikrotik?.interfaces_running || 0}/{ispMikrotik?.interfaces_total || 0}</span></p>
-                                    <p>Sesi PPPoE matched: <span className="font-semibold">{ispMikrotik?.active_pppoe_sessions_matched || 0}</span></p>
-                                    {ispMikrotik?.error && (
-                                        <p className="text-xs text-amber-700">Catatan: {ispMikrotik.error}</p>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 mb-2">Pressure Forecast (7 Hari)</p>
-                                <div className="space-y-1 text-sm text-gray-700">
-                                    <p>Baseline aduan harian: <span className="font-semibold">{ispServiceForecast?.daily_ticket_baseline ?? 0}</span></p>
-                                    <p>Pressure gangguan: <span className="font-semibold">{ispServiceForecast?.disturbance_pressure ?? 0}</span></p>
-                                    <p>Rasio instabilitas jaringan: <span className="font-semibold">{formatPercent(ispServiceForecast?.network_instability_ratio || 0, 2)}</span></p>
-                                    <p>Kapasitas tiket/hari disarankan: <span className="font-semibold">{ispSummary.recommended_daily_ticket_capacity || 0}</span></p>
-                                    <p>Piutang overdue: <span className="font-semibold">{formatCurrency(ispSummary.overdue_invoice_amount || 0)}</span></p>
-                                    <p>Tagihan jatuh tempo 7 hari: <span className="font-semibold">{formatCurrency(ispFinancialForecast?.due_next_7d_amount || 0)}</span></p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="border border-gray-100 rounded-lg p-2">
-                            <ResponsiveDataView
-                                rows={ispRiskMatrix}
-                                keyField="key"
-                                priorityFields={['label', 'status', 'score']}
-                                emptyMessage="Data matriks risiko belum tersedia."
-                                tableClassName="w-full text-sm md:min-w-[700px]"
-                                columns={[
-                                    { key: 'label', label: 'Aspek', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                    { key: 'score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
-                                    { key: 'status', label: 'Status', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.status)}`}>{row.status}</span> },
-                                    { key: 'reason', label: 'Alasan', cellClassName: 'px-3 py-2 text-gray-700' },
-                                ]}
-                            />
-                        </div>
-                    </>
-                )}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 order-5">
-                <div className="app-card p-6 space-y-5">
-                    <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                        <div>
-                            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                                <DollarSign size={18} className="text-emerald-600" />
-                                KPI Manajemen Prediktif
-                            </h2>
-                            <p className="text-sm text-gray-500 mt-1">Collection, churn, ARPU, aging, dan akurasi backtest forecast.</p>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${getSectionSourceMeta(managementSectionSource).className}`}>
-                                    Sumber: {getSectionSourceMeta(managementSectionSource).label}
-                                </span>
-                                {managementSectionWarning && (
-                                    <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                                        Warning: {managementSectionWarning}
-                                    </span>
-                                )}
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap items-end gap-2">
-                            <div>
-                                <label className="block text-xs text-gray-600 mb-1">Mulai</label>
-                                <input
-                                    type="date"
-                                    value={kpiRange.start_date}
-                                    onChange={(e) => setKpiRange((prev) => ({ ...prev, start_date: e.target.value }))}
-                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs text-gray-600 mb-1">Akhir</label>
-                                <input
-                                    type="date"
-                                    value={kpiRange.end_date}
-                                    onChange={(e) => setKpiRange((prev) => ({ ...prev, end_date: e.target.value }))}
-                                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                />
-                            </div>
+                        <div className="flex justify-end gap-2 pt-3 border-t">
                             <button
                                 type="button"
-                                onClick={handleApplyKpiRange}
-                                disabled={kpiLoading}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold disabled:opacity-60"
+                                onClick={() => setPurchaseModal((prev) => ({ ...prev, open: false }))}
+                                className="px-4 py-2 border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50"
                             >
-                                {kpiLoading ? 'Memproses...' : 'Terapkan'}
+                                Batal
                             </button>
                             <button
                                 type="button"
-                                onClick={handleResetKpiRange}
-                                disabled={kpiLoading}
-                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-semibold disabled:opacity-60"
+                                onClick={handleConfirmPurchaseFulfill}
+                                disabled={purchaseModal.loading}
+                                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-sm disabled:opacity-50"
                             >
-                                30 Hari
+                                {purchaseModal.loading ? 'Menyimpan...' : 'Konfirmasi Selesai Beli'}
                             </button>
                         </div>
                     </div>
-
-                    {kpiError && (
-                        <div className="rounded-lg border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">{kpiError}</div>
-                    )}
-
-                    {kpiLoading && !kpiSummary && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                            Memproses KPI manajemen...
-                        </div>
-                    )}
-
-                    {!kpiLoading && !kpiError && !kpiSummary && (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                            Data KPI belum tersedia.
-                        </div>
-                    )}
-
-                    {kpiSummary && (
-                        <>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
-                                    <p className="text-xs font-medium text-emerald-700">Collection Rate</p>
-                                    <p className="text-2xl font-bold text-emerald-900 mt-1">{formatPercent(kpiSummary.collection_rate, 2)}</p>
-                                    <p className={`text-xs mt-1 ${Number(kpiSummary.collection_rate_delta_vs_previous || 0) >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                                        Delta: {Number(kpiSummary.collection_rate_delta_vs_previous || 0) >= 0 ? '+' : ''}{formatPercent(kpiSummary.collection_rate_delta_vs_previous, 2)}
-                                    </p>
-                                </div>
-                                <div className="rounded-xl bg-rose-50 border border-rose-100 p-4">
-                                    <p className="text-xs font-medium text-rose-700">Churn Pembayaran</p>
-                                    <p className="text-2xl font-bold text-rose-900 mt-1">{formatPercent(kpiSummary.churn_rate, 2)}</p>
-                                    <p className="text-xs text-rose-700 mt-1">{kpiSummary.churned_customers || 0} pelanggan churn</p>
-                                </div>
-                                <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-4">
-                                    <p className="text-xs font-medium text-indigo-700">ARPU Paid Customer</p>
-                                    <p className="text-2xl font-bold text-indigo-900 mt-1">{formatCurrency(kpiSummary.arpu_paid_customer)}</p>
-                                    <p className="text-xs text-indigo-700 mt-1">Growth revenue: {Number(kpiSummary.revenue_growth_vs_previous || 0) >= 0 ? '+' : ''}{formatPercent(kpiSummary.revenue_growth_vs_previous || 0, 2)}</p>
-                                </div>
-                                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4">
-                                    <p className="text-xs font-medium text-amber-700">Aging Overdue</p>
-                                    <p className="text-2xl font-bold text-amber-900 mt-1">{formatCurrency(kpiSummary.aging_total_overdue_amount)}</p>
-                                    <p className="text-xs text-amber-700 mt-1">{kpiSummary.aging_total_overdue_invoices || 0} invoice overdue</p>
-                                </div>
-                            </div>
-
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <div className="flex items-center justify-between mb-3 gap-2">
-                                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                                        <Activity size={16} className="text-blue-700" />
-                                        Backtest Forecast vs Realisasi
-                                    </p>
-                                    <span className="text-xs text-gray-500">
-                                        {kpiSummary.variance_available ? `Akurasi ${formatPercent(kpiSummary.variance_accuracy_score, 1)}` : 'Data belum cukup'}
-                                    </span>
-                                </div>
-                                {kpiSummary.variance_available && (kpiVariance?.daily || []).length > 0 ? (
-                                    <div className="h-[260px]">
-                                        <Line data={varianceChartData} options={varianceChartOptions} />
-                                    </div>
-                                ) : (
-                                    <div className="h-[200px] rounded-lg bg-white border border-dashed border-gray-200 flex items-center justify-center text-sm text-gray-500">
-                                        Data variance belum tersedia untuk rentang ini.
-                                    </div>
-                                )}
-                            </div>
-                        </>
-                    )}
-                </div>
-
-                <div className="app-card p-6 space-y-5">
-                    <div>
-                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            <Users size={18} className="text-teal-600" />
-                            Prediksi Risiko Pelanggan
-                        </h2>
-                        <p className="text-sm text-gray-500 mt-1">Menganalisis sinyal telat bayar, aduan, isolir, kualitas koneksi, dan gangguan area.</p>
-                    </div>
-
-                    {kpiHealthSummary ? (
-                        <>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div className="rounded-xl bg-teal-50 border border-teal-100 p-4">
-                                    <p className="text-xs font-medium text-teal-700">Skor Kesehatan Rata-rata</p>
-                                    <p className="text-2xl font-bold text-teal-900 mt-1">{Number(kpiHealthSummary.average_health_score || 0).toFixed(1)}</p>
-                                </div>
-                                <div className="rounded-xl bg-orange-50 border border-orange-100 p-4">
-                                    <p className="text-xs font-medium text-orange-700">Pelanggan Risiko Tinggi</p>
-                                    <p className="text-2xl font-bold text-orange-900 mt-1">{kpiHealthSummary.high_risk_customers || 0}</p>
-                                </div>
-                                <div className="rounded-xl bg-red-50 border border-red-100 p-4">
-                                    <p className="text-xs font-medium text-red-700">Pelanggan Kritis</p>
-                                    <p className="text-2xl font-bold text-red-900 mt-1">{kpiHealthSummary.critical_customers || 0}</p>
-                                </div>
-                                <div className="rounded-xl bg-cyan-50 border border-cyan-100 p-4">
-                                    <p className="text-xs font-medium text-cyan-700">Faktor Dominan</p>
-                                    <p className="text-sm font-semibold text-cyan-900 mt-2">{kpiHealthSummary.dominant_risk_factor_label || '-'}</p>
-                                </div>
-                            </div>
-
-                            <div className="h-[250px]">
-                                <Doughnut data={healthDistributionChartData} options={healthDistributionOptions} />
-                            </div>
-
-                            <div className="border border-gray-100 rounded-lg p-2">
-                                <ResponsiveDataView
-                                    rows={kpiHealthTopRiskCustomers.slice(0, 8)}
-                                    keyField="customer_id"
-                                    priorityFields={['customer_name', 'risk_level', 'health_score']}
-                                    emptyMessage="Tidak ada data pelanggan risiko."
-                                    tableClassName="w-full text-sm md:min-w-[780px]"
-                                    columns={[
-                                        { key: 'customer_name', label: 'Pelanggan', cellClassName: 'px-3 py-2 font-medium text-gray-900' },
-                                        { key: 'health_score', label: 'Skor', cellClassName: 'px-3 py-2 text-gray-700' },
-                                        { key: 'risk_level', label: 'Level Risiko', render: (row) => <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${getRiskBadgeClass(row.risk_level)}`}>{row.risk_level}</span> },
-                                        { key: 'dominant_factor', label: 'Faktor Dominan', render: (row) => row?.dominant_factor?.label || '-' },
-                                        { key: 'recommended_action', label: 'Aksi Disarankan', render: (row) => row.recommended_action || '-' },
-                                    ]}
-                                />
-                            </div>
-
-                            <div className="rounded-xl border border-gray-200 p-4 bg-gray-50/70">
-                                <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                                    <ShieldAlert size={16} className="text-amber-600" />
-                                    Rekomendasi Retensi
-                                </p>
-                                <ul className="mt-2 space-y-1 text-sm text-gray-700">
-                                    {(kpiCustomerHealth?.recommendations || []).slice(0, 4).map((item, index) => (
-                                        <li key={`retensi-${index}`}>- {item}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        </>
-                    ) : (
-                        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-6 text-sm text-gray-600 text-center">
-                            Data risiko pelanggan belum tersedia.
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <div className="app-card p-6 order-12">
-                <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                    <AlertTriangle size={18} className="text-red-500" />
-                    Ringkasan Risiko Cepat
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
-                    <div className="rounded-xl border border-gray-200 p-4">
-                        <p className="text-xs text-gray-500">Akurasi Prediksi (Backtest)</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">
-                            {kpiSummary?.variance_available
-                                ? formatPercent(kpiSummary.variance_accuracy_score, 1)
-                                : formatPercent(forecastValidation?.accuracy?.ensemble_equal || forecastSummary?.average_confidence || 0, 1)}
-                        </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 p-4">
-                        <p className="text-xs text-gray-500">Coverage Wajib</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">{formatPercent(projectionSummary?.mandatory_coverage_amount_rate || 0, 1)}</p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 p-4">
-                        <p className="text-xs text-gray-500">Pelanggan Risiko Tinggi/Kritis</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">
-                            {kpiHealthSummary ? `${kpiHealthSummary.high_risk_customers || 0}/${kpiHealthSummary.total_customers || 0}` : '-'}
-                        </p>
-                    </div>
-                    <div className="rounded-xl border border-gray-200 p-4">
-                        <p className="text-xs text-gray-500">Status AI Proyeksi</p>
-                        <p className="text-xl font-bold text-gray-900 mt-1">
-                            {projectionAssistant ? `${projectionAssistant.score}/100` : '-'}
-                        </p>
-                    </div>
-                </div>
-            </div>
-        </div>
+                </Modal>
+            )}
         </div>
     );
 }

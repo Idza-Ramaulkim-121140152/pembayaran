@@ -296,15 +296,18 @@ function PublicCustomerRegistrationPage() {
         <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-gray-50 py-10 px-4 sm:px-6 lg:px-8">
             <div className="max-w-2xl mx-auto space-y-6">
                 {/* Brand Header */}
-                <div className="text-center space-y-2">
-                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-100/80 text-blue-800 text-xs font-semibold">
+                <div className="text-center space-y-3">
+                    <div className="flex justify-center">
+                        <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-12 w-auto object-contain" />
+                    </div>
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-100/80 text-blue-800 text-xs font-bold">
                         <Wifi size={14} className="text-blue-600" />
                         Pendaftaran Pasang Baru Internet Fiber Optic
                     </div>
-                    <h1 className="text-3xl font-black text-gray-900 tracking-tight">
+                    <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">
                         Formulir Registrasi Pelanggan
                     </h1>
-                    <p className="text-sm text-gray-600 max-w-md mx-auto">
+                    <p className="text-xs sm:text-sm text-gray-600 max-w-md mx-auto">
                         Nikmati koneksi internet rumah super cepat & stabil tanpa batas kuota (unlimited).
                     </p>
                 </div>

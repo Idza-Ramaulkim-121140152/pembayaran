@@ -268,6 +268,40 @@ class CustomerAuthController extends Controller
         $invoice->save();
         $this->appendPaymentProofAttributes($invoice);
 
+        if ($invoice->bukti_pembayaran) {
+            try {
+                $capture = \App\Models\BillingPaymentCapture::create([
+                    'source' => 'customer_app',
+                    'invoice_id' => $invoice->id,
+                    'customer_id' => $invoice->customer_id,
+                    'amount' => (float) $invoice->amount,
+                    'paid_date' => now()->toDateString(),
+                    'reference_code' => $invoice->invoice_link,
+                    'fingerprint' => hash('sha256', 'customer_app:' . $invoice->id . ':' . $invoice->bukti_pembayaran . ':' . microtime(true)),
+                    'match_status' => 'pending',
+                    'meta' => [
+                        'media' => [
+                            'path' => $invoice->bukti_pembayaran,
+                            'mime_type' => $request->hasFile('bukti_pembayaran') ? $request->file('bukti_pembayaran')->getMimeType() : 'image/jpeg',
+                            'file_name' => $request->hasFile('bukti_pembayaran') ? $request->file('bukti_pembayaran')->getClientOriginalName() : basename($invoice->bukti_pembayaran),
+                        ],
+                        'source' => [
+                            'type' => 'customer_portal_app',
+                            'invoice_link' => $invoice->invoice_link,
+                            'customer_id' => $customerId,
+                        ],
+                    ],
+                ]);
+
+                \App\Jobs\AnalyzeWhatsAppPaymentCaptureJob::dispatch($capture->id);
+            } catch (\Throwable $captureEx) {
+                \Illuminate\Support\Facades\Log::warning('Failed to dispatch payment capture for customer portal confirmation', [
+                    'invoice_id' => $invoice->id,
+                    'error' => $captureEx->getMessage(),
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Konfirmasi pembayaran berhasil dikirim.',

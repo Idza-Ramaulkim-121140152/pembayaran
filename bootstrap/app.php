@@ -15,6 +15,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(\App\Http\Middleware\DisableSearchIndexing::class);
         $middleware->validateCsrfTokens(except: [
             'api/whatsapp/webhooks/payments',
+            'api/public/*',
+            'api/customer/*',
         ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo('/dashboard');

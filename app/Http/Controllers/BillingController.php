@@ -212,6 +212,42 @@ class BillingController extends Controller
         $this->appendPaymentProofAttributes($invoice);
         $this->sendAutoPaymentConfirmationIfEligible($invoice);
 
+        // Pipe into Payment Verification AI pipeline
+        if ($invoice->status !== 'paid' && $invoice->bukti_pembayaran) {
+            try {
+                $capture = \App\Models\BillingPaymentCapture::create([
+                    'source' => 'web_public',
+                    'invoice_id' => $invoice->id,
+                    'customer_id' => $invoice->customer_id,
+                    'amount' => (float) $invoice->amount,
+                    'paid_date' => now()->toDateString(),
+                    'reference_code' => $invoice->invoice_link,
+                    'fingerprint' => hash('sha256', 'web_public:' . $invoice->id . ':' . $invoice->bukti_pembayaran . ':' . microtime(true)),
+                    'match_status' => 'pending',
+                    'meta' => [
+                        'media' => [
+                            'path' => $invoice->bukti_pembayaran,
+                            'mime_type' => isset($file) ? $file->getMimeType() : 'image/jpeg',
+                            'file_name' => isset($file) ? $file->getClientOriginalName() : basename($invoice->bukti_pembayaran),
+                        ],
+                        'source' => [
+                            'type' => 'web_public_invoice',
+                            'invoice_link' => $invoice->invoice_link,
+                            'customer_name' => $invoice->customer?->name,
+                            'customer_phone' => $invoice->customer?->phone,
+                        ],
+                    ],
+                ]);
+
+                \App\Jobs\AnalyzeWhatsAppPaymentCaptureJob::dispatch($capture->id);
+            } catch (\Throwable $captureEx) {
+                Log::warning('Failed to dispatch payment capture for web confirmation', [
+                    'invoice_id' => $invoice->id,
+                    'error' => $captureEx->getMessage(),
+                ]);
+            }
+        }
+
         if ($request->expectsJson() || $request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'message' => $responseMessage,

@@ -163,15 +163,49 @@ class PaymentMatchingService
 
     public function unmatched(int $perPage = 50)
     {
-        return BillingPaymentCapture::query()
+        return $this->captures(['status' => 'needs_review'], $perPage);
+    }
+
+    public function captures(array $filters = [], int $perPage = 50)
+    {
+        $query = BillingPaymentCapture::query()
             ->with([
-                'invoice:id,invoice_link,customer_id,status,amount,due_date',
+                'invoice:id,invoice_link,customer_id,status,amount,due_date,paid_at,bukti_pembayaran',
                 'customer:id,name,pppoe_username,phone',
                 'matchReviews.candidateInvoice:id,invoice_link,customer_id,status,amount,due_date',
             ])
-            ->whereIn('match_status', ['needs_review', 'unmatched'])
-            ->orderByDesc('id')
-            ->paginate($perPage);
+            ->orderByDesc('id');
+
+        $status = strtolower(trim((string) ($filters['status'] ?? 'all')));
+        if ($status === 'needs_review') {
+            $query->where('match_status', 'needs_review');
+        } elseif ($status === 'approved') {
+            $query->where('match_status', 'approved');
+        } elseif ($status === 'unmatched') {
+            $query->where('match_status', 'unmatched');
+        } elseif ($status === 'rejected') {
+            $query->where('match_status', 'rejected');
+        } elseif ($status === 'pending') {
+            $query->where('match_status', 'pending');
+        }
+
+        if (!empty($filters['search'])) {
+            $search = trim((string) $filters['search']);
+            $query->where(function ($q) use ($search) {
+                $q->where('reference_code', 'like', "%{$search}%")
+                    ->orWhere('id', $search)
+                    ->orWhereHas('customer', function ($cq) use ($search) {
+                        $cq->where('name', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%")
+                            ->orWhere('pppoe_username', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('invoice', function ($iq) use ($search) {
+                        $iq->where('invoice_link', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        return $query->paginate($perPage);
     }
 
     private function matchSingleCapture(BillingPaymentCapture $capture, bool $autoApply, ?int $actorId = null): BillingPaymentCapture
@@ -329,6 +363,37 @@ class PaymentMatchingService
             $capture->save();
 
             $this->ledgerService->syncInvoicePayment($invoice->fresh(), $actorId);
+
+            // Auto-restore PPPoE isolation in MikroTik if customer was isolated
+            try {
+                $customer = $invoice->customer;
+                if ($customer && $customer->pppoe_username) {
+                    $mikrotik = app(\App\Services\MikroTikService::class);
+                    $package = $customer->package;
+                    $targetProfile = $customer->mikrotik_profile ?: ($package?->mikrotik_profile ?: $package?->name);
+                    if ($targetProfile) {
+                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                        $customer->is_service_isolated = false;
+                        $customer->service_isolated_at = null;
+                        $customer->save();
+                    }
+                }
+            } catch (\Throwable $mikrotikEx) {
+                \Illuminate\Support\Facades\Log::warning('MikroTik un-isolation skipped or failed during payment capture approval', [
+                    'customer_id' => $invoice->customer_id,
+                    'error' => $mikrotikEx->getMessage(),
+                ]);
+            }
+
+            // Dispatch customer payment confirmation
+            try {
+                app(\App\Services\PaymentCaptureNotificationService::class)->notifyAutoApproved($capture->fresh(['customer', 'invoice']));
+            } catch (\Throwable $notifEx) {
+                \Illuminate\Support\Facades\Log::warning('Payment capture notification failed', [
+                    'capture_id' => $capture->id,
+                    'error' => $notifEx->getMessage(),
+                ]);
+            }
         });
     }
 

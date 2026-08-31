@@ -17,23 +17,17 @@ class PaymentProofAnalysisService
     public function analyze(BillingPaymentCapture $capture): array
     {
         $config = $this->configService->getConfig();
-        $apiKey = (string) (config('services.openai.api_key') ?: env('OPENAI_API_KEY', ''));
-
-        if ($apiKey === '') {
-            return $this->fallbackAnalysis($capture, 'openai_api_key_missing');
-        }
-
         $mediaPath = (string) data_get($capture->meta, 'media.path', '');
         if ($mediaPath === '' || !Storage::disk('public')->exists($mediaPath)) {
             return $this->fallbackAnalysis($capture, 'media_not_found');
         }
 
         $mimeType = (string) data_get($capture->meta, 'media.mime_type', 'image/jpeg');
-        $imageData = base64_encode((string) Storage::disk('public')->get($mediaPath));
-        $dataUri = 'data:' . $mimeType . ';base64,' . $imageData;
+        $rawBytes = (string) Storage::disk('public')->get($mediaPath);
+        $imageData = base64_encode($rawBytes);
 
         $prompt = <<<'PROMPT'
-Analisis media berikut dan kembalikan JSON valid tanpa markdown dengan struktur tepat:
+Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa markdown dengan struktur tepat:
 {
   "is_payment_proof": boolean,
   "amount": number|null,
@@ -62,18 +56,113 @@ Analisis media berikut dan kembalikan JSON valid tanpa markdown dengan struktur 
 }
 
 Aturan:
-- Fokus pada bukti transfer Indonesia seperti QRIS, mobile banking, BRImo, Livin, BNI Mobile, DANA, OVO, ATM receipt.
-- Jika media bukan bukti transfer, set is_payment_proof=false.
-- Jika nominal/tanggal/jam tidak terbaca, isi null dan confidence rendah.
-- success_status=true hanya jika jelas transaksi berhasil/lunas/sukses.
-- confidence memakai angka 0-100.
+- Fokus pada bukti transfer Indonesia seperti QRIS, mobile banking (BCA Mobile, myBCA, BRImo, Livin Mandiri, BNI Mobile, BSI Mobile, Seabank, Jago, Neo, dll), e-wallet (DANA, OVO, GoPay, ShopeePay, LinkAja), dan ATM receipt.
+- Jika media bukan bukti transfer (misal foto selfie, dokumen lain, foto acak), set is_payment_proof=false.
+- Jika nominal/tanggal/jam tidak terbaca jelas, isi null dan beri confidence rendah.
+- success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
+- confidence memakai skala angka 0 s.d 100.
 PROMPT;
 
+        $preferredProvider = (string) ($config['ai_provider'] ?? 'auto');
+
+        // 1. Try Gemini Vision if preferred or auto
+        $geminiKey = (string) (config('services.gemini.api_key') ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', ''))));
+        $openAiKey = (string) (config('services.openai.api_key') ?: env('OPENAI_API_KEY', ''));
+
+        if (($preferredProvider === 'gemini' || $preferredProvider === 'auto') && $geminiKey !== '') {
+            $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
+            if ($geminiResult !== null) {
+                return $geminiResult;
+            }
+        }
+
+        // 2. Try OpenAI Vision if preferred or fallback
+        if (($preferredProvider === 'openai' || $preferredProvider === 'auto' || $geminiKey === '') && $openAiKey !== '') {
+            $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
+            if ($openAiResult !== null) {
+                return $openAiResult;
+            }
+        }
+
+        // 3. Fallback: Heuristic Analysis
+        return $this->fallbackAnalysis($capture, $geminiKey === '' && $openAiKey === '' ? 'ai_api_key_missing' : 'ai_analysis_failed');
+    }
+
+    private function analyzeWithGemini(
+        BillingPaymentCapture $capture,
+        string $apiKey,
+        string $imageData,
+        string $mimeType,
+        string $prompt,
+        array $config
+    ): ?array {
+        $model = (string) ($config['gemini_model'] ?? 'gemini-1.5-flash');
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+
         try {
-            $response = Http::timeout(90)
+            $response = Http::timeout(45)->post($url, [
+                'contents' => [
+                    [
+                        'parts' => [
+                            ['text' => $prompt],
+                            [
+                                'inline_data' => [
+                                    'mime_type' => $mimeType,
+                                    'data' => $imageData,
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+                'generationConfig' => [
+                    'response_mime_type' => 'application/json',
+                    'temperature' => 0.1,
+                ],
+            ]);
+
+            if (!$response->successful()) {
+                Log::warning('Gemini payment vision failed', [
+                    'capture_id' => $capture->id,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                return null;
+            }
+
+            $content = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
+            $decoded = $this->decodeJsonContent($content);
+            if (!is_array($decoded)) {
+                return null;
+            }
+
+            $result = $this->normalizeResult($decoded);
+            $result['provider_used'] = 'gemini';
+            return $result;
+        } catch (\Throwable $e) {
+            Log::warning('Gemini payment vision exception', [
+                'capture_id' => $capture->id,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    private function analyzeWithOpenAi(
+        BillingPaymentCapture $capture,
+        string $apiKey,
+        string $imageData,
+        string $mimeType,
+        string $prompt,
+        array $config
+    ): ?array {
+        $dataUri = 'data:' . $mimeType . ';base64,' . $imageData;
+        $model = (string) ($config['openai_model'] ?? 'gpt-4o-mini');
+
+        try {
+            $response = Http::timeout(60)
                 ->withToken($apiKey)
                 ->post('https://api.openai.com/v1/chat/completions', [
-                    'model' => (string) ($config['openai_model'] ?? 'gpt-4.1-mini'),
+                    'model' => $model,
                     'response_format' => ['type' => 'json_object'],
                     'messages' => [[
                         'role' => 'user',
@@ -85,23 +174,29 @@ PROMPT;
                 ]);
 
             if (!$response->successful()) {
-                return $this->fallbackAnalysis($capture, $this->buildOpenAiFailureReason($response));
+                Log::warning('OpenAI payment vision failed', [
+                    'capture_id' => $capture->id,
+                    'status' => $response->status(),
+                    'reason' => $this->buildOpenAiFailureReason($response),
+                ]);
+                return null;
             }
 
             $content = (string) data_get($response->json(), 'choices.0.message.content', '');
             $decoded = $this->decodeJsonContent($content);
             if (!is_array($decoded)) {
-                return $this->fallbackAnalysis($capture, 'openai_invalid_json');
+                return null;
             }
 
-            return $this->normalizeResult($decoded);
+            $result = $this->normalizeResult($decoded);
+            $result['provider_used'] = 'openai';
+            return $result;
         } catch (\Throwable $exception) {
-            Log::warning('Payment proof analysis failed', [
+            Log::warning('OpenAI payment proof analysis failed', [
                 'capture_id' => $capture->id,
                 'error' => $exception->getMessage(),
             ]);
-
-            return $this->fallbackAnalysis($capture, 'openai_exception');
+            return null;
         }
     }
 

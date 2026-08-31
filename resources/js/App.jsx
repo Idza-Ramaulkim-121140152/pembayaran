@@ -165,10 +165,11 @@ function AppLayout({ children }) {
         visible: false,
         message: '',
     });
-    const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan'];
+    const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan', '/registrasi', '/daftar'];
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
-    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute;
+    const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
+    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration;
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
         && WA_ALERT_ROLES.includes(window.appUserRole || '');

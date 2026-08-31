@@ -426,6 +426,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
     Route::middleware('permission:billing.payment_capture.manage')->group(function () {
         Route::post('/api/billing/payments/capture', [BillingAutomationController::class, 'capturePayment'])->name('api.billing.payments.capture');
+        Route::post('/api/billing/payments/upload-and-analyze', [BillingAutomationController::class, 'uploadAndAnalyze'])->name('api.billing.payments.upload-and-analyze');
         Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->name('api.billing.payments.match');
         Route::put('/api/billing/payment-verification/config', [BillingAutomationController::class, 'updatePaymentVerificationConfig'])->name('api.billing.payment-verification.config.update');
         Route::post('/api/billing/payments/{capture}/reanalyze', [BillingAutomationController::class, 'reanalyzeCapture'])->name('api.billing.payments.reanalyze');
@@ -434,6 +435,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::middleware('permission:billing.payment_capture.review')->group(function () {
         Route::get('/api/billing/payment-verification/config', [BillingAutomationController::class, 'paymentVerificationConfig'])->name('api.billing.payment-verification.config');
         Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
+        Route::get('/api/billing/payments/captures', [BillingAutomationController::class, 'captures'])->name('api.billing.payments.captures');
         Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
     });
 
