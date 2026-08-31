@@ -205,6 +205,14 @@ class PaymentMatchingService
             });
         }
 
+        if (!empty($filters['from_date'])) {
+            $query->whereDate('created_at', '>=', $filters['from_date']);
+        }
+
+        if (!empty($filters['to_date'])) {
+            $query->whereDate('created_at', '<=', $filters['to_date']);
+        }
+
         return $query->paginate($perPage);
     }
 

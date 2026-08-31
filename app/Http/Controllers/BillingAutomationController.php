@@ -220,6 +220,8 @@ class BillingAutomationController extends Controller
         $validated = $request->validate([
             'status' => 'nullable|string|in:needs_review,approved,unmatched,rejected,pending,all',
             'search' => 'nullable|string|max:100',
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
 

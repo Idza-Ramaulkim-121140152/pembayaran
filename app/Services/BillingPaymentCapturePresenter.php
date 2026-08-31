@@ -12,6 +12,15 @@ class BillingPaymentCapturePresenter
     {
         $meta = (array) ($capture->meta ?? []);
         $mediaPath = (string) data_get($meta, 'media.path', '');
+        $proofUrl = null;
+        if ($mediaPath !== '') {
+            if (str_starts_with($mediaPath, 'http://') || str_starts_with($mediaPath, 'https://')) {
+                $proofUrl = $mediaPath;
+            } else {
+                $cleanPath = ltrim(str_replace('public/', '', $mediaPath), '/');
+                $proofUrl = '/storage/' . $cleanPath;
+            }
+        }
 
         return [
             'id' => $capture->id,
@@ -20,14 +29,17 @@ class BillingPaymentCapturePresenter
             'customer_id' => $capture->customer_id,
             'amount' => (float) $capture->amount,
             'paid_date' => optional($capture->paid_date)->toDateString(),
+            'paid_date_display' => $capture->paid_date ? \Carbon\Carbon::parse($capture->paid_date)->translatedFormat('d M Y') : null,
             'reference_code' => $capture->reference_code,
             'match_status' => $capture->match_status,
             'match_confidence' => $capture->match_confidence !== null ? (float) $capture->match_confidence : null,
             'reviewed_at' => optional($capture->reviewed_at)->toISOString(),
+            'reviewed_at_display' => $capture->reviewed_at ? \Carbon\Carbon::parse($capture->reviewed_at)->translatedFormat('d M Y, H:i') . ' WIB' : null,
             'created_at' => optional($capture->created_at)->toISOString(),
+            'created_at_display' => $capture->created_at ? \Carbon\Carbon::parse($capture->created_at)->translatedFormat('d M Y, H:i') . ' WIB' : null,
             'sender_phone' => data_get($meta, 'sender_phone'),
             'source_message_id' => data_get($meta, 'source.message_id'),
-            'proof_url' => $mediaPath !== '' ? Storage::disk('public')->url($mediaPath) : null,
+            'proof_url' => $proofUrl,
             'analysis' => data_get($meta, 'analysis', []),
             'validation' => data_get($meta, 'validation', []),
             'media' => data_get($meta, 'media', []),

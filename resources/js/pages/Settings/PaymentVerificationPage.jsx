@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     AlertTriangle,
     Bot,
     Building2,
+    Calendar,
     Check,
     CheckCircle2,
     ChevronLeft,
     ChevronRight,
+    Clock,
+    Download,
+    ExternalLink,
     FileText,
     Plus,
     QrCode,
@@ -55,33 +59,52 @@ export default function PaymentVerificationPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+
+    // Filters
     const [searchQuery, setSearchQuery] = useState('');
+    const [fromDate, setFromDate] = useState('');
+    const [toDate, setToDate] = useState('');
+    const [datePreset, setDatePreset] = useState('all'); // 'all' | 'today' | 'last7' | 'thisMonth' | 'custom'
     const [currentPage, setCurrentPage] = useState(1);
+
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
 
+    // Whitelist raw JSON editor toggle
     const [showJsonWhitelist, setShowJsonWhitelist] = useState(false);
     const [whitelistText, setWhitelistText] = useState(JSON.stringify(emptyWhitelist, null, 2));
 
+    // Modals
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [uploadFile, setUploadFile] = useState(null);
     const [uploadPreview, setUploadPreview] = useState(null);
     const [uploadCaption, setUploadCaption] = useState('');
     const [uploading, setUploading] = useState(false);
 
+    // Zoom Image Modal
     const [previewImageUrl, setPreviewImageUrl] = useState(null);
 
+    // Add/Edit Whitelist Bank Modal
     const [isBankModalOpen, setIsBankModalOpen] = useState(false);
     const [editingBankIndex, setEditingBankIndex] = useState(null);
     const [bankForm, setBankForm] = useState({ name: '', account_number: '', bank_name: '', aliases: '', active: true });
 
+    // Add/Edit Whitelist QRIS Modal
     const [isQrisModalOpen, setIsQrisModalOpen] = useState(false);
     const [editingQrisIndex, setEditingQrisIndex] = useState(null);
     const [qrisForm, setQrisForm] = useState({ name: '', merchant_id: '', aliases: '', active: true });
 
+    // Selected candidate invoice per capture
     const [selectedCandidate, setSelectedCandidate] = useState({});
 
-    const loadData = async (targetTab = activeTab, page = currentPage, search = searchQuery) => {
+    // Load initial data
+    const loadData = async (
+        targetTab = activeTab,
+        page = currentPage,
+        search = searchQuery,
+        startDate = fromDate,
+        endDate = toDate
+    ) => {
         try {
             setError('');
             setRefreshing(true);
@@ -98,6 +121,8 @@ export default function PaymentVerificationPage() {
                     page,
                     per_page: 20,
                     search: search.trim() || undefined,
+                    from_date: startDate || undefined,
+                    to_date: endDate || undefined,
                 }),
             ]);
 
@@ -117,20 +142,55 @@ export default function PaymentVerificationPage() {
     };
 
     useEffect(() => {
-        loadData(activeTab, 1, searchQuery);
+        loadData(activeTab, 1, searchQuery, fromDate, toDate);
     }, [activeTab]);
 
     const handleSearch = (e) => {
         e.preventDefault();
         setCurrentPage(1);
-        loadData(activeTab, 1, searchQuery);
+        loadData(activeTab, 1, searchQuery, fromDate, toDate);
+    };
+
+    const handleDatePresetChange = (preset) => {
+        setDatePreset(preset);
+        setCurrentPage(1);
+
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${yyyy}-${mm}-${dd}`;
+
+        let start = '';
+        let end = '';
+
+        if (preset === 'today') {
+            start = todayStr;
+            end = todayStr;
+        } else if (preset === 'last7') {
+            const past7 = new Date();
+            past7.setDate(now.getDate() - 7);
+            const pY = past7.getFullYear();
+            const pM = String(past7.getMonth() + 1).padStart(2, '0');
+            const pD = String(past7.getDate()).padStart(2, '0');
+            start = `${pY}-${pM}-${pD}`;
+            end = todayStr;
+        } else if (preset === 'thisMonth') {
+            start = `${yyyy}-${mm}-01`;
+            end = todayStr;
+        }
+
+        setFromDate(start);
+        setToDate(end);
+        loadData(activeTab, 1, searchQuery, start, end);
     };
 
     const handlePageChange = (page) => {
         setCurrentPage(page);
-        loadData(activeTab, page, searchQuery);
+        loadData(activeTab, page, searchQuery, fromDate, toDate);
     };
 
+    // Save Configuration
     const handleSaveConfig = async (overrideConfig = null) => {
         if (!canManage) return;
 
@@ -166,6 +226,7 @@ export default function PaymentVerificationPage() {
         }
     };
 
+    // Resolve Capture (Approve / Reject)
     const handleResolve = async (captureId, decision, candidateInvoiceId = null) => {
         try {
             setRefreshing(true);
@@ -180,7 +241,7 @@ export default function PaymentVerificationPage() {
             });
 
             setMessage(decision === 'approve' ? 'Pembayaran berhasil dikonfirmasi dan dilunaskan.' : 'Pembayaran ditolak.');
-            await loadData(activeTab, currentPage, searchQuery);
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal memproses verifikasi capture.');
         } finally {
@@ -188,6 +249,7 @@ export default function PaymentVerificationPage() {
         }
     };
 
+    // Re-analyze Capture
     const handleReanalyze = async (captureId) => {
         try {
             setRefreshing(true);
@@ -195,7 +257,7 @@ export default function PaymentVerificationPage() {
             setMessage('');
             await paymentVerificationService.reanalyzeCapture(captureId);
             setMessage(`Capture #${captureId} dijadwalkan untuk dianalisis ulang AI.`);
-            await loadData(activeTab, currentPage, searchQuery);
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal memicu analisis ulang.');
         } finally {
@@ -203,6 +265,7 @@ export default function PaymentVerificationPage() {
         }
     };
 
+    // Manual Upload & Scan
     const handleUploadSubmit = async (e) => {
         e.preventDefault();
         if (!uploadFile) {
@@ -229,7 +292,7 @@ export default function PaymentVerificationPage() {
             setUploadCaption('');
 
             setActiveTab('needs_review');
-            await loadData('needs_review', 1, '');
+            await loadData('needs_review', 1, '', '', '');
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal mengunggah dan menganalisis bukti pembayaran.');
         } finally {
@@ -237,6 +300,7 @@ export default function PaymentVerificationPage() {
         }
     };
 
+    // Whitelist Bank Handlers
     const handleSaveBank = () => {
         if (!bankForm.account_number.trim() || !bankForm.name.trim()) {
             setError('Nama pemilik rekening dan nomor rekening wajib diisi.');
@@ -290,6 +354,7 @@ export default function PaymentVerificationPage() {
         handleSaveConfig(nextConfig);
     };
 
+    // Whitelist QRIS Handlers
     const handleSaveQris = () => {
         if (!qrisForm.name.trim() || !qrisForm.merchant_id.trim()) {
             setError('Nama QRIS dan Merchant ID / NMID wajib diisi.');
@@ -342,6 +407,7 @@ export default function PaymentVerificationPage() {
         handleSaveConfig(nextConfig);
     };
 
+    // Recipients
     const recipients = config?.notification_recipients || [];
 
     const handleAddRecipient = () => {
@@ -379,6 +445,7 @@ export default function PaymentVerificationPage() {
 
     return (
         <div className="space-y-6 pb-12">
+            {/* Header */}
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
@@ -401,7 +468,7 @@ export default function PaymentVerificationPage() {
                     </button>
                     <button
                         type="button"
-                        onClick={() => loadData(activeTab, currentPage, searchQuery)}
+                        onClick={() => loadData(activeTab, currentPage, searchQuery, fromDate, toDate)}
                         disabled={refreshing}
                         className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
                     >
@@ -411,6 +478,7 @@ export default function PaymentVerificationPage() {
                 </div>
             </div>
 
+            {/* Alert Notifications */}
             {message && (
                 <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800">
                     <div className="flex items-center gap-2">
@@ -434,6 +502,7 @@ export default function PaymentVerificationPage() {
                 </div>
             )}
 
+            {/* Tabs Navigation */}
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-2">
                 <button
                     type="button"
@@ -463,7 +532,7 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <CheckCircle2 size={16} />
-                    Riwayat Terverifikasi
+                    Riwayat Terverifikasi (Lunas)
                 </button>
 
                 <button
@@ -489,34 +558,134 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <Sliders size={16} />
-                    ⚙️ Pengaturan
+                    ⚙️ Pengaturan AI & Whitelist
                 </button>
             </div>
 
+            {/* TAB CONTENT: Needs Review, Approved, Unmatched */}
             {activeTab !== 'settings' && (
                 <div className="space-y-4">
-                    <div className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-                        <form onSubmit={handleSearch} className="relative flex-1">
-                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={17} />
-                            <input
-                                type="text"
-                                placeholder="Cari nama pelanggan, no WA, kode referensi..."
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full rounded-xl border border-gray-200 pl-10 pr-4 py-2 text-sm focus:border-emerald-500 focus:ring-emerald-500"
-                            />
-                        </form>
-                        <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    {/* Search & Date Filter Bar */}
+                    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-3">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            {/* Search Form */}
+                            <form onSubmit={handleSearch} className="relative flex-1">
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={17} />
+                                <input
+                                    type="text"
+                                    placeholder="Cari nama pelanggan, no WA, kode referensi, invoice link..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full rounded-xl border border-gray-200 pl-10 pr-4 py-2 text-sm focus:border-emerald-500 focus:ring-emerald-500"
+                                />
+                            </form>
+
+                            {/* Date Presets */}
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-xs font-semibold text-gray-500 mr-1">Periode:</span>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDatePresetChange('all')}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                        datePreset === 'all'
+                                            ? 'bg-emerald-600 text-white font-semibold'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Semua
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDatePresetChange('today')}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                        datePreset === 'today'
+                                            ? 'bg-emerald-600 text-white font-semibold'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Hari Ini
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDatePresetChange('last7')}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                        datePreset === 'last7'
+                                            ? 'bg-emerald-600 text-white font-semibold'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    7 Hari
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDatePresetChange('thisMonth')}
+                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                                        datePreset === 'thisMonth'
+                                            ? 'bg-emerald-600 text-white font-semibold'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Bulan Ini
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Date Range Inputs */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <Calendar size={15} className="text-gray-400 shrink-0" />
+                                <span className="font-medium text-gray-600">Dari Tanggal:</span>
+                                <input
+                                    type="date"
+                                    value={fromDate}
+                                    onChange={(e) => {
+                                        setFromDate(e.target.value);
+                                        setDatePreset('custom');
+                                    }}
+                                    className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-700"
+                                />
+                                <span className="font-medium text-gray-600">s/d:</span>
+                                <input
+                                    type="date"
+                                    value={toDate}
+                                    onChange={(e) => {
+                                        setToDate(e.target.value);
+                                        setDatePreset('custom');
+                                    }}
+                                    className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs text-gray-700"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setCurrentPage(1);
+                                        loadData(activeTab, 1, searchQuery, fromDate, toDate);
+                                    }}
+                                    className="rounded-lg bg-emerald-50 px-3 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 transition"
+                                >
+                                    Terapkan Filter
+                                </button>
+                            </div>
+
                             <span className="text-xs font-medium text-gray-500">
-                                Total: <strong className="text-gray-800">{pagination?.total || 0}</strong> data
+                                Ditemukan: <strong className="text-gray-800">{pagination?.total || 0}</strong> data
                             </span>
                         </div>
                     </div>
 
+                    {/* Captures List */}
                     {captures.length === 0 ? (
                         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center shadow-sm">
                             <ShieldCheck className="h-12 w-12 text-gray-300" />
-                            <p className="mt-3 text-base font-semibold text-gray-700">Tidak ada data pembayaran.</p>
+                            <p className="mt-3 text-base font-semibold text-gray-700">
+                                {activeTab === 'needs_review'
+                                    ? 'Tidak ada antrean pembayaran yang perlu direview.'
+                                    : 'Tidak ada data bukti pembayaran pada rentang tanggal ini.'}
+                            </p>
+                            <p className="mt-1 text-sm text-gray-400">
+                                {activeTab === 'needs_review'
+                                    ? 'Semua bukti bayar yang masuk sudah terverifikasi otomatis atau telah diselesaikan.'
+                                    : 'Coba ubah filter pencarian atau periode tanggal.'}
+                            </p>
                         </div>
                     ) : (
                         <div className="space-y-4">
@@ -532,6 +701,7 @@ export default function PaymentVerificationPage() {
                                         className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md"
                                     >
                                         <div className="grid gap-6 p-5 lg:grid-cols-[240px_1fr]">
+                                            {/* Proof Image Box */}
                                             <div className="flex flex-col items-center gap-2">
                                                 <div className="relative group w-full h-56 rounded-xl border border-gray-200 bg-gray-50 overflow-hidden flex items-center justify-center">
                                                     {capture.proof_url ? (
@@ -546,50 +716,87 @@ export default function PaymentVerificationPage() {
                                                                 onClick={() => setPreviewImageUrl(capture.proof_url)}
                                                                 className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-white font-medium text-xs gap-1.5"
                                                             >
-                                                                <ZoomIn size={16} /> Perbesar
+                                                                <ZoomIn size={16} /> Perbesar Foto
                                                             </button>
                                                         </>
                                                     ) : (
                                                         <div className="flex flex-col items-center text-gray-400 text-xs">
                                                             <FileText size={28} className="text-gray-300" />
-                                                            <span className="mt-1">Tidak ada bukti</span>
+                                                            <span className="mt-1">Bukti fisik tidak ada</span>
                                                         </div>
                                                     )}
                                                 </div>
+
+                                                {capture.proof_url && (
+                                                    <a
+                                                        href={capture.proof_url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1"
+                                                    >
+                                                        <Download size={13} /> Buka Tab Baru
+                                                    </a>
+                                                )}
                                             </div>
 
+                                            {/* Details & Actions */}
                                             <div className="flex flex-col justify-between space-y-4">
                                                 <div>
+                                                    {/* Header Card with Dates & Status */}
                                                     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
                                                         <div className="flex flex-wrap items-center gap-2">
-                                                            <h3 className="text-lg font-bold text-gray-900">Capture #{capture.id}</h3>
-                                                            <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${isApproved ? 'bg-emerald-100 text-emerald-800' : isNeedsReview ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                            <h3 className="text-lg font-bold text-gray-900">
+                                                                Capture #{capture.id}
+                                                            </h3>
+                                                            <span
+                                                                className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                                                                    isApproved
+                                                                        ? 'bg-emerald-100 text-emerald-800'
+                                                                        : isNeedsReview
+                                                                        ? 'bg-amber-100 text-amber-800'
+                                                                        : 'bg-rose-100 text-rose-800'
+                                                                }`}
+                                                            >
                                                                 {capture.match_status?.toUpperCase()}
+                                                            </span>
+                                                            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                                                                Sumber: {capture.source}
+                                                            </span>
+
+                                                            {/* Tanggal & Jam Masuk / Upload */}
+                                                            <span className="inline-flex items-center gap-1 text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-md px-2 py-0.5 font-medium">
+                                                                <Clock size={12} className="text-gray-400" />
+                                                                Masuk: {capture.created_at_display || capture.created_at?.slice(0, 16) || '-'}
                                                             </span>
                                                         </div>
 
+                                                        {/* Action Buttons */}
                                                         {canManage && (
                                                             <div className="flex flex-wrap items-center gap-2">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleReanalyze(capture.id)}
-                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                                                                    disabled={refreshing}
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
                                                                 >
-                                                                    <RefreshCw size={13} /> Re-analyze
+                                                                    <RefreshCw size={13} /> Re-analyze AI
                                                                 </button>
+
                                                                 {isNeedsReview && (
                                                                     <>
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleResolve(capture.id, 'approve')}
-                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700"
+                                                                            disabled={refreshing}
+                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
                                                                         >
-                                                                            <Check size={14} /> Konfirmasi
+                                                                            <Check size={14} /> Konfirmasi & Lunaskan
                                                                         </button>
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleResolve(capture.id, 'reject')}
-                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-rose-700"
+                                                                            disabled={refreshing}
+                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
                                                                         >
                                                                             <X size={14} /> Tolak
                                                                         </button>
@@ -599,24 +806,121 @@ export default function PaymentVerificationPage() {
                                                         )}
                                                     </div>
 
+                                                    {/* OCR Extraction Grid */}
                                                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Nominal</p>
-                                                            <p className="mt-1 text-base font-bold text-gray-900">Rp {Number(capture.amount || 0).toLocaleString('id-ID')}</p>
+                                                        <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                                                            <p className="text-xs text-gray-500 font-medium">Nominal Terdeteksi</p>
+                                                            <p className="mt-1 text-base font-bold text-gray-900">
+                                                                Rp {Number(capture.amount || 0).toLocaleString('id-ID')}
+                                                            </p>
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Confidence</p>
-                                                            <p className="mt-1 text-base font-bold text-gray-900">{Number(capture.match_confidence || 0).toFixed(0)}%</p>
+
+                                                        <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                                                            <p className="text-xs text-gray-500 font-medium">Skor Kepercayaan AI</p>
+                                                            <div className="mt-1 flex items-center gap-2">
+                                                                <div className="h-2 w-16 overflow-hidden rounded-full bg-gray-200">
+                                                                    <div
+                                                                        className={`h-full ${
+                                                                            Number(capture.match_confidence || 0) >= 90
+                                                                                ? 'bg-emerald-500'
+                                                                                : Number(capture.match_confidence || 0) >= 70
+                                                                                ? 'bg-amber-500'
+                                                                                : 'bg-rose-500'
+                                                                        }`}
+                                                                        style={{ width: `${Math.min(100, Math.max(0, capture.match_confidence || 0))}%` }}
+                                                                    />
+                                                                </div>
+                                                                <span className="text-sm font-bold text-gray-800">
+                                                                    {Number(capture.match_confidence || 0).toFixed(0)}%
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Metode</p>
-                                                            <p className="mt-1 text-sm font-semibold text-gray-800 truncate">{analysis.payment_channel || 'Bank'}</p>
+
+                                                        <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                                                            <p className="text-xs text-gray-500 font-medium">Tanggal Transfer (Struk)</p>
+                                                            <p className="mt-1 text-xs font-bold text-gray-900 flex items-center gap-1">
+                                                                <Calendar size={13} className="text-emerald-600" />
+                                                                {capture.paid_date_display || capture.paid_date || (analysis.paid_date ? `${analysis.paid_date} ${analysis.paid_time || ''}` : '-')}
+                                                            </p>
                                                         </div>
-                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Tujuan</p>
-                                                            <p className="mt-1 text-xs font-semibold text-gray-800 truncate">{analysis.destination_identity?.name || '-'}</p>
+
+                                                        <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                                                            <p className="text-xs text-gray-500 font-medium">Bank & Tujuan</p>
+                                                            <p className="mt-1 text-xs font-semibold text-gray-800 truncate">
+                                                                {analysis.payment_channel || 'Bank'} · {analysis.destination_identity?.name || analysis.destination_identity?.account_number || '-'}
+                                                            </p>
                                                         </div>
                                                     </div>
+
+                                                    {/* Linked Invoice, Customer & Review Info */}
+                                                    <div className="mt-3 text-xs text-gray-600 space-y-1.5">
+                                                        {capture.customer && (
+                                                            <p>
+                                                                👤 <strong>Pelanggan:</strong> {capture.customer.name} (WA: {capture.customer.phone || '-'} / PPPoE: {capture.customer.pppoe_username || '-'})
+                                                            </p>
+                                                        )}
+                                                        {capture.invoice && (
+                                                            <p className="flex items-center gap-2">
+                                                                📄 <strong>Invoice Terkait:</strong> <a href={`/invoice/${capture.invoice.invoice_link}`} target="_blank" rel="noreferrer" className="text-emerald-600 font-semibold underline inline-flex items-center gap-0.5">{capture.invoice.invoice_link} <ExternalLink size={11} /></a>
+                                                                <span className="text-gray-500 font-medium">· Tagihan: Rp {Number(capture.invoice.amount || 0).toLocaleString('id-ID')}</span>
+                                                                {capture.invoice.due_date && <span className="text-gray-500">· Jatuh Tempo: <strong>{capture.invoice.due_date}</strong></span>}
+                                                            </p>
+                                                        )}
+                                                        {capture.reviewed_at_display && (
+                                                            <p className="text-emerald-700 font-medium">
+                                                                ✅ <strong>Selesai Direview:</strong> {capture.reviewed_at_display}
+                                                            </p>
+                                                        )}
+                                                        {capture.failure_reason && (
+                                                            <p className="text-rose-600 font-medium">
+                                                                ⚠️ <strong>Catatan Sistem:</strong> {capture.failure_reason}
+                                                            </p>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Candidate Invoices Selection */}
+                                                    {candidateInvoices.length > 0 && isNeedsReview && (
+                                                        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+                                                            <p className="text-xs font-bold text-amber-900 mb-2">
+                                                                🎯 Rekomendasi Invoice Kandidat untuk Dicocokkan:
+                                                            </p>
+                                                            <div className="space-y-2">
+                                                                {candidateInvoices.map((rev) => {
+                                                                    const inv = rev.candidate_invoice || rev.candidateInvoice;
+                                                                    if (!inv) return null;
+                                                                    const isSelected = (selectedCandidate[capture.id] || candidateInvoices[0]?.candidate_invoice_id) === inv.id;
+
+                                                                    return (
+                                                                        <label
+                                                                            key={rev.id || inv.id}
+                                                                            className={`flex items-center justify-between rounded-lg border p-2.5 cursor-pointer text-xs transition ${
+                                                                                isSelected
+                                                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-950 font-medium'
+                                                                                    : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                                                                            }`}
+                                                                        >
+                                                                            <div className="flex items-center gap-2">
+                                                                                <input
+                                                                                    type="radio"
+                                                                                    name={`candidate_${capture.id}`}
+                                                                                    checked={isSelected}
+                                                                                    onChange={() => setSelectedCandidate((prev) => ({ ...prev, [capture.id]: inv.id }))}
+                                                                                    className="text-emerald-600 focus:ring-emerald-500"
+                                                                                />
+                                                                                <div>
+                                                                                    <span className="font-bold">{inv.invoice_link}</span> — Tagihan: Rp {Number(inv.amount || 0).toLocaleString('id-ID')}
+                                                                                    {inv.due_date && <span className="text-gray-500 ml-1">· Jatuh Tempo: {inv.due_date}</span>}
+                                                                                </div>
+                                                                            </div>
+                                                                            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 font-bold text-[11px]">
+                                                                                Kecocokan: {rev.score}%
+                                                                            </span>
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -625,9 +929,35 @@ export default function PaymentVerificationPage() {
                             })}
                         </div>
                     )}
+
+                    {/* Pagination */}
+                    {pagination && pagination.last_page > 1 && (
+                        <div className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3 shadow-sm">
+                            <button
+                                type="button"
+                                onClick={() => handlePageChange(currentPage - 1)}
+                                disabled={currentPage <= 1}
+                                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                            >
+                                <ChevronLeft size={14} /> Sebelumnya
+                            </button>
+                            <span className="text-xs font-medium text-gray-600">
+                                Halaman {pagination.current_page} dari {pagination.last_page}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => handlePageChange(currentPage + 1)}
+                                disabled={currentPage >= pagination.last_page}
+                                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                            >
+                                Berikutnya <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
+            {/* TAB CONTENT: Settings & Whitelist */}
             {activeTab === 'settings' && (
                 <div className="space-y-6">
                     {/* AI Vision Engine Settings */}
