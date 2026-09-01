@@ -76,8 +76,6 @@ export default function PaymentVerificationPage() {
 
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
-    const [showGeminiKey, setShowGeminiKey] = useState(false);
-    const [showOpenAiKey, setShowOpenAiKey] = useState(false);
 
     // Whitelist raw JSON editor toggle
     const [showJsonWhitelist, setShowJsonWhitelist] = useState(false);
@@ -1121,100 +1119,108 @@ export default function PaymentVerificationPage() {
             ) : (
                 /* TAB 4: SETTINGS */
                 <div className="space-y-6">
-                    {/* AI Vision & OCR Engine Card */}
-                    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                    {/* Local Free Verification Engine Card */}
+                    <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-white to-emerald-50/40 p-5 shadow-sm space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                                <Bot className="h-5 w-5 text-emerald-600" />
+                            <div className="flex items-center gap-2.5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
+                                    <ShieldCheck size={22} />
+                                </div>
                                 <div>
-                                    <h3 className="font-bold text-gray-900">Konfigurasi AI Vision & OCR Bukti Pembayaran</h3>
-                                    <p className="text-xs text-gray-500">Membaca otomatis nominal, tanggal, nomor rekening, dan status lunas dari foto screenshot pelanggan.</p>
+                                    <h3 className="font-bold text-gray-900">Engine Verifikasi Pembayaran Lokal (100% Gratis & Mandiri)</h3>
+                                    <p className="text-xs text-gray-500">Berjalan langsung di server lokal tanpa memerlukan API Key berbayar, kuota eksternal, atau langganan pihak ketiga.</p>
                                 </div>
                             </div>
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 w-fit">
-                                <Sparkles size={13} /> Gemini & OpenAI Vision
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 w-fit">
+                                <CheckCircle2 size={13} /> Mesin Lokal Aktif
                             </span>
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">
-                                    Penyedia AI (AI Provider)
-                                </label>
-                                <select
-                                    value={config?.ai_provider || 'auto'}
-                                    onChange={(e) => setConfig((p) => ({ ...p, ai_provider: e.target.value }))}
-                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                >
-                                    <option value="auto">Otomatis (Coba Gemini, lalu OpenAI)</option>
-                                    <option value="gemini">Google Gemini Vision (Gratis & Direkomendasikan)</option>
-                                    <option value="openai">OpenAI (GPT-4o Mini)</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">
-                                    Model Gemini Vision
-                                </label>
-                                <select
-                                    value={config?.gemini_model || 'gemini-1.5-flash'}
-                                    onChange={(e) => setConfig((p) => ({ ...p, gemini_model: e.target.value }))}
-                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                >
-                                    <option value="gemini-1.5-flash">gemini-1.5-flash (Cepat & Hemat Kuota)</option>
-                                    <option value="gemini-2.0-flash">gemini-2.0-flash (Generasi Terbaru)</option>
-                                    <option value="gemini-1.5-pro">gemini-1.5-pro (Akurasi Maksimal)</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">
-                                    Google Gemini API Key
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type={showGeminiKey ? 'text' : 'password'}
-                                        value={config?.gemini_api_key || ''}
-                                        onChange={(e) => setConfig((p) => ({ ...p, gemini_api_key: e.target.value }))}
-                                        placeholder="Masukkan API Key (AIzaSy...)"
-                                        className="w-full text-xs rounded-xl border border-gray-300 pr-10 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowGeminiKey(!showGeminiKey)}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                                    >
-                                        {showGeminiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                                    </button>
-                                </div>
+                        {/* Feature Badges */}
+                        <div className="grid gap-3 sm:grid-cols-3 pt-1">
+                            <div className="rounded-xl border border-emerald-100 bg-white p-3 shadow-xs">
+                                <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                    <UserCheck size={14} className="text-emerald-600" /> Resolusi Pelanggan Cerdas
+                                </p>
                                 <p className="text-[11px] text-gray-500 mt-1">
-                                    Dapatkan API Key gratis di <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-emerald-600 font-semibold hover:underline">Google AI Studio</a>
+                                    Mendeteksi pelanggan otomatis via Nomor WhatsApp, Username PPPoE, & Tagihan Belum Lunas.
                                 </p>
                             </div>
-
-                            <div>
-                                <label className="block text-xs font-bold text-gray-700 mb-1">
-                                    OpenAI API Key (Opsional)
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type={showOpenAiKey ? 'text' : 'password'}
-                                        value={config?.openai_api_key || ''}
-                                        onChange={(e) => setConfig((p) => ({ ...p, openai_api_key: e.target.value }))}
-                                        placeholder="Masukkan OpenAI API Key (sk-...)"
-                                        className="w-full text-xs rounded-xl border border-gray-300 pr-10 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowOpenAiKey(!showOpenAiKey)}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                                    >
-                                        {showOpenAiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-                                    </button>
-                                </div>
-                                <p className="text-[11px] text-gray-500 mt-1">
-                                    Model: <span className="font-mono text-gray-700">{config?.openai_model || 'gpt-4o-mini'}</span>
+                            <div className="rounded-xl border border-emerald-100 bg-white p-3 shadow-xs">
+                                <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                    <Building2 size={14} className="text-emerald-600" /> Parsing Rekening & QRIS
                                 </p>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    Mengenali bukti transfer BCA, BRI, Mandiri, BNI, QRIS, DANA, OVO, GoPay, Seabank, dll.
+                                </p>
+                            </div>
+                            <div className="rounded-xl border border-emerald-100 bg-white p-3 shadow-xs">
+                                <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                    <Sparkles size={14} className="text-emerald-600" /> Local OCR & Pattern Matcher
+                                </p>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    Membaca teks dari gambar dan mencocokkan tagihan pelanggan dengan akurasi tinggi secara lokal.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Auto-Approval & Threshold Controls */}
+                        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs font-bold text-gray-900">Persetujuan Otomatis (Auto-Approve)</p>
+                                    <p className="text-[11px] text-gray-500">Otomatis menandai tagihan lunas jika nominal dan identitas pelanggan cocok 100%.</p>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={config?.auto_approve_enabled ?? true}
+                                        onChange={(e) => setConfig((p) => ({ ...p, auto_approve_enabled: e.target.checked }))}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                                </label>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2 pt-2 border-t border-gray-100">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                        Ambang Batas Auto-Approve (%)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="50"
+                                        max="100"
+                                        value={config?.confidence_thresholds?.auto_approve ?? 95}
+                                        onChange={(e) => setConfig((p) => ({
+                                            ...p,
+                                            confidence_thresholds: {
+                                                ...p.confidence_thresholds,
+                                                auto_approve: Number(e.target.value),
+                                            },
+                                        }))}
+                                        className="w-full text-xs rounded-xl border border-gray-300 p-2 bg-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                        Ambang Batas Review Manual (%)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="30"
+                                        max="90"
+                                        value={config?.confidence_thresholds?.manual_review ?? 70}
+                                        onChange={(e) => setConfig((p) => ({
+                                            ...p,
+                                            confidence_thresholds: {
+                                                ...p.confidence_thresholds,
+                                                manual_review: Number(e.target.value),
+                                            },
+                                        }))}
+                                        className="w-full text-xs rounded-xl border border-gray-300 p-2 bg-white"
+                                    />
+                                </div>
                             </div>
                         </div>
                     </div>

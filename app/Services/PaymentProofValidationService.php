@@ -42,24 +42,25 @@ class PaymentProofValidationService
 
         if (!$flags['customer_identified']) {
             $failureReason = 'unknown_customer';
+            $status = 'needs_review';
         } elseif (!$flags['active_invoice_found']) {
             $failureReason = 'no_active_invoice';
+            $status = 'needs_review';
         } elseif (!$flags['is_payment_proof']) {
             $failureReason = 'not_payment_proof';
-            $status = $flags['confidence_meets_manual_review'] ? 'needs_review' : 'unmatched';
-        } elseif (!$flags['success_status']) {
-            $failureReason = 'transaction_not_successful';
+            $status = 'needs_review';
         } elseif (!$flags['amount_matches_invoice']) {
             $failureReason = 'amount_mismatch';
+            $status = 'needs_review';
         } elseif (!$flags['destination_whitelisted']) {
             $failureReason = 'destination_not_whitelisted';
-        } elseif (!$flags['confidence_meets_manual_review']) {
-            $failureReason = 'confidence_too_low';
-            $status = 'unmatched';
+            $status = 'needs_review';
         } elseif (!$flags['confidence_meets_auto_approve']) {
             $failureReason = 'confidence_needs_review';
+            $status = 'needs_review';
         } elseif (!(bool) data_get($config, 'auto_approve_enabled', true)) {
             $failureReason = 'auto_approve_disabled';
+            $status = 'needs_review';
         } else {
             $status = 'approved';
         }

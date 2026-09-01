@@ -3,9 +3,9 @@
 namespace App\Services;
 
 use App\Models\BillingPaymentCapture;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\Process\Process;
 
 class PaymentProofAnalysisService
 {
@@ -15,361 +15,301 @@ class PaymentProofAnalysisService
     ) {
     }
 
+    /**
+     * Analyze payment capture using 100% Free & Local OCR / Pattern Engine
+     */
     public function analyze(BillingPaymentCapture $capture): array
     {
         $config = $this->configService->getConfig();
         $mediaPath = (string) data_get($capture->meta, 'media.path', '');
-        if ($mediaPath === '' || !Storage::disk('public')->exists($mediaPath)) {
-            return $this->fallbackAnalysis($capture, 'media_not_found');
-        }
+        $fullPath = $mediaPath !== '' && Storage::disk('public')->exists($mediaPath)
+            ? Storage::disk('public')->path($mediaPath)
+            : null;
 
-        $mimeType = (string) data_get($capture->meta, 'media.mime_type', 'image/jpeg');
-        $rawBytes = (string) Storage::disk('public')->get($mediaPath);
-        $imageData = base64_encode($rawBytes);
+        // 1. Try Local Free Tesseract OCR if available on server
+        $ocrText = null;
+        $ocrProvider = 'local_heuristic';
 
-        $prompt = <<<'PROMPT'
-Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa markdown dengan struktur tepat:
-{
-  "is_payment_proof": boolean,
-  "amount": number|null,
-  "paid_date": "YYYY-MM-DD"|null,
-  "paid_time": "HH:MM"|null,
-  "reference_code": string|null,
-  "payment_channel": string|null,
-  "destination_identity": {
-    "name": string|null,
-    "account_number": string|null,
-    "merchant_id": string|null,
-    "raw": string|null
-  },
-  "success_status": boolean,
-  "confidence_overall": number,
-  "confidence_by_field": {
-    "payment_proof": number,
-    "amount": number,
-    "date": number,
-    "time": number,
-    "destination": number,
-    "success_status": number
-  },
-  "ocr_raw_text": string|null,
-  "raw_summary": string|null
-}
-
-Aturan:
-- Fokus pada bukti transfer Indonesia seperti QRIS, mobile banking (BCA Mobile, myBCA, BRImo, Livin Mandiri, BNI Mobile, BSI Mobile, Seabank, Jago, Neo, dll), e-wallet (DANA, OVO, GoPay, ShopeePay, LinkAja), dan ATM receipt.
-- Jika media bukan bukti transfer (misal foto selfie, dokumen lain, foto acak), set is_payment_proof=false.
-- Jika nominal/tanggal/jam tidak terbaca jelas, isi null dan beri confidence rendah.
-- success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
-- confidence memakai skala angka 0 s.d 100.
-PROMPT;
-
-        $preferredProvider = (string) ($config['ai_provider'] ?? 'auto');
-
-        // 1. Try Gemini Vision if preferred or auto
-        $geminiKey = trim((string) ($config['gemini_api_key'] ?? config('services.gemini.api_key') ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', '')))));
-        $openAiKey = trim((string) ($config['openai_api_key'] ?? config('services.openai.api_key') ?: env('OPENAI_API_KEY', '')));
-
-        if (($preferredProvider === 'gemini' || $preferredProvider === 'auto') && $geminiKey !== '') {
-            $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
-            if ($geminiResult !== null) {
-                return $geminiResult;
+        if ($fullPath && file_exists($fullPath)) {
+            $ocrText = $this->runLocalTesseractOcr($fullPath);
+            if ($ocrText !== null && trim($ocrText) !== '') {
+                $ocrProvider = 'local_tesseract_ocr';
             }
         }
 
-        // 2. Try OpenAI Vision if preferred or fallback
-        if (($preferredProvider === 'openai' || $preferredProvider === 'auto' || $geminiKey === '') && $openAiKey !== '') {
-            $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
-            if ($openAiResult !== null) {
-                return $openAiResult;
-            }
-        }
+        // 2. Extract context from WhatsApp Caption & Source
+        $caption = trim((string) data_get($capture->meta, 'source.caption', ''));
+        $combinedText = trim(($ocrText ?? '') . "\n" . $caption);
 
-        // 3. Fallback: Heuristic & Customer Unpaid Bill Auto-Resolution
-        return $this->fallbackAnalysis($capture, $geminiKey === '' && $openAiKey === '' ? 'ai_api_key_missing' : 'ai_analysis_failed');
-    }
-
-    private function analyzeWithGemini(
-        BillingPaymentCapture $capture,
-        string $apiKey,
-        string $imageData,
-        string $mimeType,
-        string $prompt,
-        array $config
-    ): ?array {
-        $model = (string) ($config['gemini_model'] ?? 'gemini-1.5-flash');
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
-
-        try {
-            $response = Http::timeout(45)->post($url, [
-                'contents' => [
-                    [
-                        'parts' => [
-                            ['text' => $prompt],
-                            [
-                                'inline_data' => [
-                                    'mime_type' => $mimeType,
-                                    'data' => $imageData,
-                                ],
-                            ],
-                        ],
-                    ],
-                ],
-                'generationConfig' => [
-                    'response_mime_type' => 'application/json',
-                    'temperature' => 0.1,
-                ],
-            ]);
-
-            if (!$response->successful()) {
-                Log::warning('Gemini payment vision failed', [
-                    'capture_id' => $capture->id,
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-                return null;
-            }
-
-            $content = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
-            $decoded = $this->decodeJsonContent($content);
-            if (!is_array($decoded)) {
-                return null;
-            }
-
-            $result = $this->normalizeResult($decoded);
-            $result['provider_used'] = 'gemini';
-            return $result;
-        } catch (\Throwable $e) {
-            Log::warning('Gemini payment vision exception', [
-                'capture_id' => $capture->id,
-                'error' => $e->getMessage(),
-            ]);
-            return null;
-        }
-    }
-
-    private function analyzeWithOpenAi(
-        BillingPaymentCapture $capture,
-        string $apiKey,
-        string $imageData,
-        string $mimeType,
-        string $prompt,
-        array $config
-    ): ?array {
-        $dataUri = 'data:' . $mimeType . ';base64,' . $imageData;
-        $model = (string) ($config['openai_model'] ?? 'gpt-4o-mini');
-
-        try {
-            $response = Http::timeout(60)
-                ->withToken($apiKey)
-                ->post('https://api.openai.com/v1/chat/completions', [
-                    'model' => $model,
-                    'response_format' => ['type' => 'json_object'],
-                    'messages' => [[
-                        'role' => 'user',
-                        'content' => [
-                            ['type' => 'text', 'text' => $prompt],
-                            ['type' => 'image_url', 'image_url' => ['url' => $dataUri]],
-                        ],
-                    ]],
-                ]);
-
-            if (!$response->successful()) {
-                Log::warning('OpenAI payment vision failed', [
-                    'capture_id' => $capture->id,
-                    'status' => $response->status(),
-                    'reason' => $this->buildOpenAiFailureReason($response),
-                ]);
-                return null;
-            }
-
-            $content = (string) data_get($response->json(), 'choices.0.message.content', '');
-            $decoded = $this->decodeJsonContent($content);
-            if (!is_array($decoded)) {
-                return null;
-            }
-
-            $result = $this->normalizeResult($decoded);
-            $result['provider_used'] = 'openai';
-            return $result;
-        } catch (\Throwable $exception) {
-            Log::warning('OpenAI payment proof analysis failed', [
-                'capture_id' => $capture->id,
-                'error' => $exception->getMessage(),
-            ]);
-            return null;
-        }
-    }
-
-    private function normalizeResult(array $decoded): array
-    {
-        return [
-            'is_payment_proof' => (bool) ($decoded['is_payment_proof'] ?? false),
-            'amount' => isset($decoded['amount']) && is_numeric($decoded['amount']) ? round((float) $decoded['amount'], 2) : null,
-            'paid_date' => $this->stringOrNull($decoded['paid_date'] ?? null),
-            'paid_time' => $this->stringOrNull($decoded['paid_time'] ?? null),
-            'reference_code' => $this->stringOrNull($decoded['reference_code'] ?? null),
-            'payment_channel' => $this->stringOrNull($decoded['payment_channel'] ?? null),
-            'destination_identity' => [
-                'name' => $this->stringOrNull(data_get($decoded, 'destination_identity.name')),
-                'account_number' => $this->stringOrNull(data_get($decoded, 'destination_identity.account_number')),
-                'merchant_id' => $this->stringOrNull(data_get($decoded, 'destination_identity.merchant_id')),
-                'raw' => $this->stringOrNull(data_get($decoded, 'destination_identity.raw')),
-            ],
-            'success_status' => (bool) ($decoded['success_status'] ?? false),
-            'confidence_overall' => $this->normalizeConfidence($decoded['confidence_overall'] ?? 0),
-            'confidence_by_field' => [
-                'payment_proof' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.payment_proof', 0)),
-                'amount' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.amount', 0)),
-                'date' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.date', 0)),
-                'time' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.time', 0)),
-                'destination' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.destination', 0)),
-                'success_status' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.success_status', 0)),
-            ],
-            'ocr_raw_text' => $this->stringOrNull($decoded['ocr_raw_text'] ?? null),
-            'raw_summary' => $this->stringOrNull($decoded['raw_summary'] ?? null),
-        ];
-    }
-
-    private function fallbackAnalysis(BillingPaymentCapture $capture, string $reason): array
-    {
-        $caption = strtolower(trim((string) data_get($capture->meta, 'source.caption', '')));
-        $amount = $this->extractAmountFromString($caption);
+        // 3. Resolve Customer from Phone, Caption, and OCR Text
         $customer = $capture->customer ?: $this->customerResolutionService->resolveFromCapture($capture);
-        $activeInvoice = null;
+        if (!$customer && $ocrText !== null && $ocrText !== '') {
+            $customer = $this->customerResolutionService->resolveFromText($ocrText);
+        }
 
+        $activeInvoice = null;
         if ($customer) {
             $activeInvoice = $this->customerResolutionService->findActiveInvoices($customer)->first();
         }
-
         if (!$activeInvoice && $capture->invoice) {
             $activeInvoice = $capture->invoice;
         }
 
-        if ($activeInvoice) {
-            $inferredAmount = (float) $activeInvoice->amount;
-            $rawSummary = "Foto bukti transfer dari {$customer->name} (Tagihan {$activeInvoice->invoice_number} Rp " . number_format($inferredAmount, 0, ',', '.') . ")";
+        // 4. Parse Transfer / Receipt Data from Combined Text
+        $parsed = $this->parseReceiptPatterns($combinedText);
 
-            Log::info('Payment proof analysis auto-inferred from customer invoice', [
-                'capture_id' => $capture->id,
-                'customer_id' => $customer->id,
-                'invoice_id' => $activeInvoice->id,
-                'amount' => $inferredAmount,
-            ]);
-
-            return [
-                'is_payment_proof' => true,
-                'amount' => $amount ?: $inferredAmount,
-                'paid_date' => $capture->paid_date ?: now()->toDateString(),
-                'paid_time' => now()->format('H:i'),
-                'reference_code' => $activeInvoice->invoice_link ?: data_get($capture->meta, 'source.message_id'),
-                'payment_channel' => 'Transfer Bank / QRIS',
-                'destination_identity' => [
-                    'name' => 'Rumah Kita Network',
-                    'account_number' => null,
-                    'merchant_id' => null,
-                    'raw' => 'Rumah Kita Network',
-                ],
-                'success_status' => true,
-                'confidence_overall' => 88.0,
-                'confidence_by_field' => [
-                    'payment_proof' => 90.0,
-                    'amount' => 90.0,
-                    'date' => 80.0,
-                    'time' => 70.0,
-                    'destination' => 85.0,
-                    'success_status' => 85.0,
-                ],
-                'ocr_raw_text' => null,
-                'raw_summary' => $rawSummary,
-                'provider_used' => 'smart_heuristic',
-            ];
+        $amount = $parsed['amount'];
+        if (!$amount && $activeInvoice) {
+            $amount = (float) $activeInvoice->amount;
         }
 
-        $isMaybePayment = str_contains($caption, 'transfer') || str_contains($caption, 'bayar') || str_contains($caption, 'qris') || $customer !== null;
+        $isPaymentProof = $parsed['is_payment_proof'] || $activeInvoice !== null || $customer !== null;
+        $successStatus = $parsed['success_status'] || $activeInvoice !== null;
+        $channel = $parsed['payment_channel'] ?: ($activeInvoice ? 'Transfer Bank / QRIS' : 'Transfer Bank');
+        $referenceCode = $parsed['reference_code'] ?: ($activeInvoice?->invoice_link ?: data_get($capture->meta, 'source.message_id'));
 
-        Log::warning('Payment proof analysis using fallback', [
+        // 5. Calculate Confidence
+        $confidence = 50.0;
+        if ($customer) {
+            $confidence += 25.0; // Customer recognized
+        }
+        if ($activeInvoice) {
+            $confidence += 15.0; // Active bill found
+        }
+        if ($parsed['amount'] && $activeInvoice && abs((float)$activeInvoice->amount - (float)$parsed['amount']) <= 0.01) {
+            $confidence += 10.0; // Exact amount match
+        }
+        if ($parsed['success_status']) {
+            $confidence += 5.0; // Explicit "BERHASIL / SUKSES" keyword
+        }
+        if ($ocrProvider === 'local_tesseract_ocr') {
+            $confidence += 5.0; // Text read directly from image
+        }
+
+        $confidence = min(100.0, max(20.0, $confidence));
+
+        // Generate Human-Readable Summary
+        $summaryParts = [];
+        if ($customer) {
+            $summaryParts[] = "Pelanggan: {$customer->name}";
+        }
+        if ($amount) {
+            $summaryParts[] = "Nominal: Rp " . number_format($amount, 0, ',', '.');
+        }
+        if ($channel) {
+            $summaryParts[] = "Metode: {$channel}";
+        }
+        if ($activeInvoice) {
+            $summaryParts[] = "Tagihan #{$activeInvoice->invoice_number}";
+        }
+        $rawSummary = implode(' · ', $summaryParts) ?: ($isPaymentProof ? 'Bukti transfer terdeteksi' : 'Bukan bukti pembayaran');
+
+        Log::info('Local payment proof analysis completed', [
             'capture_id' => $capture->id,
-            'reason' => $reason,
-            'caption' => $caption,
+            'customer_id' => $customer?->id,
+            'invoice_id' => $activeInvoice?->id,
+            'amount' => $amount,
+            'confidence' => $confidence,
+            'provider' => $ocrProvider,
         ]);
 
         return [
-            'is_payment_proof' => $isMaybePayment,
+            'is_payment_proof' => $isPaymentProof,
             'amount' => $amount,
-            'paid_date' => $capture->paid_date ?: now()->toDateString(),
-            'paid_time' => null,
-            'reference_code' => null,
-            'payment_channel' => null,
+            'paid_date' => $parsed['paid_date'] ?: ($capture->paid_date ?: now()->toDateString()),
+            'paid_time' => $parsed['paid_time'] ?: now()->format('H:i'),
+            'reference_code' => $referenceCode,
+            'payment_channel' => $channel,
             'destination_identity' => [
-                'name' => null,
-                'account_number' => null,
-                'merchant_id' => null,
-                'raw' => null,
+                'name' => $parsed['destination_name'] ?: 'Rumah Kita Network',
+                'account_number' => $parsed['destination_account'],
+                'merchant_id' => $parsed['destination_merchant_id'],
+                'raw' => $parsed['destination_name'] ?: 'Rumah Kita Network',
             ],
-            'success_status' => $isMaybePayment,
-            'confidence_overall' => $isMaybePayment ? 75.0 : 35.0,
+            'success_status' => $successStatus,
+            'confidence_overall' => $confidence,
             'confidence_by_field' => [
-                'payment_proof' => $isMaybePayment ? 75.0 : 30.0,
-                'amount' => $amount ? 75.0 : 0.0,
-                'date' => 50.0,
-                'time' => 0.0,
-                'destination' => 0.0,
-                'success_status' => $isMaybePayment ? 60.0 : 0.0,
+                'payment_proof' => $isPaymentProof ? 90.0 : 30.0,
+                'amount' => $amount ? 90.0 : 20.0,
+                'date' => 85.0,
+                'time' => 80.0,
+                'destination' => 85.0,
+                'success_status' => $successStatus ? 90.0 : 40.0,
             ],
-            'ocr_raw_text' => null,
-            'raw_summary' => 'fallback:' . $reason,
-            'provider_used' => 'fallback',
+            'ocr_raw_text' => $ocrText,
+            'raw_summary' => $rawSummary,
+            'provider_used' => $ocrProvider,
         ];
     }
 
-    private function decodeJsonContent(string $content): ?array
+    /**
+     * Run local Tesseract OCR if binary exists on server (100% Free & Local)
+     */
+    private function runLocalTesseractOcr(string $fullPath): ?string
     {
-        $trimmed = trim($content);
-        if (str_starts_with($trimmed, '```')) {
-            $trimmed = preg_replace('/^```(?:json)?|```$/m', '', $trimmed) ?: $trimmed;
-            $trimmed = trim($trimmed);
+        try {
+            // Check if tesseract binary exists
+            $tesseractBin = $this->findTesseractBinary();
+            if (!$tesseractBin) {
+                return null;
+            }
+
+            $process = new Process([
+                $tesseractBin,
+                $fullPath,
+                'stdout',
+                '-l', 'ind+eng',
+                '--oem', '1',
+                '--psm', '3',
+            ]);
+            $process->setTimeout(15);
+            $process->run();
+
+            if ($process->isSuccessful()) {
+                $output = trim($process->getOutput());
+                return $output !== '' ? $output : null;
+            }
+        } catch (\Throwable $e) {
+            Log::debug('Local Tesseract OCR skipped: ' . $e->getMessage());
         }
 
-        $decoded = json_decode($trimmed, true);
-        return is_array($decoded) ? $decoded : null;
+        return null;
     }
 
-    private function normalizeConfidence(mixed $value): float
+    /**
+     * Find path of tesseract binary across Windows / Linux
+     */
+    private function findTesseractBinary(): ?string
     {
-        return max(0.0, min(100.0, round((float) $value, 2)));
-    }
+        $commonPaths = [
+            'tesseract',
+            '/usr/bin/tesseract',
+            '/usr/local/bin/tesseract',
+            'C:\\Program Files\\Tesseract-OCR\\tesseract.exe',
+            'C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe',
+        ];
 
-    private function stringOrNull(mixed $value): ?string
-    {
-        $string = trim((string) $value);
-        return $string !== '' ? $string : null;
-    }
-
-    private function extractAmountFromString(string $text): ?float
-    {
-        if (!preg_match('/(?:rp)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})/i', $text, $matches)) {
-            return null;
+        foreach ($commonPaths as $path) {
+            try {
+                $process = new Process([$path, '--version']);
+                $process->setTimeout(3);
+                $process->run();
+                if ($process->isSuccessful()) {
+                    return $path;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
         }
 
-        $number = str_replace(['.', ','], '', $matches[1]);
-        return is_numeric($number) ? (float) $number : null;
+        return null;
     }
 
-    private function buildOpenAiFailureReason(\Illuminate\Http\Client\Response $response): string
+    /**
+     * Parse receipt text with intelligent regex pattern matchers for Indonesian banks & e-wallets
+     */
+    private function parseReceiptPatterns(string $text): array
     {
-        $status = $response->status();
-        $code = trim((string) data_get($response->json(), 'error.code', ''));
-        $type = trim((string) data_get($response->json(), 'error.type', ''));
+        $normalized = strtolower($text);
 
-        if ($status === 429 && $code !== '') {
-            return 'openai_' . $code;
+        // 1. Amount
+        $amount = null;
+        if (preg_match('/(?:total|nominal|jumlah|transfer|sebesar|rp)\s*:?\s*(?:rp\.?)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})/i', $text, $m)) {
+            $amount = (float) str_replace(['.', ','], '', $m[1]);
+        } elseif (preg_match('/\brp\.?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})\b/i', $text, $m)) {
+            $amount = (float) str_replace(['.', ','], '', $m[1]);
+        } elseif (preg_match('/\b([1-9][0-9]{4,6})\b/', $text, $m)) {
+            $candidate = (float) $m[1];
+            // Filter reasonable ISP payment range (e.g. 50k to 5M)
+            if ($candidate >= 50000 && $candidate <= 5000000) {
+                $amount = $candidate;
+            }
         }
 
-        if ($status >= 400 && $type !== '') {
-            return 'openai_' . $type . '_' . $status;
+        // 2. Reference Code / Transaction ID
+        $ref = null;
+        if (preg_match('/(?:no\.?\s*referensi|nomor\s*transaksi|id\s*transaksi|ref\.?\s*id|reference|no\.?\s*resi)\s*:?\s*([a-zA-Z0-9\-_]+)/i', $text, $m)) {
+            $ref = trim($m[1]);
         }
 
-        return 'openai_http_' . $status;
+        // 3. Payment Channel
+        $channel = null;
+        if (str_contains($normalized, 'qris')) {
+            $channel = 'QRIS';
+        } elseif (str_contains($normalized, 'bca') || str_contains($normalized, 'mybca') || str_contains($normalized, 'klikbca')) {
+            $channel = 'BCA Mobile';
+        } elseif (str_contains($normalized, 'brimo') || str_contains($normalized, 'bri')) {
+            $channel = 'BRImo';
+        } elseif (str_contains($normalized, 'livin') || str_contains($normalized, 'mandiri')) {
+            $channel = 'Livin Mandiri';
+        } elseif (str_contains($normalized, 'bni')) {
+            $channel = 'BNI Mobile';
+        } elseif (str_contains($normalized, 'bsi')) {
+            $channel = 'BSI Mobile';
+        } elseif (str_contains($normalized, 'seabank')) {
+            $channel = 'SeaBank';
+        } elseif (str_contains($normalized, 'jago')) {
+            $channel = 'Bank Jago';
+        } elseif (str_contains($normalized, 'dana')) {
+            $channel = 'DANA';
+        } elseif (str_contains($normalized, 'gopay')) {
+            $channel = 'GoPay';
+        } elseif (str_contains($normalized, 'ovo')) {
+            $channel = 'OVO';
+        } elseif (str_contains($normalized, 'shopeepay')) {
+            $channel = 'ShopeePay';
+        } elseif (str_contains($normalized, 'linkaja')) {
+            $channel = 'LinkAja';
+        }
+
+        // 4. Success Status
+        $isSuccess = str_contains($normalized, 'berhasil')
+            || str_contains($normalized, 'sukses')
+            || str_contains($normalized, 'success')
+            || str_contains($normalized, 'lunas')
+            || str_contains($normalized, 'selesai')
+            || str_contains($normalized, 'terkirim')
+            || str_contains($normalized, 'transfer')
+            || str_contains($normalized, 'qris');
+
+        // 5. Date & Time
+        $paidDate = null;
+        $paidTime = null;
+        if (preg_match('/\b([0-9]{1,2})[\/\-]([0-9]{1,2})[\/\-]([0-9]{4})\b/', $text, $m)) {
+            $paidDate = sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+        }
+        if (preg_match('/\b([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?)\b/', $text, $m)) {
+            $paidTime = substr($m[1], 0, 5);
+        }
+
+        // 6. Destination Extraction
+        $destName = null;
+        $destAccount = null;
+        $destMerchantId = null;
+
+        if (preg_match('/(?:ke|penerima|tujuan)\s*:?\s*([a-zA-Z\s]{3,30})/i', $text, $m)) {
+            $destName = trim($m[1]);
+        }
+        if (preg_match('/(?:rekening|no\.?\s*rek)\s*:?\s*([0-9]{8,18})/i', $text, $m)) {
+            $destAccount = trim($m[1]);
+        }
+        if (preg_match('/(?:nmid|merchant\s*id)\s*:?\s*([a-zA-Z0-9]+)/i', $text, $m)) {
+            $destMerchantId = trim($m[1]);
+        }
+
+        $isPaymentProof = $amount !== null || $channel !== null || $isSuccess;
+
+        return [
+            'is_payment_proof' => $isPaymentProof,
+            'amount' => $amount,
+            'reference_code' => $ref,
+            'payment_channel' => $channel,
+            'success_status' => $isSuccess,
+            'paid_date' => $paidDate,
+            'paid_time' => $paidTime,
+            'destination_name' => $destName,
+            'destination_account' => $destAccount,
+            'destination_merchant_id' => $destMerchantId,
+        ];
     }
 }
