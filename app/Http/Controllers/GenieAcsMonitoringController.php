@@ -18,7 +18,7 @@ class GenieAcsMonitoringController extends Controller
     }
 
     /**
-     * Get all devices summary with fast projection, filtering, and stats
+     * Get all devices & customers summary with fast projection, filtering, and stats
      */
     public function devices(Request $request)
     {
@@ -34,15 +34,17 @@ class GenieAcsMonitoringController extends Controller
             if ($statusFilter === 'online') {
                 $devices = $devices->where('is_online', true);
             } elseif ($statusFilter === 'offline') {
-                $devices = $devices->where('is_online', false);
+                $devices = $devices->where('has_genieacs', true)->where('is_online', false);
+            } elseif ($statusFilter === 'with_acs') {
+                $devices = $devices->where('has_genieacs', true)->where('is_unassigned', false);
+            } elseif ($statusFilter === 'without_acs') {
+                $devices = $devices->where('has_genieacs', false);
+            } elseif ($statusFilter === 'unassigned') {
+                $devices = $devices->where('is_unassigned', true);
             } elseif ($statusFilter === 'critical_rx') {
                 $devices = $devices->where('rx_status', 'critical');
             } elseif ($statusFilter === 'warning_rx') {
                 $devices = $devices->where('rx_status', 'warning');
-            } elseif ($statusFilter === 'unmatched') {
-                $devices = $devices->whereNull('customer');
-            } elseif ($statusFilter === 'matched') {
-                $devices = $devices->whereNotNull('customer');
             }
 
             // 2. Filter by search query
@@ -56,6 +58,8 @@ class GenieAcsMonitoringController extends Controller
                     $ssid = strtolower((string) ($d['ssid'] ?? ''));
                     $custName = strtolower((string) ($d['customer']['name'] ?? ''));
                     $custPhone = strtolower((string) ($d['customer']['phone'] ?? ''));
+                    $custAddr = strtolower((string) ($d['customer']['address'] ?? ''));
+                    $pkgName = strtolower((string) ($d['customer']['package_name'] ?? ''));
 
                     return str_contains($devId, $search)
                         || str_contains($sn, $search)
@@ -64,7 +68,9 @@ class GenieAcsMonitoringController extends Controller
                         || str_contains($mac, $search)
                         || str_contains($ssid, $search)
                         || str_contains($custName, $search)
-                        || str_contains($custPhone, $search);
+                        || str_contains($custPhone, $search)
+                        || str_contains($custAddr, $search)
+                        || str_contains($pkgName, $search);
                 });
             }
 

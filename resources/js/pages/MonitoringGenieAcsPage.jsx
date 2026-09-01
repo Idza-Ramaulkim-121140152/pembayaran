@@ -12,7 +12,10 @@ import {
     FileText,
     HelpCircle,
     Laptop,
+    Link as LinkIcon,
     Lock,
+    MapPin,
+    Phone,
     Power,
     Radio,
     RefreshCw,
@@ -23,12 +26,13 @@ import {
     Sparkles,
     User,
     UserCheck,
+    UserMinus,
+    UserPlus,
     Users,
     Wifi,
     WifiOff,
     X,
     ExternalLink,
-    Phone,
 } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import genieAcsService from '../services/genieAcsService';
@@ -38,10 +42,13 @@ export default function MonitoringGenieAcsPage() {
     const [refreshing, setRefreshing] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [stats, setStats] = useState({
-        total_devices: 0,
+        total_customers: 0,
+        total_devices_in_acs: 0,
+        customers_with_acs: 0,
+        customers_without_acs: 0,
         online_devices: 0,
         offline_devices: 0,
-        matched_customers: 0,
+        unassigned_devices: 0,
         critical_rx_count: 0,
         warning_rx_count: 0,
         cached_at: null,
@@ -52,7 +59,7 @@ export default function MonitoringGenieAcsPage() {
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'online' | 'offline' | 'critical_rx' | 'unmatched'
+    const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'with_acs' | 'without_acs' | 'online' | 'offline' | 'critical_rx' | 'unassigned'
 
     // Modal: Ganti WiFi
     const [wifiModalDevice, setWifiModalDevice] = useState(null);
@@ -69,14 +76,20 @@ export default function MonitoringGenieAcsPage() {
     const [rebootModalDevice, setRebootModalDevice] = useState(null);
     const [rebooting, setRebooting] = useState(false);
 
-    // Modal: Tautkan Pelanggan Manual
+    // Modal: Tautkan Pelanggan Manual (Untuk Router yang belum tertaut)
     const [assignModalDevice, setAssignModalDevice] = useState(null);
     const [customerQuery, setCustomerQuery] = useState('');
     const [customerResults, setCustomerResults] = useState([]);
     const [searchingCustomer, setSearchingCustomer] = useState(false);
     const [assigningCustomer, setAssigningCustomer] = useState(false);
 
-    // Fetch Devices
+    // Modal: Tautkan Router ke Pelanggan (Untuk Pelanggan yang belum punya GenieACS)
+    const [linkRouterCustomer, setLinkRouterCustomer] = useState(null);
+    const [availableAcsDevices, setAvailableAcsDevices] = useState([]);
+    const [selectedDeviceId, setSelectedDeviceId] = useState('');
+    const [linkingRouter, setLinkingRouter] = useState(false);
+
+    // Fetch Devices & Customers
     const loadDevices = async (fresh = false) => {
         try {
             setError('');
@@ -95,7 +108,7 @@ export default function MonitoringGenieAcsPage() {
             setStats(response.data?.stats || {});
             setDevices(response.data?.devices || []);
         } catch (err) {
-            setError(err.response?.data?.message || err.message || 'Gagal memuat monitoring perangkat GenieACS.');
+            setError(err.response?.data?.message || err.message || 'Gagal memuat data monitoring perangkat GenieACS.');
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -249,6 +262,36 @@ export default function MonitoringGenieAcsPage() {
         }
     };
 
+    // Open Link Router Modal (For customer without GenieACS)
+    const handleOpenLinkRouterModal = (row) => {
+        setLinkRouterCustomer(row.customer);
+        // Find unassigned ACS devices
+        const unassigned = devices.filter((d) => d.is_unassigned && d.device_id);
+        setAvailableAcsDevices(unassigned);
+        setSelectedDeviceId(unassigned[0]?.device_id || '');
+    };
+
+    // Submit Link Router to Customer
+    const handleLinkRouterSubmit = async (e) => {
+        e.preventDefault();
+        if (!linkRouterCustomer || !selectedDeviceId) return;
+
+        try {
+            setLinkingRouter(true);
+            setError('');
+            setMessage('');
+
+            const res = await genieAcsService.assignCustomer(selectedDeviceId, linkRouterCustomer.id);
+            setMessage(res.data?.message || 'Router berhasil ditautkan ke pelanggan.');
+            setLinkRouterCustomer(null);
+            loadDevices(true);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menautkan router ke pelanggan.');
+        } finally {
+            setLinkingRouter(false);
+        }
+    };
+
     const filteredDevices = useMemo(() => {
         return devices;
     }, [devices]);
@@ -260,10 +303,10 @@ export default function MonitoringGenieAcsPage() {
                 <div>
                     <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
                         <Router className="h-8 w-8 text-emerald-600" />
-                        Monitoring Perangkat (GenieACS)
+                        Monitoring Perangkat & Pelanggan (GenieACS)
                     </h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Manajemen TR-069 ONT Router pelanggan, pemantauan status online, level redaman optik (RX Power), WiFi aktif, klien terhubung, dan ganti sandi jarak jauh.
+                        Sinkronisasi data pelanggan dengan TR-069 GenieACS. Pantau pelanggan yang sudah terhubung atau belum memiliki router ACS, status online, redaman optik (RX Power), dan kelola WiFi jarak jauh.
                     </p>
                 </div>
 
@@ -314,60 +357,77 @@ export default function MonitoringGenieAcsPage() {
             )}
 
             {/* Stats Summary Cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+                {/* Total Pelanggan */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Router</p>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Pelanggan</p>
                         <div className="rounded-xl bg-blue-50 p-2 text-blue-600">
-                            <Router size={20} />
+                            <Users size={18} />
                         </div>
                     </div>
-                    <p className="mt-2 text-2xl font-bold text-gray-900">{stats.total_devices || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Terdaftar di GenieACS</p>
+                    <p className="mt-2 text-2xl font-bold text-gray-900">{stats.total_customers || 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Database Pelanggan</p>
                 </div>
 
+                {/* Ada GenieACS */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ada GenieACS</p>
+                        <div className="rounded-xl bg-purple-50 p-2 text-purple-600">
+                            <UserCheck size={18} />
+                        </div>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold text-purple-700">{stats.customers_with_acs || 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Router Terdaftar</p>
+                </div>
+
+                {/* Belum Ada GenieACS */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Belum Ada ACS</p>
+                        <div className="rounded-xl bg-amber-50 p-2 text-amber-600">
+                            <UserMinus size={18} />
+                        </div>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold text-amber-600">{stats.customers_without_acs || 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Perlu Didaftarkan</p>
+                </div>
+
+                {/* Router Online */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Router Online</p>
                         <div className="rounded-xl bg-emerald-50 p-2 text-emerald-600">
-                            <Wifi size={20} />
+                            <Wifi size={18} />
                         </div>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-emerald-600">{stats.online_devices || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Inform dalam 15 menit</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Inform &lt; 15 menit</p>
                 </div>
 
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Router Offline</p>
-                        <div className="rounded-xl bg-gray-100 p-2 text-gray-600">
-                            <WifiOff size={20} />
-                        </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-bold text-gray-700">{stats.offline_devices || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Tidak ada kontak &gt; 15 menit</p>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Tertaut Pelanggan</p>
-                        <div className="rounded-xl bg-purple-50 p-2 text-purple-600">
-                            <UserCheck size={20} />
-                        </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-bold text-purple-700">{stats.matched_customers || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Dari database sistem</p>
-                </div>
-
+                {/* Redaman Kritis */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Redaman Kritis</p>
                         <div className="rounded-xl bg-rose-50 p-2 text-rose-600">
-                            <AlertCircle size={20} />
+                            <AlertCircle size={18} />
                         </div>
                     </div>
                     <p className="mt-2 text-2xl font-bold text-rose-600">{stats.critical_rx_count || 0}</p>
                     <p className="mt-1 text-[11px] text-gray-400">Sinyal &lt; -27 dBm</p>
+                </div>
+
+                {/* Router Belum Tertaut */}
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">ACS Belum Tertaut</p>
+                        <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600">
+                            <Router size={18} />
+                        </div>
+                    </div>
+                    <p className="mt-2 text-2xl font-bold text-indigo-700">{stats.unassigned_devices || 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Di ACS Tanpa Pelanggan</p>
                 </div>
             </div>
 
@@ -377,11 +437,13 @@ export default function MonitoringGenieAcsPage() {
                     {/* Status Tabs */}
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
                         {[
-                            { key: 'all', label: 'Semua Router', icon: Router },
-                            { key: 'online', label: 'Online', icon: Wifi },
-                            { key: 'offline', label: 'Offline', icon: WifiOff },
-                            { key: 'critical_rx', label: 'Redaman Kritis', icon: AlertTriangle },
-                            { key: 'unmatched', label: 'Belum Tertaut', icon: User },
+                            { key: 'all', label: `Semua (${(stats.total_customers || 0) + (stats.unassigned_devices || 0)})`, icon: Users },
+                            { key: 'with_acs', label: `Ada GenieACS (${stats.customers_with_acs || 0})`, icon: UserCheck },
+                            { key: 'without_acs', label: `Belum Ada GenieACS (${stats.customers_without_acs || 0})`, icon: UserMinus },
+                            { key: 'online', label: `Online (${stats.online_devices || 0})`, icon: Wifi },
+                            { key: 'offline', label: `Offline (${stats.offline_devices || 0})`, icon: WifiOff },
+                            { key: 'critical_rx', label: `Redaman Kritis (${stats.critical_rx_count || 0})`, icon: AlertTriangle },
+                            { key: 'unassigned', label: `ACS Belum Tertaut (${stats.unassigned_devices || 0})`, icon: Router },
                         ].map((t) => {
                             const Icon = t.icon;
                             const isActive = statusFilter === t.key;
@@ -410,25 +472,25 @@ export default function MonitoringGenieAcsPage() {
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Cari pelanggan, PPPoE, SSID, SN, IP..."
+                            placeholder="Cari nama, WA, PPPoE, SSID, SN, IP..."
                             className="w-full rounded-xl border border-gray-200 bg-gray-50/50 pl-10 pr-4 py-2 text-xs focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                         />
                     </form>
                 </div>
             </div>
 
-            {/* Devices List Table */}
+            {/* Unified Devices & Customers List Table */}
             {loading ? (
                 <div className="flex min-h-[300px] items-center justify-center rounded-2xl bg-white p-12 text-center shadow-sm">
                     <div className="flex flex-col items-center gap-3">
                         <RefreshCw className="h-8 w-8 animate-spin text-emerald-600" />
-                        <p className="text-sm font-medium text-gray-500">Memuat data router GenieACS...</p>
+                        <p className="text-sm font-medium text-gray-500">Memuat sinkronisasi pelanggan dan GenieACS...</p>
                     </div>
                 </div>
             ) : filteredDevices.length === 0 ? (
                 <div className="flex min-h-[250px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center shadow-sm">
                     <Router className="h-12 w-12 text-gray-300" />
-                    <p className="mt-3 text-base font-semibold text-gray-700">Tidak ada perangkat yang sesuai filter.</p>
+                    <p className="mt-3 text-base font-semibold text-gray-700">Tidak ada data yang sesuai filter.</p>
                     <p className="mt-1 text-xs text-gray-400">Coba ubah kata kunci pencarian atau tab filter di atas.</p>
                 </div>
             ) : (
@@ -437,63 +499,37 @@ export default function MonitoringGenieAcsPage() {
                         <table className="w-full text-left text-xs text-gray-600">
                             <thead className="bg-gray-50/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th className="px-4 py-3.5">Status & Device</th>
-                                    <th className="px-4 py-3.5">Pelanggan Terhubung</th>
-                                    <th className="px-4 py-3.5">IP & PPPoE</th>
+                                    <th className="px-4 py-3.5">Pelanggan</th>
+                                    <th className="px-4 py-3.5">Status GenieACS</th>
+                                    <th className="px-4 py-3.5">Perangkat & IP</th>
                                     <th className="px-4 py-3.5">Redaman (RX Power)</th>
                                     <th className="px-4 py-3.5">WiFi & Klien</th>
                                     <th className="px-4 py-3.5 text-right">Aksi Jarak Jauh</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {filteredDevices.map((dev) => {
-                                    const isOnline = dev.is_online;
-                                    const cust = dev.customer;
-                                    const rx = dev.rx_power;
+                                {filteredDevices.map((row, idx) => {
+                                    const hasAcs = row.has_genieacs;
+                                    const isUnassigned = row.is_unassigned;
+                                    const isOnline = row.is_online;
+                                    const cust = row.customer;
+                                    const rx = row.rx_power;
 
                                     return (
-                                        <tr key={dev.device_id} className="hover:bg-gray-50/70 transition">
-                                            {/* Status & Device ID */}
-                                            <td className="px-4 py-3.5">
-                                                <div className="flex items-start gap-2.5">
-                                                    <div className="mt-1 shrink-0">
-                                                        {isOnline ? (
-                                                            <span className="relative flex h-3 w-3">
-                                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                                                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex rounded-full h-3 w-3 bg-gray-300"></span>
-                                                        )}
-                                                    </div>
-                                                    <div>
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span className="font-bold text-gray-900">{dev.product_class || 'ONT Router'}</span>
-                                                            <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                                {dev.manufacturer || 'ONT'}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-[11px] font-mono text-gray-500 mt-0.5" title={dev.device_id}>
-                                                            SN: <strong>{dev.serial_number || dev.device_id?.split('-')[2] || '-'}</strong>
-                                                        </p>
-                                                        {dev.mac_address && (
-                                                            <p className="text-[10px] font-mono text-gray-400">
-                                                                MAC: {dev.mac_address}
-                                                            </p>
-                                                        )}
-                                                        <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
-                                                            <Clock size={10} />
-                                                            Inform: {dev.last_inform_at ? dev.last_inform_at.slice(0, 16).replace('T', ' ') : '-'}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </td>
-
-                                            {/* Customer Info */}
+                                        <tr
+                                            key={row.device_id || `cust-${cust?.id || idx}`}
+                                            className={`transition ${!hasAcs ? 'bg-amber-50/20 hover:bg-amber-50/50' : 'hover:bg-gray-50/70'}`}
+                                        >
+                                            {/* Pelanggan */}
                                             <td className="px-4 py-3.5">
                                                 {cust ? (
                                                     <div>
-                                                        <p className="font-bold text-gray-900 text-xs">{cust.name}</p>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="font-bold text-gray-900 text-xs">{cust.name}</span>
+                                                            {!cust.is_active && (
+                                                                <span className="text-[9px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-semibold">Nonaktif</span>
+                                                            )}
+                                                        </div>
                                                         <p className="text-[11px] text-gray-500 flex items-center gap-1 mt-0.5">
                                                             <span>📱 {cust.phone || '-'}</span>
                                                             {cust.phone && (
@@ -502,129 +538,207 @@ export default function MonitoringGenieAcsPage() {
                                                                     target="_blank"
                                                                     rel="noreferrer"
                                                                     className="text-emerald-600 hover:text-emerald-700"
-                                                                    title="Hubungi WhatsApp"
+                                                                    title="Chat WhatsApp"
                                                                 >
                                                                     <Phone size={11} />
                                                                 </a>
                                                             )}
                                                         </p>
-                                                        <span className="inline-block mt-1 text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.2">
-                                                            Paket: {cust.package_name}
-                                                        </span>
+                                                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                                                            <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.2">
+                                                                {cust.package_name || 'Paket -'}
+                                                            </span>
+                                                            {cust.pppoe_username && (
+                                                                <span className="text-[10px] font-mono text-gray-600 bg-gray-100 px-1.5 py-0.2 rounded">
+                                                                    PPPoE: {cust.pppoe_username}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {cust.address && (
+                                                            <p className="text-[10px] text-gray-400 mt-1 truncate max-w-xs flex items-center gap-1">
+                                                                <MapPin size={10} className="shrink-0" />
+                                                                {cust.address}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                 ) : (
                                                     <div>
-                                                        <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 inline-block">
-                                                            Belum Tertaut
+                                                        <span className="text-[11px] font-semibold text-purple-800 bg-purple-50 border border-purple-200 rounded px-2 py-0.5 inline-block">
+                                                            Router di ACS Tanpa Pelanggan
                                                         </span>
                                                         <button
                                                             type="button"
                                                             onClick={() => {
-                                                                setAssignModalDevice(dev);
-                                                                setCustomerQuery(dev.pppoe_username || '');
-                                                                handleSearchCustomers(dev.pppoe_username || '');
+                                                                setAssignModalDevice(row);
+                                                                setCustomerQuery(row.pppoe_username || '');
+                                                                handleSearchCustomers(row.pppoe_username || '');
                                                             }}
                                                             className="block mt-1 text-[11px] font-bold text-blue-600 hover:underline"
                                                         >
-                                                            + Hubungkan Pelanggan
+                                                            + Tautkan ke Pelanggan
                                                         </button>
                                                     </div>
                                                 )}
                                             </td>
 
-                                            {/* IP & PPPoE */}
+                                            {/* Status GenieACS */}
                                             <td className="px-4 py-3.5">
-                                                <div>
-                                                    <p className="font-bold font-mono text-gray-800">{dev.pppoe_username || '-'}</p>
-                                                    <p className="font-mono text-[11px] text-gray-500 mt-0.5">
-                                                        IP: <strong>{dev.ip_address || '-'}</strong>
-                                                    </p>
-                                                </div>
-                                            </td>
-
-                                            {/* RX Optical Power */}
-                                            <td className="px-4 py-3.5">
-                                                {rx !== null ? (
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span
-                                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
-                                                                dev.rx_status === 'normal'
-                                                                    ? 'bg-emerald-100 text-emerald-800'
-                                                                    : dev.rx_status === 'warning'
-                                                                    ? 'bg-amber-100 text-amber-800'
-                                                                    : 'bg-rose-100 text-rose-800'
-                                                            }`}
-                                                        >
-                                                            <Radio size={12} />
-                                                            {rx} dBm
-                                                        </span>
+                                                {hasAcs ? (
+                                                    <div className="space-y-1">
+                                                        <div className="flex items-center gap-1.5">
+                                                            {isOnline ? (
+                                                                <>
+                                                                    <span className="relative flex h-2.5 w-2.5">
+                                                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                                                    </span>
+                                                                    <span className="font-bold text-emerald-700 text-xs">Online</span>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <span className="inline-flex rounded-full h-2.5 w-2.5 bg-gray-300"></span>
+                                                                    <span className="font-semibold text-gray-500 text-xs">Offline</span>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-[10px] text-gray-400 flex items-center gap-1">
+                                                            <Clock size={10} />
+                                                            {row.last_inform_at ? row.last_inform_at.slice(0, 16).replace('T', ' ') : '-'}
+                                                        </p>
                                                     </div>
                                                 ) : (
-                                                    <span className="text-gray-400 text-[11px]">Tidak Terbaca</span>
+                                                    <div>
+                                                        <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] font-semibold text-amber-800">
+                                                            <AlertTriangle size={12} className="text-amber-600" />
+                                                            Belum Ada GenieACS
+                                                        </span>
+                                                        <p className="text-[10px] text-gray-400 mt-1">
+                                                            Router belum didaftarkan di ACS
+                                                        </p>
+                                                    </div>
                                                 )}
                                             </td>
 
-                                            {/* WiFi & Clients */}
+                                            {/* Perangkat & IP */}
                                             <td className="px-4 py-3.5">
-                                                <div>
-                                                    <p className="font-bold text-gray-900 flex items-center gap-1">
-                                                        <Wifi size={13} className="text-emerald-600" />
-                                                        {dev.ssid || 'SSID Default'}
-                                                    </p>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleOpenDetailModal(dev)}
-                                                        className="mt-1 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition"
-                                                    >
-                                                        <Users size={12} />
-                                                        {dev.wifi_clients_count} Klien Terhubung
-                                                    </button>
-                                                </div>
+                                                {hasAcs ? (
+                                                    <div>
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="font-bold text-gray-900">{row.product_class || 'ONT Router'}</span>
+                                                            <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                                {row.manufacturer || 'ONT'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-[11px] font-mono text-gray-500 mt-0.5">
+                                                            SN: <strong>{row.serial_number || row.device_id?.split('-')[2] || '-'}</strong>
+                                                        </p>
+                                                        {row.ip_address && (
+                                                            <p className="text-[10px] font-mono text-gray-600 mt-0.5">
+                                                                IP: <strong>{row.ip_address}</strong>
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-gray-400 text-[11px] italic">-</span>
+                                                )}
                                             </td>
 
-                                            {/* Action Buttons */}
+                                            {/* Optical RX Power */}
+                                            <td className="px-4 py-3.5">
+                                                {hasAcs && rx !== null ? (
+                                                    <span
+                                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+                                                            row.rx_status === 'normal'
+                                                                ? 'bg-emerald-100 text-emerald-800'
+                                                                : row.rx_status === 'warning'
+                                                                ? 'bg-amber-100 text-amber-800'
+                                                                : 'bg-rose-100 text-rose-800'
+                                                        }`}
+                                                    >
+                                                        <Radio size={12} />
+                                                        {rx} dBm
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-gray-400 text-[11px]">-</span>
+                                                )}
+                                            </td>
+
+                                            {/* WiFi & Klien */}
+                                            <td className="px-4 py-3.5">
+                                                {hasAcs ? (
+                                                    <div>
+                                                        <p className="font-bold text-gray-900 flex items-center gap-1">
+                                                            <Wifi size={13} className="text-emerald-600" />
+                                                            {row.ssid || 'SSID Default'}
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenDetailModal(row)}
+                                                            className="mt-1 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition"
+                                                        >
+                                                            <Users size={12} />
+                                                            {row.wifi_clients_count} Klien Terhubung
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-gray-400 text-[11px]">-</span>
+                                                )}
+                                            </td>
+
+                                            {/* Aksi Jarak Jauh */}
                                             <td className="px-4 py-3.5 text-right">
-                                                <div className="flex items-center justify-end gap-1.5">
-                                                    {/* Ganti Sandi WiFi */}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleOpenWifiModal(dev)}
-                                                        title="Ganti Sandi & SSID WiFi"
-                                                        className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 transition"
-                                                    >
-                                                        <Lock size={15} />
-                                                    </button>
+                                                {hasAcs ? (
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        {/* Ganti Sandi WiFi */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenWifiModal(row)}
+                                                            title="Ganti Sandi & SSID WiFi"
+                                                            className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 transition"
+                                                        >
+                                                            <Lock size={15} />
+                                                        </button>
 
-                                                    {/* Detail & Klien */}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleOpenDetailModal(dev)}
-                                                        title="Detail Perangkat & Klien"
-                                                        className="rounded-xl border border-gray-200 bg-white p-2 text-gray-700 hover:bg-gray-50 transition"
-                                                    >
-                                                        <Activity size={15} />
-                                                    </button>
+                                                        {/* Detail & Klien */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenDetailModal(row)}
+                                                            title="Detail Perangkat & Klien"
+                                                            className="rounded-xl border border-gray-200 bg-white p-2 text-gray-700 hover:bg-gray-50 transition"
+                                                        >
+                                                            <Activity size={15} />
+                                                        </button>
 
-                                                    {/* Reboot Router */}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setRebootModalDevice(dev)}
-                                                        title="Reboot Router ONT"
-                                                        className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 transition"
-                                                    >
-                                                        <Power size={15} />
-                                                    </button>
+                                                        {/* Reboot Router */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setRebootModalDevice(row)}
+                                                            title="Reboot Router ONT"
+                                                            className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 transition"
+                                                        >
+                                                            <Power size={15} />
+                                                        </button>
 
-                                                    {/* Refresh Parameter */}
+                                                        {/* Refresh Parameter */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRefreshParam(row.device_id)}
+                                                            title="Sync / Refresh Parameter"
+                                                            className="rounded-xl border border-gray-200 bg-white p-2 text-gray-500 hover:bg-gray-50 transition"
+                                                        >
+                                                            <RefreshCw size={15} />
+                                                        </button>
+                                                    </div>
+                                                ) : (
                                                     <button
                                                         type="button"
-                                                        onClick={() => handleRefreshParam(dev.device_id)}
-                                                        title="Sync / Refresh Parameter"
-                                                        className="rounded-xl border border-gray-200 bg-white p-2 text-gray-500 hover:bg-gray-50 transition"
+                                                        onClick={() => handleOpenLinkRouterModal(row)}
+                                                        className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 transition shadow-sm"
                                                     >
-                                                        <RefreshCw size={15} />
+                                                        <LinkIcon size={13} />
+                                                        + Tautkan Router ACS
                                                     </button>
-                                                </div>
+                                                )}
                                             </td>
                                         </tr>
                                     );
@@ -846,14 +960,21 @@ export default function MonitoringGenieAcsPage() {
                 )}
             </Modal>
 
-            {/* MODAL 4: TAUTKAN PELANGGAN MANUAL */}
+            {/* MODAL 4: TAUTKAN PELANGGAN MANUAL KE ROUTER ACS */}
             <Modal
                 isOpen={Boolean(assignModalDevice)}
                 onClose={() => setAssignModalDevice(null)}
-                title="Tautkan Perangkat ke Pelanggan"
+                title="Tautkan Router ke Pelanggan"
             >
                 {assignModalDevice && (
                     <div className="space-y-4 text-xs">
+                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
+                            <p className="font-bold text-gray-900">Device: {assignModalDevice.product_class}</p>
+                            <p className="text-gray-500 font-mono text-[11px]">
+                                SN: {assignModalDevice.serial_number || assignModalDevice.device_id} · MAC: {assignModalDevice.mac_address || '-'}
+                            </p>
+                        </div>
+
                         <div>
                             <label className="block font-bold text-gray-700 mb-1">
                                 Cari Pelanggan (Nama / Nomor WA / Username PPPoE)
@@ -910,6 +1031,76 @@ export default function MonitoringGenieAcsPage() {
                             </button>
                         </div>
                     </div>
+                )}
+            </Modal>
+
+            {/* MODAL 5: TAUTKAN ROUTER KE PELANGGAN (UNTUK PELANGGAN TANPA ACS) */}
+            <Modal
+                isOpen={Boolean(linkRouterCustomer)}
+                onClose={() => setLinkRouterCustomer(null)}
+                title="Tautkan Router GenieACS ke Pelanggan"
+            >
+                {linkRouterCustomer && (
+                    <form onSubmit={handleLinkRouterSubmit} className="space-y-4 text-xs">
+                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
+                            <p className="font-bold text-gray-900 text-sm">{linkRouterCustomer.name}</p>
+                            <p className="text-gray-500 font-mono text-[11px] mt-0.5">
+                                WA: {linkRouterCustomer.phone || '-'} · PPPoE: {linkRouterCustomer.pppoe_username || '-'}
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="block font-bold text-gray-700 mb-1">
+                                Pilih Router GenieACS yang Tersedia (Belum Tertaut)
+                            </label>
+                            {availableAcsDevices.length > 0 ? (
+                                <select
+                                    value={selectedDeviceId}
+                                    onChange={(e) => setSelectedDeviceId(e.target.value)}
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                >
+                                    {availableAcsDevices.map((dev) => (
+                                        <option key={dev.device_id} value={dev.device_id}>
+                                            {dev.product_class || 'ONT'} - SN: {dev.serial_number || dev.device_id} (IP: {dev.ip_address || '-'})
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <div className="p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 text-gray-500">
+                                    <p className="font-medium">Tidak ada router GenieACS yang berstatus belum tertaut.</p>
+                                    <p className="text-[11px] text-gray-400 mt-1">
+                                        Pastikan router ONT pelanggan telah terhubung ke jaringan GenieACS (TR-069) agar terbaca otomatis.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setLinkRouterCustomer(null)}
+                                className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100"
+                            >
+                                Batal
+                            </button>
+                            {availableAcsDevices.length > 0 && (
+                                <button
+                                    type="submit"
+                                    disabled={linkingRouter || !selectedDeviceId}
+                                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1.5"
+                                >
+                                    {linkingRouter ? (
+                                        <>
+                                            <RefreshCw size={13} className="animate-spin" />
+                                            Menautkan...
+                                        </>
+                                    ) : (
+                                        'Tautkan Router Ini'
+                                    )}
+                                </button>
+                            )}
+                        </div>
+                    </form>
                 )}
             </Modal>
         </div>

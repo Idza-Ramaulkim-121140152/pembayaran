@@ -54,7 +54,7 @@ class GenieAcsService
     ];
 
     /**
-     * Get fast summarized list of all devices in GenieACS with database customer matching and statistics.
+     * Get fast summarized list of ALL customers synchronized with GenieACS devices.
      */
     public function getAllDevicesSummary(bool $forceFresh = false): array
     {
@@ -77,23 +77,21 @@ class GenieAcsService
             throw new GenieAcsException('Koneksi ke GenieACS timeout atau tidak dapat dijangkau: ' . $e->getMessage(), 504);
         }
 
-        // Fetch all active customers for fast in-memory indexing
+        // Fetch all customers from database
         $customers = Customer::query()
-            ->select('id', 'name', 'phone', 'pppoe_username', 'home_router_host', 'home_router_type', 'is_active', 'package_id')
+            ->select('id', 'name', 'phone', 'address', 'pppoe_username', 'home_router_host', 'home_router_type', 'is_active', 'package_id')
             ->with('package:id,name,speed,price')
+            ->orderBy('name')
             ->get();
 
-        $custByPppoe = [];
-        foreach ($customers as $c) {
-            if ($c->pppoe_username) {
-                $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
-            }
-        }
+        // Index raw GenieACS devices by PPPoE, Serial, MAC
+        $devicesByPppoe = [];
+        $devicesByMac = [];
+        $processedAcsDeviceIds = [];
 
-        $devicesList = [];
+        $parsedAcsDevices = [];
         $onlineCount = 0;
         $offlineCount = 0;
-        $matchedCount = 0;
         $criticalRxCount = 0;
         $warningRxCount = 0;
 
@@ -169,22 +167,7 @@ class GenieAcsService
                 }
             }
 
-            // Customer Match
-            $matchedCustomer = null;
-            if ($pppoe !== '' && isset($custByPppoe[strtolower(trim($pppoe))])) {
-                $c = $custByPppoe[strtolower(trim($pppoe))];
-                $matchedCustomer = [
-                    'id' => $c->id,
-                    'name' => $c->name,
-                    'phone' => $c->phone,
-                    'pppoe_username' => $c->pppoe_username,
-                    'package_name' => $c->package?->name ?? '-',
-                    'is_active' => (bool) $c->is_active,
-                ];
-                $matchedCount++;
-            }
-
-            $devicesList[] = [
+            $devData = [
                 'device_id' => $deviceId,
                 'is_online' => $isOnline,
                 'last_inform_at' => $lastInformAt,
@@ -199,29 +182,118 @@ class GenieAcsService
                 'wifi_clients_count' => $wifiClients,
                 'rx_power' => $rxPowerVal,
                 'rx_status' => $rxStatus,
-                'customer' => $matchedCustomer,
             ];
+
+            $parsedAcsDevices[$deviceId] = $devData;
+
+            if ($pppoe !== '') {
+                $devicesByPppoe[strtolower(trim($pppoe))] = $devData;
+            }
+            if ($macAddress !== '') {
+                $cleanMac = strtolower(str_replace([':', '-', '.'], '', trim($macAddress)));
+                $devicesByMac[$cleanMac] = $devData;
+            }
         }
 
-        // Sort: Online first, then by last inform descending
-        usort($devicesList, function ($a, $b) {
+        $unifiedList = [];
+        $customersWithAcsCount = 0;
+        $customersWithoutAcsCount = 0;
+
+        // 1. Process all Customers from database
+        foreach ($customers as $c) {
+            $matchedDev = null;
+            $pppoeClean = $c->pppoe_username ? strtolower(trim($c->pppoe_username)) : '';
+
+            if ($pppoeClean !== '' && isset($devicesByPppoe[$pppoeClean])) {
+                $matchedDev = $devicesByPppoe[$pppoeClean];
+            }
+
+            $custPayload = [
+                'id' => $c->id,
+                'name' => $c->name,
+                'phone' => $c->phone,
+                'address' => $c->address,
+                'pppoe_username' => $c->pppoe_username,
+                'package_name' => $c->package?->name ?? '-',
+                'is_active' => (bool) $c->is_active,
+            ];
+
+            if ($matchedDev) {
+                $customersWithAcsCount++;
+                $processedAcsDeviceIds[$matchedDev['device_id']] = true;
+
+                $unifiedList[] = array_merge($matchedDev, [
+                    'has_genieacs' => true,
+                    'is_unassigned' => false,
+                    'customer' => $custPayload,
+                ]);
+            } else {
+                $customersWithoutAcsCount++;
+                $unifiedList[] = [
+                    'has_genieacs' => false,
+                    'is_unassigned' => false,
+                    'device_id' => null,
+                    'is_online' => false,
+                    'last_inform_at' => null,
+                    'registered_at' => null,
+                    'manufacturer' => null,
+                    'product_class' => null,
+                    'serial_number' => null,
+                    'pppoe_username' => $c->pppoe_username,
+                    'ip_address' => null,
+                    'mac_address' => null,
+                    'ssid' => null,
+                    'wifi_clients_count' => 0,
+                    'rx_power' => null,
+                    'rx_status' => 'no_acs',
+                    'customer' => $custPayload,
+                ];
+            }
+        }
+
+        // 2. Include any ACS devices that are NOT matched to any database customer
+        $unassignedCount = 0;
+        foreach ($parsedAcsDevices as $devId => $devData) {
+            if (!isset($processedAcsDeviceIds[$devId])) {
+                $unassignedCount++;
+                $unifiedList[] = array_merge($devData, [
+                    'has_genieacs' => true,
+                    'is_unassigned' => true,
+                    'customer' => null,
+                ]);
+            }
+        }
+
+        // Sort: Online first, then with_acs, then alphabetical by customer name or device id
+        usort($unifiedList, function ($a, $b) {
+            // 1. Online devices first
             if ($a['is_online'] !== $b['is_online']) {
                 return $a['is_online'] ? -1 : 1;
             }
-            return strcmp((string) ($b['last_inform_at'] ?? ''), (string) ($a['last_inform_at'] ?? ''));
+            // 2. Devices with ACS before no-ACS
+            if ($a['has_genieacs'] !== $b['has_genieacs']) {
+                return $a['has_genieacs'] ? -1 : 1;
+            }
+            // 3. Alphabetical name
+            $nameA = $a['customer']['name'] ?? ($a['pppoe_username'] ?? $a['device_id'] ?? '');
+            $nameB = $b['customer']['name'] ?? ($b['pppoe_username'] ?? $b['device_id'] ?? '');
+            return strcasecmp($nameA, $nameB);
         });
 
         $result = [
             'stats' => [
-                'total_devices' => count($devicesList),
+                'total_customers' => $customers->count(),
+                'total_devices_in_acs' => count($rawDevices),
+                'customers_with_acs' => $customersWithAcsCount,
+                'customers_without_acs' => $customersWithoutAcsCount,
                 'online_devices' => $onlineCount,
                 'offline_devices' => $offlineCount,
-                'matched_customers' => $matchedCount,
+                'unassigned_devices' => $unassignedCount,
                 'critical_rx_count' => $criticalRxCount,
                 'warning_rx_count' => $warningRxCount,
                 'cached_at' => now()->toIso8601String(),
             ],
-            'devices' => $devicesList,
+            'devices' => $unifiedList,
         ];
 
         Cache::put(self::SUMMARY_CACHE_KEY, $result, self::SUMMARY_CACHE_TTL_SECONDS);
