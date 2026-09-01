@@ -120,7 +120,11 @@ class BillingAutomationController extends Controller
     public function updatePaymentVerificationConfig(Request $request)
     {
         $validated = $request->validate([
-            'openai_model' => 'sometimes|string|max:120',
+            'ai_provider' => 'sometimes|nullable|string|max:40',
+            'gemini_api_key' => 'sometimes|nullable|string|max:255',
+            'gemini_model' => 'sometimes|nullable|string|max:120',
+            'openai_api_key' => 'sometimes|nullable|string|max:255',
+            'openai_model' => 'sometimes|nullable|string|max:120',
             'auto_approve_enabled' => 'sometimes|boolean',
             'confidence_thresholds' => 'sometimes|array',
             'confidence_thresholds.auto_approve' => 'sometimes|numeric|min:0|max:100',
