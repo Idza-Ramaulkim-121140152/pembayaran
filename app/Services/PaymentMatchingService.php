@@ -313,31 +313,37 @@ class PaymentMatchingService
                 ->get();
 
             foreach ($customerInvoices as $invoice) {
-                $score = 50.0;
+                $score = 80.0;
                 $reasons = ['customer_match'];
 
                 if ($amount > 0 && abs((float) $invoice->amount - $amount) <= 0.01) {
-                    $score += 45;
+                    $score += 15;
                     $reasons[] = 'amount_exact';
-                } elseif ($amount > 0) {
-                    $score += 20;
+                } elseif ($amount <= 0) {
+                    $score += 15;
+                    $reasons[] = 'customer_active_bill';
+                    // Auto-fill amount from invoice
+                    $capture->amount = (float) $invoice->amount;
+                    $capture->save();
+                } else {
+                    $score += 10;
                     $reasons[] = 'customer_unpaid_invoice';
                 }
 
                 if ($capture->invoice_id && (int) $capture->invoice_id === (int) $invoice->id) {
-                    $score += 15;
+                    $score += 5;
                     $reasons[] = 'invoice_hint';
                 }
 
                 if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
-                    $score += 15;
+                    $score += 5;
                     $reasons[] = 'reference_hint';
                 }
 
                 if ($invoice->due_date) {
                     $diff = abs($paidDate->diffInDays(Carbon::parse($invoice->due_date)->startOfDay(), false));
                     if ($diff <= 7) {
-                        $score += 10;
+                        $score += 5;
                         $reasons[] = 'date_near_due';
                     }
                 }

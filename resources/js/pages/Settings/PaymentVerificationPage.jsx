@@ -31,6 +31,8 @@ import {
     Phone,
     HelpCircle,
     CheckCircle,
+    Eye,
+    EyeOff,
 } from 'lucide-react';
 import Modal from '../../components/common/Modal';
 import paymentVerificationService from '../../services/paymentVerificationService';
@@ -74,6 +76,8 @@ export default function PaymentVerificationPage() {
 
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
+    const [showGeminiKey, setShowGeminiKey] = useState(false);
+    const [showOpenAiKey, setShowOpenAiKey] = useState(false);
 
     // Whitelist raw JSON editor toggle
     const [showJsonWhitelist, setShowJsonWhitelist] = useState(false);
@@ -1117,6 +1121,104 @@ export default function PaymentVerificationPage() {
             ) : (
                 /* TAB 4: SETTINGS */
                 <div className="space-y-6">
+                    {/* AI Vision & OCR Engine Card */}
+                    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <Bot className="h-5 w-5 text-emerald-600" />
+                                <div>
+                                    <h3 className="font-bold text-gray-900">Konfigurasi AI Vision & OCR Bukti Pembayaran</h3>
+                                    <p className="text-xs text-gray-500">Membaca otomatis nominal, tanggal, nomor rekening, dan status lunas dari foto screenshot pelanggan.</p>
+                                </div>
+                            </div>
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 w-fit">
+                                <Sparkles size={13} /> Gemini & OpenAI Vision
+                            </span>
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Penyedia AI (AI Provider)
+                                </label>
+                                <select
+                                    value={config?.ai_provider || 'auto'}
+                                    onChange={(e) => setConfig((p) => ({ ...p, ai_provider: e.target.value }))}
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                >
+                                    <option value="auto">Otomatis (Coba Gemini, lalu OpenAI)</option>
+                                    <option value="gemini">Google Gemini Vision (Gratis & Direkomendasikan)</option>
+                                    <option value="openai">OpenAI (GPT-4o Mini)</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Model Gemini Vision
+                                </label>
+                                <select
+                                    value={config?.gemini_model || 'gemini-1.5-flash'}
+                                    onChange={(e) => setConfig((p) => ({ ...p, gemini_model: e.target.value }))}
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                >
+                                    <option value="gemini-1.5-flash">gemini-1.5-flash (Cepat & Hemat Kuota)</option>
+                                    <option value="gemini-2.0-flash">gemini-2.0-flash (Generasi Terbaru)</option>
+                                    <option value="gemini-1.5-pro">gemini-1.5-pro (Akurasi Maksimal)</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    Google Gemini API Key
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showGeminiKey ? 'text' : 'password'}
+                                        value={config?.gemini_api_key || ''}
+                                        onChange={(e) => setConfig((p) => ({ ...p, gemini_api_key: e.target.value }))}
+                                        placeholder="Masukkan API Key (AIzaSy...)"
+                                        className="w-full text-xs rounded-xl border border-gray-300 pr-10 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowGeminiKey(!showGeminiKey)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                    >
+                                        {showGeminiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    Dapatkan API Key gratis di <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-emerald-600 font-semibold hover:underline">Google AI Studio</a>
+                                </p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1">
+                                    OpenAI API Key (Opsional)
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showOpenAiKey ? 'text' : 'password'}
+                                        value={config?.openai_api_key || ''}
+                                        onChange={(e) => setConfig((p) => ({ ...p, openai_api_key: e.target.value }))}
+                                        placeholder="Masukkan OpenAI API Key (sk-...)"
+                                        className="w-full text-xs rounded-xl border border-gray-300 pr-10 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowOpenAiKey(!showOpenAiKey)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                    >
+                                        {showOpenAiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    Model: <span className="font-mono text-gray-700">{config?.openai_model || 'gpt-4o-mini'}</span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Settings Sections */}
                     <div className="grid gap-6 lg:grid-cols-2">
                         {/* Whitelist Bank */}

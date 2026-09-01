@@ -77,7 +77,9 @@ class PaymentVerificationConfigService
     {
         return [
             'ai_provider' => 'auto',
+            'gemini_api_key' => (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', '')),
             'gemini_model' => (string) env('GEMINI_PAYMENT_VISION_MODEL', 'gemini-1.5-flash'),
+            'openai_api_key' => (string) env('OPENAI_API_KEY', ''),
             'openai_model' => (string) env('OPENAI_PAYMENT_VISION_MODEL', 'gpt-4o-mini'),
             'auto_approve_enabled' => true,
             'confidence_thresholds' => [
