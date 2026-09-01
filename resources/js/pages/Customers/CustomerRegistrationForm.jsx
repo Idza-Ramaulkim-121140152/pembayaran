@@ -4,11 +4,13 @@ import {
     ArrowLeft, User, Phone, CreditCard, Calendar, MapPin, 
     Wifi, DollarSign, Upload, CheckCircle2, AlertCircle, 
     Scan, Sparkles, Loader2, Image as ImageIcon, Check, X,
-    Star, Clock, Eye, XCircle, ChevronDown, ChevronUp, UserCheck
+    Star, Clock, Eye, XCircle, ChevronDown, ChevronUp, UserCheck,
+    Zap, Trash2
 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import { compressImage, formatFileSize } from '../../utils/imageCompressor';
 
 const INITIAL_FORM = {
     nama: '',
@@ -52,6 +54,18 @@ function CustomerRegistrationForm() {
         foto_opm: null,
     });
     const [photoPreviews, setPhotoPreviews] = useState({
+        foto_depan_rumah: null,
+        foto_ktp: null,
+        foto_modem: null,
+        foto_opm: null,
+    });
+    const [compressing, setCompressing] = useState({
+        foto_depan_rumah: false,
+        foto_ktp: false,
+        foto_modem: false,
+        foto_opm: false,
+    });
+    const [compressionInfo, setCompressionInfo] = useState({
         foto_depan_rumah: null,
         foto_ktp: null,
         foto_modem: null,
@@ -247,12 +261,52 @@ function CustomerRegistrationForm() {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        setPhotos((prev) => ({ ...prev, [fieldName]: file }));
-        const previewUrl = URL.createObjectURL(file);
-        setPhotoPreviews((prev) => ({ ...prev, [fieldName]: previewUrl }));
+        // Set compressing state and immediate preview
+        setCompressing((prev) => ({ ...prev, [fieldName]: true }));
+        const tempPreview = URL.createObjectURL(file);
+        setPhotoPreviews((prev) => ({ ...prev, [fieldName]: tempPreview }));
 
+        try {
+            // Compress in browser before storing and uploading
+            const result = await compressImage(file, {
+                maxWidth: 1600,
+                maxHeight: 1600,
+                quality: 0.8,
+            });
+
+            setPhotos((prev) => ({ ...prev, [fieldName]: result.file }));
+            setPhotoPreviews((prev) => ({ ...prev, [fieldName]: result.previewUrl }));
+            setCompressionInfo((prev) => ({
+                ...prev,
+                [fieldName]: {
+                    originalSize: result.originalSize,
+                    compressedSize: result.compressedSize,
+                    ratio: result.ratio,
+                },
+            }));
+
+            // If foto modem, run MAC address scanner with the optimized file
+            if (fieldName === 'foto_modem') {
+                analyzeMacAddressPhoto(result.file);
+            }
+        } catch (err) {
+            console.error('Photo compression error, falling back to original:', err);
+            setPhotos((prev) => ({ ...prev, [fieldName]: file }));
+            if (fieldName === 'foto_modem') {
+                analyzeMacAddressPhoto(file);
+            }
+        } finally {
+            setCompressing((prev) => ({ ...prev, [fieldName]: false }));
+        }
+    };
+
+    const handleRemovePhoto = (fieldName) => {
+        setPhotos((prev) => ({ ...prev, [fieldName]: null }));
+        setPhotoPreviews((prev) => ({ ...prev, [fieldName]: null }));
+        setCompressionInfo((prev) => ({ ...prev, [fieldName]: null }));
         if (fieldName === 'foto_modem') {
-            analyzeMacAddressPhoto(file);
+            setDetectedMac(null);
+            setMacAnalysisMeta(null);
         }
     };
 
@@ -292,9 +346,16 @@ function CustomerRegistrationForm() {
         }
     };
 
+    const isAnyPhotoCompressing = Object.values(compressing).some(Boolean);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError(null);
+
+        if (isAnyPhotoCompressing) {
+            setError('Mohon tunggu sebentar, foto sedang dikompresi otomatis...');
+            return;
+        }
 
         if (!formData.nama.trim()) {
             setError('Nama pelanggan wajib diisi.');
@@ -448,19 +509,20 @@ function CustomerRegistrationForm() {
                                         >
                                             <div className="space-y-1">
                                                 <div className="flex justify-between items-start gap-1">
-                                                    <span className="font-mono text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded">
-                                                        {rec.registration_no}
+                                                    <h4 className="font-bold text-sm text-gray-900 truncate">
+                                                        {rec.nama}
+                                                    </h4>
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold shrink-0">
+                                                        {rec.paket || 'Paket'}
                                                     </span>
-                                                    <span className="text-[10px] text-gray-400 font-medium">{rec.paket || 'Standar'}</span>
                                                 </div>
-                                                <h4 className="font-bold text-sm text-gray-900 line-clamp-1">{rec.nama}</h4>
-                                                <p className="text-xs text-gray-600 flex items-center gap-1">
+                                                <p className="text-xs text-gray-500 flex items-center gap-1">
                                                     <Phone size={12} className="text-gray-400" />
                                                     {rec.no_telp}
                                                 </p>
-                                                <p className="text-[11px] text-gray-500 line-clamp-1">
-                                                    <MapPin size={11} className="inline mr-1 text-gray-400" />
-                                                    {rec.desa?.name ? `Desa ${rec.desa.name}, ` : ''}{rec.kecamatan?.name || ''}
+                                                <p className="text-xs text-gray-500 flex items-center gap-1 truncate">
+                                                    <MapPin size={12} className="text-gray-400 shrink-0" />
+                                                    {rec.alamat || `${rec.dusun?.name || ''}, ${rec.desa?.name || ''}`}
                                                 </p>
                                             </div>
 
@@ -468,22 +530,22 @@ function CustomerRegistrationForm() {
                                                 <button
                                                     type="button"
                                                     onClick={() => applyProspectData(rec)}
-                                                    className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                                                    className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                                                         isSelected
-                                                            ? 'bg-amber-500 text-white shadow-sm'
-                                                            : 'bg-orange-600 hover:bg-orange-700 text-white'
+                                                            ? 'bg-amber-600 text-white shadow-sm'
+                                                            : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
                                                     }`}
                                                 >
-                                                    <Check size={13} />
-                                                    {isSelected ? 'Data Terpilih' : 'Gunakan Data Ini'}
+                                                    {isSelected ? <Check size={14} /> : <UserCheck size={14} />}
+                                                    {isSelected ? 'Data Terpasang' : 'Gunakan Data Ini'}
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => handleDismissRecommendation(rec.id)}
-                                                    className="p-1.5 rounded-xl text-gray-400 hover:text-red-600 hover:bg-red-50 transition"
-                                                    title="Batal Pasang / Tolak"
+                                                    className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition"
+                                                    title="Batalkan rekomendasi"
                                                 >
-                                                    <XCircle size={16} />
+                                                    <X size={14} />
                                                 </button>
                                             </div>
                                         </div>
@@ -494,39 +556,43 @@ function CustomerRegistrationForm() {
                     </div>
                 )}
 
-                {/* Form Card */}
+                {/* Form Card Container */}
                 <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white">
-                        <div className="flex items-center gap-3 mb-2">
-                            <div className="p-2.5 bg-white/15 backdrop-blur-sm rounded-xl">
-                                <User size={24} />
-                            </div>
+                    <div className="px-6 py-5 border-b border-gray-100 bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
+                        <div className="flex items-center justify-between">
                             <div>
-                                <h1 className="text-2xl font-bold">Formulir Pendaftaran Pelanggan Baru</h1>
-                                <p className="text-blue-100 text-sm">
-                                    Data otomatis tersimpan ke sistem dan disinkronkan langsung ke Google Sheets.
+                                <h1 className="text-xl font-bold tracking-tight">Formulir Pendaftaran & Pemasangan Pelanggan Baru</h1>
+                                <p className="text-xs text-blue-100 mt-1">
+                                    Data akan otomatis dikompresi untuk mempercepat proses upload, disinkronkan ke Google Sheets, dan siap diverifikasi.
                                 </p>
                             </div>
+                            <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-xs font-semibold">
+                                <Zap size={14} className="text-amber-300" />
+                                Auto-Compression Aktif
+                            </span>
                         </div>
                     </div>
 
-                    {error && (
-                        <div className="p-6 pb-0">
-                            <Alert variant="error">{error}</Alert>
-                        </div>
-                    )}
+                    <form onSubmit={handleSubmit} className="p-6 space-y-8">
+                        {error && (
+                            <Alert
+                                type="error"
+                                message={error}
+                                onClose={() => setError(null)}
+                            />
+                        )}
 
-                    <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-8">
-                        {/* 1. DATA PRIBADI */}
+                        {/* 1. INFORMASI PELANGGAN */}
                         <div>
                             <h2 className="text-base font-bold text-gray-900 border-b border-gray-100 pb-3 mb-4 flex items-center gap-2">
                                 <User size={18} className="text-blue-600" />
-                                1. Data Pribadi Pelanggan
+                                1. Data Diri Pelanggan
                             </h2>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="sm:col-span-2">
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Nama Lengkap Pelanggan <span className="text-red-500">*</span>
+                                        Nama Lengkap <span className="text-red-500">*</span>
                                     </label>
                                     <input
                                         type="text"
@@ -541,7 +607,7 @@ function CustomerRegistrationForm() {
 
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        NIK Pelanggan (16 Digit) <span className="text-red-500">*</span>
+                                        NIK (Nomor KTP) <span className="text-red-500">*</span>
                                     </label>
                                     <input
                                         type="text"
@@ -550,23 +616,23 @@ function CustomerRegistrationForm() {
                                         maxLength={20}
                                         value={formData.nik}
                                         onChange={handleInputChange}
-                                        placeholder="180XXXXXXXXXXXXX"
-                                        className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        placeholder="16 digit NIK"
+                                        className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                     />
                                 </div>
 
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Nomor WhatsApp <span className="text-red-500">*</span>
+                                        Nomor WhatsApp / HP <span className="text-red-500">*</span>
                                     </label>
                                     <input
-                                        type="text"
+                                        type="tel"
                                         name="no_telp"
                                         required
                                         value={formData.no_telp}
                                         onChange={handleInputChange}
-                                        placeholder="081234567890"
-                                        className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        placeholder="08xxxxxxxxxx"
+                                        className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                                     />
                                 </div>
 
@@ -587,7 +653,7 @@ function CustomerRegistrationForm() {
 
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Tanggal Aktivasi <span className="text-red-500">*</span>
+                                        Tanggal Aktivasi / Pasang <span className="text-red-500">*</span>
                                     </label>
                                     <input
                                         type="date"
@@ -604,10 +670,11 @@ function CustomerRegistrationForm() {
                         {/* 2. WILAYAH & ALAMAT */}
                         <div>
                             <h2 className="text-base font-bold text-gray-900 border-b border-gray-100 pb-3 mb-4 flex items-center gap-2">
-                                <MapPin size={18} className="text-green-600" />
-                                2. Alamat & Master Wilayah
+                                <MapPin size={18} className="text-emerald-600" />
+                                2. Wilayah & Alamat Pemasangan
                             </h2>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
                                         Kecamatan <span className="text-red-500">*</span>
@@ -621,75 +688,82 @@ function CustomerRegistrationForm() {
                                     >
                                         <option value="">Pilih Kecamatan</option>
                                         {kecamatanList.map((k) => (
-                                            <option key={k.id} value={k.id}>{k.name}</option>
+                                            <option key={k.id} value={k.id}>
+                                                {k.name}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
 
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Desa <span className="text-red-500">*</span>
+                                        Desa / Kelurahan <span className="text-red-500">*</span>
                                     </label>
                                     <select
                                         name="desa_id"
                                         required
+                                        disabled={!formData.kecamatan_id}
                                         value={formData.desa_id}
                                         onChange={handleInputChange}
-                                        disabled={!formData.kecamatan_id}
                                         className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                     >
                                         <option value="">Pilih Desa</option>
                                         {desaList.map((d) => (
-                                            <option key={d.id} value={d.id}>{d.name}</option>
+                                            <option key={d.id} value={d.id}>
+                                                {d.name}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
 
                                 <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Dusun <span className="text-red-500">*</span>
+                                        Dusun / Lingkungan <span className="text-red-500">*</span>
                                     </label>
                                     <select
                                         name="dusun_id"
                                         required
+                                        disabled={!formData.desa_id}
                                         value={formData.dusun_id}
                                         onChange={handleInputChange}
-                                        disabled={!formData.desa_id}
                                         className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
                                     >
                                         <option value="">Pilih Dusun</option>
-                                        {dusunList.map((d) => (
-                                            <option key={d.id} value={d.id}>{d.name}</option>
+                                        {dusunList.map((du) => (
+                                            <option key={du.id} value={du.id}>
+                                                {du.name}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
+                            </div>
 
-                                <div className="sm:col-span-3">
-                                    <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Alamat Lengkap / Patokan Rumah
-                                    </label>
-                                    <input
-                                        type="text"
-                                        name="alamat"
-                                        value={formData.alamat}
-                                        onChange={handleInputChange}
-                                        placeholder="Contoh: RT 02 RW 01, samping pos ronda"
-                                        className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                                    />
-                                </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                                    Detail Alamat / Patokan (Opsional)
+                                </label>
+                                <textarea
+                                    name="alamat"
+                                    rows={2}
+                                    value={formData.alamat}
+                                    onChange={handleInputChange}
+                                    placeholder="Contoh: Depan Musholla Nurul Iman, RT 02 / RW 01"
+                                    className="w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                />
                             </div>
                         </div>
 
-                        {/* 3. PAKET & BIAYA */}
+                        {/* 3. PAKET LAYANAN & BIAYA */}
                         <div>
                             <h2 className="text-base font-bold text-gray-900 border-b border-gray-100 pb-3 mb-4 flex items-center gap-2">
                                 <Wifi size={18} className="text-indigo-600" />
-                                3. Paket Layanan & ODP
+                                3. Paket Layanan & Biaya Pemasangan
                             </h2>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                <div className={isCustomPackage ? 'sm:col-span-1' : 'sm:col-span-2'}>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <div>
                                     <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
-                                        Jenis Paket <span className="text-red-500">*</span>
+                                        Pilihan Paket Internet <span className="text-red-500">*</span>
                                     </label>
                                     <select
                                         name="paket"
@@ -794,7 +868,7 @@ function CustomerRegistrationForm() {
                                 {analyzingMac && (
                                     <div className="flex items-center gap-2 p-3 bg-white rounded-xl border border-purple-200 text-purple-700 text-xs">
                                         <Loader2 size={16} className="animate-spin text-purple-600" />
-                                        Menganalisis stiker modem dari foto...
+                                        Menganalisis stiker modem dari foto terkompresi...
                                     </div>
                                 )}
 
@@ -832,71 +906,229 @@ function CustomerRegistrationForm() {
                                 )}
                             </div>
 
-                            {/* 5. UPLOAD FOTO PELANGGAN & PERANGKAT */}
+                            {/* 5. UPLOAD FOTO PELANGGAN & PERANGKAT DENGAN AUTO-COMPRESS */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 {/* Foto Depan Rumah */}
-                                <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50">
-                                    <label className="block text-xs font-semibold text-gray-700 mb-2">
-                                        Foto Depan Rumah
-                                    </label>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handlePhotoChange(e, 'foto_depan_rumah')}
-                                        className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                                    />
-                                    {photoPreviews.foto_depan_rumah && (
-                                        <img src={photoPreviews.foto_depan_rumah} alt="Depan Rumah" className="mt-2 h-24 w-full object-cover rounded-lg border border-gray-200" />
+                                <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 flex flex-col justify-between space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="block text-xs font-bold text-gray-800">
+                                                Foto Depan Rumah
+                                            </label>
+                                            {compressionInfo.foto_depan_rumah && (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                                    <Zap size={12} />
+                                                    Hemat {compressionInfo.foto_depan_rumah.ratio}%
+                                                </span>
+                                            )}
+                                        </div>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            disabled={compressing.foto_depan_rumah}
+                                            onChange={(e) => handlePhotoChange(e, 'foto_depan_rumah')}
+                                            className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer disabled:opacity-60"
+                                        />
+                                    </div>
+
+                                    {compressing.foto_depan_rumah && (
+                                        <div className="flex items-center gap-2 py-2 text-xs text-blue-600">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            <span>Mengompresi foto otomatis...</span>
+                                        </div>
+                                    )}
+
+                                    {photoPreviews.foto_depan_rumah && !compressing.foto_depan_rumah && (
+                                        <div className="space-y-1.5">
+                                            <div className="relative group rounded-xl overflow-hidden border border-gray-200 bg-black/5 h-28 flex items-center justify-center">
+                                                <img 
+                                                    src={photoPreviews.foto_depan_rumah} 
+                                                    alt="Depan Rumah" 
+                                                    className="h-full w-full object-cover" 
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemovePhoto('foto_depan_rumah')}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-600 transition"
+                                                    title="Hapus foto"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                            {compressionInfo.foto_depan_rumah && (
+                                                <p className="text-[11px] text-gray-500">
+                                                    Ukuran: <span className="line-through text-gray-400">{formatFileSize(compressionInfo.foto_depan_rumah.originalSize)}</span> ➔ <strong className="text-emerald-600">{formatFileSize(compressionInfo.foto_depan_rumah.compressedSize)}</strong>
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
 
                                 {/* Foto KTP */}
-                                <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50">
-                                    <label className="block text-xs font-semibold text-gray-700 mb-2">
-                                        Foto KTP Pelanggan
-                                    </label>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handlePhotoChange(e, 'foto_ktp')}
-                                        className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                                    />
-                                    {photoPreviews.foto_ktp && (
-                                        <img src={photoPreviews.foto_ktp} alt="KTP" className="mt-2 h-24 w-full object-cover rounded-lg border border-gray-200" />
+                                <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 flex flex-col justify-between space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="block text-xs font-bold text-gray-800">
+                                                Foto KTP Pelanggan
+                                            </label>
+                                            {compressionInfo.foto_ktp && (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                                    <Zap size={12} />
+                                                    Hemat {compressionInfo.foto_ktp.ratio}%
+                                                </span>
+                                            )}
+                                        </div>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            disabled={compressing.foto_ktp}
+                                            onChange={(e) => handlePhotoChange(e, 'foto_ktp')}
+                                            className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer disabled:opacity-60"
+                                        />
+                                    </div>
+
+                                    {compressing.foto_ktp && (
+                                        <div className="flex items-center gap-2 py-2 text-xs text-blue-600">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            <span>Mengompresi foto KTP...</span>
+                                        </div>
+                                    )}
+
+                                    {photoPreviews.foto_ktp && !compressing.foto_ktp && (
+                                        <div className="space-y-1.5">
+                                            <div className="relative group rounded-xl overflow-hidden border border-gray-200 bg-black/5 h-28 flex items-center justify-center">
+                                                <img 
+                                                    src={photoPreviews.foto_ktp} 
+                                                    alt="KTP" 
+                                                    className="h-full w-full object-cover" 
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemovePhoto('foto_ktp')}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-600 transition"
+                                                    title="Hapus foto"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                            {compressionInfo.foto_ktp && (
+                                                <p className="text-[11px] text-gray-500">
+                                                    Ukuran: <span className="line-through text-gray-400">{formatFileSize(compressionInfo.foto_ktp.originalSize)}</span> ➔ <strong className="text-emerald-600">{formatFileSize(compressionInfo.foto_ktp.compressedSize)}</strong>
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
 
                                 {/* Foto Modem (Dengan Auto Scanner) */}
-                                <div className="border border-purple-200 rounded-xl p-4 bg-purple-50/30">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <label className="block text-xs font-semibold text-purple-900">
-                                            Foto Stiker / Label Modem (Auto Scan MAC)
-                                        </label>
+                                <div className="border border-purple-200 rounded-2xl p-4 bg-purple-50/40 flex flex-col justify-between space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="block text-xs font-bold text-purple-900">
+                                                Foto Stiker / Label Modem (Auto Scan)
+                                            </label>
+                                            {compressionInfo.foto_modem && (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                                                    <Zap size={12} />
+                                                    Hemat {compressionInfo.foto_modem.ratio}%
+                                                </span>
+                                            )}
+                                        </div>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            disabled={compressing.foto_modem}
+                                            onChange={(e) => handlePhotoChange(e, 'foto_modem')}
+                                            className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-purple-100 file:text-purple-800 hover:file:bg-purple-200 cursor-pointer disabled:opacity-60"
+                                        />
                                     </div>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handlePhotoChange(e, 'foto_modem')}
-                                        className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-purple-100 file:text-purple-800 hover:file:bg-purple-200 cursor-pointer"
-                                    />
-                                    {photoPreviews.foto_modem && (
-                                        <img src={photoPreviews.foto_modem} alt="Modem" className="mt-2 h-24 w-full object-cover rounded-lg border border-gray-200" />
+
+                                    {compressing.foto_modem && (
+                                        <div className="flex items-center gap-2 py-2 text-xs text-purple-600">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            <span>Mengompresi foto & menyiapkan OCR...</span>
+                                        </div>
+                                    )}
+
+                                    {photoPreviews.foto_modem && !compressing.foto_modem && (
+                                        <div className="space-y-1.5">
+                                            <div className="relative group rounded-xl overflow-hidden border border-purple-200 bg-black/5 h-28 flex items-center justify-center">
+                                                <img 
+                                                    src={photoPreviews.foto_modem} 
+                                                    alt="Modem" 
+                                                    className="h-full w-full object-cover" 
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemovePhoto('foto_modem')}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-600 transition"
+                                                    title="Hapus foto"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                            {compressionInfo.foto_modem && (
+                                                <p className="text-[11px] text-gray-500">
+                                                    Ukuran: <span className="line-through text-gray-400">{formatFileSize(compressionInfo.foto_modem.originalSize)}</span> ➔ <strong className="text-purple-700">{formatFileSize(compressionInfo.foto_modem.compressedSize)}</strong>
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
 
                                 {/* Foto Redaman OPM */}
-                                <div className="border border-gray-200 rounded-xl p-4 bg-gray-50/50">
-                                    <label className="block text-xs font-semibold text-gray-700 mb-2">
-                                        Foto Redaman OPM
-                                    </label>
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handlePhotoChange(e, 'foto_opm')}
-                                        className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
-                                    />
-                                    {photoPreviews.foto_opm && (
-                                        <img src={photoPreviews.foto_opm} alt="Redaman OPM" className="mt-2 h-24 w-full object-cover rounded-lg border border-gray-200" />
+                                <div className="border border-gray-200 rounded-2xl p-4 bg-gray-50/50 flex flex-col justify-between space-y-3">
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <label className="block text-xs font-bold text-gray-800">
+                                                Foto Redaman OPM
+                                            </label>
+                                            {compressionInfo.foto_opm && (
+                                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                                    <Zap size={12} />
+                                                    Hemat {compressionInfo.foto_opm.ratio}%
+                                                </span>
+                                            )}
+                                        </div>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            disabled={compressing.foto_opm}
+                                            onChange={(e) => handlePhotoChange(e, 'foto_opm')}
+                                            className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer disabled:opacity-60"
+                                        />
+                                    </div>
+
+                                    {compressing.foto_opm && (
+                                        <div className="flex items-center gap-2 py-2 text-xs text-blue-600">
+                                            <Loader2 size={14} className="animate-spin" />
+                                            <span>Mengompresi foto OPM...</span>
+                                        </div>
+                                    )}
+
+                                    {photoPreviews.foto_opm && !compressing.foto_opm && (
+                                        <div className="space-y-1.5">
+                                            <div className="relative group rounded-xl overflow-hidden border border-gray-200 bg-black/5 h-28 flex items-center justify-center">
+                                                <img 
+                                                    src={photoPreviews.foto_opm} 
+                                                    alt="Redaman OPM" 
+                                                    className="h-full w-full object-cover" 
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemovePhoto('foto_opm')}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 text-white hover:bg-red-600 transition"
+                                                    title="Hapus foto"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
+                                            {compressionInfo.foto_opm && (
+                                                <p className="text-[11px] text-gray-500">
+                                                    Ukuran: <span className="line-through text-gray-400">{formatFileSize(compressionInfo.foto_opm.originalSize)}</span> ➔ <strong className="text-emerald-600">{formatFileSize(compressionInfo.foto_opm.compressedSize)}</strong>
+                                                </p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             </div>
@@ -912,13 +1144,18 @@ function CustomerRegistrationForm() {
                             <Button
                                 type="submit"
                                 variant="primary"
-                                disabled={submitting}
-                                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-6 py-2.5 font-semibold"
+                                disabled={submitting || isAnyPhotoCompressing}
+                                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-6 py-2.5 font-semibold shadow-sm"
                             >
                                 {submitting ? (
                                     <>
                                         <Loader2 size={16} className="animate-spin mr-2" />
                                         Mendaftarkan & Sinkronisasi...
+                                    </>
+                                ) : isAnyPhotoCompressing ? (
+                                    <>
+                                        <Loader2 size={16} className="animate-spin mr-2" />
+                                        Mengompresi Foto...
                                     </>
                                 ) : (
                                     <>
@@ -948,9 +1185,9 @@ function CustomerRegistrationForm() {
                             <Button
                                 variant="primary"
                                 onClick={() => navigate(`/customer-verification/verify/${successModal.encodedTimestamp}`)}
-                                className="w-full bg-green-600 hover:bg-green-700 py-2.5 font-semibold"
+                                className="w-full bg-blue-600 hover:bg-blue-700 py-2.5 font-semibold"
                             >
-                                Lanjut ke Verifikasi & Aktivasi →
+                                Lanjut Verifikasi Sekarang
                             </Button>
                             <Button
                                 variant="secondary"
@@ -959,18 +1196,12 @@ function CustomerRegistrationForm() {
                                     setFormData(INITIAL_FORM);
                                     setPhotos({ foto_depan_rumah: null, foto_ktp: null, foto_modem: null, foto_opm: null });
                                     setPhotoPreviews({ foto_depan_rumah: null, foto_ktp: null, foto_modem: null, foto_opm: null });
+                                    setCompressionInfo({ foto_depan_rumah: null, foto_ktp: null, foto_modem: null, foto_opm: null });
                                     setSelectedProspectId(null);
                                 }}
-                                className="w-full"
+                                className="w-full py-2.5"
                             >
-                                Daftarkan Pelanggan Lain
-                            </Button>
-                            <Button
-                                variant="secondary"
-                                onClick={() => navigate('/customer-verification')}
-                                className="w-full text-gray-500 text-xs border-transparent hover:bg-gray-100"
-                            >
-                                Kembali ke Daftar Verifikasi
+                                Daftarkan Pelanggan Baru Lainnya
                             </Button>
                         </div>
                     </div>

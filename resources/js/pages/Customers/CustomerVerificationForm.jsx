@@ -6,6 +6,7 @@ import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import { HOME_ROUTER_OPTIONS, getHomeRouterPreset } from '../../constants/homeRouterPresets';
+import { compressImage } from '../../utils/imageCompressor';
 
 const DEFAULT_FORM_DATA = {
     google_sheets_timestamp: '',
@@ -600,12 +601,28 @@ function CustomerVerificationForm() {
         }));
     };
 
-    const handleFileChange = (e) => {
+    const handleFileChange = async (e) => {
         const { name, files } = e.target;
-        setFormData((prev) => ({
-            ...prev,
-            [name]: Array.from(files || []),
-        }));
+        const fileList = Array.from(files || []);
+        if (fileList.length === 0) return;
+
+        // Compress multiple files concurrently
+        try {
+            const compressedResults = await Promise.all(
+                fileList.map((f) => compressImage(f, { maxWidth: 1600, maxHeight: 1600, quality: 0.8 }))
+            );
+            const compressedFiles = compressedResults.map((r) => r.file);
+            setFormData((prev) => ({
+                ...prev,
+                [name]: compressedFiles,
+            }));
+        } catch (err) {
+            console.error('File compression fallback:', err);
+            setFormData((prev) => ({
+                ...prev,
+                [name]: fileList,
+            }));
+        }
     };
 
     const contractPhotoNames = formData.contract_installation_photos || [];
@@ -627,6 +644,25 @@ function CustomerVerificationForm() {
                 installer_member_ids: [...current, numericMemberId],
             };
         });
+    };
+
+    const handleQuickAssignInstallers = (teamPreset) => {
+        if (!teamPreset || !Array.isArray(teamPreset.members)) return;
+        const validIds = teamPreset.members
+            .map((m) => Number(m.id || m.payroll_member_id || m))
+            .filter((id) => id > 0);
+
+        setFormData((prev) => ({
+            ...prev,
+            installer_member_ids: validIds,
+        }));
+    };
+
+    const formatReceiverLabel = (receiver) => {
+        if (!receiver) return '-';
+        const role = receiver.role ? ` (${receiver.role})` : '';
+        const companyTag = receiver.is_company_finance_receiver ? ' [Keuangan Perusahaan]' : '';
+        return `${receiver.name || receiver.email || receiver.id}${role}${companyTag}`;
     };
 
     const handleOdpListScroll = (event) => {
@@ -684,10 +720,17 @@ function CustomerVerificationForm() {
         setDetectedMac(null);
         setMacAnalysisMeta(null);
 
-        const body = new FormData();
-        body.append('photo', file);
-
         try {
+            // Compress photo first for ultra-fast OCR transmission
+            const compressedResult = await compressImage(file, {
+                maxWidth: 1600,
+                maxHeight: 1600,
+                quality: 0.8,
+            });
+
+            const body = new FormData();
+            body.append('photo', compressedResult.file || file);
+
             const res = await fetch('/api/customer-verification/analyze-mac', {
                 method: 'POST',
                 headers: {
