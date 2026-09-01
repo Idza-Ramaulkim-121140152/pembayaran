@@ -30,8 +30,8 @@ import {
     ExternalLink,
     Phone,
 } from 'lucide-react';
-import Modal from '../../components/common/Modal';
-import genieAcsService from '../../services/genieAcsService';
+import Modal from '../components/common/Modal';
+import genieAcsService from '../services/genieAcsService';
 
 export default function MonitoringGenieAcsPage() {
     const [loading, setLoading] = useState(true);
