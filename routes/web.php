@@ -58,6 +58,7 @@ use App\Http\Controllers\MonthlyBudgetController;
 use App\Http\Controllers\CashObligationCalendarController;
 use App\Http\Controllers\ReconciliationCenterController;
 use App\Http\Controllers\WhatsAppPaymentWebhookController;
+use App\Http\Controllers\GenieAcsMonitoringController;
 use App\Models\User;
 use App\Services\PaymentReceiverService;
 
@@ -191,6 +192,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     // View routes - Return React app view (any authenticated user)
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
+    Route::get('/monitoring-genieacs', fn() => view('app'))->name('monitoring.genieacs');
     Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
     Route::get('/settings/expense-categories', fn() => view('app'))->name('settings.expense-categories');
     Route::get('/settings/customer-package-management', fn() => view('app'))->name('settings.customer-package-management');
@@ -350,6 +352,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/monitoring/connection/{username}', [MonitoringController::class, 'connectionDetails'])->name('api.monitoring.connection');
         Route::get('/api/monitoring-maps', [MonitoringMapsController::class, 'getMapData'])->middleware('permission:monitoring.maps.view')->name('api.monitoring-maps');
 
+        // GenieACS Monitoring & TR-069 Management API
+        Route::get('/api/genieacs/devices', [GenieAcsMonitoringController::class, 'devices'])->name('api.genieacs.devices');
+        Route::get('/api/genieacs/devices/{deviceId}', [GenieAcsMonitoringController::class, 'show'])->name('api.genieacs.show');
+        Route::post('/api/genieacs/devices/{deviceId}/wifi', [GenieAcsMonitoringController::class, 'updateWifi'])->name('api.genieacs.wifi.update');
+        Route::post('/api/genieacs/devices/{deviceId}/reboot', [GenieAcsMonitoringController::class, 'reboot'])->name('api.genieacs.reboot');
+        Route::post('/api/genieacs/devices/{deviceId}/refresh', [GenieAcsMonitoringController::class, 'refresh'])->name('api.genieacs.refresh');
+        Route::post('/api/genieacs/devices/{deviceId}/assign-customer', [GenieAcsMonitoringController::class, 'assignCustomer'])->name('api.genieacs.assign-customer');
+
         // WhatsApp API
         Route::get('/api/whatsapp/status', [WhatsAppController::class, 'status'])->name('api.whatsapp.status');
         Route::get('/api/whatsapp/qr', [WhatsAppController::class, 'qr'])->name('api.whatsapp.qr');
@@ -437,6 +447,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
         Route::get('/api/billing/payments/captures', [BillingAutomationController::class, 'captures'])->name('api.billing.payments.captures');
         Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
+        Route::post('/api/billing/payments/{capture}/assign-customer', [BillingAutomationController::class, 'assignCustomer'])->name('api.billing.payments.assign-customer');
     });
 
     Route::middleware('permission:customer.package_audit.view')->group(function () {

@@ -3,30 +3,431 @@
 namespace App\Services;
 
 use App\Exceptions\GenieAcsException;
+use App\Models\Customer;
 use Carbon\Carbon;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class GenieAcsService
 {
     private const PORTAL_STALE_MINUTES = 15;
+    private const SUMMARY_CACHE_KEY = 'genieacs_devices_summary_fast';
+    private const SUMMARY_CACHE_TTL_SECONDS = 60;
 
-    private const DEVICE_PROJECTION = [
+    private const FAST_DEVICE_PROJECTION = [
         '_id',
         '_lastInform',
-        'DeviceID',
-        'VirtualParameters',
-        'InternetGatewayDevice.DeviceInfo',
-        'InternetGatewayDevice.WANDevice',
-        'InternetGatewayDevice.LANDevice',
-        'Device.DeviceInfo',
-        'Device.IP',
-        'Device.Hosts',
-        'Device.PPP',
-        'Device.WiFi',
+        '_registered',
+        'DeviceID.SerialNumber',
+        'DeviceID.ProductClass',
+        'DeviceID.Manufacturer',
+        'DeviceID.ModelName',
+        'VirtualParameters.pppoeUsername',
+        'VirtualParameters.pppoeUsername2',
+        'VirtualParameters.getSerialNumber',
+        'VirtualParameters.RXPower',
+        'VirtualParameters.activedevices',
+        'InternetGatewayDevice.DeviceInfo.SerialNumber',
+        'InternetGatewayDevice.DeviceInfo.ModelName',
+        'InternetGatewayDevice.DeviceInfo.ProductClass',
+        'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ConnectionStatus',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress',
+        'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ConnectionStatus',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
+        'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MACAddress',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+        'Device.WiFi.SSID.1.SSID',
+        'Device.WiFi.SSID.1.Enable',
+        'Device.PPP.Interface.1.Username',
     ];
+
+    /**
+     * Get fast summarized list of all devices in GenieACS with database customer matching and statistics.
+     */
+    public function getAllDevicesSummary(bool $forceFresh = false): array
+    {
+        if (!$forceFresh && Cache::has(self::SUMMARY_CACHE_KEY)) {
+            return Cache::get(self::SUMMARY_CACHE_KEY);
+        }
+
+        try {
+            $response = $this->client()->get($this->url('/devices'), [
+                'projection' => implode(',', self::FAST_DEVICE_PROJECTION),
+            ]);
+
+            if (!$response->successful()) {
+                throw new GenieAcsException('Gagal menghubungi GenieACS API (HTTP ' . $response->status() . ').', 502);
+            }
+
+            $rawDevices = $response->json() ?? [];
+        } catch (\Throwable $e) {
+            if ($e instanceof GenieAcsException) throw $e;
+            throw new GenieAcsException('Koneksi ke GenieACS timeout atau tidak dapat dijangkau: ' . $e->getMessage(), 504);
+        }
+
+        // Fetch all active customers for fast in-memory indexing
+        $customers = Customer::query()
+            ->select('id', 'name', 'phone', 'pppoe_username', 'home_router_host', 'home_router_type', 'is_active', 'package_id')
+            ->with('package:id,name,speed,price')
+            ->get();
+
+        $custByPppoe = [];
+        foreach ($customers as $c) {
+            if ($c->pppoe_username) {
+                $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
+            }
+        }
+
+        $devicesList = [];
+        $onlineCount = 0;
+        $offlineCount = 0;
+        $matchedCount = 0;
+        $criticalRxCount = 0;
+        $warningRxCount = 0;
+
+        foreach ($rawDevices as $d) {
+            $deviceId = (string) ($d['_id'] ?? '');
+            $lastInformAt = $this->resolveLastInformAt($d);
+            $isOnline = $this->isLastInformRecent($lastInformAt);
+
+            if ($isOnline) {
+                $onlineCount++;
+            } else {
+                $offlineCount++;
+            }
+
+            // Extract Manufacturer / Model
+            $mfr = $this->parameterValue($d, 'DeviceID.Manufacturer')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.DeviceInfo.Manufacturer')
+                ?: 'Generic';
+
+            $productClass = $this->parameterValue($d, 'DeviceID.ProductClass')
+                ?: $this->parameterValue($d, 'DeviceID.ModelName')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.DeviceInfo.ModelName')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.DeviceInfo.ProductClass')
+                ?: 'ONT Router';
+
+            $serialNumber = $this->parameterValue($d, 'VirtualParameters.getSerialNumber')
+                ?: $this->parameterValue($d, 'DeviceID.SerialNumber')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.DeviceInfo.SerialNumber')
+                ?: '';
+
+            // Extract PPPoE Username
+            $pppoe = $this->parameterValue($d, 'VirtualParameters.pppoeUsername')
+                ?: $this->parameterValue($d, 'VirtualParameters.pppoeUsername2')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username')
+                ?: $this->parameterValue($d, 'Device.PPP.Interface.1.Username')
+                ?: '';
+
+            // Extract IP Address
+            $ipAddress = $this->parameterValue($d, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.ExternalIPAddress')
+                ?: '';
+
+            // Extract MAC Address
+            $macAddress = $this->parameterValue($d, 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress')
+                ?: $this->parameterValue($d, 'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MACAddress')
+                ?: '';
+
+            // Extract SSID & Connected WiFi Clients
+            $ssid1 = $this->parameterValue($d, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID')
+                ?: $this->parameterValue($d, 'Device.WiFi.SSID.1.SSID')
+                ?: '';
+
+            $wifiClients = $this->integerParameter($d, 'VirtualParameters.activedevices')
+                ?? $this->integerParameter($d, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations')
+                ?? 0;
+
+            // Optical Power (dBm)
+            $rxPowerRaw = $this->parameterValue($d, 'VirtualParameters.RXPower');
+            $rxPowerVal = null;
+            $rxStatus = 'unknown';
+
+            if ($rxPowerRaw !== null && is_numeric($rxPowerRaw)) {
+                $rxPowerVal = (float) $rxPowerRaw;
+                if ($rxPowerVal >= -24.0) {
+                    $rxStatus = 'normal';
+                } elseif ($rxPowerVal >= -27.0) {
+                    $rxStatus = 'warning';
+                    $warningRxCount++;
+                } else {
+                    $rxStatus = 'critical';
+                    $criticalRxCount++;
+                }
+            }
+
+            // Customer Match
+            $matchedCustomer = null;
+            if ($pppoe !== '' && isset($custByPppoe[strtolower(trim($pppoe))])) {
+                $c = $custByPppoe[strtolower(trim($pppoe))];
+                $matchedCustomer = [
+                    'id' => $c->id,
+                    'name' => $c->name,
+                    'phone' => $c->phone,
+                    'pppoe_username' => $c->pppoe_username,
+                    'package_name' => $c->package?->name ?? '-',
+                    'is_active' => (bool) $c->is_active,
+                ];
+                $matchedCount++;
+            }
+
+            $devicesList[] = [
+                'device_id' => $deviceId,
+                'is_online' => $isOnline,
+                'last_inform_at' => $lastInformAt,
+                'registered_at' => $this->parameterValue($d, '_registered'),
+                'manufacturer' => $mfr,
+                'product_class' => $productClass,
+                'serial_number' => $serialNumber,
+                'pppoe_username' => $pppoe ?: null,
+                'ip_address' => $ipAddress ?: null,
+                'mac_address' => $macAddress ?: null,
+                'ssid' => $ssid1 ?: null,
+                'wifi_clients_count' => $wifiClients,
+                'rx_power' => $rxPowerVal,
+                'rx_status' => $rxStatus,
+                'customer' => $matchedCustomer,
+            ];
+        }
+
+        // Sort: Online first, then by last inform descending
+        usort($devicesList, function ($a, $b) {
+            if ($a['is_online'] !== $b['is_online']) {
+                return $a['is_online'] ? -1 : 1;
+            }
+            return strcmp((string) ($b['last_inform_at'] ?? ''), (string) ($a['last_inform_at'] ?? ''));
+        });
+
+        $result = [
+            'stats' => [
+                'total_devices' => count($devicesList),
+                'online_devices' => $onlineCount,
+                'offline_devices' => $offlineCount,
+                'matched_customers' => $matchedCount,
+                'critical_rx_count' => $criticalRxCount,
+                'warning_rx_count' => $warningRxCount,
+                'cached_at' => now()->toIso8601String(),
+            ],
+            'devices' => $devicesList,
+        ];
+
+        Cache::put(self::SUMMARY_CACHE_KEY, $result, self::SUMMARY_CACHE_TTL_SECONDS);
+
+        return $result;
+    }
+
+    /**
+     * Get detailed telemetry and configuration of a single GenieACS device
+     */
+    public function getDeviceDetails(string $deviceId): array
+    {
+        $response = $this->client()->get($this->url('/devices'), [
+            'query' => json_encode(['_id' => $deviceId]),
+        ]);
+
+        if (!$response->successful()) {
+            throw new GenieAcsException('Gagal mengambil data perangkat dari GenieACS.', 502);
+        }
+
+        $devices = $response->json() ?? [];
+        if (empty($devices)) {
+            throw new GenieAcsException('Perangkat tidak ditemukan di GenieACS.', 404);
+        }
+
+        $device = $devices[0];
+
+        $summary = $this->summarizeDevice($device);
+        $telemetry = $this->summarizePortalTelemetry($device);
+        $lanHosts = $this->resolveLanHostsByMac($device);
+
+        // Find matched customer
+        $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
+            ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
+            ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+            ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username')
+            ?: '';
+
+        $customer = null;
+        if ($pppoe !== '') {
+            $customerModel = Customer::query()
+                ->where('pppoe_username', $pppoe)
+                ->with('package:id,name,speed,price')
+                ->first();
+
+            if ($customerModel) {
+                $customer = [
+                    'id' => $customerModel->id,
+                    'name' => $customerModel->name,
+                    'phone' => $customerModel->phone,
+                    'address' => $customerModel->address,
+                    'pppoe_username' => $customerModel->pppoe_username,
+                    'package_name' => $customerModel->package?->name ?? '-',
+                    'is_active' => (bool) $customerModel->is_active,
+                ];
+            }
+        }
+
+        return [
+            'device_id' => $deviceId,
+            'summary' => $summary,
+            'telemetry' => $telemetry,
+            'lan_hosts' => array_values($lanHosts),
+            'customer' => $customer,
+            'raw_writable_wifi_targets' => $this->activeWifiTargets($device),
+        ];
+    }
+
+    /**
+     * Update WiFi SSID and/or Password for a device with robust multi-vendor TR-069 path handling
+     */
+    public function updateDeviceWifi(string $deviceId, array $payload): array
+    {
+        $newPassword = isset($payload['password']) ? trim((string) $payload['password']) : null;
+        $newSsid = isset($payload['ssid']) ? trim((string) $payload['ssid']) : null;
+
+        if ($newPassword === null && $newSsid === null) {
+            throw new GenieAcsException('Harap isi Nama SSID atau Password baru yang ingin diubah.', 422);
+        }
+
+        // Fetch device to inspect current WiFi parameter paths
+        $response = $this->client()->get($this->url('/devices'), [
+            'query' => json_encode(['_id' => $deviceId]),
+        ]);
+
+        if (!$response->successful() || empty($response->json())) {
+            throw new GenieAcsException('Perangkat tidak ditemukan di GenieACS.', 404);
+        }
+
+        $device = $response->json()[0];
+        $wifiTargets = $this->activeWifiTargets($device);
+
+        if (empty($wifiTargets)) {
+            // Fallback default TR-098 WLAN paths if not detected
+            $wifiTargets = [
+                [
+                    'ssid' => 'SSID 1',
+                    'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                    'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+                ],
+                [
+                    'ssid' => 'SSID 1 PreSharedKey',
+                    'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                    'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
+                ]
+            ];
+        }
+
+        $parameterValues = [];
+        $refreshPaths = [];
+
+        // 1. If updating Password:
+        if ($newPassword !== null && $newPassword !== '') {
+            $passwordPaths = collect($wifiTargets)->pluck('password_path')->filter()->unique()->values()->all();
+            foreach ($passwordPaths as $pPath) {
+                $parameterValues[] = [$pPath, $newPassword, 'xsd:string'];
+                $refreshPaths[] = $pPath;
+            }
+        }
+
+        // 2. If updating SSID Name:
+        if ($newSsid !== null && $newSsid !== '') {
+            $ssidPaths = [];
+            foreach ($wifiTargets as $wt) {
+                $basePath = $wt['path'] ?? null;
+                if ($basePath) {
+                    if (str_starts_with($basePath, 'Device.WiFi.')) {
+                        $ssidPaths[] = $basePath . '.SSID';
+                    } else {
+                        $ssidPaths[] = $basePath . '.SSID';
+                    }
+                }
+            }
+            $ssidPaths = array_values(array_unique(array_filter($ssidPaths)));
+            if (empty($ssidPaths)) {
+                $ssidPaths[] = 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID';
+            }
+
+            foreach ($ssidPaths as $sPath) {
+                $parameterValues[] = [$sPath, $newSsid, 'xsd:string'];
+                $refreshPaths[] = $sPath;
+            }
+        }
+
+        if (empty($parameterValues)) {
+            throw new GenieAcsException('Tidak ada parameter WiFi yang dapat diubah pada perangkat ini.', 422);
+        }
+
+        // Post setParameterValues task
+        $this->postTask($deviceId, [
+            'name' => 'setParameterValues',
+            'parameterValues' => $parameterValues,
+        ]);
+
+        // Post refreshObject task to update values on next Inform
+        $refreshTarget = !empty($refreshPaths) ? $this->refreshObjectName($refreshPaths[0]) : 'InternetGatewayDevice.LANDevice.';
+        $this->postTask($deviceId, [
+            'name' => 'refreshObject',
+            'objectName' => $refreshTarget,
+        ], false);
+
+        // Invalidate summary cache so UI updates immediately
+        Cache::forget(self::SUMMARY_CACHE_KEY);
+
+        return [
+            'device_id' => $deviceId,
+            'updated_parameters' => count($parameterValues),
+            'parameter_paths' => array_column($parameterValues, 0),
+            'message' => 'Perintah pembaruan WiFi berhasil dikirim ke antrean GenieACS (TR-069 Task Created).',
+        ];
+    }
+
+    /**
+     * Reboot router device via TR-069 RPC method
+     */
+    public function rebootDevice(string $deviceId): array
+    {
+        $this->postTask($deviceId, [
+            'name' => 'reboot',
+        ]);
+
+        Cache::forget(self::SUMMARY_CACHE_KEY);
+
+        return [
+            'device_id' => $deviceId,
+            'message' => 'Perintah reboot router berhasil dikirim ke GenieACS.',
+        ];
+    }
+
+    /**
+     * Refresh router parameters from device
+     */
+    public function refreshDevice(string $deviceId): array
+    {
+        $this->postTask($deviceId, [
+            'name' => 'refreshObject',
+            'objectName' => '',
+        ]);
+
+        Cache::forget(self::SUMMARY_CACHE_KEY);
+
+        return [
+            'device_id' => $deviceId,
+            'message' => 'Perintah sinkronisasi parameter berhasil dikirim ke router.',
+        ];
+    }
 
     public function findDeviceByPppoe(string $pppoeUsername): ?array
     {
@@ -35,17 +436,46 @@ class GenieAcsService
             return null;
         }
 
-        $response = $this->client()->get($this->url('/devices'), [
-            'projection' => implode(',', self::DEVICE_PROJECTION),
+        // Fast MongoDB query via GenieACS REST API
+        $queryParam = json_encode([
+            '$or' => [
+                ['VirtualParameters.pppoeUsername' => $target],
+                ['VirtualParameters.pppoeUsername2' => $target],
+                ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username' => $target],
+                ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username' => $target],
+                ['Device.PPP.Interface.1.Username' => $target],
+            ],
         ]);
 
-        if (!$response->successful()) {
-            throw new GenieAcsException('Gagal menghubungi GenieACS API.', 502);
+        try {
+            $response = $this->client()->get($this->url('/devices'), [
+                'query' => $queryParam,
+            ]);
+
+            if ($response->successful()) {
+                $devices = $response->json() ?? [];
+                if (!empty($devices)) {
+                    return $devices[0];
+                }
+            }
+        } catch (\Throwable) {
+            // Fallback to full fetch if query fails
         }
 
-        foreach ($response->json() ?? [] as $device) {
-            if ($this->deviceHasPppoeUsername($device, $target)) {
-                return $device;
+        // Fallback: search across all devices
+        $all = $this->client()->get($this->url('/devices'), [
+            'projection' => implode(',', self::FAST_DEVICE_PROJECTION),
+        ]);
+
+        if ($all->successful()) {
+            foreach ($all->json() ?? [] as $device) {
+                if ($this->deviceHasPppoeUsername($device, $target)) {
+                    // Fetch full device
+                    $full = $this->client()->get($this->url('/devices'), [
+                        'query' => json_encode(['_id' => $device['_id']]),
+                    ]);
+                    return $full->successful() ? ($full->json()[0] ?? $device) : $device;
+                }
             }
         }
 
@@ -71,44 +501,19 @@ class GenieAcsService
             throw new GenieAcsException('Device GenieACS tidak ditemukan untuk PPPoE pelanggan ini.', 404);
         }
 
-        $summary = $this->summarizeDevice($device);
-        $targets = collect($summary['ssids'])
-            ->pluck('password_path')
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-
-        if (empty($targets)) {
-            throw new GenieAcsException('Tidak ada SSID aktif dengan parameter password yang bisa diubah.', 422);
-        }
-
         $deviceId = (string) ($device['_id'] ?? '');
-        $parameterValues = array_map(
-            fn (string $path) => [$path, $password, 'xsd:string'],
-            $targets
-        );
-
-        $this->postTask($deviceId, [
-            'name' => 'setParameterValues',
-            'parameterValues' => $parameterValues,
-        ]);
-
-        $this->postTask($deviceId, [
-            'name' => 'refreshObject',
-            'objectName' => $this->refreshObjectName($targets[0]),
-        ], false);
+        $res = $this->updateDeviceWifi($deviceId, ['password' => $password]);
+        $summary = $this->summarizeDevice($device);
 
         return [
             'device_id' => $deviceId,
-            'updated_ssid_count' => count($targets),
-            'target_ssid_count' => count($targets),
-            'targets' => collect($summary['ssids'])
-                ->filter(fn (array $ssid) => in_array($ssid['password_path'] ?? null, $targets, true))
+            'updated_ssid_count' => count($summary['ssids'] ?? [1]),
+            'target_ssid_count' => count($summary['ssids'] ?? [1]),
+            'targets' => collect($summary['ssids'] ?? [])
                 ->map(fn (array $ssid) => Arr::only($ssid, ['ssid', 'path', 'password_path']))
                 ->values()
                 ->all(),
-            'ssids' => collect($summary['ssids'])
+            'ssids' => collect($summary['ssids'] ?? [])
                 ->map(fn (array $ssid) => Arr::except($ssid, ['password_path', 'current_password']))
                 ->values()
                 ->all(),
@@ -263,21 +668,18 @@ class GenieAcsService
         $response = $this->client()->post($this->url('/devices/' . rawurlencode($deviceId) . '/tasks?timeout=20000'), $payload);
 
         if ($required && !$response->successful()) {
-            throw new GenieAcsException('GenieACS gagal menerima task ubah password WiFi.', 502);
+            throw new GenieAcsException('GenieACS gagal menerima task perintah (' . ($payload['name'] ?? 'task') . ').', 502);
         }
     }
 
     private function deviceHasPppoeUsername(array $device, string $target): bool
     {
         foreach ($this->flattenParameterValues($device) as $path => $value) {
-            if (!Str::endsWith($path, '.Username')) {
+            if (!Str::endsWith($path, '.Username') && !Str::contains($path, 'pppoeUsername')) {
                 continue;
             }
 
-            $isPppPath = str_contains($path, 'WANPPPConnection')
-                || str_contains($path, 'Device.PPP.Interface');
-
-            if ($isPppPath && $this->normalize((string) $value) === $target) {
+            if ($this->normalize((string) $value) === $target) {
                 return true;
             }
         }
@@ -699,6 +1101,8 @@ class GenieAcsService
                 $passwordParameter = $this->firstWritablePasswordParameter($wlan, $basePath, [
                     'KeyPassphrase',
                     'PreSharedKey.1.KeyPassphrase',
+                    'PreSharedKey.1.PreSharedKey',
+                    'X_HW_KeyPassphrase',
                 ]);
 
                 if (!$passwordParameter) {

@@ -344,11 +344,37 @@ class BillingAutomationController extends Controller
             ]),
         ]);
 
-        AnalyzeWhatsAppPaymentCaptureJob::dispatch($capture->id);
+        try {
+            AnalyzeWhatsAppPaymentCaptureJob::dispatchSync($capture->id);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Payment capture sync reanalyze failed, queueing async', [
+                'capture_id' => $capture->id,
+                'error' => $e->getMessage(),
+            ]);
+            AnalyzeWhatsAppPaymentCaptureJob::dispatch($capture->id);
+        }
 
         return response()->json([
-            'message' => 'Capture pembayaran dijadwalkan untuk analisis ulang.',
-            'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice'])),
-        ], 202);
+            'message' => 'Capture pembayaran berhasil dianalisis ulang.',
+            'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
+        ]);
+    }
+
+    public function assignCustomer(Request $request, BillingPaymentCapture $capture)
+    {
+        $validated = $request->validate([
+            'customer_id' => 'required|integer|exists:customers,id',
+        ]);
+
+        $capture->customer_id = (int) $validated['customer_id'];
+        $capture->save();
+
+        // Run candidate matching for this capture
+        $this->paymentMatchingService->runMatching($capture->id, false, auth()->id());
+
+        return response()->json([
+            'message' => 'Pelanggan berhasil ditautkan ke bukti pembayaran.',
+            'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
+        ]);
     }
 }

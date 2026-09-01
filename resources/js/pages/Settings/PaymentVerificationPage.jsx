@@ -22,10 +22,15 @@ import {
     Sparkles,
     Trash2,
     UploadCloud,
+    User,
+    UserCheck,
     Users,
     X,
     XCircle,
     ZoomIn,
+    Phone,
+    HelpCircle,
+    CheckCircle,
 } from 'lucide-react';
 import Modal from '../../components/common/Modal';
 import paymentVerificationService from '../../services/paymentVerificationService';
@@ -96,6 +101,12 @@ export default function PaymentVerificationPage() {
 
     // Selected candidate invoice per capture
     const [selectedCandidate, setSelectedCandidate] = useState({});
+
+    // Manual Customer Assignment state
+    const [customerSearchQueries, setCustomerSearchQueries] = useState({});
+    const [customerSearchResults, setCustomerSearchResults] = useState({});
+    const [isSearchingCustomer, setIsSearchingCustomer] = useState({});
+    const [showCustomerSearch, setShowCustomerSearch] = useState({});
 
     // Load initial data
     const loadData = async (
@@ -240,7 +251,7 @@ export default function PaymentVerificationPage() {
                 candidate_invoice_id: selectedInvId,
             });
 
-            setMessage(decision === 'approve' ? 'Pembayaran berhasil dikonfirmasi dan dilunaskan.' : 'Pembayaran ditolak.');
+            setMessage(decision === 'approve' ? 'Pembayaran berhasil dikonfirmasi dan tagihan dilunaskan.' : 'Pembayaran ditolak.');
             await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal memproses verifikasi capture.');
@@ -255,11 +266,48 @@ export default function PaymentVerificationPage() {
             setRefreshing(true);
             setError('');
             setMessage('');
-            await paymentVerificationService.reanalyzeCapture(captureId);
-            setMessage(`Capture #${captureId} dijadwalkan untuk dianalisis ulang AI.`);
+            const res = await paymentVerificationService.reanalyzeCapture(captureId);
+            setMessage(res.data?.message || `Capture #${captureId} berhasil dianalisis ulang.`);
             await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
         } catch (err) {
-            setError(err.response?.data?.message || err.message || 'Gagal memicu analisis ulang.');
+            setError(err.response?.data?.message || err.message || 'Gagal menganalisis ulang bukti pembayaran.');
+        } finally {
+            setRefreshing(false);
+        }
+    };
+
+    // Search Customer for Manual Assignment
+    const handleSearchCustomer = async (captureId, query) => {
+        setCustomerSearchQueries((prev) => ({ ...prev, [captureId]: query }));
+        if (!query || query.trim().length < 2) {
+            setCustomerSearchResults((prev) => ({ ...prev, [captureId]: [] }));
+            return;
+        }
+
+        try {
+            setIsSearchingCustomer((prev) => ({ ...prev, [captureId]: true }));
+            const res = await paymentVerificationService.getCustomers({ search: query.trim(), per_page: 8 });
+            const list = res.data?.data || res.data || [];
+            setCustomerSearchResults((prev) => ({ ...prev, [captureId]: Array.isArray(list) ? list : (list.data || []) }));
+        } catch (err) {
+            console.error('Failed to search customers', err);
+        } finally {
+            setIsSearchingCustomer((prev) => ({ ...prev, [captureId]: false }));
+        }
+    };
+
+    // Assign Customer Manually
+    const handleAssignCustomer = async (captureId, customerId) => {
+        try {
+            setRefreshing(true);
+            setError('');
+            setMessage('');
+            await paymentVerificationService.assignCustomer(captureId, customerId);
+            setMessage(`Pelanggan berhasil ditautkan ke Capture #${captureId}.`);
+            setShowCustomerSearch((prev) => ({ ...prev, [captureId]: false }));
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menautkan pelanggan ke capture.');
         } finally {
             setRefreshing(false);
         }
@@ -453,7 +501,7 @@ export default function PaymentVerificationPage() {
                         Payment Verification AI
                     </h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Verifikasi otomatis bukti transfer via WhatsApp & Web, validasi rekening perusahaan, dan auto-pelunasan tagihan.
+                        Verifikasi otomatis bukti transfer via WhatsApp & Web, pencocokan nomor WA pengirim ke data pelanggan, dan auto-pelunasan tagihan.
                     </p>
                 </div>
 
@@ -532,7 +580,7 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <CheckCircle2 size={16} />
-                    Riwayat Terverifikasi (Lunas)
+                    Terverifikasi (Lunas)
                 </button>
 
                 <button
@@ -545,7 +593,7 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <XCircle size={16} />
-                    Ditolak / Tidak Cocok
+                    Ditolak / Unmatched
                 </button>
 
                 <button
@@ -558,82 +606,57 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <Sliders size={16} />
-                    ⚙️ Pengaturan AI & Whitelist
+                    Pengaturan Rekening & Notifikasi
                 </button>
             </div>
 
-            {/* TAB CONTENT: Needs Review, Approved, Unmatched */}
-            {activeTab !== 'settings' && (
+            {/* TAB CONTENT */}
+            {activeTab !== 'settings' ? (
                 <div className="space-y-4">
-                    {/* Search & Date Filter Bar */}
-                    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-3">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    {/* Filters Bar */}
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                             {/* Search Form */}
                             <form onSubmit={handleSearch} className="relative flex-1">
                                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={17} />
                                 <input
                                     type="text"
-                                    placeholder="Cari nama pelanggan, no WA, kode referensi, invoice link..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full rounded-xl border border-gray-200 pl-10 pr-4 py-2 text-sm focus:border-emerald-500 focus:ring-emerald-500"
+                                    placeholder="Cari nama pelanggan, no WA, kode referensi, invoice link..."
+                                    className="w-full rounded-xl border border-gray-200 bg-gray-50/50 pl-10 pr-4 py-2.5 text-sm focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
                                 />
                             </form>
 
                             {/* Date Presets */}
-                            <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-xs font-semibold text-gray-500 mr-1">Periode:</span>
-                                <button
-                                    type="button"
-                                    onClick={() => handleDatePresetChange('all')}
-                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                                        datePreset === 'all'
-                                            ? 'bg-emerald-600 text-white font-semibold'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                    }`}
-                                >
-                                    Semua
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleDatePresetChange('today')}
-                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                                        datePreset === 'today'
-                                            ? 'bg-emerald-600 text-white font-semibold'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                    }`}
-                                >
-                                    Hari Ini
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleDatePresetChange('last7')}
-                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                                        datePreset === 'last7'
-                                            ? 'bg-emerald-600 text-white font-semibold'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                    }`}
-                                >
-                                    7 Hari
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleDatePresetChange('thisMonth')}
-                                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                                        datePreset === 'thisMonth'
-                                            ? 'bg-emerald-600 text-white font-semibold'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                    }`}
-                                >
-                                    Bulan Ini
-                                </button>
+                            <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
+                                <span className="text-gray-400 font-medium whitespace-nowrap mr-1">Periode:</span>
+                                {[
+                                    { key: 'all', label: 'Semua' },
+                                    { key: 'today', label: 'Hari Ini' },
+                                    { key: 'last7', label: '7 Hari' },
+                                    { key: 'thisMonth', label: 'Bulan Ini' },
+                                ].map((p) => (
+                                    <button
+                                        key={p.key}
+                                        type="button"
+                                        onClick={() => handleDatePresetChange(p.key)}
+                                        className={`rounded-lg px-2.5 py-1.5 font-medium transition ${
+                                            datePreset === p.key
+                                                ? 'bg-emerald-600 text-white font-semibold'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
                         {/* Date Range Inputs */}
-                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                                <Calendar size={15} className="text-gray-400 shrink-0" />
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Calendar size={15} className="text-gray-400" />
                                 <span className="font-medium text-gray-600">Dari Tanggal:</span>
                                 <input
                                     type="date"
@@ -694,6 +717,9 @@ export default function PaymentVerificationPage() {
                                 const candidateInvoices = capture.match_reviews || [];
                                 const isNeedsReview = capture.match_status === 'needs_review' || capture.match_status === 'pending';
                                 const isApproved = capture.match_status === 'approved';
+                                const isSearchingThisCapture = isSearchingCustomer[capture.id] || false;
+                                const searchResultsForCapture = customerSearchResults[capture.id] || [];
+                                const isSearchOpen = showCustomerSearch[capture.id] || false;
 
                                 return (
                                     <div
@@ -710,7 +736,17 @@ export default function PaymentVerificationPage() {
                                                                 src={capture.proof_url}
                                                                 alt={`Bukti Bayar #${capture.id}`}
                                                                 className="h-full w-full object-contain p-1"
+                                                                onError={(e) => {
+                                                                    e.currentTarget.style.display = 'none';
+                                                                    const fallback = e.currentTarget.parentElement?.querySelector('.img-fallback');
+                                                                    if (fallback) fallback.classList.remove('hidden');
+                                                                }}
                                                             />
+                                                            <div className="img-fallback hidden flex flex-col items-center justify-center text-center p-3 text-gray-400 text-xs">
+                                                                <FileText size={32} className="text-gray-300 mb-1.5" />
+                                                                <span className="font-semibold text-gray-600">Bukti Bayar #{capture.id}</span>
+                                                                <span className="text-[11px] text-gray-400 mt-0.5">File gambar tidak ditemukan di server</span>
+                                                            </div>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => setPreviewImageUrl(capture.proof_url)}
@@ -720,9 +756,9 @@ export default function PaymentVerificationPage() {
                                                             </button>
                                                         </>
                                                     ) : (
-                                                        <div className="flex flex-col items-center text-gray-400 text-xs">
-                                                            <FileText size={28} className="text-gray-300" />
-                                                            <span className="mt-1">Bukti fisik tidak ada</span>
+                                                        <div className="flex flex-col items-center text-gray-400 text-xs text-center p-4">
+                                                            <FileText size={28} className="text-gray-300 mb-1" />
+                                                            <span>Bukti fisik tidak terlampir</span>
                                                         </div>
                                                     )}
                                                 </div>
@@ -777,7 +813,7 @@ export default function PaymentVerificationPage() {
                                                                     type="button"
                                                                     onClick={() => handleReanalyze(capture.id)}
                                                                     disabled={refreshing}
-                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 shadow-sm"
                                                                 >
                                                                     <RefreshCw size={13} /> Re-analyze AI
                                                                 </button>
@@ -847,42 +883,157 @@ export default function PaymentVerificationPage() {
                                                         <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
                                                             <p className="text-xs text-gray-500 font-medium">Bank & Tujuan</p>
                                                             <p className="mt-1 text-xs font-semibold text-gray-800 truncate">
-                                                                {analysis.payment_channel || 'Bank'} · {analysis.destination_identity?.name || analysis.destination_identity?.account_number || '-'}
+                                                                {analysis.payment_channel || 'Transfer Bank / QRIS'} · {analysis.destination_identity?.name || analysis.destination_identity?.account_number || 'Rekening Perusahaan'}
                                                             </p>
                                                         </div>
                                                     </div>
 
-                                                    {/* Linked Invoice, Customer & Review Info */}
-                                                    <div className="mt-3 text-xs text-gray-600 space-y-1.5">
-                                                        {capture.customer && (
-                                                            <p>
-                                                                👤 <strong>Pelanggan:</strong> {capture.customer.name} (WA: {capture.customer.phone || '-'} / PPPoE: {capture.customer.pppoe_username || '-'})
-                                                            </p>
+                                                    {/* Linked Customer & Invoice Cards */}
+                                                    <div className="mt-3 space-y-2.5">
+                                                        {/* Customer Info Card */}
+                                                        {capture.customer ? (
+                                                            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                                                                <div className="flex items-center gap-2.5 text-xs text-emerald-950">
+                                                                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                                                        <UserCheck size={18} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="font-bold text-sm text-gray-900">{capture.customer.name}</p>
+                                                                        <p className="text-gray-600 text-[11px] flex items-center gap-2">
+                                                                            <span>📱 WA: <strong>{capture.customer.phone || '-'}</strong></span>
+                                                                            {capture.customer.pppoe_username && (
+                                                                                <span>· PPPoE: <strong className="font-mono text-emerald-700">{capture.customer.pppoe_username}</strong></span>
+                                                                            )}
+                                                                            {capture.sender_phone && capture.sender_phone !== capture.customer.phone && (
+                                                                                <span className="text-gray-400">· Pengirim: {capture.sender_phone}</span>
+                                                                            )}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                                                    Pelanggan Teridentifikasi
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 text-xs">
+                                                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                                    <div className="flex items-center gap-2 text-amber-900">
+                                                                        <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                                                                        <div>
+                                                                            <span className="font-bold">Pelanggan belum terhubung secara otomatis.</span>
+                                                                            {capture.sender_phone && (
+                                                                                <span className="text-gray-600 ml-1">
+                                                                                    (Nomor Pengirim WA: <strong>{capture.sender_phone}</strong>)
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    {canManage && isNeedsReview && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setShowCustomerSearch((prev) => ({ ...prev, [capture.id]: !isSearchOpen }))}
+                                                                            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition flex items-center gap-1 shadow-sm shrink-0"
+                                                                        >
+                                                                            <User size={13} />
+                                                                            {isSearchOpen ? 'Tutup Pencarian' : 'Cari & Tautkan Pelanggan'}
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Search Customer Inline Form */}
+                                                                {isSearchOpen && (
+                                                                    <div className="mt-3 pt-3 border-t border-amber-200/80 space-y-2">
+                                                                        <div className="relative">
+                                                                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                                            <input
+                                                                                type="text"
+                                                                                value={customerSearchQueries[capture.id] || ''}
+                                                                                onChange={(e) => handleSearchCustomer(capture.id, e.target.value)}
+                                                                                placeholder="Ketik nama pelanggan, nomor WhatsApp, atau username PPPoE..."
+                                                                                className="w-full text-xs rounded-lg border border-amber-300 pl-8 pr-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                                                            />
+                                                                        </div>
+
+                                                                        {isSearchingThisCapture && (
+                                                                            <p className="text-[11px] text-gray-500 italic">Mencari pelanggan...</p>
+                                                                        )}
+
+                                                                        {searchResultsForCapture.length > 0 && (
+                                                                            <div className="max-h-40 overflow-y-auto rounded-lg border border-amber-200 bg-white divide-y divide-gray-100 shadow-sm">
+                                                                                {searchResultsForCapture.map((c) => (
+                                                                                    <div
+                                                                                        key={c.id}
+                                                                                        className="flex items-center justify-between p-2 hover:bg-emerald-50/60 transition cursor-pointer"
+                                                                                        onClick={() => handleAssignCustomer(capture.id, c.id)}
+                                                                                    >
+                                                                                        <div>
+                                                                                            <span className="font-bold text-gray-900 text-xs">{c.name}</span>
+                                                                                            <span className="text-gray-500 text-[11px] ml-2">WA: {c.phone || '-'}</span>
+                                                                                            {c.pppoe_username && (
+                                                                                                <span className="text-emerald-700 text-[11px] ml-1 font-mono">({c.pppoe_username})</span>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold text-[11px]"
+                                                                                        >
+                                                                                            Pilih
+                                                                                        </button>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                         )}
+
+                                                        {/* Attached Invoice */}
                                                         {capture.invoice && (
-                                                            <p className="flex items-center gap-2">
-                                                                📄 <strong>Invoice Terkait:</strong> <a href={`/invoice/${capture.invoice.invoice_link}`} target="_blank" rel="noreferrer" className="text-emerald-600 font-semibold underline inline-flex items-center gap-0.5">{capture.invoice.invoice_link} <ExternalLink size={11} /></a>
-                                                                <span className="text-gray-500 font-medium">· Tagihan: Rp {Number(capture.invoice.amount || 0).toLocaleString('id-ID')}</span>
-                                                                {capture.invoice.due_date && <span className="text-gray-500">· Jatuh Tempo: <strong>{capture.invoice.due_date}</strong></span>}
-                                                            </p>
+                                                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-blue-50/50 border border-blue-200 text-xs">
+                                                                <div className="flex items-center gap-2 text-blue-950">
+                                                                    <FileText size={15} className="text-blue-600 shrink-0" />
+                                                                    <span>
+                                                                        <strong>Invoice Terpaut:</strong>{' '}
+                                                                        <a
+                                                                            href={`/invoice/${capture.invoice.invoice_link}`}
+                                                                            target="_blank"
+                                                                            rel="noreferrer"
+                                                                            className="text-blue-700 font-bold underline inline-flex items-center gap-0.5"
+                                                                        >
+                                                                            {capture.invoice.invoice_link} <ExternalLink size={11} />
+                                                                        </a>
+                                                                    </span>
+                                                                    <span className="text-gray-600 font-medium">· Tagihan: Rp {Number(capture.invoice.amount || 0).toLocaleString('id-ID')}</span>
+                                                                    {capture.invoice.due_date && (
+                                                                        <span className="text-gray-500">· Jatuh Tempo: {capture.invoice.due_date}</span>
+                                                                    )}
+                                                                </div>
+                                                                <span className="text-[11px] font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                                                                    Status: {capture.invoice.status}
+                                                                </span>
+                                                            </div>
                                                         )}
+
                                                         {capture.reviewed_at_display && (
-                                                            <p className="text-emerald-700 font-medium">
+                                                            <p className="text-emerald-700 font-medium text-xs">
                                                                 ✅ <strong>Selesai Direview:</strong> {capture.reviewed_at_display}
                                                             </p>
                                                         )}
+
                                                         {capture.failure_reason && (
-                                                            <p className="text-rose-600 font-medium">
-                                                                ⚠️ <strong>Catatan Sistem:</strong> {capture.failure_reason}
+                                                            <p className="text-rose-600 font-medium text-xs">
+                                                                ⚠️ <strong>Catatan Validasi:</strong> {capture.failure_reason}
                                                             </p>
                                                         )}
                                                     </div>
 
                                                     {/* Candidate Invoices Selection */}
                                                     {candidateInvoices.length > 0 && isNeedsReview && (
-                                                        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-                                                            <p className="text-xs font-bold text-amber-900 mb-2">
-                                                                🎯 Rekomendasi Invoice Kandidat untuk Dicocokkan:
+                                                        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5">
+                                                            <p className="text-xs font-bold text-emerald-950 mb-2 flex items-center gap-1.5">
+                                                                <Sparkles size={14} className="text-emerald-600" />
+                                                                Rekomendasi Tagihan / Invoice yang Cocok untuk Dilunaskan:
                                                             </p>
                                                             <div className="space-y-2">
                                                                 {candidateInvoices.map((rev) => {
@@ -893,26 +1044,34 @@ export default function PaymentVerificationPage() {
                                                                     return (
                                                                         <label
                                                                             key={rev.id || inv.id}
-                                                                            className={`flex items-center justify-between rounded-lg border p-2.5 cursor-pointer text-xs transition ${
+                                                                            className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl border p-2.5 cursor-pointer text-xs transition ${
                                                                                 isSelected
-                                                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-950 font-medium'
+                                                                                    ? 'border-emerald-500 bg-white shadow-sm ring-1 ring-emerald-500 text-emerald-950 font-medium'
                                                                                     : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
                                                                             }`}
                                                                         >
-                                                                            <div className="flex items-center gap-2">
+                                                                            <div className="flex items-center gap-2.5">
                                                                                 <input
                                                                                     type="radio"
                                                                                     name={`candidate_${capture.id}`}
                                                                                     checked={isSelected}
                                                                                     onChange={() => setSelectedCandidate((prev) => ({ ...prev, [capture.id]: inv.id }))}
-                                                                                    className="text-emerald-600 focus:ring-emerald-500"
+                                                                                    className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                                                                                 />
                                                                                 <div>
-                                                                                    <span className="font-bold">{inv.invoice_link}</span> — Tagihan: Rp {Number(inv.amount || 0).toLocaleString('id-ID')}
-                                                                                    {inv.due_date && <span className="text-gray-500 ml-1">· Jatuh Tempo: {inv.due_date}</span>}
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <span className="font-bold font-mono text-gray-900">{inv.invoice_link}</span>
+                                                                                        {inv.customer && (
+                                                                                            <span className="text-gray-600">({inv.customer.name})</span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="text-[11px] text-gray-500 mt-0.5">
+                                                                                        Nominal Tagihan: <strong className="text-emerald-700">Rp {Number(inv.amount || 0).toLocaleString('id-ID')}</strong>
+                                                                                        {inv.due_date && <span className="ml-2">· Jatuh Tempo: {inv.due_date}</span>}
+                                                                                    </div>
                                                                                 </div>
                                                                             </div>
-                                                                            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 font-bold text-[11px]">
+                                                                            <span className="self-start sm:self-auto rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 font-bold text-[11px]">
                                                                                 Kecocokan: {rev.score}%
                                                                             </span>
                                                                         </label>
@@ -950,680 +1109,386 @@ export default function PaymentVerificationPage() {
                                 disabled={currentPage >= pagination.last_page}
                                 className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
                             >
-                                Berikutnya <ChevronRight size={14} />
+                                Selanjutnya <ChevronRight size={14} />
                             </button>
                         </div>
                     )}
                 </div>
-            )}
-
-            {/* TAB CONTENT: Settings & Whitelist */}
-            {activeTab === 'settings' && (
+            ) : (
+                /* TAB 4: SETTINGS */
                 <div className="space-y-6">
-                    {/* AI Vision Engine Settings */}
-                    <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-gray-100 pb-4">
-                            <div>
-                                <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                                    <Bot className="h-5 w-5 text-emerald-600" />
-                                    Mesin AI Vision & Parameter Verifikasi
-                                </h2>
-                                <p className="text-xs text-gray-500">
-                                    Atur model AI Vision (Gemini / OpenAI), ambang batas skor kepercayaan (*confidence threshold*), dan auto-approve.
-                                </p>
-                            </div>
-
-                            {canManage && (
+                    {/* Settings Sections */}
+                    <div className="grid gap-6 lg:grid-cols-2">
+                        {/* Whitelist Bank */}
+                        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <Building2 className="h-5 w-5 text-emerald-600" />
+                                    <h3 className="font-bold text-gray-900">Whitelist Rekening Bank Perusahaan</h3>
+                                </div>
                                 <button
                                     type="button"
-                                    onClick={() => handleSaveConfig()}
-                                    disabled={saving}
-                                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 transition"
+                                    onClick={() => {
+                                        setEditingBankIndex(null);
+                                        setBankForm({ name: '', account_number: '', bank_name: 'BCA / BRI / Mandiri', aliases: '', active: true });
+                                        setIsBankModalOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                                 >
-                                    <Save size={16} />
-                                    {saving ? 'Menyimpan...' : 'Simpan Pengaturan'}
+                                    <Plus size={13} /> Tambah Rekening
                                 </button>
-                            )}
-                        </div>
-
-                        <div className="mt-5 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                            <label className="block">
-                                <span className="text-xs font-semibold text-gray-700">Penyedia AI Vision</span>
-                                <select
-                                    value={config?.ai_provider || 'auto'}
-                                    disabled={!canManage}
-                                    onChange={(e) => setConfig((prev) => ({ ...prev, ai_provider: e.target.value }))}
-                                    className="mt-1.5 w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-800 focus:border-emerald-500 focus:ring-emerald-500"
-                                >
-                                    <option value="auto">✨ Auto Fallback (Gemini + OpenAI)</option>
-                                    <option value="gemini">Google Gemini 1.5 Flash (Sangat Cepat & Hemat)</option>
-                                    <option value="openai">OpenAI GPT-4o-mini Vision</option>
-                                </select>
-                            </label>
-
-                            <label className="block">
-                                <span className="text-xs font-semibold text-gray-700">Threshold Auto-Approve (%)</span>
-                                <div className="mt-1.5 flex items-center gap-3">
-                                    <input
-                                        type="range"
-                                        min="70"
-                                        max="100"
-                                        value={config?.confidence_thresholds?.auto_approve ?? 95}
-                                        disabled={!canManage}
-                                        onChange={(e) =>
-                                            setConfig((prev) => ({
-                                                ...prev,
-                                                confidence_thresholds: {
-                                                    ...(prev?.confidence_thresholds || {}),
-                                                    auto_approve: Number(e.target.value),
-                                                },
-                                            }))
-                                        }
-                                        className="flex-1 accent-emerald-600"
-                                    />
-                                    <span className="w-12 text-right text-sm font-bold text-emerald-700">
-                                        {config?.confidence_thresholds?.auto_approve ?? 95}%
-                                    </span>
-                                </div>
-                                <span className="text-[11px] text-gray-400">Skor minimum agar pembayaran langsung lunas otomatis.</span>
-                            </label>
-
-                            <label className="block">
-                                <span className="text-xs font-semibold text-gray-700">Threshold Review Manual (%)</span>
-                                <div className="mt-1.5 flex items-center gap-3">
-                                    <input
-                                        type="range"
-                                        min="50"
-                                        max="90"
-                                        value={config?.confidence_thresholds?.manual_review ?? 70}
-                                        disabled={!canManage}
-                                        onChange={(e) =>
-                                            setConfig((prev) => ({
-                                                ...prev,
-                                                confidence_thresholds: {
-                                                    ...(prev?.confidence_thresholds || {}),
-                                                    manual_review: Number(e.target.value),
-                                                },
-                                            }))
-                                        }
-                                        className="flex-1 accent-amber-500"
-                                    />
-                                    <span className="w-12 text-right text-sm font-bold text-amber-700">
-                                        {config?.confidence_thresholds?.manual_review ?? 70}%
-                                    </span>
-                                </div>
-                                <span className="text-[11px] text-gray-400">Di bawah skor ini akan ditandai sebagai Tidak Cocok.</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    {/* Visual Whitelist Management */}
-                    <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-gray-100 pb-4">
-                            <div>
-                                <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                                    <Building2 className="h-5 w-5 text-emerald-600" />
-                                    Whitelist Tujuan Pembayaran Resmi
-                                </h2>
-                                <p className="text-xs text-gray-500">
-                                    AI hanya akan menyetujui pembayaran yang ditransfer ke rekening bank atau QRIS resmi berikut.
-                                </p>
                             </div>
 
-                            <button
-                                type="button"
-                                onClick={() => setShowJsonWhitelist(!showJsonWhitelist)}
-                                className="text-xs font-semibold text-gray-500 hover:text-gray-800 underline"
-                            >
-                                {showJsonWhitelist ? 'Sembunyikan Mode JSON' : '⚙️ Tampilkan Editor JSON'}
-                            </button>
-                        </div>
-
-                        {showJsonWhitelist ? (
-                            <div className="mt-4">
-                                <textarea
-                                    rows={10}
-                                    value={whitelistText}
-                                    onChange={(e) => setWhitelistText(e.target.value)}
-                                    className="w-full rounded-xl border border-gray-300 bg-slate-950 p-4 font-mono text-xs text-emerald-400"
-                                />
-                            </div>
-                        ) : (
-                            <div className="mt-6 space-y-6">
-                                {/* Bank Accounts Section */}
-                                <div>
-                                    <div className="flex items-center justify-between mb-3">
-                                        <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                            <Building2 size={16} className="text-blue-600" />
-                                            Rekening Bank Transfer ({config?.destination_whitelist?.transfer_bank?.length || 0})
-                                        </h3>
-                                        {canManage && (
+                            <div className="space-y-2">
+                                {(config?.destination_whitelist?.transfer_bank || []).map((b, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50">
+                                        <div>
+                                            <p className="font-bold text-xs text-gray-900">{b.name}</p>
+                                            <p className="text-xs text-gray-500 font-mono">{b.account_number} ({b.bank_name || 'Bank'})</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    setBankForm({ name: '', account_number: '', bank_name: 'BCA', aliases: '', active: true });
-                                                    setEditingBankIndex(null);
+                                                    setEditingBankIndex(idx);
+                                                    setBankForm({
+                                                        name: b.name || '',
+                                                        account_number: b.account_number || '',
+                                                        bank_name: b.bank_name || '',
+                                                        aliases: Array.isArray(b.aliases) ? b.aliases.join(', ') : '',
+                                                        active: b.active ?? true,
+                                                    });
                                                     setIsBankModalOpen(true);
                                                 }}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition"
+                                                className="text-xs font-semibold text-blue-600 hover:underline"
                                             >
-                                                <Plus size={14} /> Tambah Rekening Bank
+                                                Edit
                                             </button>
-                                        )}
-                                    </div>
-
-                                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                        {(config?.destination_whitelist?.transfer_bank || []).map((bank, idx) => (
-                                            <div
-                                                key={idx}
-                                                className="rounded-xl border border-gray-200 p-4 bg-gray-50/50 flex flex-col justify-between"
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteBank(idx)}
+                                                className="text-xs font-semibold text-rose-600 hover:underline"
                                             >
-                                                <div>
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="rounded bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-800">
-                                                            {bank.bank_name || 'Bank Transfer'}
-                                                        </span>
-                                                        <span
-                                                            className={`h-2 w-2 rounded-full ${
-                                                                bank.active ? 'bg-emerald-500' : 'bg-gray-300'
-                                                            }`}
-                                                        />
-                                                    </div>
-                                                    <p className="mt-2 text-base font-bold text-gray-900 font-mono tracking-wider">
-                                                        {bank.account_number}
-                                                    </p>
-                                                    <p className="text-xs font-medium text-gray-600 mt-0.5">
-                                                        A/N: <strong>{bank.name}</strong>
-                                                    </p>
-                                                    {bank.aliases?.length > 0 && (
-                                                        <p className="text-[11px] text-gray-400 mt-1 truncate">
-                                                            Alias: {bank.aliases.join(', ')}
-                                                        </p>
-                                                    )}
-                                                </div>
-
-                                                {canManage && (
-                                                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-gray-100 pt-2">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setBankForm({
-                                                                    name: bank.name,
-                                                                    bank_name: bank.bank_name || 'Bank Transfer',
-                                                                    account_number: bank.account_number,
-                                                                    aliases: (bank.aliases || []).join(', '),
-                                                                    active: bank.active ?? true,
-                                                                });
-                                                                setEditingBankIndex(idx);
-                                                                setIsBankModalOpen(true);
-                                                            }}
-                                                            className="text-xs text-gray-600 hover:text-gray-900 font-medium"
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDeleteBank(idx)}
-                                                            className="text-xs text-rose-600 hover:text-rose-800 font-medium"
-                                                        >
-                                                            Hapus
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-
-                                        {(!config?.destination_whitelist?.transfer_bank || config.destination_whitelist.transfer_bank.length === 0) && (
-                                            <div className="col-span-full rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400">
-                                                Belum ada rekening bank yang didaftarkan.
-                                            </div>
-                                        )}
+                                                Hapus
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
+                                ))}
+                            </div>
+                        </div>
 
-                                {/* QRIS Merchants Section */}
-                                <div>
-                                    <div className="flex items-center justify-between mb-3">
-                                        <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                            <QrCode size={16} className="text-emerald-600" />
-                                            QRIS Merchant ({config?.destination_whitelist?.qris?.length || 0})
-                                        </h3>
-                                        {canManage && (
+                        {/* Whitelist QRIS */}
+                        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <QrCode className="h-5 w-5 text-emerald-600" />
+                                    <h3 className="font-bold text-gray-900">Whitelist QRIS Perusahaan</h3>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setEditingQrisIndex(null);
+                                        setQrisForm({ name: '', merchant_id: '', aliases: '', active: true });
+                                        setIsQrisModalOpen(true);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                                >
+                                    <Plus size={13} /> Tambah QRIS
+                                </button>
+                            </div>
+
+                            <div className="space-y-2">
+                                {(config?.destination_whitelist?.qris || []).map((q, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50">
+                                        <div>
+                                            <p className="font-bold text-xs text-gray-900">{q.name}</p>
+                                            <p className="text-xs text-gray-500 font-mono">NMID: {q.merchant_id}</p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 type="button"
                                                 onClick={() => {
-                                                    setQrisForm({ name: '', merchant_id: '', aliases: '', active: true });
-                                                    setEditingQrisIndex(null);
+                                                    setEditingQrisIndex(idx);
+                                                    setQrisForm({
+                                                        name: q.name || '',
+                                                        merchant_id: q.merchant_id || '',
+                                                        aliases: Array.isArray(q.aliases) ? q.aliases.join(', ') : '',
+                                                        active: q.active ?? true,
+                                                    });
                                                     setIsQrisModalOpen(true);
                                                 }}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition"
+                                                className="text-xs font-semibold text-blue-600 hover:underline"
                                             >
-                                                <Plus size={14} /> Tambah QRIS
+                                                Edit
                                             </button>
-                                        )}
-                                    </div>
-
-                                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                        {(config?.destination_whitelist?.qris || []).map((qris, idx) => (
-                                            <div
-                                                key={idx}
-                                                className="rounded-xl border border-gray-200 p-4 bg-gray-50/50 flex flex-col justify-between"
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteQris(idx)}
+                                                className="text-xs font-semibold text-rose-600 hover:underline"
                                             >
-                                                <div>
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
-                                                            QRIS Official
-                                                        </span>
-                                                        <span
-                                                            className={`h-2 w-2 rounded-full ${
-                                                                qris.active ? 'bg-emerald-500' : 'bg-gray-300'
-                                                            }`}
-                                                        />
-                                                    </div>
-                                                    <p className="mt-2 text-base font-bold text-gray-900">
-                                                        {qris.name}
-                                                    </p>
-                                                    <p className="text-xs font-medium text-gray-600 font-mono mt-0.5">
-                                                        ID: {qris.merchant_id}
-                                                    </p>
-                                                    {qris.aliases?.length > 0 && (
-                                                        <p className="text-[11px] text-gray-400 mt-1 truncate">
-                                                            Alias: {qris.aliases.join(', ')}
-                                                        </p>
-                                                    )}
-                                                </div>
-
-                                                {canManage && (
-                                                    <div className="mt-3 flex items-center justify-end gap-2 border-t border-gray-100 pt-2">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setQrisForm({
-                                                                    name: qris.name,
-                                                                    merchant_id: qris.merchant_id,
-                                                                    aliases: (qris.aliases || []).join(', '),
-                                                                    active: qris.active ?? true,
-                                                                });
-                                                                setEditingQrisIndex(idx);
-                                                                setIsQrisModalOpen(true);
-                                                            }}
-                                                            className="text-xs text-gray-600 hover:text-gray-900 font-medium"
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleDeleteQris(idx)}
-                                                            className="text-xs text-rose-600 hover:text-rose-800 font-medium"
-                                                        >
-                                                            Hapus
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-
-                                        {(!config?.destination_whitelist?.qris || config.destination_whitelist.qris.length === 0) && (
-                                            <div className="col-span-full rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400">
-                                                Belum ada QRIS yang didaftarkan.
-                                            </div>
-                                        )}
+                                                Hapus
+                                            </button>
+                                        </div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
-                        )}
+                        </div>
                     </div>
 
                     {/* Notification Recipients */}
-                    <div className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-gray-100 pb-4">
-                            <div>
-                                <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
-                                    <Users className="h-5 w-5 text-emerald-600" />
-                                    Penerima Notifikasi WhatsApp
-                                </h2>
-                                <p className="text-xs text-gray-500">
-                                    Nomor staf/admin yang menerima notifikasi real-time saat pembayaran lunas atau perlu review.
-                                </p>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Users className="h-5 w-5 text-emerald-600" />
+                                <h3 className="font-bold text-gray-900">Penerima Notifikasi WhatsApp Admin</h3>
                             </div>
-
-                            {canManage && (
-                                <button
-                                    type="button"
-                                    onClick={handleAddRecipient}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition"
-                                >
-                                    <Plus size={14} /> Tambah Penerima
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={handleAddRecipient}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                            >
+                                <Plus size={13} /> Tambah Penerima
+                            </button>
                         </div>
 
-                        <div className="mt-4 space-y-3">
+                        <div className="space-y-3">
                             {recipients.map((rec, idx) => (
-                                <div
-                                    key={rec.id || idx}
-                                    className="flex flex-col gap-3 rounded-xl border border-gray-200 p-3 sm:flex-row sm:items-center sm:justify-between"
-                                >
-                                    <div className="grid gap-3 sm:grid-cols-2 flex-1">
-                                        <input
-                                            type="text"
-                                            placeholder="Nama Penerima"
-                                            value={rec.name || ''}
-                                            disabled={!canManage}
-                                            onChange={(e) => handleUpdateRecipient(idx, { name: e.target.value })}
-                                            className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium"
-                                        />
-                                        <input
-                                            type="text"
-                                            placeholder="Nomor WA (contoh: 08123456789)"
-                                            value={rec.phone || ''}
-                                            disabled={!canManage}
-                                            onChange={(e) => handleUpdateRecipient(idx, { phone: e.target.value })}
-                                            className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-mono"
-                                        />
-                                    </div>
-
-                                    <div className="flex flex-wrap items-center gap-3">
-                                        <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                                <div key={rec.id || idx} className="grid gap-3 sm:grid-cols-4 p-3 rounded-xl border border-gray-100 bg-gray-50 items-center">
+                                    <input
+                                        type="text"
+                                        placeholder="Nama Admin"
+                                        value={rec.name}
+                                        onChange={(e) => handleUpdateRecipient(idx, { name: e.target.value })}
+                                        className="text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white"
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="Nomor WA (0812...)"
+                                        value={rec.phone}
+                                        onChange={(e) => handleUpdateRecipient(idx, { phone: e.target.value })}
+                                        className="text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white font-mono"
+                                    />
+                                    <div className="flex items-center gap-3 text-xs">
+                                        <label className="flex items-center gap-1.5">
                                             <input
                                                 type="checkbox"
-                                                checked={Boolean(rec.receive_auto_approved)}
-                                                disabled={!canManage}
-                                                onChange={(e) => handleUpdateRecipient(idx, { receive_auto_approved: e.target.checked })}
-                                                className="rounded text-emerald-600 focus:ring-emerald-500"
-                                            />
-                                            Auto-Approved
-                                        </label>
-                                        <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                checked={Boolean(rec.receive_needs_review)}
-                                                disabled={!canManage}
+                                                checked={rec.receive_needs_review}
                                                 onChange={(e) => handleUpdateRecipient(idx, { receive_needs_review: e.target.checked })}
-                                                className="rounded text-amber-500 focus:ring-amber-500"
+                                                className="rounded text-emerald-600"
                                             />
-                                            Perlu Review
+                                            Review
                                         </label>
-                                        <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                                        <label className="flex items-center gap-1.5">
                                             <input
                                                 type="checkbox"
-                                                checked={Boolean(rec.is_active)}
-                                                disabled={!canManage}
-                                                onChange={(e) => handleUpdateRecipient(idx, { is_active: e.target.checked })}
-                                                className="rounded text-blue-600 focus:ring-blue-500"
+                                                checked={rec.receive_auto_approved}
+                                                onChange={(e) => handleUpdateRecipient(idx, { receive_auto_approved: e.target.checked })}
+                                                className="rounded text-emerald-600"
                                             />
-                                            Aktif
+                                            Auto-Approve
                                         </label>
-
-                                        {canManage && (
-                                            <button
-                                                type="button"
-                                                onClick={() => handleDeleteRecipient(idx)}
-                                                className="p-1 text-rose-500 hover:text-rose-700"
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        )}
+                                    </div>
+                                    <div className="flex items-center justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteRecipient(idx)}
+                                            className="text-rose-600 hover:text-rose-800 p-1"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
                                     </div>
                                 </div>
                             ))}
+                        </div>
 
-                            {recipients.length === 0 && (
-                                <div className="rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-400">
-                                    Belum ada nomor penerima notifikasi WhatsApp.
-                                </div>
-                            )}
+                        <div className="pt-2">
+                            <button
+                                type="button"
+                                onClick={() => handleSaveConfig()}
+                                disabled={saving}
+                                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 transition"
+                            >
+                                <Save size={16} />
+                                {saving ? 'Menyimpan...' : 'Simpan Pengaturan'}
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* MODAL: Upload & Scan Bukti Bayar */}
-            <Modal
-                isOpen={isUploadModalOpen}
-                onClose={() => setIsUploadModalOpen(false)}
-                title="Unggah & Scan Bukti Transfer AI"
-                size="lg"
-            >
+            {/* MODAL: UPLOAD & SCAN */}
+            <Modal isOpen={isUploadModalOpen} onClose={() => setIsUploadModalOpen(false)} title="Upload Bukti Transfer Manual">
                 <form onSubmit={handleUploadSubmit} className="space-y-4">
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                            Pilih Gambar / Struk Bukti Bayar (JPEG, PNG, WEBP, PDF)
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Pilih File Foto Bukti Transfer (JPG, PNG, PDF) <span className="text-red-500">*</span>
                         </label>
                         <input
                             type="file"
-                            accept="image/jpeg,image/png,image/webp,application/pdf"
+                            accept="image/*,application/pdf"
+                            required
                             onChange={(e) => {
                                 const file = e.target.files?.[0];
                                 if (file) {
                                     setUploadFile(file);
-                                    if (file.type.startsWith('image/')) {
-                                        setUploadPreview(URL.createObjectURL(file));
-                                    } else {
-                                        setUploadPreview(null);
-                                    }
+                                    setUploadPreview(URL.createObjectURL(file));
                                 }
                             }}
-                            className="w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100"
+                            className="w-full text-xs text-gray-500 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
                         />
+                        {uploadPreview && (
+                            <img src={uploadPreview} alt="Preview" className="mt-2 h-44 w-full object-contain rounded-xl border border-gray-200 bg-gray-50" />
+                        )}
                     </div>
-
-                    {uploadPreview && (
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-2 flex justify-center">
-                            <img src={uploadPreview} alt="Preview" className="max-h-48 rounded-lg object-contain" />
-                        </div>
-                    )}
 
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">
-                            Catatan Tambahan (Opsional)
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Catatan / Keterangan WhatsApp (Opsional)
                         </label>
-                        <input
-                            type="text"
-                            placeholder="Contoh: Bukti transfer dari Bpk Budi via WA pribadi"
+                        <textarea
+                            rows={2}
                             value={uploadCaption}
                             onChange={(e) => setUploadCaption(e.target.value)}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs focus:border-emerald-500 focus:ring-emerald-500"
+                            placeholder="Contoh: Pembayaran invoice Budi Santoso / no wa 0812345678"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                         />
                     </div>
 
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
+                    <div className="flex justify-end gap-2 pt-2">
                         <button
                             type="button"
                             onClick={() => setIsUploadModalOpen(false)}
-                            className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                            className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100"
                         >
                             Batal
                         </button>
                         <button
                             type="submit"
-                            disabled={uploading || !uploadFile}
-                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"
+                            disabled={uploading}
+                            className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1.5"
                         >
                             {uploading ? (
                                 <>
-                                    <RefreshCw size={14} className="animate-spin" /> Menganalisis AI...
+                                    <RefreshCw size={13} className="animate-spin" />
+                                    Menganalisis...
                                 </>
                             ) : (
-                                <>
-                                    <Sparkles size={14} /> Scan & Proses AI Sekarang
-                                </>
+                                'Unggah & Analisis AI'
                             )}
                         </button>
                     </div>
                 </form>
             </Modal>
 
-            {/* MODAL: Zoom Bukti Transfer */}
+            {/* MODAL: PREVIEW IMAGE ZOOM */}
             {previewImageUrl && (
                 <div
-                    className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
                     onClick={() => setPreviewImageUrl(null)}
                 >
-                    <div className="relative max-w-3xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2" onClick={(e) => e.stopPropagation()}>
-                        <button
-                            type="button"
-                            onClick={() => setPreviewImageUrl(null)}
-                            className="absolute top-4 right-4 rounded-full bg-slate-900/60 p-1.5 text-white hover:bg-slate-900"
-                        >
-                            <X size={20} />
-                        </button>
+                    <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-white p-2">
                         <img
                             src={previewImageUrl}
                             alt="Bukti Transfer Zoom"
-                            className="max-h-[80vh] w-auto object-contain rounded-xl"
+                            className="max-h-[85vh] max-w-[85vw] object-contain rounded-xl"
                         />
+                        <button
+                            type="button"
+                            onClick={() => setPreviewImageUrl(null)}
+                            className="absolute top-4 right-4 rounded-full bg-black/60 p-2 text-white hover:bg-black transition"
+                        >
+                            <X size={20} />
+                        </button>
                     </div>
                 </div>
             )}
 
-            {/* MODAL: Tambah/Edit Rekening Bank */}
-            <Modal
-                isOpen={isBankModalOpen}
-                onClose={() => setIsBankModalOpen(false)}
-                title={editingBankIndex !== null ? 'Edit Rekening Bank' : 'Tambah Rekening Bank Resmi'}
-                size="md"
-            >
+            {/* MODAL: BANK WHITELIST */}
+            <Modal isOpen={isBankModalOpen} onClose={() => setIsBankModalOpen(false)} title={editingBankIndex !== null ? 'Edit Rekening Bank' : 'Tambah Rekening Bank'}>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Nama Bank</label>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Nama Pemilik Rekening <span className="text-red-500">*</span></label>
                         <input
                             type="text"
-                            placeholder="Contoh: BCA, BRI, Mandiri, BNI"
-                            value={bankForm.bank_name}
-                            onChange={(e) => setBankForm({ ...bankForm, bank_name: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Nomor Rekening</label>
-                        <input
-                            type="text"
-                            placeholder="Nomor rekening tujuan transfer"
-                            value={bankForm.account_number}
-                            onChange={(e) => setBankForm({ ...bankForm, account_number: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs font-mono"
-                        />
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Atas Nama Pemilik</label>
-                        <input
-                            type="text"
-                            placeholder="Nama pemilik rekening sesuai mutasi"
                             value={bankForm.name}
-                            onChange={(e) => setBankForm({ ...bankForm, name: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs"
+                            onChange={(e) => setBankForm((p) => ({ ...p, name: e.target.value }))}
+                            placeholder="Contoh: M ABDUL ROHMAN"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5 uppercase"
                         />
                     </div>
-
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Alias Pencocokan (Pisahkan koma)</label>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Nomor Rekening <span className="text-red-500">*</span></label>
                         <input
                             type="text"
-                            placeholder="contoh: abdul, mabdulrohman, rkn"
-                            value={bankForm.aliases}
-                            onChange={(e) => setBankForm({ ...bankForm, aliases: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs"
+                            value={bankForm.account_number}
+                            onChange={(e) => setBankForm((p) => ({ ...p, account_number: e.target.value }))}
+                            placeholder="Contoh: 0847566563"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono"
                         />
                     </div>
-
-                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer pt-1">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Nama Bank</label>
                         <input
-                            type="checkbox"
-                            checked={bankForm.active}
-                            onChange={(e) => setBankForm({ ...bankForm, active: e.target.checked })}
-                            className="rounded text-emerald-600 focus:ring-emerald-500"
+                            type="text"
+                            value={bankForm.bank_name}
+                            onChange={(e) => setBankForm((p) => ({ ...p, bank_name: e.target.value }))}
+                            placeholder="Contoh: BCA / BRI / Mandiri"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5"
                         />
-                        Aktifkan Rekening Ini
-                    </label>
-
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
-                        <button
-                            type="button"
-                            onClick={() => setIsBankModalOpen(false)}
-                            className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                        >
-                            Batal
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleSaveBank}
-                            className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-                        >
-                            Simpan Rekening
-                        </button>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Alias / Variasi Penulisan (Dipisah Koma)</label>
+                        <input
+                            type="text"
+                            value={bankForm.aliases}
+                            onChange={(e) => setBankForm((p) => ({ ...p, aliases: e.target.value }))}
+                            placeholder="Contoh: abdulrohman, abdul rohman, rumah kita"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5"
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" onClick={() => setIsBankModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100">Batal</button>
+                        <button type="button" onClick={handleSaveBank} className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700">Simpan</button>
                     </div>
                 </div>
             </Modal>
 
-            {/* MODAL: Tambah/Edit QRIS */}
-            <Modal
-                isOpen={isQrisModalOpen}
-                onClose={() => setIsQrisModalOpen(false)}
-                title={editingQrisIndex !== null ? 'Edit QRIS Merchant' : 'Tambah QRIS Merchant Resmi'}
-                size="md"
-            >
+            {/* MODAL: QRIS WHITELIST */}
+            <Modal isOpen={isQrisModalOpen} onClose={() => setIsQrisModalOpen(false)} title={editingQrisIndex !== null ? 'Edit QRIS Perusahaan' : 'Tambah QRIS Perusahaan'}>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Nama QRIS Merchant</label>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Nama Merchant QRIS <span className="text-red-500">*</span></label>
                         <input
                             type="text"
-                            placeholder="Contoh: Rumah Kita Network"
                             value={qrisForm.name}
-                            onChange={(e) => setQrisForm({ ...qrisForm, name: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs"
+                            onChange={(e) => setQrisForm((p) => ({ ...p, name: e.target.value }))}
+                            placeholder="Contoh: Rumah Kita Network"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5"
                         />
                     </div>
-
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Merchant ID / NMID</label>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Merchant ID / NMID <span className="text-red-500">*</span></label>
                         <input
                             type="text"
-                            placeholder="Contoh: G141935892 / NMID"
                             value={qrisForm.merchant_id}
-                            onChange={(e) => setQrisForm({ ...qrisForm, merchant_id: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs font-mono"
+                            onChange={(e) => setQrisForm((p) => ({ ...p, merchant_id: e.target.value }))}
+                            placeholder="Contoh: G141935892"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono"
                         />
                     </div>
-
                     <div>
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">Alias Pencocokan (Pisahkan koma)</label>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">Alias / Variasi Penulisan (Dipisah Koma)</label>
                         <input
                             type="text"
-                            placeholder="contoh: rumahkitanetwork, mabdulrohman"
                             value={qrisForm.aliases}
-                            onChange={(e) => setQrisForm({ ...qrisForm, aliases: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-xs"
+                            onChange={(e) => setQrisForm((p) => ({ ...p, aliases: e.target.value }))}
+                            placeholder="Contoh: rumahkitanetwork, mabdulrohman"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5"
                         />
                     </div>
-
-                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer pt-1">
-                        <input
-                            type="checkbox"
-                            checked={qrisForm.active}
-                            onChange={(e) => setQrisForm({ ...qrisForm, active: e.target.checked })}
-                            className="rounded text-emerald-600 focus:ring-emerald-500"
-                        />
-                        Aktifkan QRIS Ini
-                    </label>
-
-                    <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
-                        <button
-                            type="button"
-                            onClick={() => setIsQrisModalOpen(false)}
-                            className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-                        >
-                            Batal
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handleSaveQris}
-                            className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-                        >
-                            Simpan QRIS
-                        </button>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button type="button" onClick={() => setIsQrisModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100">Batal</button>
+                        <button type="button" onClick={handleSaveQris} className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700">Simpan</button>
                     </div>
                 </div>
             </Modal>

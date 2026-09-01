@@ -31,13 +31,46 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
         PaymentProofValidationService $validationService,
         PaymentMatchingService $paymentMatchingService,
         PaymentCaptureNotificationService $notificationService,
+        \App\Services\CustomerResolutionService $customerResolutionService,
     ): void {
         $capture = BillingPaymentCapture::query()->with(['customer', 'invoice'])->find($this->captureId);
         if (!$capture) {
             return;
         }
 
+        // Auto-resolve customer from sender_phone, caption, or OCR if not yet attached
+        if (!$capture->customer_id || !$capture->customer) {
+            $resolvedCustomer = $customerResolutionService->resolveFromCapture($capture);
+            if ($resolvedCustomer) {
+                $capture->customer_id = $resolvedCustomer->id;
+                $activeInvoice = $customerResolutionService->findActiveInvoices($resolvedCustomer)->first();
+                if ($activeInvoice && !$capture->invoice_id) {
+                    $capture->invoice_id = $activeInvoice->id;
+                }
+                $capture->save();
+                $capture->load(['customer', 'invoice']);
+            }
+        }
+
         $analysis = $analysisService->analyze($capture);
+
+        // If customer was still not identified, attempt resolution with newly extracted OCR text
+        if (!$capture->customer_id || !$capture->customer) {
+            $ocrText = (string) ($analysis['ocr_raw_text'] ?? '');
+            if ($ocrText !== '') {
+                $resolvedCustomer = $customerResolutionService->resolveFromText($ocrText);
+                if ($resolvedCustomer) {
+                    $capture->customer_id = $resolvedCustomer->id;
+                    $activeInvoice = $customerResolutionService->findActiveInvoices($resolvedCustomer)->first();
+                    if ($activeInvoice && !$capture->invoice_id) {
+                        $capture->invoice_id = $activeInvoice->id;
+                    }
+                    $capture->save();
+                    $capture->load(['customer', 'invoice']);
+                }
+            }
+        }
+
         $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);
 
         Log::info('WhatsApp payment capture analyzed', [

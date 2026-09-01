@@ -10,6 +10,8 @@ const paymentVerificationService = {
     }),
     resolveCapture: (captureId, payload) => apiClient.post(`/billing/payments/${captureId}/resolve`, payload),
     reanalyzeCapture: (captureId) => apiClient.post(`/billing/payments/${captureId}/reanalyze`),
+    assignCustomer: (captureId, customerId) => apiClient.post(`/billing/payments/${captureId}/assign-customer`, { customer_id: customerId }),
+    getCustomers: (params = {}) => apiClient.get('/customers', { params }),
 };
 
 export default paymentVerificationService;

@@ -16,6 +16,7 @@ class WhatsAppPaymentIntakeService
 {
     public function __construct(
         private PaymentVerificationConfigService $configService,
+        private CustomerResolutionService $customerResolutionService,
     ) {
     }
 
@@ -32,8 +33,11 @@ class WhatsAppPaymentIntakeService
             ];
         }
 
-        $customer = $this->findCustomerByPhone($normalized['sender_phone']);
-        $invoice = $customer ? $this->findActiveInvoice($customer) : null;
+        $customer = $this->customerResolutionService->findCustomerByPhone($normalized['sender_phone']);
+        if (!$customer && !empty($normalized['caption'])) {
+            $customer = $this->customerResolutionService->resolveFromText($normalized['caption']);
+        }
+        $invoice = $customer ? $this->customerResolutionService->findActiveInvoices($customer)->first() : null;
         $media = $this->storeMedia($normalized);
 
         $capture = BillingPaymentCapture::query()->create([

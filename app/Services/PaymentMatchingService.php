@@ -14,7 +14,9 @@ class PaymentMatchingService
     public function __construct(
         private FinancialLedgerService $ledgerService,
         private AuditLogService $auditLogService,
+        private ?CustomerResolutionService $customerResolutionService = null,
     ) {
+        $this->customerResolutionService = $customerResolutionService ?: app(CustomerResolutionService::class);
     }
 
     public function capture(array $payload, ?int $actorId = null): array
@@ -171,8 +173,10 @@ class PaymentMatchingService
         $query = BillingPaymentCapture::query()
             ->with([
                 'invoice:id,invoice_link,customer_id,status,amount,due_date,paid_at,bukti_pembayaran',
+                'invoice.customer:id,name,phone,pppoe_username',
                 'customer:id,name,pppoe_username,phone',
                 'matchReviews.candidateInvoice:id,invoice_link,customer_id,status,amount,due_date',
+                'matchReviews.candidateInvoice.customer:id,name,phone,pppoe_username',
             ])
             ->orderByDesc('id');
 
@@ -288,58 +292,103 @@ class PaymentMatchingService
         $paidDate = $capture->paid_date ? Carbon::parse($capture->paid_date)->startOfDay() : Carbon::today();
         $reference = strtolower(trim((string) $capture->reference_code));
 
-        $query = Invoice::query()
-            ->with('customer:id,name,phone,billing_auto_disabled')
-            ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
-            ->whereBetween('amount', [$amount - 0.01, $amount + 0.01]);
-
-        if ($capture->invoice_id) {
-            $query->where('id', $capture->invoice_id);
+        // Auto-resolve customer if not set
+        if (!$capture->customer_id) {
+            $resolved = $this->customerResolutionService->resolveFromCapture($capture);
+            if ($resolved) {
+                $capture->customer_id = $resolved->id;
+                $capture->save();
+            }
         }
 
+        $candidates = collect();
+
+        // 1. If customer is identified, query active unpaid invoices for this customer
         if ($capture->customer_id) {
-            $query->where('customer_id', $capture->customer_id);
+            $customerInvoices = Invoice::query()
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled')
+                ->where('customer_id', $capture->customer_id)
+                ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                ->orderBy('due_date')
+                ->get();
+
+            foreach ($customerInvoices as $invoice) {
+                $score = 50.0;
+                $reasons = ['customer_match'];
+
+                if ($amount > 0 && abs((float) $invoice->amount - $amount) <= 0.01) {
+                    $score += 45;
+                    $reasons[] = 'amount_exact';
+                } elseif ($amount > 0) {
+                    $score += 20;
+                    $reasons[] = 'customer_unpaid_invoice';
+                }
+
+                if ($capture->invoice_id && (int) $capture->invoice_id === (int) $invoice->id) {
+                    $score += 15;
+                    $reasons[] = 'invoice_hint';
+                }
+
+                if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
+                    $score += 15;
+                    $reasons[] = 'reference_hint';
+                }
+
+                if ($invoice->due_date) {
+                    $diff = abs($paidDate->diffInDays(Carbon::parse($invoice->due_date)->startOfDay(), false));
+                    if ($diff <= 7) {
+                        $score += 10;
+                        $reasons[] = 'date_near_due';
+                    }
+                }
+
+                $candidates->push([
+                    'invoice' => $invoice,
+                    'score' => min($score, 100),
+                    'reason' => implode(',', $reasons),
+                ]);
+            }
         }
 
-        $rows = $query->orderBy('due_date')->limit(25)->get();
-        return $rows->map(function (Invoice $invoice) use ($amount, $paidDate, $reference, $capture) {
-            $score = 0.0;
-            $reasons = [];
+        // 2. Query invoices matching exact amount if more candidates needed or customer not identified
+        if ($amount > 0 && $candidates->count() < 10) {
+            $query = Invoice::query()
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled')
+                ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                ->whereBetween('amount', [$amount - 0.01, $amount + 0.01]);
 
-            if (abs((float) $invoice->amount - $amount) <= 0.01) {
-                $score += 70;
-                $reasons[] = 'amount_exact';
+            if ($capture->customer_id) {
+                $query->where('customer_id', '!=', $capture->customer_id);
             }
 
-            if ($capture->customer_id && (int) $capture->customer_id === (int) $invoice->customer_id) {
-                $score += 20;
-                $reasons[] = 'customer_match';
-            }
+            $amountMatches = $query->orderBy('due_date')->limit(15)->get();
 
-            if ($capture->invoice_id && (int) $capture->invoice_id === (int) $invoice->id) {
-                $score += 20;
-                $reasons[] = 'invoice_hint';
-            }
+            foreach ($amountMatches as $invoice) {
+                $score = 70.0;
+                $reasons = ['amount_exact'];
 
-            if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
-                $score += 15;
-                $reasons[] = 'reference_hint';
-            }
-
-            if ($invoice->due_date) {
-                $diff = abs($paidDate->diffInDays(Carbon::parse($invoice->due_date)->startOfDay(), false));
-                if ($diff <= 7) {
-                    $score += 10;
-                    $reasons[] = 'date_near_due';
+                if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
+                    $score += 15;
+                    $reasons[] = 'reference_hint';
                 }
-            }
 
-            return [
-                'invoice' => $invoice,
-                'score' => min($score, 100),
-                'reason' => implode(',', $reasons),
-            ];
-        })->sortByDesc('score')->values();
+                if ($invoice->due_date) {
+                    $diff = abs($paidDate->diffInDays(Carbon::parse($invoice->due_date)->startOfDay(), false));
+                    if ($diff <= 7) {
+                        $score += 10;
+                        $reasons[] = 'date_near_due';
+                    }
+                }
+
+                $candidates->push([
+                    'invoice' => $invoice,
+                    'score' => min($score, 100),
+                    'reason' => implode(',', $reasons),
+                ]);
+            }
+        }
+
+        return $candidates->sortByDesc('score')->values();
     }
 
     private function applyCaptureToInvoice(

@@ -49,6 +49,7 @@ const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivit
 const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
 const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
 const Monitoring = lazy(() => import('./pages/Monitoring'));
+const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
 const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
 const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
@@ -387,6 +388,7 @@ function App() {
                     {/* Monitoring */}
                     <Route path="/monitoring" element={<GuardedRoute permissionKey="monitoring.view" element={<Monitoring />} />} />
                     <Route path="/monitoring-maps" element={<GuardedRoute permissionKey="monitoring.maps.view" element={<MonitoringMaps />} />} />
+                    <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringGenieAcsPage />} />} />
                     
                     {/* Isolir */}
                     <Route path="/isolir" element={<GuardedRoute permissionKey="isolir.view" element={<IsolirPage />} />} />

@@ -55,6 +55,7 @@ class BillingPaymentCapturePresenter
                 'id' => $capture->customer->id,
                 'name' => $capture->customer->name,
                 'phone' => $capture->customer->phone,
+                'pppoe_username' => $capture->customer->pppoe_username,
             ] : null,
             'match_reviews' => $capture->relationLoaded('matchReviews')
                 ? $capture->matchReviews->map(fn ($review) => [
@@ -68,6 +69,13 @@ class BillingPaymentCapturePresenter
                         'invoice_link' => $review->candidateInvoice->invoice_link,
                         'status' => $review->candidateInvoice->status,
                         'amount' => (float) $review->candidateInvoice->amount,
+                        'due_date' => optional($review->candidateInvoice->due_date)->toDateString(),
+                        'customer' => $review->candidateInvoice->customer ? [
+                            'id' => $review->candidateInvoice->customer->id,
+                            'name' => $review->candidateInvoice->customer->name,
+                            'phone' => $review->candidateInvoice->customer->phone,
+                            'pppoe_username' => $review->candidateInvoice->customer->pppoe_username,
+                        ] : null,
                     ] : null,
                 ])->values()->all()
                 : [],
