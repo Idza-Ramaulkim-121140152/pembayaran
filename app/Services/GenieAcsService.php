@@ -45,9 +45,18 @@ class GenieAcsService
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_CMS_KeyPassphrase',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+        'VirtualParameters.WlanPassword',
+        'VirtualParameters.wlanPassword',
+        'VirtualParameters.wifiPassword',
+        'InternetGatewayDevice.LANDevice.1.Hosts.Host',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDevice',
         'Device.WiFi.SSID.1.SSID',
         'Device.WiFi.SSID.1.Enable',
         'Device.PPP.Interface.1.Username',
@@ -183,6 +192,7 @@ class GenieAcsService
                 'ip_address' => $ipAddress ?: null,
                 'mac_address' => $macAddress ?: null,
                 'ssid' => $ssid1 ?: null,
+                'wifi_password' => $this->resolveWifiPassword($d),
                 'wifi_clients_count' => $wifiClients,
                 'rx_power' => $rxPowerVal,
                 'rx_status' => $rxStatus,
@@ -447,7 +457,9 @@ class GenieAcsService
             'device_id' => $deviceId,
             'summary' => $summary,
             'telemetry' => $telemetry,
-            'lan_hosts' => array_values($lanHosts),
+            'ssid' => $this->parameterValue($device, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID') ?: ($summary['ssid'] ?? null),
+            'wifi_password' => $this->resolveWifiPassword($device),
+            'lan_hosts' => $this->resolveAllConnectedHosts($device),
             'customer' => $customer,
             'raw_writable_wifi_targets' => $this->activeWifiTargets($device),
         ];
@@ -1146,6 +1158,178 @@ class GenieAcsService
         $count = collect($candidates)->unique()->count();
 
         return $count > 0 ? $count : null;
+    }
+
+    public function resolveWifiPassword(array $device): ?string
+    {
+        $candidates = [
+            'VirtualParameters.WlanPassword',
+            'VirtualParameters.wlanPassword',
+            'VirtualParameters.wifiPassword',
+            'VirtualParameters.WLANPassword',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_CMS_KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.X_CMS_KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase',
+            'Device.WiFi.AccessPoint.1.Security.KeyPassphrase',
+            'Device.WiFi.AccessPoint.1.Security.PreSharedKey',
+        ];
+
+        foreach ($candidates as $cand) {
+            $val = $this->parameterValue($device, $cand);
+            if ($val !== null && trim((string) $val) !== '' && !is_array($val)) {
+                $trimmed = trim((string) $val);
+                if (!str_starts_with($trimmed, '{') && strlen($trimmed) >= 1) {
+                    return $trimmed;
+                }
+            }
+        }
+
+        $lanDevices = data_get($device, 'InternetGatewayDevice.LANDevice', []);
+        if (is_array($lanDevices)) {
+            foreach ($lanDevices as $lan) {
+                if (!is_array($lan)) continue;
+                foreach (($lan['WLANConfiguration'] ?? []) as $wlan) {
+                    if (!is_array($wlan)) continue;
+                    foreach (['X_CMS_KeyPassphrase', 'KeyPassphrase', 'X_HW_KeyPassphrase'] as $k) {
+                        $v = $this->nodeValue($wlan[$k] ?? null);
+                        if ($v && !is_array($v) && !str_starts_with(trim((string)$v), '{')) {
+                            return trim((string)$v);
+                        }
+                    }
+                    foreach (($wlan['PreSharedKey'] ?? []) as $psk) {
+                        if (!is_array($psk)) continue;
+                        foreach (['KeyPassphrase', 'PreSharedKey'] as $k) {
+                            $v = $this->nodeValue($psk[$k] ?? null);
+                            if ($v && !is_array($v) && !str_starts_with(trim((string)$v), '{')) {
+                                return trim((string)$v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public function resolveAllConnectedHosts(array $device): array
+    {
+        $hostsByMac = [];
+        $activeAssocMacs = [];
+
+        // 1. Collect WLAN Associated Devices (Active WiFi clients)
+        $lanDevices = data_get($device, 'InternetGatewayDevice.LANDevice', []);
+        if (is_array($lanDevices)) {
+            foreach ($lanDevices as $lan) {
+                if (!is_array($lan)) continue;
+                foreach (($lan['WLANConfiguration'] ?? []) as $wlan) {
+                    if (!is_array($wlan)) continue;
+                    foreach (($wlan['AssociatedDevice'] ?? []) as $ak => $av) {
+                        if (!is_array($av) || str_starts_with((string)$ak, '_')) continue;
+                        $mac = $this->nodeValue($av['AssociatedDeviceMACAddress'] ?? null)
+                            ?: $this->nodeValue($av['MACAddress'] ?? null);
+                        $ip = $this->nodeValue($av['AssociatedDeviceIPAddress'] ?? null)
+                            ?: $this->nodeValue($av['IPAddress'] ?? null);
+                        if ($mac) {
+                            $cleanMac = strtoupper(str_replace(['-', '.'], ':', trim((string)$mac)));
+                            $activeAssocMacs[$cleanMac] = true;
+                            $hostsByMac[$cleanMac] = [
+                                'name' => 'Perangkat WiFi',
+                                'ip_address' => $ip ?: null,
+                                'mac_address' => $cleanMac,
+                                'type' => 'WiFi (Aktif)',
+                                'is_active' => true,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Collect TR-098 LANDevice.Hosts.Host
+        if (is_array($lanDevices)) {
+            foreach ($lanDevices as $lan) {
+                if (!is_array($lan)) continue;
+                $hosts = data_get($lan, 'Hosts.Host', []);
+                if (is_array($hosts)) {
+                    foreach ($hosts as $hk => $hv) {
+                        if (!is_array($hv) || str_starts_with((string)$hk, '_')) continue;
+                        $mac = $this->nodeValue($hv['MACAddress'] ?? null)
+                            ?: $this->nodeValue($hv['PhysAddress'] ?? null);
+                        if (!$mac) continue;
+                        $cleanMac = strtoupper(str_replace(['-', '.'], ':', trim((string)$mac)));
+                        $name = $this->nodeValue($hv['HostName'] ?? null);
+                        $ip = $this->nodeValue($hv['IPAddress'] ?? null);
+                        $iface = $this->nodeValue($hv['InterfaceType'] ?? null);
+                        $active = $this->nodeValue($hv['Active'] ?? null);
+
+                        $type = 'WiFi';
+                        if ($iface && (str_contains(strtolower((string)$iface), 'ethernet') || str_contains(strtolower((string)$iface), 'lan'))) {
+                            $type = 'LAN Kabel';
+                        } elseif (isset($activeAssocMacs[$cleanMac])) {
+                            $type = 'WiFi (Aktif)';
+                        }
+
+                        $isActive = isset($activeAssocMacs[$cleanMac]) || $active === '1' || $active === 'true' || $active === true || $active === 1;
+
+                        if (isset($hostsByMac[$cleanMac])) {
+                            if ($name && trim((string)$name) !== '') {
+                                $hostsByMac[$cleanMac]['name'] = trim((string)$name);
+                            }
+                            if ($ip && !$hostsByMac[$cleanMac]['ip_address']) {
+                                $hostsByMac[$cleanMac]['ip_address'] = $ip;
+                            }
+                            $hostsByMac[$cleanMac]['type'] = $type;
+                            $hostsByMac[$cleanMac]['is_active'] = $isActive;
+                        } else {
+                            $hostsByMac[$cleanMac] = [
+                                'name' => ($name && trim((string)$name) !== '') ? trim((string)$name) : 'Perangkat Terhubung',
+                                'ip_address' => $ip ?: null,
+                                'mac_address' => $cleanMac,
+                                'type' => $type,
+                                'is_active' => $isActive,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback to VirtualParameters lan host / wifi connected if available
+        $vpHosts = $this->resolveLanHostsByMac($device);
+        foreach ($vpHosts as $vMac => $vh) {
+            $cleanMac = strtoupper(str_replace(['-', '.'], ':', trim((string)$vMac)));
+            if (isset($hostsByMac[$cleanMac])) {
+                if (!empty($vh['name']) && $hostsByMac[$cleanMac]['name'] === 'Perangkat Terhubung') {
+                    $hostsByMac[$cleanMac]['name'] = $vh['name'];
+                }
+                if (!empty($vh['ip_address']) && empty($hostsByMac[$cleanMac]['ip_address'])) {
+                    $hostsByMac[$cleanMac]['ip_address'] = $vh['ip_address'];
+                }
+            } else {
+                $hostsByMac[$cleanMac] = [
+                    'name' => $vh['name'] ?? 'Perangkat Terhubung',
+                    'ip_address' => $vh['ip_address'] ?? null,
+                    'mac_address' => $cleanMac,
+                    'type' => $vh['type'] ?? 'WiFi',
+                    'is_active' => true,
+                ];
+            }
+        }
+
+        // Sort: Active clients first, then alphabetically by name
+        usort($hostsByMac, function ($a, $b) {
+            if ($a['is_active'] !== $b['is_active']) {
+                return $a['is_active'] ? -1 : 1;
+            }
+            return strcasecmp($a['name'] ?? '', $b['name'] ?? '');
+        });
+
+        return array_values($hostsByMac);
     }
 
     private function resolveLanHostsByMac(array $device): array

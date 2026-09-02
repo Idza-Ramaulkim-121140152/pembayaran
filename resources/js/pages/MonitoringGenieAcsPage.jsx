@@ -102,11 +102,14 @@ export default function MonitoringGenieAcsPage() {
     const [wifiModalDevice, setWifiModalDevice] = useState(null);
     const [wifiForm, setWifiForm] = useState({ ssid: '', password: '' });
     const [showPassword, setShowPassword] = useState(false);
+    const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+    const [copiedCurrentPassword, setCopiedCurrentPassword] = useState(false);
     const [savingWifi, setSavingWifi] = useState(false);
 
     // Modal: Detail & Klien Terhubung
     const [detailModalDevice, setDetailModalDevice] = useState(null);
     const [deviceDetailData, setDeviceDetailData] = useState(null);
+    const [showDetailWifiPassword, setShowDetailWifiPassword] = useState(false);
     const [loadingDetail, setLoadingDetail] = useState(false);
 
     // Modal: Reboot
@@ -182,6 +185,8 @@ export default function MonitoringGenieAcsPage() {
             password: '',
         });
         setShowPassword(false);
+        setShowCurrentPassword(false);
+        setCopiedCurrentPassword(false);
     };
 
     // Submit Ganti WiFi
@@ -223,6 +228,7 @@ export default function MonitoringGenieAcsPage() {
     const handleOpenDetailModal = async (device) => {
         setDetailModalDevice(device);
         setDeviceDetailData(null);
+        setShowDetailWifiPassword(false);
         setLoadingDetail(true);
         try {
             const res = await genieAcsService.getDevice(device.device_id);
@@ -907,13 +913,75 @@ export default function MonitoringGenieAcsPage() {
             >
                 {wifiModalDevice && (
                     <form onSubmit={handleSaveWifi} className="space-y-4">
-                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 text-xs space-y-1">
-                            <p className="font-bold text-gray-900">
-                                {wifiModalDevice.customer?.name || wifiModalDevice.pppoe_username || wifiModalDevice.product_class}
-                            </p>
-                            <p className="text-gray-500 font-mono text-[11px]">
-                                Device: {wifiModalDevice.product_class} · SN: {wifiModalDevice.serial_number || wifiModalDevice.device_id}
-                            </p>
+                        {/* Current Device & WiFi Summary */}
+                        <div className="rounded-2xl bg-gradient-to-br from-gray-50 to-emerald-50/40 border border-emerald-200/80 p-3.5 text-xs space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="font-bold text-gray-900 text-sm">
+                                        {wifiModalDevice.customer?.name || wifiModalDevice.pppoe_username || wifiModalDevice.product_class}
+                                    </p>
+                                    <p className="text-gray-500 font-mono text-[11px] mt-0.5">
+                                        Model: {wifiModalDevice.product_class} · SN: {wifiModalDevice.serial_number || wifiModalDevice.device_id}
+                                    </p>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${wifiModalDevice.is_online ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-700'}`}>
+                                    {wifiModalDevice.is_online ? '● Online' : '○ Offline'}
+                                </span>
+                            </div>
+
+                            {/* Password Saat Ini */}
+                            <div className="pt-2 border-t border-emerald-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div>
+                                    <p className="text-[11px] font-semibold text-gray-700 flex items-center gap-1">
+                                        <Lock size={12} className="text-emerald-600" />
+                                        Password WiFi Saat Ini (Aktif di Router):
+                                    </p>
+                                    {wifiModalDevice.wifi_password ? (
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="font-mono text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded-lg px-2.5 py-1 select-all">
+                                                {showCurrentPassword ? wifiModalDevice.wifi_password : '••••••••••••'}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                                className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition"
+                                                title={showCurrentPassword ? 'Sembunyikan password' : 'Lihat password'}
+                                            >
+                                                {showCurrentPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(wifiModalDevice.wifi_password);
+                                                    setCopiedCurrentPassword(true);
+                                                    setTimeout(() => setCopiedCurrentPassword(false), 2000);
+                                                }}
+                                                className="p-1.5 rounded-lg border border-gray-200 bg-white text-gray-500 hover:text-gray-700 hover:bg-gray-50 transition flex items-center gap-1 text-[11px]"
+                                                title="Salin password"
+                                            >
+                                                {copiedCurrentPassword ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                                                <span>{copiedCurrentPassword ? 'Tersalin' : 'Salin'}</span>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <p className="text-[11px] text-gray-500 italic mt-0.5">
+                                            Password tersimpan di router (Terenkripsi / Belum di-inform).
+                                        </p>
+                                    )}
+                                </div>
+
+                                {wifiModalDevice.device_id && (
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRefreshParam(wifiModalDevice.device_id)}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:underline self-start sm:self-auto"
+                                        title="Tarik pembaruan parameter dari router"
+                                    >
+                                        <RefreshCw size={11} />
+                                        Tarik dari Router
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
                         <div>
@@ -999,7 +1067,7 @@ export default function MonitoringGenieAcsPage() {
                                 {/* Status Kapasitas Banner */}
                                 {detailModalDevice.max_devices && (
                                     <div
-                                        className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                                        className={`p-3 rounded-2xl border text-xs flex items-center justify-between ${
                                             detailModalDevice.capacity_status === 'safe'
                                                 ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                                                 : detailModalDevice.capacity_status === 'warning'
@@ -1045,35 +1113,94 @@ export default function MonitoringGenieAcsPage() {
                                     </div>
                                 </div>
 
+                                {/* WiFi Summary Card */}
+                                <div className="p-3 rounded-2xl bg-gray-50 border border-gray-200 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                    <div>
+                                        <p className="text-[11px] text-gray-600 font-semibold flex items-center gap-1">
+                                            <Wifi size={13} className="text-emerald-600" />
+                                            Nama SSID: <span className="font-bold text-gray-900">{deviceDetailData?.ssid || detailModalDevice.ssid || 'SSID Default'}</span>
+                                        </p>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="text-[11px] text-gray-600 font-semibold flex items-center gap-1">
+                                                <Lock size={12} className="text-emerald-600" />
+                                                Password WiFi:
+                                            </span>
+                                            {(deviceDetailData?.wifi_password || detailModalDevice.wifi_password) ? (
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="font-mono text-xs font-bold text-gray-900 bg-white border border-gray-200 rounded px-2 py-0.5 select-all">
+                                                        {showDetailWifiPassword ? (deviceDetailData?.wifi_password || detailModalDevice.wifi_password) : '••••••••••••'}
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowDetailWifiPassword(!showDetailWifiPassword)}
+                                                        className="p-1 rounded border border-gray-200 bg-white text-gray-500 hover:text-gray-700"
+                                                        title={showDetailWifiPassword ? 'Sembunyikan' : 'Lihat password'}
+                                                    >
+                                                        {showDetailWifiPassword ? <EyeOff size={12} /> : <Eye size={12} />}
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <span className="text-gray-400 italic text-[11px]">Tersimpan di router</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1">
+                                            <Users size={12} />
+                                            {detailModalDevice.wifi_clients_count} Klien Aktif Terhubung
+                                        </span>
+                                    </div>
+                                </div>
+
                                 {/* Connected Devices List */}
                                 <div>
                                     <h4 className="text-xs font-bold text-gray-900 mb-2 flex items-center gap-1.5">
                                         <Laptop size={14} className="text-emerald-600" />
-                                        Daftar Perangkat (HP / Laptop) yang Terkoneksi ke Router:
+                                        Daftar Perangkat (HP / Laptop / TV) yang Terkoneksi ke Router ({deviceDetailData?.lan_hosts?.length || 0}):
                                     </h4>
 
                                     {deviceDetailData?.lan_hosts && deviceDetailData.lan_hosts.length > 0 ? (
-                                        <div className="max-h-60 overflow-y-auto rounded-xl border border-gray-200 bg-white divide-y divide-gray-100">
+                                        <div className="max-h-72 overflow-y-auto rounded-2xl border border-gray-200 bg-white divide-y divide-gray-100 shadow-xs">
                                             {deviceDetailData.lan_hosts.map((h, i) => (
-                                                <div key={i} className="flex items-center justify-between p-3 text-xs">
-                                                    <div className="flex items-center gap-2">
-                                                        <Smartphone size={16} className="text-gray-400" />
+                                                <div key={i} className={`flex items-center justify-between p-3 text-xs transition ${h.is_active ? 'bg-emerald-50/20 hover:bg-emerald-50/40' : 'hover:bg-gray-50'}`}>
+                                                    <div className="flex items-center gap-2.5">
+                                                        <div className={`p-2 rounded-xl ${h.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                                                            {h.type?.toLowerCase().includes('lan') ? <Laptop size={16} /> : <Smartphone size={16} />}
+                                                        </div>
                                                         <div>
-                                                            <p className="font-bold text-gray-900">{h.name || `Perangkat ${i + 1}`}</p>
-                                                            <p className="text-[11px] font-mono text-gray-500">
-                                                                IP: {h.ip_address || '-'} · MAC: {h.mac_address || '-'}
+                                                            <div className="flex items-center gap-1.5">
+                                                                <p className="font-bold text-gray-900">{h.name || `Perangkat ${i + 1}`}</p>
+                                                                {h.is_active && (
+                                                                    <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">
+                                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                                                                        Aktif
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-[11px] font-mono text-gray-500 mt-0.5">
+                                                                IP: <strong className="text-gray-700">{h.ip_address || '-'}</strong> · MAC: <strong className="text-gray-700">{h.mac_address || '-'}</strong>
                                                             </p>
                                                         </div>
                                                     </div>
-                                                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                                                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg ${
+                                                        h.is_active
+                                                            ? 'text-emerald-800 bg-emerald-100 border border-emerald-200'
+                                                            : h.type?.toLowerCase().includes('lan')
+                                                            ? 'text-blue-800 bg-blue-50 border border-blue-200'
+                                                            : 'text-gray-600 bg-gray-100'
+                                                    }`}>
                                                         {h.type || 'WiFi'}
                                                     </span>
                                                 </div>
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="p-4 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-400">
-                                            Tidak ada rincian nama klien yang dilaporkan pada Inform terakhir.
+                                        <div className="p-6 rounded-2xl border border-dashed border-gray-200 text-center text-xs text-gray-400 bg-gray-50/50">
+                                            <Smartphone size={24} className="mx-auto mb-2 text-gray-300" />
+                                            <p className="font-semibold text-gray-600">Tidak ada rincian klien spesifik yang dilaporkan router.</p>
+                                            <p className="text-[11px] text-gray-400 mt-0.5">
+                                                Total {detailModalDevice.wifi_clients_count} klien dilaporkan aktif melalui parameter TR-069 router.
+                                            </p>
                                         </div>
                                     )}
                                 </div>
