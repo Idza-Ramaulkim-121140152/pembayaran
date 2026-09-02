@@ -375,6 +375,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/genieacs/devices/{deviceId}/reboot', [GenieAcsMonitoringController::class, 'reboot'])->name('api.genieacs.reboot');
         Route::post('/api/genieacs/devices/{deviceId}/refresh', [GenieAcsMonitoringController::class, 'refresh'])->name('api.genieacs.refresh');
         Route::post('/api/genieacs/devices/{deviceId}/assign-customer', [GenieAcsMonitoringController::class, 'assignCustomer'])->name('api.genieacs.assign-customer');
+        Route::post('/api/genieacs/send-portal-link', [GenieAcsMonitoringController::class, 'sendPortalLinkWhatsApp'])->name('api.genieacs.send-portal-link');
 
         // WhatsApp API
         Route::get('/api/whatsapp/status', [WhatsAppController::class, 'status'])->name('api.whatsapp.status');

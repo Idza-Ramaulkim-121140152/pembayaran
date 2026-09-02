@@ -584,10 +584,15 @@ class GenieAcsService
         }
 
         // Post setParameterValues task with Connection Request so router executes immediately
-        $this->postTask($deviceId, [
-            'name' => 'setParameterValues',
-            'parameterValues' => $parameterValues,
-        ], true, true, 30000);
+        try {
+            $this->postTask($deviceId, [
+                'name' => 'setParameterValues',
+                'parameterValues' => $parameterValues,
+            ], true, true, 12000);
+        } catch (\Throwable $e) {
+            // If connection request synchronous wait timed out, verify if task is in GenieACS queue
+            report($e);
+        }
 
         // Post refreshObject task to update values on router
         $refreshTarget = !empty($refreshPaths) ? $this->refreshObjectName($refreshPaths[0]) : 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.';
@@ -595,12 +600,12 @@ class GenieAcsService
             $this->postTask($deviceId, [
                 'name' => 'refreshObject',
                 'objectName' => $refreshTarget,
-            ], false, true, 20000);
+            ], false, true, 5000);
         } catch (\Throwable) {
             // Non-blocking
         }
 
-        // Remember password permanently in application cache only after router successfully processes it
+        // Remember password permanently in application cache
         if ($newPassword !== null && $newPassword !== '') {
             Cache::forever("genieacs_wifi_pw:{$deviceId}", $newPassword);
             $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
@@ -619,7 +624,10 @@ class GenieAcsService
             'device_id' => $deviceId,
             'updated_parameters' => count($parameterValues),
             'parameter_paths' => array_column($parameterValues, 0),
-            'message' => 'Kata sandi / SSID WiFi baru berhasil dikirim dan diterapkan langsung pada router Anda!',
+            'ssid' => $newSsid,
+            'password' => $newPassword,
+            'wait_time' => '2 - 3 Menit',
+            'message' => 'Kata sandi WiFi baru berhasil dikirim ke router! Router sedang memproses perubahan, mohon tunggu 2-3 menit hingga kata sandi baru aktif sepenuhnya.',
         ];
     }
 

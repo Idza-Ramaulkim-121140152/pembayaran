@@ -116,6 +116,8 @@ export default function MonitoringGenieAcsPage() {
     // Modal: Portal Akses Mandiri Pelanggan (Action Mata)
     const [portalModalDevice, setPortalModalDevice] = useState(null);
     const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
+    const [sendingWaLink, setSendingWaLink] = useState(false);
+    const [waLinkResult, setWaLinkResult] = useState(null);
 
     // Modal: Reboot
     const [rebootModalDevice, setRebootModalDevice] = useState(null);
@@ -133,6 +135,40 @@ export default function MonitoringGenieAcsPage() {
     const [availableAcsDevices, setAvailableAcsDevices] = useState([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState('');
     const [linkingRouter, setLinkingRouter] = useState(false);
+
+    // Handle Kirim Link Portal via API WhatsApp
+    const handleSendPortalLinkWa = async () => {
+        if (!portalModalDevice) return;
+        setSendingWaLink(true);
+        setWaLinkResult(null);
+
+        try {
+            const res = await axios.post('/api/genieacs/send-portal-link', {
+                customer_id: portalModalDevice.customer?.id,
+                portal_token: portalModalDevice.portal_token,
+            });
+
+            setWaLinkResult({
+                success: true,
+                message: res.data?.message || 'Link portal mandiri berhasil dikirimkan via WhatsApp Gateway!',
+            });
+        } catch (err) {
+            const errMsg = err.response?.data?.message || 'Gagal mengirim link via WhatsApp Gateway.';
+            const phone = portalModalDevice.customer?.phone ? portalModalDevice.customer.phone.replace(/[^0-9]/g, '') : '';
+            const cleanPhone = phone.startsWith('0') ? '62' + phone.substring(1) : phone;
+            const fallback = err.response?.data?.fallback_url || (cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
+                `Halo Kak ${portalModalDevice.customer?.name || 'Pelanggan'},\n\nBerikut adalah link Portal Akses Mandiri WiFi Rumah Kita Net Anda untuk melihat & ganti password WiFi, melihat perangkat yang terhubung, dan cek tagihan:\n\n${portalModalDevice.portal_url}\n\n(Dapat dibuka langsung dari HP tanpa login)`
+            )}` : null);
+
+            setWaLinkResult({
+                success: false,
+                message: errMsg,
+                fallbackUrl: fallback,
+            });
+        } finally {
+            setSendingWaLink(false);
+        }
+    };
 
     // Fetch Devices & Customers
     const loadDevices = async (fresh = false) => {
@@ -1506,6 +1542,44 @@ export default function MonitoringGenieAcsPage() {
                             </div>
                         </div>
 
+                        {/* Result Notification Banner */}
+                        {waLinkResult && (
+                            <div>
+                                {waLinkResult.success ? (
+                                    <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-xs text-emerald-950 flex items-start gap-2.5 animate-in fade-in shadow-xs">
+                                        <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                                        <div className="space-y-0.5">
+                                            <p className="font-bold text-emerald-900">Berhasil Terkirim via WhatsApp API!</p>
+                                            <p className="text-[11px] text-emerald-800 leading-relaxed">{waLinkResult.message}</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-xs text-rose-950 space-y-2 animate-in fade-in shadow-xs">
+                                        <div className="flex items-start gap-2.5">
+                                            <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+                                            <div className="space-y-0.5">
+                                                <p className="font-bold text-rose-900">Pengiriman WhatsApp Gateway Gagal</p>
+                                                <p className="text-[11px] text-rose-800 leading-relaxed">{waLinkResult.message}</p>
+                                            </div>
+                                        </div>
+                                        {waLinkResult.fallbackUrl && (
+                                            <div className="pt-1 flex justify-end">
+                                                <a
+                                                    href={waLinkResult.fallbackUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow-sm"
+                                                >
+                                                    <Phone size={13} />
+                                                    Kirim Manual via WhatsApp Web
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* Actions */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
                             <button
@@ -1521,19 +1595,25 @@ export default function MonitoringGenieAcsPage() {
                                 Buka Portal di Tab Baru
                             </button>
 
-                            {portalModalDevice.customer?.phone && (
-                                <a
-                                    href={`https://wa.me/${portalModalDevice.customer.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
-                                        `Halo Kak ${portalModalDevice.customer.name}, berikut adalah link portal mandiri WiFi Rumah Kita Net Anda untuk melihat & ganti password WiFi, melihat perangkat yang terhubung, dan cek tagihan:\n\n${portalModalDevice.portal_url}\n\n(Dapat dibuka langsung tanpa login)`
-                                    )}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-900/20"
-                                >
-                                    <Phone size={14} />
-                                    Kirim Link ke WhatsApp
-                                </a>
-                            )}
+                            <button
+                                type="button"
+                                onClick={handleSendPortalLinkWa}
+                                disabled={sendingWaLink || !portalModalDevice.customer?.phone}
+                                className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-900/20"
+                                title={!portalModalDevice.customer?.phone ? 'Nomor WhatsApp pelanggan belum terdaftar' : 'Kirim link portal langsung via API WhatsApp sistem'}
+                            >
+                                {sendingWaLink ? (
+                                    <>
+                                        <RefreshCw size={14} className="animate-spin" />
+                                        Mengirim via WhatsApp API...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Phone size={14} />
+                                        Kirim Link ke WhatsApp
+                                    </>
+                                )}
+                            </button>
                         </div>
 
                         {/* Feature preview list */}

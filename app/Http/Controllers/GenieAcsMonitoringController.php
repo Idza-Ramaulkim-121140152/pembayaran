@@ -264,4 +264,140 @@ class GenieAcsMonitoringController extends Controller
             'message' => "Perangkat berhasil ditautkan ke pelanggan {$customer->name}.",
         ]);
     }
+
+    /**
+     * Send customer public portal link via system's WhatsApp Gateway API
+     */
+    public function sendPortalLinkWhatsApp(Request $request)
+    {
+        $validated = $request->validate([
+            'customer_id' => ['nullable', 'integer', 'exists:customers,id'],
+            'portal_token' => ['nullable', 'string'],
+            'custom_phone' => ['nullable', 'string'],
+        ]);
+
+        $customer = null;
+        if (!empty($validated['customer_id'])) {
+            $customer = Customer::find($validated['customer_id']);
+        } elseif (!empty($validated['portal_token'])) {
+            $customer = $this->genieAcsService->resolveCustomerByPortalToken($validated['portal_token']);
+        }
+
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data pelanggan tidak ditemukan untuk pengiriman link portal.',
+            ], 404);
+        }
+
+        $phone = trim((string) ($validated['custom_phone'] ?? $customer->phone ?? ''));
+        if ($phone === '' || strlen(preg_replace('/[^0-9]/', '', $phone)) < 8) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nomor WhatsApp pelanggan belum terdaftar atau tidak valid.',
+            ], 422);
+        }
+
+        // Generate token and link
+        $token = $this->genieAcsService->generateCustomerPortalToken($customer->id);
+        $portalUrl = url("/portal-pelanggan/{$token}");
+        $customerName = $customer->name ?? 'Pelanggan';
+
+        $message = "Halo Bapak/Ibu *{$customerName}*,\n\n" .
+            "Berikut adalah link *Portal Akses Mandiri WiFi Rumah Kita Net* Anda:\n\n" .
+            "🌐 {$portalUrl}\n\n" .
+            "Melalui portal ini, Anda dapat:\n" .
+            "✅ Melihat & Mengganti Kata Sandi WiFi secara mandiri\n" .
+            "✅ Memeriksa daftar perangkat/HP yang sedang terhubung\n" .
+            "✅ Memblokir perangkat asing/tidak dikenal\n" .
+            "✅ Melihat batas kuota kapasitas & status tagihan bulanan\n" .
+            "✅ Membuat tiket aduan kendala jika internet mengalami gangguan\n\n" .
+            "_(Tautan khusus ini dapat diakses langsung dari HP Anda tanpa perlu login)_\n\n" .
+            "Salam,\n*Rumah Kita Net*";
+
+        // Clean phone for wa.me fallback
+        $cleanPhone = preg_replace('/[^0-9]/', '', $phone);
+        if (str_starts_with($cleanPhone, '0')) {
+            $cleanPhone = '62' . substr($cleanPhone, 1);
+        }
+        $fallbackWaUrl = "https://wa.me/{$cleanPhone}?text=" . rawurlencode($message);
+
+        // Attempt sending via internal WhatsApp Gateway
+        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+        
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(15)->post($gatewayUrl . '/send', [
+                'phone' => $phone,
+                'name' => $customerName,
+                'message' => $message,
+            ]);
+
+            $payload = $response->json();
+            $isGatewaySuccess = $response->successful() && is_array($payload) && ($payload['success'] ?? true);
+
+            if ($isGatewaySuccess) {
+                \App\Models\NotificationLog::create([
+                    'customer_id' => $customer->id,
+                    'phone' => $phone,
+                    'message' => mb_substr($message, 0, 2000),
+                    'notice_id' => null,
+                    'status' => 'sent',
+                    'error' => null,
+                    'sent_at' => now(),
+                ]);
+
+                $this->auditLogService->log('customer_portal.whatsapp_link_sent', $customer, [
+                    'customer_id' => $customer->id,
+                    'phone' => $phone,
+                    'portal_url' => $portalUrl,
+                    'via' => 'whatsapp_gateway',
+                ], auth()->id());
+
+                return response()->json([
+                    'success' => true,
+                    'message' => "Link portal mandiri berhasil dikirimkan via WhatsApp Gateway ke {$customerName} ({$phone})!",
+                    'phone' => $phone,
+                    'portal_url' => $portalUrl,
+                ]);
+            }
+
+            $gatewayError = is_array($payload) ? ($payload['error'] ?? $payload['message'] ?? 'Gateway rejected message') : 'Gateway response invalid';
+            
+            \App\Models\NotificationLog::create([
+                'customer_id' => $customer->id,
+                'phone' => $phone,
+                'message' => mb_substr($message, 0, 2000),
+                'notice_id' => null,
+                'status' => 'failed',
+                'error' => $gatewayError,
+                'sent_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => "WhatsApp Gateway gagal mengirimkan pesan: {$gatewayError}",
+                'fallback_url' => $fallbackWaUrl,
+                'phone' => $phone,
+            ], 422);
+
+        } catch (\Throwable $e) {
+            \App\Models\NotificationLog::create([
+                'customer_id' => $customer->id,
+                'phone' => $phone,
+                'message' => mb_substr($message, 0, 2000),
+                'notice_id' => null,
+                'status' => 'failed',
+                'error' => 'Gateway connection error: ' . $e->getMessage(),
+                'sent_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => "WhatsApp Gateway service offline / tidak merespons. Anda dapat mengirimkan secara manual melalui WhatsApp Web.",
+                'fallback_url' => $fallbackWaUrl,
+                'phone' => $phone,
+                'error_detail' => $e->getMessage(),
+            ], 503);
+        }
+    }
 }
