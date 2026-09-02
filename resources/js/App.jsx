@@ -171,7 +171,7 @@ function AppLayout({ children }) {
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
-    const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/');
+    const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
     const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration && !isPublicPortal;
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
@@ -332,6 +332,7 @@ function App() {
                     
                     {/* Public Customer Self-Service Portal (Tanpa Login) */}
                     <Route path="/portal-pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />
+                    <Route path="/portal_pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />
                     
                     {/* Customers */}
                     <Route path="/customers" element={<GuardedRoute permissionKey="customer.view" element={<CustomersPage />} />} />

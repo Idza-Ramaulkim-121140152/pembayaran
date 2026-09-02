@@ -23,13 +23,14 @@ class CustomerPublicPortalController extends Controller
      */
     public function show(string $token)
     {
-        $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
+        try {
+            $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
 
-        if (!$customer) {
-            return response()->json([
-                'message' => 'Tautan akses portal pelanggan tidak valid atau sudah tidak aktif.',
-            ], 404);
-        }
+            if (!$customer) {
+                return response()->json([
+                    'message' => 'Tautan akses portal pelanggan tidak valid atau sudah tidak aktif. Pastikan Anda membuka tautan resmi dari admin atau hubungi Customer Service.',
+                ], 404);
+            }
 
         $pppoe = trim((string) $customer->pppoe_username);
         $device = null;
@@ -243,6 +244,12 @@ class CustomerPublicPortalController extends Controller
                 'support_message' => "Halo CS Rumah Kita Net, saya ingin menanyakan bantuan mengenai jaringan WiFi/Router saya atas nama: {$customer->name}.",
             ],
         ]);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'message' => 'Terjadi kendala saat memuat data portal: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**

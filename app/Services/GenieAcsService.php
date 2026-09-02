@@ -2048,27 +2048,56 @@ class GenieAcsService
     public function resolveCustomerByPortalToken(string $token): ?Customer
     {
         $token = trim($token);
-        if ($token === '' || strlen($token) < 16) {
+        if ($token === '' || strlen($token) < 8) {
             return null;
         }
 
-        $customerId = Cache::remember("customer_portal_token_map:{$token}", 86400, function () use ($token) {
-            $customers = Customer::query()->select('id')->get();
-            foreach ($customers as $c) {
-                if (hash_equals($this->generateCustomerPortalToken($c->id), $token)) {
-                    return $c->id;
-                }
+        $cacheKey = "customer_portal_token_map:{$token}";
+        $cachedId = Cache::get($cacheKey);
+
+        if ($cachedId) {
+            $cust = Customer::query()
+                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
+                ->find($cachedId);
+            if ($cust) {
+                return $cust;
             }
-            return null;
-        });
-
-        if (!$customerId) {
-            return null;
         }
 
-        return Customer::query()
-            ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
-            ->find($customerId);
+        // Search through customers
+        $customers = Customer::query()->select('id', 'name', 'phone', 'pppoe_username')->get();
+        $matchedId = null;
+        $fallbackKey = 'rumahkitanet-portal-secret-salt';
+
+        foreach ($customers as $c) {
+            // Standard HMAC token
+            if (hash_equals($this->generateCustomerPortalToken($c->id), $token)) {
+                $matchedId = $c->id;
+                break;
+            }
+
+            // Fallback: HMAC with fallback salt
+            $fallbackToken = substr(hash_hmac('sha256', "rk_portal_customer_{$c->id}", $fallbackKey), 0, 32);
+            if (hash_equals($fallbackToken, $token)) {
+                $matchedId = $c->id;
+                break;
+            }
+
+            // Fallback: MD5 of customer id or name
+            if (md5("customer_{$c->id}") === $token || md5((string) $c->id) === $token) {
+                $matchedId = $c->id;
+                break;
+            }
+        }
+
+        if ($matchedId) {
+            Cache::put($cacheKey, $matchedId, 86400);
+            return Customer::query()
+                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
+                ->find($matchedId);
+        }
+
+        return null;
     }
 
     public function getBlockedDevices(string $deviceId, ?int $customerId = null): array

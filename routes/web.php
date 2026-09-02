@@ -82,6 +82,10 @@ Route::get('/portal-pelanggan/{token}', function () {
     return view('app');
 })->name('customer.public-portal');
 
+Route::get('/portal_pelanggan/{token}', function () {
+    return view('app');
+})->name('customer.public-portal.alias');
+
 // Route publik untuk akses invoice tanpa login
 Route::get('/api/invoice/{invoice_link}', [BillingController::class, 'showInvoiceApi'])->name('api.invoice.show');
 Route::get('/invoice/{invoice_link}/print', [InvoiceDocumentController::class, 'showPrint'])->name('invoice.public.print');

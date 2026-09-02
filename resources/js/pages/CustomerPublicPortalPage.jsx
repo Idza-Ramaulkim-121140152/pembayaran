@@ -228,27 +228,37 @@ export default function CustomerPublicPortalPage() {
 
     if (error || !portalData) {
         return (
-            <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-center">
-                <div className="p-6 rounded-3xl bg-slate-800/90 border border-rose-500/30 shadow-2xl backdrop-blur-md max-w-md w-full space-y-4 text-left">
+            <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-center">
+                <div className="p-6 sm:p-7 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl backdrop-blur-md max-w-md w-full space-y-4 text-left">
                     <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
                         <AlertTriangle size={28} />
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-white">Akses Portal Tidak Ditemukan</h2>
-                        <p className="text-xs text-slate-400 mt-1">{error}</p>
-                    </div>
-                    <div className="pt-2 border-t border-slate-700">
-                        <p className="text-[11px] text-slate-400">
-                            Butuh bantuan? Silakan hubungi Customer Service Rumah Kita Net via WhatsApp:
+                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                            {error || 'Tautan akses portal pelanggan yang Anda buka tidak valid atau telah kedaluwarsa. Silakan periksa kembali tautan yang diberikan atau hubungi layanan pelanggan kami.'}
                         </p>
+                    </div>
+                    <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setLoading(true);
+                                loadPortalData();
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center gap-2 transition border border-slate-700"
+                        >
+                            <RefreshCw size={14} />
+                            Coba Muat Ulang Halaman
+                        </button>
                         <a
-                            href="https://wa.me/6282181512403?text=Halo%20CS%20Rumah%20Kita%20Net,%20saya%20mengalami%20kendala%20saat%20membuka%20link%20portal%20pelanggan."
+                            href={`https://wa.me/6282181512403?text=${encodeURIComponent(`Halo CS Rumah Kita Net, saya ingin menanyakan tautan portal mandiri pelanggan WiFi saya yang tidak dapat dibuka (Token: ${token || '-'}).`)}`}
                             target="_blank"
                             rel="noreferrer"
-                            className="mt-3 w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-lg shadow-emerald-900/30"
+                            className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-lg shadow-emerald-900/30"
                         >
                             <MessageSquare size={16} />
-                            Hubungi Customer Service
+                            Hubungi Customer Service via WhatsApp
                         </a>
                     </div>
                 </div>
