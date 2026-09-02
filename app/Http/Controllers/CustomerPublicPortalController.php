@@ -139,6 +139,48 @@ class CustomerPublicPortalController extends Controller
             ];
         }
 
+        // Disruption / Offline Detection (> 15 minutes)
+        $isOfflineOver15Min = false;
+        $offlineDurationMinutes = 0;
+        $lastActiveFormatted = null;
+
+        if ($lastInformAt) {
+            try {
+                $lastInformCarbon = Carbon::parse($lastInformAt);
+                $offlineDurationMinutes = (int) $lastInformCarbon->diffInMinutes(now());
+                $lastActiveFormatted = $lastInformCarbon->setTimezone('Asia/Jakarta')->format('d M Y H:i') . ' WIB';
+                if ($offlineDurationMinutes >= 15) {
+                    $isOfflineOver15Min = true;
+                }
+            } catch (\Throwable) {
+                $isOfflineOver15Min = !$isOnline;
+            }
+        } elseif (!$device || !$isOnline) {
+            $isOfflineOver15Min = true;
+        }
+
+        // Recent complaints from this customer
+        $recentComplaints = $customer->complaints()
+            ->orderByDesc('created_at')
+            ->take(5)
+            ->get()
+            ->map(fn($c) => [
+                'id' => $c->id,
+                'ticket_number' => $c->ticket_number,
+                'subject' => $c->subject,
+                'category' => $c->category,
+                'status' => $c->status,
+                'status_label' => match($c->status) {
+                    'pending' => 'Menunggu Teknisi',
+                    'in_progress' => 'Sedang Ditangani',
+                    'resolved' => 'Selesai',
+                    'closed' => 'Ditutup',
+                    default => ucfirst($c->status),
+                },
+                'created_at' => $c->created_at ? Carbon::parse($c->created_at)->setTimezone('Asia/Jakarta')->format('d M Y H:i') : null,
+                'admin_response' => $c->admin_response,
+            ]);
+
         // Customer General Info (Safe - NO NIK, NO KTP, NO house photos)
         $formattedAddress = implode(', ', array_filter([
             $customer->address,
@@ -184,6 +226,14 @@ class CustomerPublicPortalController extends Controller
                 'rx_power' => $rxPower,
                 'connected_hosts' => $lanHosts,
                 'blocked_devices' => $blockedDevices,
+            ],
+            'disruption' => [
+                'is_disrupted' => $isOfflineOver15Min,
+                'offline_duration_minutes' => $offlineDurationMinutes,
+                'last_active_at' => $lastActiveFormatted,
+                'notice_title' => 'Perangkat Router Tidak Aktif / Terindikasi Gangguan',
+                'notice_description' => 'Router Anda terdeteksi tidak aktif lebih dari 15 menit. Jika adaptor router terpasang dan lampu indikator mati atau lampu LOS berkedip merah, Anda dapat langsung membuat tiket aduan gangguan di bawah ini.',
+                'recent_complaints' => $recentComplaints,
             ],
             'invoice' => $invoicePayload,
             'cs_contact' => [
@@ -340,6 +390,83 @@ class CustomerPublicPortalController extends Controller
             ]);
         } catch (\Throwable $e) {
             return response()->json(['message' => 'Gagal membuka blokir perangkat: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Submit a customer complaint / disruption ticket via public portal
+     */
+    public function storeComplaint(Request $request, string $token)
+    {
+        $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
+
+        if (!$customer) {
+            return response()->json(['message' => 'Tautan akses portal pelanggan tidak valid.'], 404);
+        }
+
+        $validated = $request->validate([
+            'category' => ['required', 'string', 'in:los_merah,mati_total,koneksi_lambat,sering_putus,ganti_password,lainnya'],
+            'subject' => ['required', 'string', 'min:3', 'max:150'],
+            'message' => ['required', 'string', 'min:5', 'max:2000'],
+        ], [
+            'category.required' => 'Pilih kategori kendala / gangguan.',
+            'subject.required' => 'Judul laporan aduan wajib diisi.',
+            'message.required' => 'Jelaskan rincian kendala Anda minimal 5 karakter.',
+        ]);
+
+        $categoryLabels = [
+            'los_merah' => 'Lampu LOS Berkedip Merah',
+            'mati_total' => 'Router Mati Total / Tidak Menyala',
+            'koneksi_lambat' => 'Koneksi Lambat / Lemot',
+            'sering_putus' => 'Koneksi Sering Putus / RTO',
+            'ganti_password' => 'Bantuan Pengaturan WiFi',
+            'lainnya' => 'Kendala Lainnya',
+        ];
+
+        $dbCategory = match($validated['category']) {
+            'ganti_password' => 'layanan',
+            'lainnya' => 'lainnya',
+            default => 'gangguan',
+        };
+
+        try {
+            $complaint = \App\Models\Complaint::create([
+                'customer_id' => $customer->id,
+                'subject' => "[{$categoryLabels[$validated['category']]}] " . $validated['subject'],
+                'category' => $dbCategory,
+                'message' => $validated['message'],
+                'status' => 'pending',
+                'priority' => in_array($validated['category'], ['los_merah', 'mati_total'], true) ? 'high' : 'medium',
+                'opened_at' => now(),
+                'last_activity_at' => now(),
+            ]);
+
+            $this->auditLogService->log('customer_portal.complaint_created', $customer, [
+                'customer_id' => $customer->id,
+                'complaint_id' => $complaint->id,
+                'ticket_number' => $complaint->ticket_number,
+                'category' => $validated['category'],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Laporan aduan berhasil dikirim ke tim teknisi kami!',
+                'data' => [
+                    'id' => $complaint->id,
+                    'ticket_number' => $complaint->ticket_number,
+                    'subject' => $complaint->subject,
+                    'category' => $complaint->category,
+                    'category_label' => $categoryLabels[$validated['category']] ?? $validated['category'],
+                    'status' => $complaint->status,
+                    'status_label' => 'Menunggu Teknisi',
+                    'created_at' => Carbon::parse($complaint->created_at)->setTimezone('Asia/Jakarta')->format('d M Y H:i'),
+                ],
+            ], 201);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'message' => 'Gagal membuat laporan aduan: ' . $e->getMessage(),
+            ], 500);
         }
     }
 }

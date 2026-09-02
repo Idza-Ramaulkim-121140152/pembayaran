@@ -30,6 +30,8 @@ import {
     ChevronDown,
     ChevronUp,
     Sparkles,
+    FileText,
+    Clock,
 } from 'lucide-react';
 
 export default function CustomerPublicPortalPage() {
@@ -56,6 +58,15 @@ export default function CustomerPublicPortalPage() {
     const [blockModalTarget, setBlockModalTarget] = useState(null);
     const [actionMessage, setActionMessage] = useState('');
 
+    // Complaint / Aduan Gangguan state
+    const [showComplaintForm, setShowComplaintForm] = useState(false);
+    const [complaintCategory, setComplaintCategory] = useState('los_merah');
+    const [complaintSubject, setComplaintSubject] = useState('Lampu LOS Router Berkedip Merah / Tidak Ada Sinyal Optik');
+    const [complaintMessage, setComplaintMessage] = useState('');
+    const [submittingComplaint, setSubmittingComplaint] = useState(false);
+    const [complaintSuccess, setComplaintSuccess] = useState('');
+    const [complaintError, setComplaintError] = useState('');
+
     // Fetch portal data
     const loadPortalData = async () => {
         if (!token) return;
@@ -76,6 +87,50 @@ export default function CustomerPublicPortalPage() {
     useEffect(() => {
         loadPortalData();
     }, [token]);
+
+    // Handle Category change for complaint
+    const handleCategoryChange = (cat) => {
+        setComplaintCategory(cat);
+        const titles = {
+            los_merah: 'Lampu LOS Router Berkedip Merah / Tidak Ada Sinyal Optik',
+            mati_total: 'Router Mati Total / Tidak Menyala Sama Sekali',
+            koneksi_lambat: 'Koneksi Internet Sangat Lambat / Lemot',
+            sering_putus: 'Koneksi Internet Sering Putus-Putus / RTO',
+            ganti_password: 'Bantuan Pengaturan Nama & Sandi WiFi',
+            lainnya: 'Laporan Kendala Jaringan Internet',
+        };
+        setComplaintSubject(titles[cat] || 'Laporan Kendala Jaringan');
+    };
+
+    // Handle Submit Complaint
+    const handleSubmitComplaint = async (e) => {
+        e.preventDefault();
+        setComplaintError('');
+        setComplaintSuccess('');
+
+        if (!complaintMessage || complaintMessage.trim().length < 5) {
+            setComplaintError('Harap jelaskan rincian kendala Anda minimal 5 karakter.');
+            return;
+        }
+
+        try {
+            setSubmittingComplaint(true);
+            const res = await axios.post(`/api/public/portal/${token}/complaints`, {
+                category: complaintCategory,
+                subject: complaintSubject.trim(),
+                message: complaintMessage.trim(),
+            });
+
+            setComplaintSuccess(res.data?.message || 'Laporan aduan berhasil dikirim! Tim teknisi kami akan segera memproses laporan Anda.');
+            setComplaintMessage('');
+            setShowComplaintForm(false);
+            await loadPortalData();
+        } catch (err) {
+            setComplaintError(err.response?.data?.message || 'Gagal mengirim laporan aduan.');
+        } finally {
+            setSubmittingComplaint(false);
+        }
+    };
 
     // Handle Ganti Password WiFi
     const handleSaveWifi = async (e) => {
@@ -201,7 +256,7 @@ export default function CustomerPublicPortalPage() {
         );
     }
 
-    const { customer, package: pkg, capacity, wifi, invoice, cs_contact } = portalData;
+    const { customer, package: pkg, capacity, wifi, disruption, invoice, cs_contact } = portalData;
     const isOnline = wifi.is_online;
     const blockedMacSet = new Set((wifi.blocked_devices || []).map((b) => b.mac_address.toUpperCase()));
 
@@ -228,13 +283,19 @@ export default function CustomerPublicPortalPage() {
                     <div className="flex items-center gap-2">
                         <span
                             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold shadow-xs ${
-                                isOnline
+                                !wifi.has_router
+                                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                    : isOnline
                                     ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                                     : 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
                             }`}
                         >
-                            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
-                            {isOnline ? 'Router Online' : 'Router Offline'}
+                            <span
+                                className={`w-2 h-2 rounded-full ${
+                                    !wifi.has_router ? 'bg-amber-400' : isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'
+                                }`}
+                            />
+                            {!wifi.has_router ? 'Router Belum Tertaut ACS' : isOnline ? 'Router Online' : 'Router Offline'}
                         </span>
                     </div>
                 </div>
@@ -279,6 +340,193 @@ export default function CustomerPublicPortalPage() {
                     </div>
                 )}
 
+                {/* SECTION: PEMBERITAHUAN GANGGUAN ROUTER & FORM ADUAN */}
+                {disruption?.is_disrupted && (
+                    <div className="rounded-3xl bg-gradient-to-br from-rose-950/70 via-slate-800 to-amber-950/50 border-2 border-rose-500/40 p-5 shadow-2xl space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                            <div className="flex items-start gap-3">
+                                <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
+                                    <AlertTriangle size={22} className="animate-bounce" />
+                                </div>
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h3 className="text-sm font-extrabold text-white">
+                                            Perangkat Terindikasi Mengalami Gangguan
+                                        </h3>
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/30 text-rose-300 border border-rose-500/40">
+                                            {disruption.offline_duration_minutes > 0
+                                                ? `Tidak Aktif > ${disruption.offline_duration_minutes} Menit`
+                                                : 'Tidak Aktif > 15 Menit'}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                                        Router Anda terdeteksi tidak aktif sejak <strong>{disruption.last_active_at || 'beberapa waktu lalu'}</strong>. Silakan periksa adaptor listrik router dan pastikan lampu indikator tidak berkedip merah (LOS).
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 sm:self-start">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowComplaintForm(!showComplaintForm)}
+                                    className="w-full sm:w-auto px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-950/50"
+                                >
+                                    <FileText size={14} />
+                                    {showComplaintForm ? 'Tutup Formulir' : 'Buat Laporan Aduan'}
+                                    {showComplaintForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* COMPLAINT SUCCESS BANNER */}
+                        {complaintSuccess && (
+                            <div className="p-3.5 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                                <CheckCircle2 size={16} className="shrink-0" />
+                                <span>{complaintSuccess}</span>
+                            </div>
+                        )}
+
+                        {/* COLLAPSIBLE COMPLAINT FORM */}
+                        {showComplaintForm && (
+                            <form onSubmit={handleSubmitComplaint} className="pt-3 border-t border-slate-700/80 space-y-3.5 text-left">
+                                <h4 className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                                    <FileText size={14} />
+                                    Formulir Pengaduan Kendala Teknis:
+                                </h4>
+
+                                {complaintError && (
+                                    <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-300 text-xs">
+                                        {complaintError}
+                                    </div>
+                                )}
+
+                                {/* Kategori Kendala Pills */}
+                                <div>
+                                    <label className="block text-slate-300 text-xs font-semibold mb-1.5">
+                                        Pilih Kategori Kendala:
+                                    </label>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                                        {[
+                                            { key: 'los_merah', label: '🔴 Lampu LOS Berkedip Merah' },
+                                            { key: 'mati_total', label: '🔌 Router Mati / Tidak Menyala' },
+                                            { key: 'koneksi_lambat', label: '🐢 Internet Lambat / Lemot' },
+                                            { key: 'sering_putus', label: '📶 Sering Putus / RTO' },
+                                            { key: 'ganti_password', label: '🔒 Bantuan Pengaturan WiFi' },
+                                            { key: 'lainnya', label: '📝 Kendala Lainnya' },
+                                        ].map((c) => (
+                                            <button
+                                                key={c.key}
+                                                type="button"
+                                                onClick={() => handleCategoryChange(c.key)}
+                                                className={`p-2.5 rounded-xl border text-left font-medium transition text-[11px] ${
+                                                    complaintCategory === c.key
+                                                        ? 'bg-rose-600/30 border-rose-400 text-white font-bold'
+                                                        : 'bg-slate-900/60 border-slate-700 text-slate-300 hover:bg-slate-800'
+                                                }`}
+                                            >
+                                                {c.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Judul Laporan */}
+                                <div>
+                                    <label className="block text-slate-300 text-xs font-semibold mb-1">
+                                        Judul Laporan:
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={complaintSubject}
+                                        onChange={(e) => setComplaintSubject(e.target.value)}
+                                        placeholder="Judul kendala..."
+                                        className="w-full text-xs rounded-xl bg-slate-900 border border-slate-700 p-2.5 text-white focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                                        required
+                                    />
+                                </div>
+
+                                {/* Rincian Pesan */}
+                                <div>
+                                    <label className="block text-slate-300 text-xs font-semibold mb-1">
+                                        Rincian Keluhan / Pesan untuk Teknisi: <span className="text-rose-400">*</span>
+                                    </label>
+                                    <textarea
+                                        rows={3}
+                                        value={complaintMessage}
+                                        onChange={(e) => setComplaintMessage(e.target.value)}
+                                        placeholder="Contoh: Lampu LOS berkedip merah sejak tadi pagi, sudah coba restart router tetap merah..."
+                                        className="w-full text-xs rounded-xl bg-slate-900 border border-slate-700 p-2.5 text-white focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                                        required
+                                    />
+                                </div>
+
+                                <div className="flex justify-end gap-2 pt-1">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowComplaintForm(false)}
+                                        className="px-3.5 py-2 text-xs font-semibold text-slate-400 rounded-xl hover:bg-slate-700/60"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={submittingComplaint}
+                                        className="px-4 py-2 text-xs font-bold text-white bg-rose-600 rounded-xl hover:bg-rose-500 disabled:opacity-50 flex items-center gap-1.5 shadow-lg shadow-rose-950/50"
+                                    >
+                                        {submittingComplaint ? (
+                                            <>
+                                                <RefreshCw size={13} className="animate-spin" />
+                                                Mengirim Laporan...
+                                            </>
+                                        ) : (
+                                            'Kirim Laporan Aduan'
+                                        )}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+
+                        {/* RECENT COMPLAINTS LIST */}
+                        {disruption.recent_complaints && disruption.recent_complaints.length > 0 && (
+                            <div className="pt-3 border-t border-slate-700/80 space-y-2">
+                                <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                                    <Clock size={13} className="text-slate-400" />
+                                    Riwayat Aduan Anda ({disruption.recent_complaints.length}):
+                                </h4>
+                                <div className="rounded-2xl border border-slate-700/80 bg-slate-900/60 divide-y divide-slate-800/80 overflow-hidden text-xs">
+                                    {disruption.recent_complaints.map((c) => (
+                                        <div key={c.id} className="p-3 space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-mono font-bold text-slate-300 text-[11px]">{c.ticket_number}</span>
+                                                    <p className="font-bold text-white">{c.subject}</p>
+                                                </div>
+                                                <span
+                                                    className={`px-2 py-0.5 rounded-full font-bold text-[10px] border ${
+                                                        c.status === 'resolved' || c.status === 'closed'
+                                                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                                            : c.status === 'in_progress'
+                                                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                                                            : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                                                    }`}
+                                                >
+                                                    {c.status_label}
+                                                </span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400">Dibuat: {c.created_at}</p>
+                                            {c.admin_response && (
+                                                <div className="p-2 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-emerald-300 mt-1">
+                                                    <strong className="text-white">Tanggapan Teknisi:</strong> {c.admin_response}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* SECTION 1: WIFI & KATA SANDI CARD */}
                 <div className="rounded-3xl bg-slate-800/80 border border-slate-700/80 p-5 shadow-xl space-y-4">
                     <div className="flex items-center justify-between">
@@ -292,16 +540,46 @@ export default function CustomerPublicPortalPage() {
                             </div>
                         </div>
 
-                        <button
-                            type="button"
-                            onClick={() => setShowChangeWifiForm(!showChangeWifiForm)}
-                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-950/50"
-                        >
-                            <Lock size={13} />
-                            {showChangeWifiForm ? 'Tutup Form' : 'Ganti Sandi WiFi'}
-                            {showChangeWifiForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
+                        {wifi.has_router && (
+                            <button
+                                type="button"
+                                onClick={() => setShowChangeWifiForm(!showChangeWifiForm)}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-950/50"
+                            >
+                                <Lock size={13} />
+                                {showChangeWifiForm ? 'Tutup Form' : 'Ganti Sandi WiFi'}
+                                {showChangeWifiForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+                        )}
                     </div>
+
+                    {!wifi.has_router ? (
+                        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 space-y-2.5">
+                            <div className="flex items-start gap-2.5">
+                                <Info size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                                <div className="space-y-1">
+                                    <p className="font-bold text-amber-300">
+                                        Router Belum Tertaut ke Sistem GenieACS
+                                    </p>
+                                    <p className="text-[11px] leading-relaxed text-slate-300">
+                                        Perangkat router di lokasi Anda belum disinkronkan dengan sistem otomasi TR-069 kami. Untuk bantuan konfigurasi nama WiFi, kata sandi, atau pengecekan oleh teknisi, silakan hubungi Customer Service kami.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="pt-1 flex justify-end">
+                                <a
+                                    href={`https://wa.me/${cs_contact.whatsapp}?text=${encodeURIComponent(cs_contact.support_message)}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow"
+                                >
+                                    <MessageSquare size={13} />
+                                    Hubungi CS via WhatsApp
+                                </a>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
 
                     {/* WIFI CREDENTIALS BOX */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
@@ -470,6 +748,8 @@ export default function CustomerPublicPortalPage() {
                                 </button>
                             </div>
                         </form>
+                    )}
+                    </>
                     )}
                 </div>
 

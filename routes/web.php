@@ -94,6 +94,7 @@ Route::get('/api/public/portal/{token}', [\App\Http\Controllers\CustomerPublicPo
 Route::post('/api/public/portal/{token}/wifi', [\App\Http\Controllers\CustomerPublicPortalController::class, 'updateWifi'])->name('api.public.portal.wifi.update');
 Route::post('/api/public/portal/{token}/block-device', [\App\Http\Controllers\CustomerPublicPortalController::class, 'blockDevice'])->name('api.public.portal.device.block');
 Route::post('/api/public/portal/{token}/unblock-device', [\App\Http\Controllers\CustomerPublicPortalController::class, 'unblockDevice'])->name('api.public.portal.device.unblock');
+Route::post('/api/public/portal/{token}/complaints', [\App\Http\Controllers\CustomerPublicPortalController::class, 'storeComplaint'])->name('api.public.portal.complaint.store');
 
 // Public payment methods API (for invoice page)
 Route::get('/api/payment-methods/active', [PaymentMethodController::class, 'activeList'])->name('api.payment-methods.active');
