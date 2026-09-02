@@ -32,7 +32,8 @@ import {
     Wifi,
     WifiOff,
     X,
-    ExternalLink,
+    Filter,
+    Layers,
 } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import genieAcsService from '../services/genieAcsService';
@@ -49,10 +50,16 @@ export default function MonitoringGenieAcsPage() {
         online_devices: 0,
         offline_devices: 0,
         unassigned_devices: 0,
+        total_connected_clients: 0,
+        safe_capacity_count: 0,
+        warning_capacity_count: 0,
+        critical_capacity_count: 0,
+        overlimit_capacity_count: 0,
         critical_rx_count: 0,
         warning_rx_count: 0,
         cached_at: null,
     });
+    const [packages, setPackages] = useState([]);
     const [devices, setDevices] = useState([]);
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
@@ -60,6 +67,8 @@ export default function MonitoringGenieAcsPage() {
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'with_acs' | 'without_acs' | 'online' | 'offline' | 'critical_rx' | 'unassigned'
+    const [capacityFilter, setCapacityFilter] = useState('all'); // 'all' | 'safe' | 'warning' | 'critical' | 'overlimit' | 'no_limit'
+    const [packageFilter, setPackageFilter] = useState('all'); // 'all' | package_id or name
 
     // Modal: Ganti WiFi
     const [wifiModalDevice, setWifiModalDevice] = useState(null);
@@ -102,10 +111,13 @@ export default function MonitoringGenieAcsPage() {
             const response = await genieAcsService.getDevices({
                 fresh: fresh ? 1 : 0,
                 status: statusFilter !== 'all' ? statusFilter : undefined,
+                capacity: capacityFilter !== 'all' ? capacityFilter : undefined,
+                package: packageFilter !== 'all' ? packageFilter : undefined,
                 search: searchQuery.trim() || undefined,
             });
 
             setStats(response.data?.stats || {});
+            setPackages(response.data?.packages || []);
             setDevices(response.data?.devices || []);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal memuat data monitoring perangkat GenieACS.');
@@ -118,12 +130,21 @@ export default function MonitoringGenieAcsPage() {
 
     useEffect(() => {
         loadDevices(false);
-    }, [statusFilter]);
+    }, [statusFilter, capacityFilter, packageFilter]);
 
     const handleSearchSubmit = (e) => {
         e.preventDefault();
         loadDevices(false);
     };
+
+    const handleResetFilters = () => {
+        setSearchQuery('');
+        setStatusFilter('all');
+        setCapacityFilter('all');
+        setPackageFilter('all');
+    };
+
+    const isFiltered = statusFilter !== 'all' || capacityFilter !== 'all' || packageFilter !== 'all' || searchQuery.trim() !== '';
 
     // Open WiFi Modal
     const handleOpenWifiModal = (device) => {
@@ -265,7 +286,6 @@ export default function MonitoringGenieAcsPage() {
     // Open Link Router Modal (For customer without GenieACS)
     const handleOpenLinkRouterModal = (row) => {
         setLinkRouterCustomer(row.customer);
-        // Find unassigned ACS devices
         const unassigned = devices.filter((d) => d.is_unassigned && d.device_id);
         setAvailableAcsDevices(unassigned);
         setSelectedDeviceId(unassigned[0]?.device_id || '');
@@ -292,10 +312,6 @@ export default function MonitoringGenieAcsPage() {
         }
     };
 
-    const filteredDevices = useMemo(() => {
-        return devices;
-    }, [devices]);
-
     return (
         <div className="space-y-6 pb-12">
             {/* Header */}
@@ -306,7 +322,7 @@ export default function MonitoringGenieAcsPage() {
                         Monitoring Perangkat & Pelanggan (GenieACS)
                     </h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Sinkronisasi data pelanggan dengan TR-069 GenieACS. Pantau pelanggan yang sudah terhubung atau belum memiliki router ACS, status online, redaman optik (RX Power), dan kelola WiFi jarak jauh.
+                        Pantau perangkat ONT/Router pelanggan, total klien terhubung, kepatuhan batas paket (Aman, Siaga, Kritis), redaman optik, dan remote setting WiFi.
                     </p>
                 </div>
 
@@ -356,7 +372,7 @@ export default function MonitoringGenieAcsPage() {
                 </div>
             )}
 
-            {/* Stats Summary Cards */}
+            {/* Stats Summary Cards (Include Total Perangkat Terhubung) */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
                 {/* Total Pelanggan */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -370,6 +386,24 @@ export default function MonitoringGenieAcsPage() {
                     <p className="mt-1 text-[11px] text-gray-400">Database Pelanggan</p>
                 </div>
 
+                {/* Total Perangkat Terhubung (Klien Aktif) */}
+                <div className="rounded-2xl border border-emerald-300 bg-gradient-to-br from-emerald-50/50 to-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                        <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total Klien Terhubung</p>
+                        <div className="rounded-xl bg-emerald-600 p-2 text-white shadow-xs">
+                            <Smartphone size={18} />
+                        </div>
+                    </div>
+                    <p className="mt-2 text-2xl font-extrabold text-emerald-700">
+                        {stats.total_connected_clients || 0} <span className="text-sm font-semibold text-emerald-600">Perangkat</span>
+                    </p>
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-semibold">
+                        <span className="text-emerald-700 bg-emerald-100/80 px-1 rounded">Aman: {stats.safe_capacity_count || 0}</span>
+                        <span className="text-amber-800 bg-amber-100 px-1 rounded">Siaga: {stats.warning_capacity_count || 0}</span>
+                        <span className="text-rose-700 bg-rose-100 px-1 rounded">Kritis: {stats.critical_capacity_count || 0}</span>
+                    </div>
+                </div>
+
                 {/* Ada GenieACS */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
@@ -380,18 +414,6 @@ export default function MonitoringGenieAcsPage() {
                     </div>
                     <p className="mt-2 text-2xl font-bold text-purple-700">{stats.customers_with_acs || 0}</p>
                     <p className="mt-1 text-[11px] text-gray-400">Router Terdaftar</p>
-                </div>
-
-                {/* Belum Ada GenieACS */}
-                <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Belum Ada ACS</p>
-                        <div className="rounded-xl bg-amber-50 p-2 text-amber-600">
-                            <UserMinus size={18} />
-                        </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-bold text-amber-600">{stats.customers_without_acs || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Perlu Didaftarkan</p>
                 </div>
 
                 {/* Router Online */}
@@ -418,64 +440,122 @@ export default function MonitoringGenieAcsPage() {
                     <p className="mt-1 text-[11px] text-gray-400">Sinyal &lt; -27 dBm</p>
                 </div>
 
-                {/* Router Belum Tertaut */}
+                {/* Belum Ada GenieACS */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">ACS Belum Tertaut</p>
-                        <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600">
-                            <Router size={18} />
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Belum Ada ACS</p>
+                        <div className="rounded-xl bg-amber-50 p-2 text-amber-600">
+                            <UserMinus size={18} />
                         </div>
                     </div>
-                    <p className="mt-2 text-2xl font-bold text-indigo-700">{stats.unassigned_devices || 0}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">Di ACS Tanpa Pelanggan</p>
+                    <p className="mt-2 text-2xl font-bold text-amber-600">{stats.customers_without_acs || 0}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">Perlu Didaftarkan</p>
                 </div>
             </div>
 
             {/* Filter & Search Navigation */}
             <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    {/* Status Tabs */}
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                        {[
-                            { key: 'all', label: `Semua (${(stats.total_customers || 0) + (stats.unassigned_devices || 0)})`, icon: Users },
-                            { key: 'with_acs', label: `Ada GenieACS (${stats.customers_with_acs || 0})`, icon: UserCheck },
-                            { key: 'without_acs', label: `Belum Ada GenieACS (${stats.customers_without_acs || 0})`, icon: UserMinus },
-                            { key: 'online', label: `Online (${stats.online_devices || 0})`, icon: Wifi },
-                            { key: 'offline', label: `Offline (${stats.offline_devices || 0})`, icon: WifiOff },
-                            { key: 'critical_rx', label: `Redaman Kritis (${stats.critical_rx_count || 0})`, icon: AlertTriangle },
-                            { key: 'unassigned', label: `ACS Belum Tertaut (${stats.unassigned_devices || 0})`, icon: Router },
-                        ].map((t) => {
-                            const Icon = t.icon;
-                            const isActive = statusFilter === t.key;
-                            return (
-                                <button
-                                    key={t.key}
-                                    type="button"
-                                    onClick={() => setStatusFilter(t.key)}
-                                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 font-semibold transition ${
-                                        isActive
-                                            ? 'bg-emerald-600 text-white shadow-sm'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                    }`}
-                                >
-                                    <Icon size={14} />
-                                    {t.label}
-                                </button>
-                            );
-                        })}
+                {/* Status Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    {[
+                        { key: 'all', label: `Semua (${(stats.total_customers || 0) + (stats.unassigned_devices || 0)})`, icon: Users },
+                        { key: 'with_acs', label: `Ada GenieACS (${stats.customers_with_acs || 0})`, icon: UserCheck },
+                        { key: 'without_acs', label: `Belum Ada GenieACS (${stats.customers_without_acs || 0})`, icon: UserMinus },
+                        { key: 'online', label: `Online (${stats.online_devices || 0})`, icon: Wifi },
+                        { key: 'offline', label: `Offline (${stats.offline_devices || 0})`, icon: WifiOff },
+                        { key: 'critical_rx', label: `Redaman Kritis (${stats.critical_rx_count || 0})`, icon: AlertTriangle },
+                        { key: 'unassigned', label: `ACS Belum Tertaut (${stats.unassigned_devices || 0})`, icon: Router },
+                    ].map((t) => {
+                        const Icon = t.icon;
+                        const isActive = statusFilter === t.key;
+                        return (
+                            <button
+                                key={t.key}
+                                type="button"
+                                onClick={() => setStatusFilter(t.key)}
+                                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-2 font-semibold transition ${
+                                    isActive
+                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                }`}
+                            >
+                                <Icon size={14} />
+                                {t.label}
+                            </button>
+                        );
+                    })}
+                </div>
+
+                {/* Secondary Filters: Dropdown Kapasitas Perangkat, Dropdown Paket, Search Box */}
+                <div className="grid gap-3 pt-2 border-t border-gray-100 sm:grid-cols-2 lg:grid-cols-4 items-center">
+                    {/* Dropdown 1: Status Kapasitas Perangkat */}
+                    <div>
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1 flex items-center gap-1">
+                            <Smartphone size={12} className="text-emerald-600" />
+                            Kapasitas Perangkat Terhubung:
+                        </label>
+                        <select
+                            value={capacityFilter}
+                            onChange={(e) => setCapacityFilter(e.target.value)}
+                            className="w-full text-xs rounded-xl border border-gray-200 bg-gray-50/70 p-2 font-medium text-gray-800 focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                            <option value="all">⚡ Semua Status Kapasitas</option>
+                            <option value="safe">🟢 Aman (PT ≤ Batas Paket)</option>
+                            <option value="warning">🟡 Siaga (Lebih 1 Perangkat)</option>
+                            <option value="critical">🔴 Kritis (Melebihi &gt; 1 Perangkat)</option>
+                            <option value="overlimit">⚠️ Semua Melebihi Batas (Siaga + Kritis)</option>
+                            <option value="no_limit">⚪ Tanpa Batas / Belum Disetel</option>
+                        </select>
+                    </div>
+
+                    {/* Dropdown 2: Paket Layanan */}
+                    <div>
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1 flex items-center gap-1">
+                            <Layers size={12} className="text-emerald-600" />
+                            Paket Layanan:
+                        </label>
+                        <select
+                            value={packageFilter}
+                            onChange={(e) => setPackageFilter(e.target.value)}
+                            className="w-full text-xs rounded-xl border border-gray-200 bg-gray-50/70 p-2 font-medium text-gray-800 focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        >
+                            <option value="all">📦 Semua Paket Layanan</option>
+                            {packages.map((pkg) => (
+                                <option key={pkg.id} value={pkg.name}>
+                                    {pkg.name} {pkg.device_count ? `(Maks ${pkg.device_count} Perangkat)` : ''}
+                                </option>
+                            ))}
+                        </select>
                     </div>
 
                     {/* Search Form */}
-                    <form onSubmit={handleSearchSubmit} className="relative w-full md:w-80">
-                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Cari nama, WA, PPPoE, SSID, SN, IP..."
-                            className="w-full rounded-xl border border-gray-200 bg-gray-50/50 pl-10 pr-4 py-2 text-xs focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                        />
-                    </form>
+                    <div className="lg:col-span-2">
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1">
+                            Pencarian Cepat Pelanggan / Router:
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <form onSubmit={handleSearchSubmit} className="relative flex-1">
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Cari nama, WA, PPPoE, SSID, SN, IP, Paket..."
+                                    className="w-full rounded-xl border border-gray-200 bg-gray-50/70 pl-10 pr-4 py-2 text-xs focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                />
+                            </form>
+                            {isFiltered && (
+                                <button
+                                    type="button"
+                                    onClick={handleResetFilters}
+                                    className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 shrink-0"
+                                    title="Reset Semua Filter"
+                                >
+                                    Reset
+                                </button>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -487,11 +567,11 @@ export default function MonitoringGenieAcsPage() {
                         <p className="text-sm font-medium text-gray-500">Memuat sinkronisasi pelanggan dan GenieACS...</p>
                     </div>
                 </div>
-            ) : filteredDevices.length === 0 ? (
+            ) : devices.length === 0 ? (
                 <div className="flex min-h-[250px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center shadow-sm">
                     <Router className="h-12 w-12 text-gray-300" />
                     <p className="mt-3 text-base font-semibold text-gray-700">Tidak ada data yang sesuai filter.</p>
-                    <p className="mt-1 text-xs text-gray-400">Coba ubah kata kunci pencarian atau tab filter di atas.</p>
+                    <p className="mt-1 text-xs text-gray-400">Coba ubah kata kunci pencarian atau dropdown filter di atas.</p>
                 </div>
             ) : (
                 <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -499,28 +579,31 @@ export default function MonitoringGenieAcsPage() {
                         <table className="w-full text-left text-xs text-gray-600">
                             <thead className="bg-gray-50/80 text-[11px] font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200">
                                 <tr>
-                                    <th className="px-4 py-3.5">Pelanggan</th>
+                                    <th className="px-4 py-3.5">Pelanggan & Paket</th>
                                     <th className="px-4 py-3.5">Status GenieACS</th>
                                     <th className="px-4 py-3.5">Perangkat & IP</th>
                                     <th className="px-4 py-3.5">Redaman (RX Power)</th>
-                                    <th className="px-4 py-3.5">WiFi & Klien</th>
+                                    <th className="px-4 py-3.5">WiFi & Kapasitas Klien</th>
                                     <th className="px-4 py-3.5 text-right">Aksi Jarak Jauh</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {filteredDevices.map((row, idx) => {
+                                {devices.map((row, idx) => {
                                     const hasAcs = row.has_genieacs;
                                     const isUnassigned = row.is_unassigned;
                                     const isOnline = row.is_online;
                                     const cust = row.customer;
                                     const rx = row.rx_power;
+                                    const clientsCount = row.wifi_clients_count || 0;
+                                    const maxDev = row.max_devices;
+                                    const capStatus = row.capacity_status; // 'safe' | 'warning' | 'critical' | 'no_limit'
 
                                     return (
                                         <tr
                                             key={row.device_id || `cust-${cust?.id || idx}`}
                                             className={`transition ${!hasAcs ? 'bg-amber-50/20 hover:bg-amber-50/50' : 'hover:bg-gray-50/70'}`}
                                         >
-                                            {/* Pelanggan */}
+                                            {/* Pelanggan & Paket */}
                                             <td className="px-4 py-3.5">
                                                 {cust ? (
                                                     <div>
@@ -544,12 +627,17 @@ export default function MonitoringGenieAcsPage() {
                                                                 </a>
                                                             )}
                                                         </p>
-                                                        <div className="flex flex-wrap items-center gap-1 mt-1">
-                                                            <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded px-1.5 py-0.2">
+                                                        <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                                                            {/* Paket Badge */}
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md px-2 py-0.5">
+                                                                <Layers size={10} className="text-emerald-600" />
                                                                 {cust.package_name || 'Paket -'}
+                                                                {cust.package_max_devices ? (
+                                                                    <span className="text-emerald-600 font-semibold">(Maks {cust.package_max_devices} Perangkat)</span>
+                                                                ) : null}
                                                             </span>
                                                             {cust.pppoe_username && (
-                                                                <span className="text-[10px] font-mono text-gray-600 bg-gray-100 px-1.5 py-0.2 rounded">
+                                                                <span className="text-[10px] font-mono text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                     PPPoE: {cust.pppoe_username}
                                                                 </span>
                                                             )}
@@ -663,7 +751,7 @@ export default function MonitoringGenieAcsPage() {
                                                 )}
                                             </td>
 
-                                            {/* WiFi & Klien */}
+                                            {/* WiFi & Kapasitas Klien Terhubung */}
                                             <td className="px-4 py-3.5">
                                                 {hasAcs ? (
                                                     <div>
@@ -671,14 +759,48 @@ export default function MonitoringGenieAcsPage() {
                                                             <Wifi size={13} className="text-emerald-600" />
                                                             {row.ssid || 'SSID Default'}
                                                         </p>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleOpenDetailModal(row)}
-                                                            className="mt-1 inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition"
-                                                        >
-                                                            <Users size={12} />
-                                                            {row.wifi_clients_count} Klien Terhubung
-                                                        </button>
+                                                        
+                                                        {/* Status Kapasitas Perangkat Terhubung */}
+                                                        {capStatus === 'safe' ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDetailModal(row)}
+                                                                className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100 transition shadow-2xs"
+                                                                title="Jumlah perangkat aman sesuai batas paket"
+                                                            >
+                                                                <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                                                                {clientsCount} {maxDev ? `/ ${maxDev}` : ''} Klien (Aman)
+                                                            </button>
+                                                        ) : capStatus === 'warning' ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDetailModal(row)}
+                                                                className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1 text-[11px] font-bold text-amber-900 hover:bg-amber-100 transition shadow-2xs"
+                                                                title="Perangkat terhubung lebih banyak 1 dari batas paket"
+                                                            >
+                                                                <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+                                                                {clientsCount} / {maxDev} Klien · Siaga (+1)
+                                                            </button>
+                                                        ) : capStatus === 'critical' ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDetailModal(row)}
+                                                                className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-rose-50 border border-rose-300 px-2.5 py-1 text-[11px] font-bold text-rose-800 hover:bg-rose-100 transition shadow-2xs animate-pulse"
+                                                                title={`Perangkat terhubung melebihi batas paket sebanyak +${row.capacity_diff} perangkat`}
+                                                            >
+                                                                <AlertTriangle size={12} className="text-rose-600 shrink-0" />
+                                                                {clientsCount} / {maxDev} Klien · Kritis (+{row.capacity_diff})
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDetailModal(row)}
+                                                                className="mt-1 inline-flex items-center gap-1 rounded-lg bg-blue-50 border border-blue-200 px-2.5 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 transition shadow-2xs"
+                                                            >
+                                                                <Users size={12} />
+                                                                {clientsCount} Klien Terhubung
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 ) : (
                                                     <span className="text-gray-400 text-[11px]">-</span>
@@ -846,6 +968,35 @@ export default function MonitoringGenieAcsPage() {
                             </div>
                         ) : (
                             <>
+                                {/* Status Kapasitas Banner */}
+                                {detailModalDevice.max_devices && (
+                                    <div
+                                        className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                                            detailModalDevice.capacity_status === 'safe'
+                                                ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                                : detailModalDevice.capacity_status === 'warning'
+                                                ? 'bg-amber-50 border-amber-300 text-amber-900'
+                                                : 'bg-rose-50 border-rose-300 text-rose-900'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            {detailModalDevice.capacity_status === 'safe' ? (
+                                                <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+                                            ) : (
+                                                <AlertTriangle size={18} className={detailModalDevice.capacity_status === 'warning' ? 'text-amber-600 shrink-0' : 'text-rose-600 shrink-0'} />
+                                            )}
+                                            <div>
+                                                <p className="font-bold">
+                                                    Status Kapasitas: {detailModalDevice.capacity_label}
+                                                </p>
+                                                <p className="text-[11px] opacity-80">
+                                                    Paket: {detailModalDevice.customer?.package_name || '-'} (Batas Maksimal: {detailModalDevice.max_devices} Perangkat)
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Telemetry Cards */}
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                                     <div className="p-2.5 rounded-xl bg-gray-50 border border-gray-200">
@@ -960,66 +1111,68 @@ export default function MonitoringGenieAcsPage() {
                 )}
             </Modal>
 
-            {/* MODAL 4: TAUTKAN PELANGGAN MANUAL KE ROUTER ACS */}
+            {/* MODAL 4: TAUTKAN PELANGGAN MANUAL KE ROUTER BELUM TERTAUT */}
             <Modal
                 isOpen={Boolean(assignModalDevice)}
                 onClose={() => setAssignModalDevice(null)}
                 title="Tautkan Router ke Pelanggan"
             >
                 {assignModalDevice && (
-                    <div className="space-y-4 text-xs">
-                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
-                            <p className="font-bold text-gray-900">Device: {assignModalDevice.product_class}</p>
-                            <p className="text-gray-500 font-mono text-[11px]">
-                                SN: {assignModalDevice.serial_number || assignModalDevice.device_id} · MAC: {assignModalDevice.mac_address || '-'}
+                    <div className="space-y-4">
+                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 text-xs">
+                            <p className="font-bold text-gray-900">Device ID: {assignModalDevice.device_id}</p>
+                            <p className="text-gray-500 font-mono text-[11px] mt-0.5">
+                                Model: {assignModalDevice.product_class} · PPPoE Terbaca: {assignModalDevice.pppoe_username || '-'}
                             </p>
                         </div>
 
                         <div>
-                            <label className="block font-bold text-gray-700 mb-1">
-                                Cari Pelanggan (Nama / Nomor WA / Username PPPoE)
+                            <label className="block text-xs font-bold text-gray-700 mb-1">
+                                Cari Pelanggan di Database (Ketik Nama / No. WA / PPPoE)
                             </label>
                             <div className="relative">
-                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
                                 <input
                                     type="text"
                                     value={customerQuery}
                                     onChange={(e) => handleSearchCustomers(e.target.value)}
-                                    placeholder="Ketik nama atau nomor pelanggan..."
-                                    className="w-full text-xs rounded-xl border border-gray-300 pl-9 pr-3 py-2 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    placeholder="Ketik minimal 2 huruf..."
+                                    className="w-full text-xs rounded-xl border border-gray-300 pl-10 p-2.5 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                                 />
                             </div>
                         </div>
 
-                        {searchingCustomer && (
-                            <p className="text-gray-400 italic">Mencari pelanggan...</p>
-                        )}
-
-                        {customerResults.length > 0 && (
-                            <div className="max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white divide-y divide-gray-100 shadow-sm">
+                        {searchingCustomer ? (
+                            <div className="text-center py-4 text-xs text-gray-500 flex items-center justify-center gap-2">
+                                <RefreshCw size={14} className="animate-spin text-emerald-600" />
+                                Mencari pelanggan...
+                            </div>
+                        ) : customerResults.length > 0 ? (
+                            <div className="max-h-52 overflow-y-auto rounded-xl border border-gray-200 divide-y divide-gray-100">
                                 {customerResults.map((c) => (
-                                    <div
-                                        key={c.id}
-                                        onClick={() => handleAssignCustomerSubmit(c.id)}
-                                        className="flex items-center justify-between p-2.5 hover:bg-emerald-50 cursor-pointer transition"
-                                    >
+                                    <div key={c.id} className="flex items-center justify-between p-3 text-xs hover:bg-gray-50">
                                         <div>
                                             <p className="font-bold text-gray-900">{c.name}</p>
                                             <p className="text-[11px] text-gray-500">
-                                                WA: {c.phone || '-'} {c.pppoe_username && `· PPPoE: ${c.pppoe_username}`}
+                                                📱 {c.phone || '-'} · PPPoE: <span className="font-mono">{c.pppoe_username || '-'}</span>
                                             </p>
                                         </div>
                                         <button
                                             type="button"
+                                            onClick={() => handleAssignCustomerSubmit(c.id)}
                                             disabled={assigningCustomer}
-                                            className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-semibold text-[11px]"
+                                            className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-60"
                                         >
-                                            Pilih & Tautkan
+                                            {assigningCustomer ? 'Menautkan...' : 'Pilih & Tautkan'}
                                         </button>
                                     </div>
                                 ))}
                             </div>
-                        )}
+                        ) : customerQuery.trim().length >= 2 ? (
+                            <p className="text-xs text-center text-gray-400 py-3">
+                                Tidak ditemukan pelanggan dengan kata kunci tersebut.
+                            </p>
+                        ) : null}
 
                         <div className="flex justify-end pt-2">
                             <button
@@ -1034,42 +1187,42 @@ export default function MonitoringGenieAcsPage() {
                 )}
             </Modal>
 
-            {/* MODAL 5: TAUTKAN ROUTER KE PELANGGAN (UNTUK PELANGGAN TANPA ACS) */}
+            {/* MODAL 5: TAUTKAN ROUTER KE PELANGGAN YANG BELUM MEMILIKI GENIEACS */}
             <Modal
                 isOpen={Boolean(linkRouterCustomer)}
                 onClose={() => setLinkRouterCustomer(null)}
                 title="Tautkan Router GenieACS ke Pelanggan"
             >
                 {linkRouterCustomer && (
-                    <form onSubmit={handleLinkRouterSubmit} className="space-y-4 text-xs">
-                        <div className="rounded-xl bg-gray-50 border border-gray-200 p-3">
-                            <p className="font-bold text-gray-900 text-sm">{linkRouterCustomer.name}</p>
-                            <p className="text-gray-500 font-mono text-[11px] mt-0.5">
-                                WA: {linkRouterCustomer.phone || '-'} · PPPoE: {linkRouterCustomer.pppoe_username || '-'}
+                    <form onSubmit={handleLinkRouterSubmit} className="space-y-4">
+                        <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-xs space-y-1 text-amber-900">
+                            <p className="font-bold">{linkRouterCustomer.name}</p>
+                            <p className="text-amber-800 text-[11px]">
+                                PPPoE: {linkRouterCustomer.pppoe_username || '-'} · Telp: {linkRouterCustomer.phone || '-'}
                             </p>
                         </div>
 
                         <div>
-                            <label className="block font-bold text-gray-700 mb-1">
-                                Pilih Router GenieACS yang Tersedia (Belum Tertaut)
+                            <label className="block text-xs font-bold text-gray-700 mb-1">
+                                Pilih Router GenieACS yang Tersedia / Belum Tertaut:
                             </label>
                             {availableAcsDevices.length > 0 ? (
                                 <select
                                     value={selectedDeviceId}
                                     onChange={(e) => setSelectedDeviceId(e.target.value)}
-                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
                                 >
-                                    {availableAcsDevices.map((dev) => (
-                                        <option key={dev.device_id} value={dev.device_id}>
-                                            {dev.product_class || 'ONT'} - SN: {dev.serial_number || dev.device_id} (IP: {dev.ip_address || '-'})
+                                    {availableAcsDevices.map((d) => (
+                                        <option key={d.device_id} value={d.device_id}>
+                                            {d.product_class} ({d.manufacturer || 'ONT'}) - SN: {d.serial_number || d.device_id} {d.pppoe_username ? `[PPPoE: ${d.pppoe_username}]` : ''}
                                         </option>
                                     ))}
                                 </select>
                             ) : (
-                                <div className="p-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 text-gray-500">
-                                    <p className="font-medium">Tidak ada router GenieACS yang berstatus belum tertaut.</p>
+                                <div className="rounded-xl border border-dashed border-gray-200 p-4 text-center text-xs text-gray-500">
+                                    <p className="font-semibold">Tidak ada router GenieACS yang belum tertaut.</p>
                                     <p className="text-[11px] text-gray-400 mt-1">
-                                        Pastikan router ONT pelanggan telah terhubung ke jaringan GenieACS (TR-069) agar terbaca otomatis.
+                                        Pastikan router ONT pelanggan sudah di-setting Inform URL TR-069 dan terhubung ke server GenieACS.
                                     </p>
                                 </div>
                             )}
@@ -1083,22 +1236,20 @@ export default function MonitoringGenieAcsPage() {
                             >
                                 Batal
                             </button>
-                            {availableAcsDevices.length > 0 && (
-                                <button
-                                    type="submit"
-                                    disabled={linkingRouter || !selectedDeviceId}
-                                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-1.5"
-                                >
-                                    {linkingRouter ? (
-                                        <>
-                                            <RefreshCw size={13} className="animate-spin" />
-                                            Menautkan...
-                                        </>
-                                    ) : (
-                                        'Tautkan Router Ini'
-                                    )}
-                                </button>
-                            )}
+                            <button
+                                type="submit"
+                                disabled={linkingRouter || availableAcsDevices.length === 0}
+                                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                                {linkingRouter ? (
+                                    <>
+                                        <RefreshCw size={13} className="animate-spin" />
+                                        Menautkan...
+                                    </>
+                                ) : (
+                                    'Tautkan Router Sekarang'
+                                )}
+                            </button>
                         </div>
                     </form>
                 )}

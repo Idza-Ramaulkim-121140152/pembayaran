@@ -77,10 +77,14 @@ class GenieAcsService
             throw new GenieAcsException('Koneksi ke GenieACS timeout atau tidak dapat dijangkau: ' . $e->getMessage(), 504);
         }
 
+        // Fetch all packages for device limit and lookup
+        $packages = \App\Models\Package::query()->get(['id', 'name', 'speed', 'price', 'device_count']);
+        $packagesByName = $packages->keyBy(fn($p) => strtolower(trim((string) $p->name)));
+
         // Fetch all customers from database
         $customers = Customer::query()
-            ->select('id', 'name', 'phone', 'address', 'pppoe_username', 'home_router_host', 'home_router_type', 'is_active', 'package_id')
-            ->with('package:id,name,speed,price')
+            ->select('id', 'name', 'phone', 'address', 'pppoe_username', 'home_router_host', 'home_router_type', 'is_active', 'package_id', 'package_type')
+            ->with('package:id,name,speed,price,device_count')
             ->orderBy('name')
             ->get();
 
@@ -198,6 +202,11 @@ class GenieAcsService
         $unifiedList = [];
         $customersWithAcsCount = 0;
         $customersWithoutAcsCount = 0;
+        $totalConnectedClients = 0;
+        $safeCapacityCount = 0;
+        $warningCapacityCount = 0;
+        $criticalCapacityCount = 0;
+        $overlimitCapacityCount = 0;
 
         // 1. Process all Customers from database
         foreach ($customers as $c) {
@@ -208,24 +217,81 @@ class GenieAcsService
                 $matchedDev = $devicesByPppoe[$pppoeClean];
             }
 
+            // Resolve Customer Package
+            $pkg = $c->package ?: ($c->package_type ? ($packagesByName[strtolower(trim($c->package_type))] ?? null) : null);
+            $packageName = $pkg?->name ?? ($c->package_type ?: '-');
+            $packageSpeed = $pkg?->speed ?? null;
+            $packagePrice = $pkg?->price ?? null;
+            $maxDevices = $pkg && $pkg->device_count !== null && $pkg->device_count > 0 ? (int) $pkg->device_count : null;
+
             $custPayload = [
                 'id' => $c->id,
                 'name' => $c->name,
                 'phone' => $c->phone,
                 'address' => $c->address,
                 'pppoe_username' => $c->pppoe_username,
-                'package_name' => $c->package?->name ?? '-',
+                'package_id' => $pkg?->id ?? $c->package_id,
+                'package_name' => $packageName,
+                'package_speed' => $packageSpeed,
+                'package_price' => $packagePrice,
+                'package_max_devices' => $maxDevices,
                 'is_active' => (bool) $c->is_active,
             ];
 
             if ($matchedDev) {
                 $customersWithAcsCount++;
                 $processedAcsDeviceIds[$matchedDev['device_id']] = true;
+                $clients = (int) ($matchedDev['wifi_clients_count'] ?? 0);
+                $isOnline = (bool) ($matchedDev['is_online'] ?? false);
+
+                if ($isOnline) {
+                    $totalConnectedClients += $clients;
+                }
+
+                // Capacity calculation:
+                // pt <= mp => safe (Hijau)
+                // pt == mp + 1 => warning (Kuning Siaga)
+                // pt > mp + 1 => critical (Merah Kritis)
+                $capacityStatus = 'no_limit';
+                $capacityLabel = 'Tanpa Batas';
+                $capacityDiff = 0;
+
+                if ($maxDevices !== null && $maxDevices > 0) {
+                    if ($clients <= $maxDevices) {
+                        $capacityStatus = 'safe';
+                        $capacityLabel = "Aman ({$clients}/{$maxDevices})";
+                        $capacityDiff = 0;
+                        if ($isOnline) {
+                            $safeCapacityCount++;
+                        }
+                    } elseif ($clients === $maxDevices + 1) {
+                        $capacityStatus = 'warning';
+                        $capacityLabel = "Siaga (+1) ({$clients}/{$maxDevices})";
+                        $capacityDiff = 1;
+                        if ($isOnline) {
+                            $warningCapacityCount++;
+                            $overlimitCapacityCount++;
+                        }
+                    } else {
+                        $capacityStatus = 'critical';
+                        $over = $clients - $maxDevices;
+                        $capacityLabel = "Kritis (+{$over}) ({$clients}/{$maxDevices})";
+                        $capacityDiff = $over;
+                        if ($isOnline) {
+                            $criticalCapacityCount++;
+                            $overlimitCapacityCount++;
+                        }
+                    }
+                }
 
                 $unifiedList[] = array_merge($matchedDev, [
                     'has_genieacs' => true,
                     'is_unassigned' => false,
                     'customer' => $custPayload,
+                    'capacity_status' => $capacityStatus,
+                    'capacity_label' => $capacityLabel,
+                    'capacity_diff' => $capacityDiff,
+                    'max_devices' => $maxDevices,
                 ]);
             } else {
                 $customersWithoutAcsCount++;
@@ -247,6 +313,10 @@ class GenieAcsService
                     'rx_power' => null,
                     'rx_status' => 'no_acs',
                     'customer' => $custPayload,
+                    'capacity_status' => $maxDevices ? 'safe' : 'no_limit',
+                    'capacity_label' => $maxDevices ? "Offline (0/{$maxDevices})" : 'Offline',
+                    'capacity_diff' => 0,
+                    'max_devices' => $maxDevices,
                 ];
             }
         }
@@ -256,10 +326,19 @@ class GenieAcsService
         foreach ($parsedAcsDevices as $devId => $devData) {
             if (!isset($processedAcsDeviceIds[$devId])) {
                 $unassignedCount++;
+                $clients = (int) ($devData['wifi_clients_count'] ?? 0);
+                if ($devData['is_online']) {
+                    $totalConnectedClients += $clients;
+                }
+
                 $unifiedList[] = array_merge($devData, [
                     'has_genieacs' => true,
                     'is_unassigned' => true,
                     'customer' => null,
+                    'capacity_status' => 'no_limit',
+                    'capacity_label' => "{$clients} Klien (Router Belum Tertaut)",
+                    'capacity_diff' => 0,
+                    'max_devices' => null,
                 ]);
             }
         }
@@ -289,10 +368,22 @@ class GenieAcsService
                 'online_devices' => $onlineCount,
                 'offline_devices' => $offlineCount,
                 'unassigned_devices' => $unassignedCount,
+                'total_connected_clients' => $totalConnectedClients,
+                'safe_capacity_count' => $safeCapacityCount,
+                'warning_capacity_count' => $warningCapacityCount,
+                'critical_capacity_count' => $criticalCapacityCount,
+                'overlimit_capacity_count' => $overlimitCapacityCount,
                 'critical_rx_count' => $criticalRxCount,
                 'warning_rx_count' => $warningRxCount,
                 'cached_at' => now()->toIso8601String(),
             ],
+            'packages' => $packages->map(fn($p) => [
+                'id' => $p->id,
+                'name' => $p->name,
+                'speed' => $p->speed,
+                'price' => $p->price,
+                'device_count' => $p->device_count,
+            ])->values()->all(),
             'devices' => $unifiedList,
         ];
 

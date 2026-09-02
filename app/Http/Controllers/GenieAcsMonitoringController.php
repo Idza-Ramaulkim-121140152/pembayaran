@@ -29,6 +29,8 @@ class GenieAcsMonitoringController extends Controller
             $devices = collect($data['devices'] ?? []);
             $search = strtolower(trim((string) $request->input('search', '')));
             $statusFilter = strtolower(trim((string) $request->input('status', 'all')));
+            $capacityFilter = strtolower(trim((string) $request->input('capacity', $request->input('capacity_status', 'all'))));
+            $packageFilter = strtolower(trim((string) $request->input('package', 'all')));
 
             // 1. Filter by status
             if ($statusFilter === 'online') {
@@ -47,7 +49,29 @@ class GenieAcsMonitoringController extends Controller
                 $devices = $devices->where('rx_status', 'warning');
             }
 
-            // 2. Filter by search query
+            // 2. Filter by device capacity compliance (Aman / Siaga / Kritis / Overlimit)
+            if ($capacityFilter === 'safe') {
+                $devices = $devices->where('capacity_status', 'safe');
+            } elseif ($capacityFilter === 'warning') {
+                $devices = $devices->where('capacity_status', 'warning');
+            } elseif ($capacityFilter === 'critical') {
+                $devices = $devices->where('capacity_status', 'critical');
+            } elseif ($capacityFilter === 'overlimit') {
+                $devices = $devices->filter(fn($d) => in_array($d['capacity_status'] ?? '', ['warning', 'critical'], true));
+            } elseif ($capacityFilter === 'no_limit') {
+                $devices = $devices->where('capacity_status', 'no_limit');
+            }
+
+            // 3. Filter by package name or ID
+            if ($packageFilter !== '' && $packageFilter !== 'all') {
+                $devices = $devices->filter(function ($d) use ($packageFilter) {
+                    $pkgId = (string) ($d['customer']['package_id'] ?? '');
+                    $pkgName = strtolower((string) ($d['customer']['package_name'] ?? ''));
+                    return $pkgId === $packageFilter || str_contains($pkgName, $packageFilter);
+                });
+            }
+
+            // 4. Filter by search query
             if ($search !== '') {
                 $devices = $devices->filter(function ($d) use ($search) {
                     $devId = strtolower((string) ($d['device_id'] ?? ''));
@@ -76,6 +100,7 @@ class GenieAcsMonitoringController extends Controller
 
             return response()->json([
                 'stats' => $data['stats'] ?? [],
+                'packages' => $data['packages'] ?? [],
                 'devices' => $devices->values()->all(),
                 'total_filtered' => $devices->count(),
             ]);
