@@ -802,7 +802,7 @@ export default function CustomerPublicPortalPage() {
                         <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-700/60">
                             <p className="text-[11px] text-slate-400">Batas Maksimal Paket</p>
                             <p className="text-base font-extrabold text-emerald-400 mt-0.5">
-                                {capacity.max_devices ? `${capacity.max_devices} Unit` : 'Tanpa Batas'}
+                                {capacity.max_devices ? `${capacity.max_devices} Perangkat` : (capacity.max_devices_label || 'Tanpa Batas')}
                             </p>
                         </div>
                         <div className="p-3 rounded-2xl bg-slate-900/70 border border-slate-700/60">

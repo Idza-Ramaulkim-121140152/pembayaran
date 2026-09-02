@@ -90,9 +90,50 @@ class CustomerPublicPortalController extends Controller
             }
         }
 
-        // Capacity calculation
+        // Capacity & Package calculation
         $pkg = $customer->package;
-        $maxDevices = $pkg && $pkg->device_count !== null && $pkg->device_count > 0 ? (int) $pkg->device_count : null;
+        if (!$pkg && $customer->package_id) {
+            $pkg = \App\Models\Package::find($customer->package_id);
+        }
+        if (!$pkg && $customer->package_type) {
+            $rawType = trim((string) $customer->package_type);
+            $pkg = \App\Models\Package::where('name', $rawType)
+                ->orWhere('name', 'like', $rawType)
+                ->first();
+
+            if (!$pkg) {
+                $allPackages = \App\Models\Package::all();
+                foreach ($allPackages as $p) {
+                    if (strcasecmp(trim($p->name), $rawType) === 0 || str_contains(strtolower($rawType), strtolower(trim($p->name)))) {
+                        $pkg = $p;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!$pkg && $customer->mikrotik_profile) {
+            $pkg = \App\Models\Package::where('mikrotik_profile', $customer->mikrotik_profile)
+                ->orWhere('speed', 'like', "%{$customer->mikrotik_profile}%")
+                ->first();
+        }
+
+        $packageName = $pkg?->name ?? ($customer->package_type ?: 'Paket Internet');
+        $rawSpeed = $pkg?->speed ?? ($customer->mikrotik_profile ?: null);
+        if ($rawSpeed && is_numeric($rawSpeed)) {
+            $packageSpeed = $rawSpeed . ' Mbps';
+        } elseif ($rawSpeed) {
+            $packageSpeed = (string) $rawSpeed;
+            if (!str_contains(strtolower($packageSpeed), 'mbps') && !str_contains(strtolower($packageSpeed), 'kbps')) {
+                $packageSpeed .= ' Mbps';
+            }
+        } elseif (preg_match('/(\d+)\s*(?:mbps|mb|m)/i', $packageName, $m)) {
+            $packageSpeed = $m[1] . ' Mbps';
+        } else {
+            $packageSpeed = 'Sesuai Langganan';
+        }
+
+        $packagePrice = (int) ($pkg?->price ?? ($customer->custom_package ?? 0));
+        $maxDevices = $pkg && $pkg->device_count !== null && (int) $pkg->device_count > 0 ? (int) $pkg->device_count : null;
         
         // Count active clients
         $activeClientsCount = count(array_filter($lanHosts, fn($h) => !empty($h['is_active'])));
@@ -201,10 +242,11 @@ class CustomerPublicPortalController extends Controller
                 'due_date_day' => $customer->due_date ?: '20',
             ],
             'package' => [
-                'name' => $pkg?->name ?? ($customer->package_type ?: 'Paket Internet Rumah Kita Net'),
-                'speed' => $pkg?->speed ?? 'Sesuai Langganan',
-                'price' => (int) ($pkg?->price ?? ($customer->custom_package ?? 0)),
+                'name' => $packageName,
+                'speed' => $packageSpeed,
+                'price' => $packagePrice,
                 'max_devices' => $maxDevices,
+                'max_devices_label' => $maxDevices ? "{$maxDevices} Perangkat" : 'Tanpa Batas',
                 'active_status' => $customer->is_active ? 'Aktif' : 'Terisolir / Non-Aktif',
             ],
             'capacity' => [
@@ -213,6 +255,7 @@ class CustomerPublicPortalController extends Controller
                 'diff' => $capacityDiff,
                 'connected_count' => $activeClientsCount,
                 'max_devices' => $maxDevices,
+                'max_devices_label' => $maxDevices ? "{$maxDevices} Perangkat" : 'Tanpa Batas',
                 'is_compliant' => $capacityStatus === 'safe' || $capacityStatus === 'no_limit',
             ],
             'wifi' => [
