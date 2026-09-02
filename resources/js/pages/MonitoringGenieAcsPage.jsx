@@ -38,6 +38,34 @@ import {
 import Modal from '../components/common/Modal';
 import genieAcsService from '../services/genieAcsService';
 
+function formatDateTime(dateStr) {
+    if (!dateStr) return '-';
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+
+        const parts = new Intl.DateTimeFormat('id-ID', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: 'Asia/Jakarta',
+        }).formatToParts(date);
+
+        const map = {};
+        parts.forEach((p) => {
+            map[p.type] = p.value;
+        });
+
+        return `${map.year}-${map.month}-${map.day} ${map.hour}:${map.minute}:${map.second} WIB`;
+    } catch {
+        return dateStr;
+    }
+}
+
 export default function MonitoringGenieAcsPage() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -689,9 +717,9 @@ export default function MonitoringGenieAcsPage() {
                                                                 </>
                                                             )}
                                                         </div>
-                                                        <p className="text-[10px] text-gray-400 flex items-center gap-1">
-                                                            <Clock size={10} />
-                                                            {row.last_inform_at ? row.last_inform_at.slice(0, 16).replace('T', ' ') : '-'}
+                                                        <p className="text-[10px] text-gray-400 flex items-center gap-1 font-medium">
+                                                            <Clock size={10} className="shrink-0" />
+                                                            {formatDateTime(row.last_inform_at)}
                                                         </p>
                                                     </div>
                                                 ) : (

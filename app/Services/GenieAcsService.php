@@ -1733,7 +1733,7 @@ class GenieAcsService
         }
 
         try {
-            return Carbon::parse($value)->toIso8601String();
+            return Carbon::parse($value)->setTimezone('Asia/Jakarta')->toIso8601String();
         } catch (\Throwable) {
             return null;
         }
