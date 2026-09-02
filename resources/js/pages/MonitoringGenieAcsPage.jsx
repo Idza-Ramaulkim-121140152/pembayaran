@@ -268,8 +268,24 @@ export default function MonitoringGenieAcsPage() {
             setMessage('');
 
             const res = await genieAcsService.refreshDevice(deviceId);
-            setMessage(res.data?.message || 'Perintah sinkronisasi parameter berhasil dikirim.');
-            loadDevices(true);
+            setMessage(res.data?.message || 'Perintah sinkronisasi parameter berhasil dikirim ke router.');
+
+            await loadDevices(true);
+
+            if (wifiModalDevice && wifiModalDevice.device_id === deviceId) {
+                try {
+                    const detailRes = await genieAcsService.getDevice(deviceId);
+                    if (detailRes.data?.data) {
+                        setWifiModalDevice((prev) => ({
+                            ...prev,
+                            wifi_password: detailRes.data.data.wifi_password || prev.wifi_password,
+                            ssid: detailRes.data.data.ssid || prev.ssid,
+                        }));
+                    }
+                } catch {
+                    // Ignore background detail refresh error
+                }
+            }
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal mengirim perintah sinkronisasi.');
         } finally {

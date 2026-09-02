@@ -515,6 +515,28 @@ class GenieAcsService
                 $parameterValues[] = [$pPath, $newPassword, 'xsd:string'];
                 $refreshPaths[] = $pPath;
             }
+
+            // Ensure standard and virtual parameter targets are updated
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase', $newPassword, 'xsd:string'];
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase', $newPassword, 'xsd:string'];
+            $parameterValues[] = ['VirtualParameters.WlanPassword', $newPassword, 'xsd:string'];
+
+            // Deduplicate parameter values by path
+            $deduped = [];
+            foreach ($parameterValues as $pv) {
+                $deduped[$pv[0]] = $pv;
+            }
+            $parameterValues = array_values($deduped);
+
+            // Remember password permanently in application cache
+            Cache::forever("genieacs_wifi_pw:{$deviceId}", $newPassword);
+            $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
+                ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
+                ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+                ?: '';
+            if ($pppoe !== '') {
+                Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $newPassword);
+            }
         }
 
         // 2. If updating SSID Name:
@@ -591,10 +613,27 @@ class GenieAcsService
      */
     public function refreshDevice(string $deviceId): array
     {
+        // 1. Send getParameterValues task for all WiFi & Client nodes
+        $this->postTask($deviceId, [
+            'name' => 'getParameterValues',
+            'parameterNames' => [
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_CMS_KeyPassphrase',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_KeyPassphrase',
+                'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDevice',
+                'InternetGatewayDevice.LANDevice.1.Hosts.Host',
+                'VirtualParameters.WlanPassword',
+            ],
+        ], false);
+
+        // 2. Send refreshObject task
         $this->postTask($deviceId, [
             'name' => 'refreshObject',
-            'objectName' => '',
-        ]);
+            'objectName' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
+        ], false);
 
         Cache::forget(self::SUMMARY_CACHE_KEY);
 
@@ -1171,18 +1210,33 @@ class GenieAcsService
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.WEPKey.1.WEPKey',
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_HW_KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_CT-COM_WPSKeyWord',
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.X_CMS_KeyPassphrase',
             'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.PreSharedKey.1.KeyPassphrase',
             'Device.WiFi.AccessPoint.1.Security.KeyPassphrase',
             'Device.WiFi.AccessPoint.1.Security.PreSharedKey',
         ];
+
+        $deviceId = $device['_id'] ?? null;
+        $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
+            ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
+            ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+            ?: '';
 
         foreach ($candidates as $cand) {
             $val = $this->parameterValue($device, $cand);
             if ($val !== null && trim((string) $val) !== '' && !is_array($val)) {
                 $trimmed = trim((string) $val);
                 if (!str_starts_with($trimmed, '{') && strlen($trimmed) >= 1) {
+                    if ($deviceId) {
+                        Cache::forever("genieacs_wifi_pw:{$deviceId}", $trimmed);
+                    }
+                    if ($pppoe !== '') {
+                        Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $trimmed);
+                    }
                     return $trimmed;
                 }
             }
@@ -1194,10 +1248,17 @@ class GenieAcsService
                 if (!is_array($lan)) continue;
                 foreach (($lan['WLANConfiguration'] ?? []) as $wlan) {
                     if (!is_array($wlan)) continue;
-                    foreach (['X_CMS_KeyPassphrase', 'KeyPassphrase', 'X_HW_KeyPassphrase'] as $k) {
+                    foreach (['X_CMS_KeyPassphrase', 'KeyPassphrase', 'X_HW_KeyPassphrase', 'X_CT-COM_WPSKeyWord'] as $k) {
                         $v = $this->nodeValue($wlan[$k] ?? null);
                         if ($v && !is_array($v) && !str_starts_with(trim((string)$v), '{')) {
-                            return trim((string)$v);
+                            $trimmed = trim((string)$v);
+                            if ($deviceId) {
+                                Cache::forever("genieacs_wifi_pw:{$deviceId}", $trimmed);
+                            }
+                            if ($pppoe !== '') {
+                                Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $trimmed);
+                            }
+                            return $trimmed;
                         }
                     }
                     foreach (($wlan['PreSharedKey'] ?? []) as $psk) {
@@ -1205,12 +1266,27 @@ class GenieAcsService
                         foreach (['KeyPassphrase', 'PreSharedKey'] as $k) {
                             $v = $this->nodeValue($psk[$k] ?? null);
                             if ($v && !is_array($v) && !str_starts_with(trim((string)$v), '{')) {
-                                return trim((string)$v);
+                                $trimmed = trim((string)$v);
+                                if ($deviceId) {
+                                    Cache::forever("genieacs_wifi_pw:{$deviceId}", $trimmed);
+                                }
+                                if ($pppoe !== '') {
+                                    Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $trimmed);
+                                }
+                                return $trimmed;
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Fallback to persistent cache / remembered password
+        if ($deviceId && Cache::has("genieacs_wifi_pw:{$deviceId}")) {
+            return (string) Cache::get("genieacs_wifi_pw:{$deviceId}");
+        }
+        if ($pppoe !== '' && Cache::has("genieacs_wifi_pw:" . strtolower(trim($pppoe)))) {
+            return (string) Cache::get("genieacs_wifi_pw:" . strtolower(trim($pppoe)));
         }
 
         return null;
