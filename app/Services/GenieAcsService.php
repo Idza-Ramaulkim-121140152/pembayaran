@@ -493,7 +493,7 @@ class GenieAcsService
         ]);
 
         if (!$response->successful() || empty($response->json())) {
-            throw new GenieAcsException('Perangkat tidak ditemukan di GenieACS.', 404);
+            throw new GenieAcsException('Perangkat router tidak terdeteksi atau sedang offline di server.', 404);
         }
 
         $device = $response->json()[0];
@@ -522,31 +522,25 @@ class GenieAcsService
         if ($newPassword !== null && $newPassword !== '') {
             $passwordPaths = collect($wifiTargets)->pluck('password_path')->filter()->unique()->values()->all();
             foreach ($passwordPaths as $pPath) {
-                $parameterValues[] = [$pPath, $newPassword, 'xsd:string'];
-                $refreshPaths[] = $pPath;
+                // Ensure no VirtualParameters are passed as TR-069 CPE parameters
+                if (!str_starts_with($pPath, 'VirtualParameters.')) {
+                    $parameterValues[] = [$pPath, $newPassword, 'xsd:string'];
+                    $refreshPaths[] = $pPath;
+                }
             }
 
-            // Ensure standard and virtual parameter targets are updated
+            // Ensure standard TR-098 targets are present
             $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase', $newPassword, 'xsd:string'];
             $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase', $newPassword, 'xsd:string'];
-            $parameterValues[] = ['VirtualParameters.WlanPassword', $newPassword, 'xsd:string'];
 
-            // Deduplicate parameter values by path
+            // Deduplicate parameter values by path and filter out invalid nodes
             $deduped = [];
             foreach ($parameterValues as $pv) {
-                $deduped[$pv[0]] = $pv;
+                if (!str_starts_with($pv[0], 'VirtualParameters.')) {
+                    $deduped[$pv[0]] = $pv;
+                }
             }
             $parameterValues = array_values($deduped);
-
-            // Remember password permanently in application cache
-            Cache::forever("genieacs_wifi_pw:{$deviceId}", $newPassword);
-            $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
-                ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
-                ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
-                ?: '';
-            if ($pppoe !== '') {
-                Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $newPassword);
-            }
         }
 
         // 2. If updating SSID Name:
@@ -554,12 +548,8 @@ class GenieAcsService
             $ssidPaths = [];
             foreach ($wifiTargets as $wt) {
                 $basePath = $wt['path'] ?? null;
-                if ($basePath) {
-                    if (str_starts_with($basePath, 'Device.WiFi.')) {
-                        $ssidPaths[] = $basePath . '.SSID';
-                    } else {
-                        $ssidPaths[] = $basePath . '.SSID';
-                    }
+                if ($basePath && !str_starts_with($basePath, 'VirtualParameters.')) {
+                    $ssidPaths[] = $basePath . '.SSID';
                 }
             }
             $ssidPaths = array_values(array_unique(array_filter($ssidPaths)));
@@ -577,18 +567,50 @@ class GenieAcsService
             throw new GenieAcsException('Tidak ada parameter WiFi yang dapat diubah pada perangkat ini.', 422);
         }
 
-        // Post setParameterValues task
+        // Clean any old stuck/failed tasks for this device to prevent queuing blockage
+        try {
+            $existingTasksRes = $this->client()->get($this->url('/tasks'), [
+                'query' => json_encode(['device' => $deviceId]),
+            ]);
+            if ($existingTasksRes->successful()) {
+                foreach ($existingTasksRes->json() ?? [] as $oldTask) {
+                    if (!empty($oldTask['_id'])) {
+                        $this->client()->delete($this->url("/tasks/{$oldTask['_id']}"));
+                    }
+                }
+            }
+        } catch (\Throwable) {
+            // Non-blocking
+        }
+
+        // Post setParameterValues task with Connection Request so router executes immediately
         $this->postTask($deviceId, [
             'name' => 'setParameterValues',
             'parameterValues' => $parameterValues,
-        ]);
+        ], true, true, 30000);
 
-        // Post refreshObject task to update values on next Inform
-        $refreshTarget = !empty($refreshPaths) ? $this->refreshObjectName($refreshPaths[0]) : 'InternetGatewayDevice.LANDevice.';
-        $this->postTask($deviceId, [
-            'name' => 'refreshObject',
-            'objectName' => $refreshTarget,
-        ], false);
+        // Post refreshObject task to update values on router
+        $refreshTarget = !empty($refreshPaths) ? $this->refreshObjectName($refreshPaths[0]) : 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.';
+        try {
+            $this->postTask($deviceId, [
+                'name' => 'refreshObject',
+                'objectName' => $refreshTarget,
+            ], false, true, 20000);
+        } catch (\Throwable) {
+            // Non-blocking
+        }
+
+        // Remember password permanently in application cache only after router successfully processes it
+        if ($newPassword !== null && $newPassword !== '') {
+            Cache::forever("genieacs_wifi_pw:{$deviceId}", $newPassword);
+            $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
+                ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
+                ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+                ?: '';
+            if ($pppoe !== '') {
+                Cache::forever("genieacs_wifi_pw:" . strtolower(trim($pppoe)), $newPassword);
+            }
+        }
 
         // Invalidate summary cache so UI updates immediately
         Cache::forget(self::SUMMARY_CACHE_KEY);
@@ -597,7 +619,7 @@ class GenieAcsService
             'device_id' => $deviceId,
             'updated_parameters' => count($parameterValues),
             'parameter_paths' => array_column($parameterValues, 0),
-            'message' => 'Perintah pembaruan WiFi berhasil dikirim ke antrean GenieACS (TR-069 Task Created).',
+            'message' => 'Kata sandi / SSID WiFi baru berhasil dikirim dan diterapkan langsung pada router Anda!',
         ];
     }
 
@@ -655,51 +677,35 @@ class GenieAcsService
 
     public function findDeviceByPppoe(string $pppoeUsername): ?array
     {
-        $target = $this->normalize($pppoeUsername);
+        $target = trim($pppoeUsername);
         if ($target === '') {
             return null;
         }
 
-        // Fast MongoDB query via GenieACS REST API
-        $queryParam = json_encode([
-            '$or' => [
-                ['VirtualParameters.pppoeUsername' => $target],
-                ['VirtualParameters.pppoeUsername2' => $target],
-                ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username' => $target],
-                ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username' => $target],
-                ['Device.PPP.Interface.1.Username' => $target],
-            ],
-        ]);
+        $regexQuery = ['$regex' => '^' . preg_quote($target) . '$', '$options' => 'i'];
 
-        try {
-            $response = $this->client()->get($this->url('/devices'), [
-                'query' => $queryParam,
-            ]);
+        $fieldsToTry = [
+            'VirtualParameters.pppoeUsername',
+            'VirtualParameters.pppoeUsername2',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
+            'Device.PPP.Interface.1.Username',
+        ];
 
-            if ($response->successful()) {
-                $devices = $response->json() ?? [];
-                if (!empty($devices)) {
-                    return $devices[0];
+        foreach ($fieldsToTry as $field) {
+            try {
+                $response = $this->client()->get($this->url('/devices'), [
+                    'query' => json_encode([$field => $regexQuery]),
+                ]);
+
+                if ($response->successful()) {
+                    $devices = $response->json() ?? [];
+                    if (!empty($devices)) {
+                        return $devices[0];
+                    }
                 }
-            }
-        } catch (\Throwable) {
-            // Fallback to full fetch if query fails
-        }
-
-        // Fallback: search across all devices
-        $all = $this->client()->get($this->url('/devices'), [
-            'projection' => implode(',', self::FAST_DEVICE_PROJECTION),
-        ]);
-
-        if ($all->successful()) {
-            foreach ($all->json() ?? [] as $device) {
-                if ($this->deviceHasPppoeUsername($device, $target)) {
-                    // Fetch full device
-                    $full = $this->client()->get($this->url('/devices'), [
-                        'query' => json_encode(['_id' => $device['_id']]),
-                    ]);
-                    return $full->successful() ? ($full->json()[0] ?? $device) : $device;
-                }
+            } catch (\Throwable) {
+                // Continue to next field
             }
         }
 
@@ -887,13 +893,24 @@ class GenieAcsService
         return rtrim((string) config('services.genieacs.api_url'), '/') . '/' . ltrim($path, '/');
     }
 
-    private function postTask(string $deviceId, array $payload, bool $required = true): void
+    private function postTask(string $deviceId, array $payload, bool $required = true, bool $connectionRequest = true, int $timeout = 25000): array
     {
-        $response = $this->client()->post($this->url('/devices/' . rawurlencode($deviceId) . '/tasks?timeout=20000'), $payload);
+        $query = [
+            'timeout' => $timeout,
+        ];
+        if ($connectionRequest) {
+            $query['connection_request'] = 'true';
+        }
+
+        $url = $this->url('/devices/' . rawurlencode($deviceId) . '/tasks?' . http_build_query($query));
+        $response = $this->client()->post($url, $payload);
 
         if ($required && !$response->successful()) {
-            throw new GenieAcsException('GenieACS gagal menerima task perintah (' . ($payload['name'] ?? 'task') . ').', 502);
+            $msg = $response->json()['message'] ?? ($response->body() ?: 'Perangkat tidak merespons perintah.');
+            throw new GenieAcsException("GenieACS gagal mengeksekusi task ({$payload['name']}): {$msg}", 502);
         }
+
+        return $response->json() ?? [];
     }
 
     private function deviceHasPppoeUsername(array $device, string $target): bool

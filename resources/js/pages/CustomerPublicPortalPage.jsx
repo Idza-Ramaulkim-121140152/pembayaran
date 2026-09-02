@@ -750,7 +750,7 @@ export default function CustomerPublicPortalPage() {
                                     {savingWifi ? (
                                         <>
                                             <RefreshCw size={13} className="animate-spin" />
-                                            Mengirim ke Router...
+                                            Menerapkan ke Router... (Mohon tunggu)
                                         </>
                                     ) : (
                                         'Simpan Kata Sandi Baru'
