@@ -50,6 +50,7 @@ const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerif
 const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
 const Monitoring = lazy(() => import('./pages/Monitoring'));
 const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
+const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
 const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
 const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
@@ -170,7 +171,8 @@ function AppLayout({ children }) {
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
-    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration;
+    const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/');
+    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration && !isPublicPortal;
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
         && WA_ALERT_ROLES.includes(window.appUserRole || '');
@@ -327,6 +329,9 @@ function App() {
                     
                     {/* Public Invoice */}
                     <Route path="/invoice/:invoiceLink" element={<RouteSuspense><InvoicePage /></RouteSuspense>} />
+                    
+                    {/* Public Customer Self-Service Portal (Tanpa Login) */}
+                    <Route path="/portal-pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />
                     
                     {/* Customers */}
                     <Route path="/customers" element={<GuardedRoute permissionKey="customer.view" element={<CustomersPage />} />} />

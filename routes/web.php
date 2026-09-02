@@ -77,12 +77,23 @@ Route::get('/invoice/{invoice_link}', function () {
     return view('app');
 })->name('invoice.show');
 
+// Public Customer Self-Service Portal (Tanpa Login via Public Token)
+Route::get('/portal-pelanggan/{token}', function () {
+    return view('app');
+})->name('customer.public-portal');
+
 // Route publik untuk akses invoice tanpa login
 Route::get('/api/invoice/{invoice_link}', [BillingController::class, 'showInvoiceApi'])->name('api.invoice.show');
 Route::get('/invoice/{invoice_link}/print', [InvoiceDocumentController::class, 'showPrint'])->name('invoice.public.print');
 Route::get('/invoice-documents/{token}/download', [InvoiceDocumentController::class, 'download'])->name('invoice-documents.public.download');
 Route::get('/invoice-documents/{token}/verify', [InvoiceDocumentController::class, 'verify'])->name('invoice-documents.public.verify');
 Route::post('/invoice/{invoice}/konfirmasi', [\App\Http\Controllers\BillingController::class, 'confirmPayment'])->name('invoice.confirm-payment');
+
+// Public Customer Self-Service Portal API (Tanpa Login)
+Route::get('/api/public/portal/{token}', [\App\Http\Controllers\CustomerPublicPortalController::class, 'show'])->name('api.public.portal.show');
+Route::post('/api/public/portal/{token}/wifi', [\App\Http\Controllers\CustomerPublicPortalController::class, 'updateWifi'])->name('api.public.portal.wifi.update');
+Route::post('/api/public/portal/{token}/block-device', [\App\Http\Controllers\CustomerPublicPortalController::class, 'blockDevice'])->name('api.public.portal.device.block');
+Route::post('/api/public/portal/{token}/unblock-device', [\App\Http\Controllers\CustomerPublicPortalController::class, 'unblockDevice'])->name('api.public.portal.device.unblock');
 
 // Public payment methods API (for invoice page)
 Route::get('/api/payment-methods/active', [PaymentMethodController::class, 'activeList'])->name('api.payment-methods.active');

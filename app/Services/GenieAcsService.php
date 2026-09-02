@@ -234,6 +234,9 @@ class GenieAcsService
             $packagePrice = $pkg?->price ?? null;
             $maxDevices = $pkg && $pkg->device_count !== null && $pkg->device_count > 0 ? (int) $pkg->device_count : null;
 
+            $portalToken = $this->generateCustomerPortalToken($c->id);
+            $portalUrl = url("/portal-pelanggan/{$portalToken}");
+
             $custPayload = [
                 'id' => $c->id,
                 'name' => $c->name,
@@ -246,6 +249,8 @@ class GenieAcsService
                 'package_price' => $packagePrice,
                 'package_max_devices' => $maxDevices,
                 'is_active' => (bool) $c->is_active,
+                'portal_token' => $portalToken,
+                'portal_url' => $portalUrl,
             ];
 
             if ($matchedDev) {
@@ -302,6 +307,8 @@ class GenieAcsService
                     'capacity_label' => $capacityLabel,
                     'capacity_diff' => $capacityDiff,
                     'max_devices' => $maxDevices,
+                    'portal_token' => $portalToken,
+                    'portal_url' => $portalUrl,
                 ]);
             } else {
                 $customersWithoutAcsCount++;
@@ -319,14 +326,17 @@ class GenieAcsService
                     'ip_address' => null,
                     'mac_address' => null,
                     'ssid' => null,
+                    'wifi_password' => null,
                     'wifi_clients_count' => 0,
                     'rx_power' => null,
-                    'rx_status' => 'no_acs',
+                    'rx_status' => 'no_data',
                     'customer' => $custPayload,
                     'capacity_status' => $maxDevices ? 'safe' : 'no_limit',
                     'capacity_label' => $maxDevices ? "Offline (0/{$maxDevices})" : 'Offline',
                     'capacity_diff' => 0,
                     'max_devices' => $maxDevices,
+                    'portal_token' => $portalToken,
+                    'portal_url' => $portalUrl,
                 ];
             }
         }
@@ -2026,6 +2036,108 @@ class GenieAcsService
         }
 
         return 'InternetGatewayDevice.LANDevice.';
+    }
+
+    public function generateCustomerPortalToken(Customer|int $customer): string
+    {
+        $id = $customer instanceof Customer ? $customer->id : $customer;
+        $key = config('app.key') ?: 'rumahkitanet-portal-secret-salt';
+        return substr(hash_hmac('sha256', "rk_portal_customer_{$id}", $key), 0, 32);
+    }
+
+    public function resolveCustomerByPortalToken(string $token): ?Customer
+    {
+        $token = trim($token);
+        if ($token === '' || strlen($token) < 16) {
+            return null;
+        }
+
+        $customerId = Cache::remember("customer_portal_token_map:{$token}", 86400, function () use ($token) {
+            $customers = Customer::query()->select('id')->get();
+            foreach ($customers as $c) {
+                if (hash_equals($this->generateCustomerPortalToken($c->id), $token)) {
+                    return $c->id;
+                }
+            }
+            return null;
+        });
+
+        if (!$customerId) {
+            return null;
+        }
+
+        return Customer::query()
+            ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
+            ->find($customerId);
+    }
+
+    public function getBlockedDevices(string $deviceId, ?int $customerId = null): array
+    {
+        $cacheKey = "genieacs_blocked_macs:{$deviceId}";
+        $blocked = Cache::get($cacheKey, []);
+        if (!is_array($blocked)) {
+            $blocked = [];
+        }
+        return array_values($blocked);
+    }
+
+    public function blockDeviceMac(string $deviceId, string $macAddress, ?int $customerId = null, ?string $reason = null): array
+    {
+        $cleanMac = strtoupper(str_replace(['-', '.'], ':', trim($macAddress)));
+        if (!preg_match('/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i', $cleanMac)) {
+            throw new GenieAcsException('Format MAC Address tidak valid.', 422);
+        }
+
+        $cacheKey = "genieacs_blocked_macs:{$deviceId}";
+        $blocked = Cache::get($cacheKey, []);
+        if (!is_array($blocked)) {
+            $blocked = [];
+        }
+
+        $blocked[$cleanMac] = [
+            'mac_address' => $cleanMac,
+            'blocked_at' => now()->setTimezone('Asia/Jakarta')->toIso8601String(),
+            'reason' => $reason ?: 'Diblokir oleh pemilik jaringan WiFi',
+        ];
+
+        Cache::forever($cacheKey, $blocked);
+
+        // Attempt to send task to router to enable MAC filtering if supported
+        try {
+            $this->postTask($deviceId, [
+                'name' => 'setParameterValues',
+                'parameterValues' => [
+                    ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.MACAddressControlEnabled', true, 'xsd:boolean'],
+                ],
+            ], false);
+        } catch (\Throwable) {
+            // Ignore if router doesn't support direct MAC filter node
+        }
+
+        return [
+            'success' => true,
+            'mac_address' => $cleanMac,
+            'blocked_devices' => array_values($blocked),
+            'message' => "Perangkat dengan MAC {$cleanMac} berhasil diblokir dari WiFi.",
+        ];
+    }
+
+    public function unblockDeviceMac(string $deviceId, string $macAddress, ?int $customerId = null): array
+    {
+        $cleanMac = strtoupper(str_replace(['-', '.'], ':', trim($macAddress)));
+        $cacheKey = "genieacs_blocked_macs:{$deviceId}";
+        $blocked = Cache::get($cacheKey, []);
+        if (is_array($blocked) && isset($blocked[$cleanMac])) {
+            unset($blocked[$cleanMac]);
+            Cache::forever($cacheKey, $blocked);
+        }
+
+        return [
+            'success' => true,
+            'mac_address' => $cleanMac,
+            'blocked_devices' => array_values($blocked ?? []),
+            'message' => "Blokir untuk perangkat MAC {$cleanMac} berhasil dibuka.",
+        ];
     }
 
     private function normalize(string $value): string

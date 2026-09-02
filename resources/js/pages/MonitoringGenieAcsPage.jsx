@@ -34,6 +34,7 @@ import {
     X,
     Filter,
     Layers,
+    ExternalLink,
 } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import genieAcsService from '../services/genieAcsService';
@@ -111,6 +112,10 @@ export default function MonitoringGenieAcsPage() {
     const [deviceDetailData, setDeviceDetailData] = useState(null);
     const [showDetailWifiPassword, setShowDetailWifiPassword] = useState(false);
     const [loadingDetail, setLoadingDetail] = useState(false);
+
+    // Modal: Portal Akses Mandiri Pelanggan (Action Mata)
+    const [portalModalDevice, setPortalModalDevice] = useState(null);
+    const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
 
     // Modal: Reboot
     const [rebootModalDevice, setRebootModalDevice] = useState(null);
@@ -859,58 +864,75 @@ export default function MonitoringGenieAcsPage() {
 
                                             {/* Aksi Jarak Jauh */}
                                             <td className="px-4 py-3.5 text-right">
-                                                {hasAcs ? (
-                                                    <div className="flex items-center justify-end gap-1.5">
-                                                        {/* Ganti Sandi WiFi */}
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {/* Action Mata: Portal Akses Mandiri Pelanggan (Tanpa Login) */}
+                                                    {row.portal_url && (
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleOpenWifiModal(row)}
-                                                            title="Ganti Sandi & SSID WiFi"
-                                                            className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 transition"
+                                                            onClick={() => {
+                                                                setPortalModalDevice(row);
+                                                                setCopiedPortalUrl(false);
+                                                            }}
+                                                            title="Portal Akses Mandiri Pelanggan (Tanpa Login)"
+                                                            className="rounded-xl border border-indigo-200 bg-indigo-50 p-2 text-indigo-700 hover:bg-indigo-100 transition shadow-2xs"
                                                         >
-                                                            <Lock size={15} />
+                                                            <Eye size={15} />
                                                         </button>
+                                                    )}
 
-                                                        {/* Detail & Klien */}
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleOpenDetailModal(row)}
-                                                            title="Detail Perangkat & Klien"
-                                                            className="rounded-xl border border-gray-200 bg-white p-2 text-gray-700 hover:bg-gray-50 transition"
-                                                        >
-                                                            <Activity size={15} />
-                                                        </button>
+                                                    {hasAcs ? (
+                                                        <>
+                                                            {/* Ganti Sandi WiFi */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenWifiModal(row)}
+                                                                title="Ganti Sandi & SSID WiFi"
+                                                                className="rounded-xl border border-emerald-200 bg-emerald-50 p-2 text-emerald-700 hover:bg-emerald-100 transition"
+                                                            >
+                                                                <Lock size={15} />
+                                                            </button>
 
-                                                        {/* Reboot Router */}
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setRebootModalDevice(row)}
-                                                            title="Reboot Router ONT"
-                                                            className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 transition"
-                                                        >
-                                                            <Power size={15} />
-                                                        </button>
+                                                            {/* Detail & Klien */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenDetailModal(row)}
+                                                                title="Detail Perangkat & Klien"
+                                                                className="rounded-xl border border-gray-200 bg-white p-2 text-gray-700 hover:bg-gray-50 transition"
+                                                            >
+                                                                <Activity size={15} />
+                                                            </button>
 
-                                                        {/* Refresh Parameter */}
+                                                            {/* Reboot Router */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setRebootModalDevice(row)}
+                                                                title="Reboot Router ONT"
+                                                                className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-rose-700 hover:bg-rose-100 transition"
+                                                            >
+                                                                <Power size={15} />
+                                                            </button>
+
+                                                            {/* Refresh Parameter */}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRefreshParam(row.device_id)}
+                                                                title="Sync / Refresh Parameter"
+                                                                className="rounded-xl border border-gray-200 bg-white p-2 text-gray-500 hover:bg-gray-50 transition"
+                                                            >
+                                                                <RefreshCw size={15} />
+                                                            </button>
+                                                        </>
+                                                    ) : (
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleRefreshParam(row.device_id)}
-                                                            title="Sync / Refresh Parameter"
-                                                            className="rounded-xl border border-gray-200 bg-white p-2 text-gray-500 hover:bg-gray-50 transition"
+                                                            onClick={() => handleOpenLinkRouterModal(row)}
+                                                            className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 transition shadow-sm"
                                                         >
-                                                            <RefreshCw size={15} />
+                                                            <LinkIcon size={13} />
+                                                            + Tautkan Router
                                                         </button>
-                                                    </div>
-                                                ) : (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleOpenLinkRouterModal(row)}
-                                                        className="inline-flex items-center gap-1 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 transition shadow-sm"
-                                                    >
-                                                        <LinkIcon size={13} />
-                                                        + Tautkan Router ACS
-                                                    </button>
-                                                )}
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -1423,6 +1445,120 @@ export default function MonitoringGenieAcsPage() {
                             </button>
                         </div>
                     </form>
+                )}
+            </Modal>
+
+            {/* MODAL 6: PORTAL AKSES MANDIRI PELANGGAN (ACTION MATA 👁️) */}
+            <Modal
+                isOpen={Boolean(portalModalDevice)}
+                onClose={() => setPortalModalDevice(null)}
+                title="Portal Akses Mandiri Pelanggan (Tanpa Login)"
+            >
+                {portalModalDevice && (
+                    <div className="space-y-4 text-left">
+                        {/* Header info */}
+                        <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 text-xs text-indigo-950 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <p className="font-extrabold text-sm text-indigo-900 flex items-center gap-1.5">
+                                    <User size={15} />
+                                    {portalModalDevice.customer?.name || portalModalDevice.pppoe_username}
+                                </p>
+                                <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] bg-indigo-200/70 text-indigo-900 border border-indigo-300">
+                                    {portalModalDevice.customer?.package_name || 'Pelanggan Aktif'}
+                                </span>
+                            </div>
+                            <p className="text-[11px] text-indigo-700 leading-relaxed">
+                                Setiap pelanggan memiliki link akses unik khusus. Link ini dapat dibuka langsung oleh pelanggan melalui HP tanpa perlu login.
+                            </p>
+                        </div>
+
+                        {/* Link Box */}
+                        <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-gray-700">
+                                Tautan Akses Portal Pelanggan:
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    readOnly
+                                    value={portalModalDevice.portal_url || ''}
+                                    className="w-full text-xs font-mono rounded-xl bg-gray-50 border border-gray-300 p-2.5 text-gray-700 select-all"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (portalModalDevice.portal_url) {
+                                            navigator.clipboard.writeText(portalModalDevice.portal_url);
+                                            setCopiedPortalUrl(true);
+                                            setTimeout(() => setCopiedPortalUrl(false), 2500);
+                                        }
+                                    }}
+                                    className={`px-3.5 py-2.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition shrink-0 shadow-xs ${
+                                        copiedPortalUrl
+                                            ? 'bg-emerald-600 text-white'
+                                            : 'bg-gray-900 hover:bg-gray-800 text-white'
+                                    }`}
+                                    title="Salin Tautan"
+                                >
+                                    {copiedPortalUrl ? <Check size={14} /> : <Copy size={14} />}
+                                    <span>{copiedPortalUrl ? 'Tersalin!' : 'Salin'}</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (portalModalDevice.portal_url) {
+                                        window.open(portalModalDevice.portal_url, '_blank');
+                                    }
+                                }}
+                                className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-indigo-900/20"
+                            >
+                                <ExternalLink size={15} />
+                                Buka Portal di Tab Baru
+                            </button>
+
+                            {portalModalDevice.customer?.phone && (
+                                <a
+                                    href={`https://wa.me/${portalModalDevice.customer.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(
+                                        `Halo Kak ${portalModalDevice.customer.name}, berikut adalah link portal mandiri WiFi Rumah Kita Net Anda untuk melihat & ganti password WiFi, melihat perangkat yang terhubung, dan cek tagihan:\n\n${portalModalDevice.portal_url}\n\n(Dapat dibuka langsung tanpa login)`
+                                    )}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-emerald-900/20"
+                                >
+                                    <Phone size={14} />
+                                    Kirim Link ke WhatsApp
+                                </a>
+                            )}
+                        </div>
+
+                        {/* Feature preview list */}
+                        <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200 text-[11px] text-gray-600 space-y-1.5">
+                            <p className="font-bold text-gray-800 text-xs">Fitur yang Tersedia pada Portal Pelanggan:</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-gray-600">
+                                <p className="flex items-center gap-1">✅ Lihat & Ganti Password WiFi</p>
+                                <p className="flex items-center gap-1">✅ Daftar Perangkat HP/Laptop Terhubung</p>
+                                <p className="flex items-center gap-1">✅ Fitur Blokir Perangkat Asing (MAC)</p>
+                                <p className="flex items-center gap-1">✅ Indikator Kapasitas Paket (Aman/Kritis)</p>
+                                <p className="flex items-center gap-1">✅ Status Masa Aktif & Tagihan Pembayaran</p>
+                                <p className="flex items-center gap-1">✅ Kontak CS (Aman: Tanpa NIK/KTP)</p>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end pt-1">
+                            <button
+                                type="button"
+                                onClick={() => setPortalModalDevice(null)}
+                                className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100"
+                            >
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
                 )}
             </Modal>
         </div>
