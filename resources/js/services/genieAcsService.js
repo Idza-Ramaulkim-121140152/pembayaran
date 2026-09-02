@@ -7,6 +7,7 @@ const genieAcsService = {
     rebootDevice: (deviceId) => apiClient.post(`/genieacs/devices/${encodeURIComponent(deviceId)}/reboot`),
     refreshDevice: (deviceId) => apiClient.post(`/genieacs/devices/${encodeURIComponent(deviceId)}/refresh`),
     assignCustomer: (deviceId, customerId) => apiClient.post(`/genieacs/devices/${encodeURIComponent(deviceId)}/assign-customer`, { customer_id: customerId }),
+    sendPortalLinkWa: (payload) => apiClient.post('/genieacs/send-portal-link', payload),
     getCustomers: (params = {}) => apiClient.get('/customers', { params }),
 };
 

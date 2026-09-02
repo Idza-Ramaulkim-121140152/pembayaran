@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import axios from 'axios';
 import {
     Activity,
     AlertCircle,
@@ -143,7 +144,7 @@ export default function MonitoringGenieAcsPage() {
         setWaLinkResult(null);
 
         try {
-            const res = await axios.post('/api/genieacs/send-portal-link', {
+            const res = await genieAcsService.sendPortalLinkWa({
                 customer_id: portalModalDevice.customer?.id,
                 portal_token: portalModalDevice.portal_token,
             });
