@@ -2057,7 +2057,7 @@ class GenieAcsService
 
         if ($cachedId) {
             $cust = Customer::query()
-                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
+                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,name', 'desa:id,name', 'dusun:id,name'])
                 ->find($cachedId);
             if ($cust) {
                 return $cust;
@@ -2093,7 +2093,7 @@ class GenieAcsService
         if ($matchedId) {
             Cache::put($cacheKey, $matchedId, 86400);
             return Customer::query()
-                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,nama', 'desa:id,nama', 'dusun:id,nama'])
+                ->with(['package:id,name,speed,price,device_count', 'kecamatan:id,name', 'desa:id,name', 'dusun:id,name'])
                 ->find($matchedId);
         }
 

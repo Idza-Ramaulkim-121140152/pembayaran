@@ -185,9 +185,9 @@ class CustomerPublicPortalController extends Controller
         // Customer General Info (Safe - NO NIK, NO KTP, NO house photos)
         $formattedAddress = implode(', ', array_filter([
             $customer->address,
-            $customer->dusun?->nama ? 'Dsn. ' . $customer->dusun->nama : null,
-            $customer->desa?->nama ? 'Ds. ' . $customer->desa->nama : null,
-            $customer->kecamatan?->nama ? 'Kec. ' . $customer->kecamatan->nama : null,
+            $customer->dusun?->name ? 'Dsn. ' . $customer->dusun->name : null,
+            $customer->desa?->name ? 'Ds. ' . $customer->desa->name : null,
+            $customer->kecamatan?->name ? 'Kec. ' . $customer->kecamatan->name : null,
         ]));
 
         return response()->json([
