@@ -290,11 +290,19 @@ class GenieAcsMonitoringController extends Controller
             ], 404);
         }
 
-        $phone = trim((string) ($validated['custom_phone'] ?? $customer->phone ?? ''));
-        if ($phone === '' || strlen(preg_replace('/[^0-9]/', '', $phone)) < 8) {
+        $rawPhone = preg_replace('/\D/', '', (string) ($validated['custom_phone'] ?? $customer->phone ?? ''));
+        if (str_starts_with($rawPhone, '0')) {
+            $cleanPhone = '62' . substr($rawPhone, 1);
+        } elseif (str_starts_with($rawPhone, '8')) {
+            $cleanPhone = '62' . $rawPhone;
+        } else {
+            $cleanPhone = $rawPhone;
+        }
+
+        if (strlen($cleanPhone) < 9) {
             return response()->json([
                 'success' => false,
-                'message' => 'Nomor WhatsApp pelanggan belum terdaftar atau tidak valid.',
+                'message' => 'Nomor WhatsApp pelanggan belum terdaftar atau format nomor tidak valid.',
             ], 422);
         }
 
@@ -315,30 +323,51 @@ class GenieAcsMonitoringController extends Controller
             "_(Tautan khusus ini dapat diakses langsung dari HP Anda tanpa perlu login)_\n\n" .
             "Salam,\n*Rumah Kita Net*";
 
-        // Clean phone for wa.me fallback
-        $cleanPhone = preg_replace('/[^0-9]/', '', $phone);
-        if (str_starts_with($cleanPhone, '0')) {
-            $cleanPhone = '62' . substr($cleanPhone, 1);
-        }
         $fallbackWaUrl = "https://wa.me/{$cleanPhone}?text=" . rawurlencode($message);
 
-        // Attempt sending via internal WhatsApp Gateway
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+        // Attempt sending via internal WhatsApp Gateway (same pattern as BillingController / PaymentCapture)
+        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://127.0.0.1:3001'), '/');
         
         try {
-            $response = \Illuminate\Support\Facades\Http::timeout(15)->post($gatewayUrl . '/send', [
-                'phone' => $phone,
-                'name' => $customerName,
+            $response = \Illuminate\Support\Facades\Http::timeout(30)->post($gatewayUrl . '/send-bulk', [
+                'recipients' => [[
+                    'phone' => $cleanPhone,
+                    'name' => $customerName,
+                ]],
                 'message' => $message,
+                'delay' => 0,
             ]);
 
             $payload = $response->json();
-            $isGatewaySuccess = $response->successful() && is_array($payload) && ($payload['success'] ?? true);
+            $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];
+            $isSuccess = false;
+            $error = null;
 
-            if ($isGatewaySuccess) {
+            if (count($results) > 0) {
+                $first = $results[0];
+                $isSuccess = (bool) ($first['success'] ?? false);
+                $error = $isSuccess ? null : (($first['error'] ?? null) ?: 'Nomor ditolak oleh WhatsApp Gateway');
+            } else {
+                if (!$response->successful()) {
+                    // Fallback to /send endpoint
+                    $fallbackRes = \Illuminate\Support\Facades\Http::timeout(30)->post($gatewayUrl . '/send', [
+                        'phone' => $cleanPhone,
+                        'name' => $customerName,
+                        'message' => $message,
+                    ]);
+                    $fallbackPayload = $fallbackRes->json();
+                    $isSuccess = $fallbackRes->successful() && ((bool) ($fallbackPayload['success'] ?? false) || (string) ($fallbackPayload['message'] ?? '') === 'Pesan berhasil terkirim');
+                    $error = $isSuccess ? null : ($fallbackPayload['error'] ?? $fallbackPayload['message'] ?? 'Gateway rejected message');
+                } else {
+                    $isSuccess = (bool) ($payload['success'] ?? false);
+                    $error = $isSuccess ? null : ($payload['error'] ?? $payload['message'] ?? 'Respon gateway tidak valid');
+                }
+            }
+
+            if ($isSuccess) {
                 \App\Models\NotificationLog::create([
                     'customer_id' => $customer->id,
-                    'phone' => $phone,
+                    'phone' => $cleanPhone,
                     'message' => mb_substr($message, 0, 2000),
                     'notice_id' => null,
                     'status' => 'sent',
@@ -348,55 +377,52 @@ class GenieAcsMonitoringController extends Controller
 
                 $this->auditLogService->log('customer_portal.whatsapp_link_sent', $customer, [
                     'customer_id' => $customer->id,
-                    'phone' => $phone,
+                    'phone' => $cleanPhone,
                     'portal_url' => $portalUrl,
                     'via' => 'whatsapp_gateway',
                 ], auth()->id());
 
                 return response()->json([
                     'success' => true,
-                    'message' => "Link portal mandiri berhasil dikirimkan via WhatsApp Gateway ke {$customerName} ({$phone})!",
-                    'phone' => $phone,
+                    'message' => "Link portal mandiri berhasil dikirimkan ke WhatsApp {$customerName} ({$cleanPhone})!",
+                    'phone' => $cleanPhone,
                     'portal_url' => $portalUrl,
                 ]);
             }
 
-            $gatewayError = is_array($payload) ? ($payload['error'] ?? $payload['message'] ?? 'Gateway rejected message') : 'Gateway response invalid';
-            
             \App\Models\NotificationLog::create([
                 'customer_id' => $customer->id,
-                'phone' => $phone,
+                'phone' => $cleanPhone,
                 'message' => mb_substr($message, 0, 2000),
                 'notice_id' => null,
                 'status' => 'failed',
-                'error' => $gatewayError,
+                'error' => $error,
                 'sent_at' => now(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => "WhatsApp Gateway gagal mengirimkan pesan: {$gatewayError}",
+                'message' => "WhatsApp Gateway gagal mengirim: {$error}",
                 'fallback_url' => $fallbackWaUrl,
-                'phone' => $phone,
+                'phone' => $cleanPhone,
             ], 422);
 
         } catch (\Throwable $e) {
             \App\Models\NotificationLog::create([
                 'customer_id' => $customer->id,
-                'phone' => $phone,
+                'phone' => $cleanPhone,
                 'message' => mb_substr($message, 0, 2000),
                 'notice_id' => null,
                 'status' => 'failed',
-                'error' => 'Gateway connection error: ' . $e->getMessage(),
+                'error' => 'Gateway error: ' . $e->getMessage(),
                 'sent_at' => now(),
             ]);
 
             return response()->json([
                 'success' => false,
-                'message' => "WhatsApp Gateway service offline / tidak merespons. Anda dapat mengirimkan secara manual melalui WhatsApp Web.",
+                'message' => "WhatsApp Gateway service tidak dapat dihubungi: " . $e->getMessage(),
                 'fallback_url' => $fallbackWaUrl,
-                'phone' => $phone,
-                'error_detail' => $e->getMessage(),
+                'phone' => $cleanPhone,
             ], 503);
         }
     }

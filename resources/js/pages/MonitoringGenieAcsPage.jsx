@@ -153,7 +153,7 @@ export default function MonitoringGenieAcsPage() {
                 message: res.data?.message || 'Link portal mandiri berhasil dikirimkan via WhatsApp Gateway!',
             });
         } catch (err) {
-            const errMsg = err.response?.data?.message || 'Gagal mengirim link via WhatsApp Gateway.';
+            const errMsg = err.response?.data?.message || err.response?.data?.error || err.message || 'Gagal mengirim link via WhatsApp Gateway.';
             const phone = portalModalDevice.customer?.phone ? portalModalDevice.customer.phone.replace(/[^0-9]/g, '') : '';
             const cleanPhone = phone.startsWith('0') ? '62' + phone.substring(1) : phone;
             const fallback = err.response?.data?.fallback_url || (cleanPhone ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(
