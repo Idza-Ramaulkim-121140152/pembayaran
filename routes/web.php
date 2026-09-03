@@ -59,6 +59,7 @@ use App\Http\Controllers\CashObligationCalendarController;
 use App\Http\Controllers\ReconciliationCenterController;
 use App\Http\Controllers\WhatsAppPaymentWebhookController;
 use App\Http\Controllers\GenieAcsMonitoringController;
+use App\Http\Controllers\IpaymuIntegrationController;
 use App\Models\User;
 use App\Services\PaymentReceiverService;
 
@@ -661,6 +662,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/master/customer-wifi-allowed-public-ips', [CustomerWifiLinkMasterController::class, 'storeIp'])->middleware('permission:master.customer_wifi_links.manage')->name('api.master.customer-wifi-allowed-public-ips.store');
         Route::put('/api/master/customer-wifi-allowed-public-ips/{ip}', [CustomerWifiLinkMasterController::class, 'updateIp'])->middleware('permission:master.customer_wifi_links.manage')->name('api.master.customer-wifi-allowed-public-ips.update');
         Route::delete('/api/master/customer-wifi-allowed-public-ips/{ip}', [CustomerWifiLinkMasterController::class, 'destroyIp'])->middleware('permission:master.customer_wifi_links.manage')->name('api.master.customer-wifi-allowed-public-ips.destroy');
+
+        // iPaymu Payment Gateway Integration & Test Tool
+        Route::get('/settings/ipaymu-integration', fn() => view('app'))->name('settings.ipaymu-integration');
+        Route::get('/settings/payment-gateway', fn() => view('app'))->name('settings.payment-gateway');
+        Route::get('/api/ipaymu/status', [IpaymuIntegrationController::class, 'getStatus'])->name('api.ipaymu.status');
+        Route::post('/api/ipaymu/config', [IpaymuIntegrationController::class, 'saveConfig'])->name('api.ipaymu.config');
+        Route::post('/api/ipaymu/test-payment', [IpaymuIntegrationController::class, 'testPayment'])->name('api.ipaymu.test-payment');
+        Route::post('/api/ipaymu/check-transaction', [IpaymuIntegrationController::class, 'checkTransaction'])->name('api.ipaymu.check-transaction');
     }); // end admin settings
 
     // Superadmin-only routes (User Management)

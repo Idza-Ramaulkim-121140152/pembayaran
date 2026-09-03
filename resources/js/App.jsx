@@ -22,6 +22,7 @@ const ExpenseCategoriesPage = lazy(() => import('./pages/Settings/ExpenseCategor
 const BorrowersPage = lazy(() => import('./pages/Settings/BorrowersPage'));
 const CompanyFinanceReceiversPage = lazy(() => import('./pages/Settings/CompanyFinanceReceiversPage'));
 const PaymentReceiverMappingsPage = lazy(() => import('./pages/Settings/PaymentReceiverMappingsPage'));
+const IpaymuIntegrationPage = lazy(() => import('./pages/Settings/IpaymuIntegrationPage'));
 const PackageManagementPage = lazy(() => import('./pages/Settings/PackageManagementPage'));
 const UserManagementPage = lazy(() => import('./pages/Settings/UserManagementPage'));
 const InvoiceManagementPage = lazy(() => import('./pages/Settings/InvoiceManagementPage'));
@@ -407,6 +408,8 @@ function App() {
                     <Route path="/settings/company-finance-receivers" element={<GuardedRoute permissionKey="master.payment.manage" element={<CompanyFinanceReceiversPage />} />} />
                     <Route path="/settings/borrowers" element={<GuardedRoute permissionKey="master.payment.manage" element={<BorrowersPage />} />} />
                     <Route path="/settings/payment-receiver-mappings" element={<GuardedRoute permissionKey="master.payment.manage" element={<PaymentReceiverMappingsPage />} />} />
+                    <Route path="/settings/ipaymu-integration" element={<GuardedRoute permissionKey="master.payment.manage" element={<IpaymuIntegrationPage />} />} />
+                    <Route path="/settings/payment-gateway" element={<GuardedRoute permissionKey="master.payment.manage" element={<IpaymuIntegrationPage />} />} />
                     <Route path="/settings/packages" element={<GuardedRoute permissionKey="master.package.manage" element={<PackageManagementPage />} />} />
                     <Route path="/settings/users" element={<GuardedRoute permissionKey="user.manage" element={<UserManagementPage />} />} />
                     <Route path="/settings/invoice-management" element={<GuardedRoute permissionKey="billing.invoice.manage" element={<InvoiceManagementPage />} />} />
