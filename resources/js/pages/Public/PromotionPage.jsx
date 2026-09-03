@@ -26,7 +26,8 @@ import {
     RefreshCw,
     ExternalLink,
     AlertCircle,
-    Radio
+    Radio,
+    Mail
 } from 'lucide-react';
 
 export default function PromotionPage() {
