@@ -164,6 +164,11 @@ Route::post('/api/whatsapp/webhooks/payments', [WhatsAppPaymentWebhookController
     ->middleware('throttle:60,1')
     ->name('api.whatsapp.webhooks.payments');
 
+// iPaymu Payment Gateway Public Callbacks & Webhook (Tanpa Login)
+Route::match(['get', 'post'], '/api/ipaymu/return', [IpaymuIntegrationController::class, 'handleReturn'])->name('api.ipaymu.return');
+Route::match(['get', 'post'], '/api/ipaymu/cancel', [IpaymuIntegrationController::class, 'handleCancel'])->name('api.ipaymu.cancel');
+Route::post('/api/ipaymu/notify', [IpaymuIntegrationController::class, 'handleNotify'])->name('api.ipaymu.notify');
+
 // Customer Portal Pages (Public - tanpa auth admin)
 Route::get('/customer/login', function () {
     return view('app');

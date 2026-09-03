@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/whatsapp/webhooks/payments',
             'api/public/*',
             'api/customer/*',
+            'api/ipaymu/*',
         ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo('/dashboard');

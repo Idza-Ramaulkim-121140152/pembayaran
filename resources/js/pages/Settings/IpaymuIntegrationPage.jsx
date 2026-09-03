@@ -543,16 +543,65 @@ export default function IpaymuIntegrationPage() {
                                         </div>
                                     )}
 
-                                    {testResult.result.response.Data.QrImage && (
-                                        <div className="pt-2 text-center space-y-2">
-                                            <p className="text-xs font-bold text-gray-800 dark:text-slate-200">Scan QRIS Pembayaran:</p>
-                                            <img
-                                                src={testResult.result.response.Data.QrImage}
-                                                alt="QRIS iPaymu"
-                                                className="w-48 h-48 mx-auto rounded-xl border border-gray-200 shadow-sm"
-                                            />
-                                        </div>
-                                    )}
+                                    {/* QRIS Display Block */}
+                                    {(() => {
+                                        const data = testResult.result?.response?.Data;
+                                        if (!data) return null;
+                                        const qrString = data.QrString || (data.PaymentNo?.startsWith('000201') ? data.PaymentNo : null);
+                                        const qrImageSrc = data.qr_image_url || (qrString ? `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(qrString)}` : null);
+
+                                        if (!qrString && !qrImageSrc && !data.QrImage) return null;
+
+                                        return (
+                                            <div className="pt-3 border-t border-gray-100 dark:border-slate-800 text-center space-y-4">
+                                                <div className="inline-block p-4 rounded-3xl bg-white border-2 border-emerald-500 shadow-xl text-slate-800">
+                                                    <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-gray-100 text-slate-800">
+                                                        <span className="text-xs font-black tracking-wider">QRIS STANDAR NASIONAL</span>
+                                                        <span className="text-[10px] font-bold text-emerald-600 uppercase bg-emerald-50 px-2 py-0.5 rounded-full">{data.Channel || 'MPM'}</span>
+                                                    </div>
+                                                    {qrImageSrc ? (
+                                                        <img
+                                                            src={qrImageSrc}
+                                                            alt="QRIS Pembayaran"
+                                                            className="w-56 h-56 mx-auto object-contain rounded-lg"
+                                                        />
+                                                    ) : (
+                                                        <div className="w-56 h-56 flex items-center justify-center bg-gray-100 text-gray-500 text-xs font-semibold rounded-lg">
+                                                            QR Code Tidak Tersedia
+                                                        </div>
+                                                    )}
+                                                    <div className="pt-2 text-[11px] font-bold text-slate-700 border-t border-gray-100 mt-2 flex items-center justify-between">
+                                                        <span>NMID: {data.NMID || 'ID2022173022171'}</span>
+                                                        <span className="text-emerald-600 font-extrabold">Rp {new Intl.NumberFormat('id-ID').format(data.Total || testForm.amount)}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                                                    {data.QrTemplate && (
+                                                        <a
+                                                            href={data.QrTemplate}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="px-3.5 py-2 rounded-xl bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-800 dark:text-slate-200 font-bold transition flex items-center gap-1.5"
+                                                        >
+                                                            <ExternalLink size={13} />
+                                                            <span>Buka Template QRIS Resmi iPaymu</span>
+                                                        </a>
+                                                    )}
+                                                    {qrString && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleCopy(qrString, 'qr_string')}
+                                                            className="px-3.5 py-2 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-300 font-bold transition flex items-center gap-1.5"
+                                                        >
+                                                            {copiedField === 'qr_string' ? <Check size={13} /> : <Copy size={13} />}
+                                                            <span>{copiedField === 'qr_string' ? 'String QRIS Disalin!' : 'Salin String QRIS'}</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             )}
 

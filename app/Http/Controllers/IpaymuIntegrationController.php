@@ -149,6 +149,14 @@ class IpaymuIntegrationController extends Controller
             ]);
         }
 
+        // Enhance QRIS response with direct renderable QR Image URL
+        if (!empty($result['response']['Data']['QrString']) || !empty($result['response']['Data']['PaymentNo'])) {
+            $qrData = $result['response']['Data']['QrString'] ?? $result['response']['Data']['PaymentNo'];
+            if (str_starts_with($qrData, '000201')) {
+                $result['response']['Data']['qr_image_url'] = 'https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=' . urlencode($qrData);
+            }
+        }
+
         return response()->json([
             'success' => $result['success'],
             'http_code' => $result['http_code'],
@@ -160,18 +168,54 @@ class IpaymuIntegrationController extends Controller
     /**
      * Check Transaction Status
      */
-    public function checkTransaction(Request $request)
+    /**
+     * Handle Customer Return URL after payment checkout
+     */
+    public function handleReturn(Request $request)
     {
-        $validated = $request->validate([
-            'transaction_id' => 'required|string|max:100',
-        ]);
+        $status = $request->query('status', 'berhasil');
+        $trxId = $request->query('trx_id');
+        $sid = $request->query('sid');
+        $paymentMethod = $request->query('payment_method') ?: $request->query('tipe');
+        $isSuccess = in_array(strtolower($status), ['berhasil', 'success', 'settlement', 'paid']);
+        $isCancel = in_array(strtolower($status), ['batal', 'cancel', 'cancelled', 'failed', 'gagal']);
 
-        $result = $this->ipaymu->checkTransaction($validated['transaction_id']);
+        return view('payment.ipaymu_return', [
+            'status' => $status,
+            'trxId' => $trxId,
+            'sid' => $sid,
+            'paymentMethod' => $paymentMethod,
+            'isSuccess' => $isSuccess,
+            'isCancel' => $isCancel,
+        ]);
+    }
+
+    /**
+     * Handle Customer Cancel URL
+     */
+    public function handleCancel(Request $request)
+    {
+        return view('payment.ipaymu_return', [
+            'status' => 'dibatalkan',
+            'trxId' => $request->query('trx_id'),
+            'sid' => $request->query('sid'),
+            'paymentMethod' => $request->query('payment_method') ?: $request->query('tipe'),
+            'isSuccess' => false,
+            'isCancel' => true,
+        ]);
+    }
+
+    /**
+     * Handle iPaymu Webhook Notification (POST)
+     */
+    public function handleNotify(Request $request)
+    {
+        $payload = $request->all();
+        \Illuminate\Support\Facades\Log::info('iPaymu Webhook Notification Received:', $payload);
 
         return response()->json([
-            'success' => $result['success'],
-            'http_code' => $result['http_code'],
-            'result' => $result,
+            'status' => 'success',
+            'message' => 'Notification processed successfully',
         ]);
     }
 }
