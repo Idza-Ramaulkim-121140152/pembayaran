@@ -34,6 +34,7 @@ const CustomerVerificationForm = lazy(() => import('./pages/Customers/CustomerVe
 const CustomerRegistrationForm = lazy(() => import('./pages/Customers/CustomerRegistrationForm'));
 const CustomerProspectsPage = lazy(() => import('./pages/Customers/CustomerProspectsPage'));
 const PublicCustomerRegistrationPage = lazy(() => import('./pages/Public/PublicCustomerRegistrationPage'));
+const PromotionPage = lazy(() => import('./pages/Public/PromotionPage'));
 const ComplaintsPage = lazy(() => import('./pages/Complaints/ComplaintsPage'));
 const NetworkNoticePage = lazy(() => import('./pages/Settings/NetworkNoticePage'));
 const SendNotificationPage = lazy(() => import('./pages/Settings/SendNotificationPage'));
@@ -167,12 +168,13 @@ function AppLayout({ children }) {
         visible: false,
         message: '',
     });
-    const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan', '/registrasi', '/daftar'];
+    const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan', '/registrasi', '/daftar', '/promo', '/promosi'];
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
     const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
-    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration && !isPublicPortal;
+    const isPromoPage = location.pathname === '/promo' || location.pathname === '/promosi';
+    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration && !isPublicPortal && !isPromoPage;
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
         && WA_ALERT_ROLES.includes(window.appUserRole || '');
@@ -343,6 +345,10 @@ function App() {
                     {/* Public Registration (Calon Pelanggan Tanpa Login) */}
                     <Route path="/registrasi" element={<RouteSuspense><PublicCustomerRegistrationPage /></RouteSuspense>} />
                     <Route path="/daftar" element={<RouteSuspense><PublicCustomerRegistrationPage /></RouteSuspense>} />
+
+                    {/* Public Promotion Page (Tanpa Login) */}
+                    <Route path="/promo" element={<RouteSuspense><PromotionPage /></RouteSuspense>} />
+                    <Route path="/promosi" element={<RouteSuspense><PromotionPage /></RouteSuspense>} />
 
                     {/* Customer Verification & Prospects */}
                     <Route path="/customer-verification" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerVerificationPage />} />} />

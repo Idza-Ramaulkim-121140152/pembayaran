@@ -112,6 +112,11 @@ Route::get('/api/public/wilayah/desa', [\App\Http\Controllers\MasterWilayahContr
 Route::get('/api/public/wilayah/dusun', [\App\Http\Controllers\MasterWilayahController::class, 'dusunOptions'])->name('api.public.wilayah.dusun');
 Route::get('/api/public/packages', [\App\Http\Controllers\PackageController::class, 'publicPackages'])->name('api.public.packages');
 
+// Public Promotion Page (Tanpa Login)
+Route::get('/promo', fn() => view('app'))->name('public.promo');
+Route::get('/promosi', fn() => view('app'))->name('public.promo.alias');
+Route::get('/api/public/promo-page', [LandingPageController::class, 'getPromoData'])->name('api.public.promo-data');
+
 // Landing Page Public API
 Route::get('/api/landing-page', [LandingPageController::class, 'getData'])->name('api.landing-page');
 
