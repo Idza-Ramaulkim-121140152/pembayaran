@@ -117,6 +117,17 @@ Route::get('/promo', fn() => view('app'))->name('public.promo');
 Route::get('/promosi', fn() => view('app'))->name('public.promo.alias');
 Route::get('/api/public/promo-page', [LandingPageController::class, 'getPromoData'])->name('api.public.promo-data');
 
+// Public Legal & Verification Pages (iPaymu Payment Gateway Compliance)
+Route::get('/faq', fn() => view('app'))->name('public.faq');
+Route::get('/terms-and-conditions', fn() => view('app'))->name('public.terms');
+Route::get('/syarat-ketentuan', fn() => view('app'))->name('public.terms.alias');
+Route::get('/refund-policy', fn() => view('app'))->name('public.refund');
+Route::get('/kebijakan-pengembalian', fn() => view('app'))->name('public.refund.alias');
+Route::get('/kontak', fn() => view('app'))->name('public.contact');
+Route::get('/contact', fn() => view('app'))->name('public.contact.alias');
+Route::get('/privacy-policy', fn() => view('app'))->name('public.privacy');
+Route::get('/kebijakan-privasi', fn() => view('app'))->name('public.privacy.alias');
+
 // Landing Page Public API
 Route::get('/api/landing-page', [LandingPageController::class, 'getData'])->name('api.landing-page');
 

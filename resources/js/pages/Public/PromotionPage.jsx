@@ -1076,44 +1076,49 @@ export default function PromotionPage() {
                             </p>
                         </div>
 
-                        {/* Col 2: Navigasi */}
+                        {/* Col 2: Navigasi & Legal */}
                         <div className="space-y-2.5">
-                            <h4 className="font-bold text-white uppercase text-xs tracking-wider">Navigasi</h4>
+                            <h4 className="font-bold text-white uppercase text-xs tracking-wider">Halaman Legal &amp; Bantuan</h4>
                             <ul className="space-y-1.5 text-slate-400">
-                                <li><a href="#paket" className="hover:text-emerald-400 transition">Paket Layanan</a></li>
-                                <li><a href="#cakupan" className="hover:text-emerald-400 transition">Daerah Cakupan</a></li>
-                                <li><a href="#keunggulan" className="hover:text-emerald-400 transition">Keunggulan Layanan</a></li>
+                                <li><a href="/faq" className="hover:text-emerald-400 transition">FAQ &amp; Pusat Bantuan</a></li>
+                                <li><a href="/terms-and-conditions" className="hover:text-emerald-400 transition">Syarat &amp; Ketentuan Layanan</a></li>
+                                <li><a href="/refund-policy" className="hover:text-emerald-400 transition">Kebijakan Pengembalian (Refund)</a></li>
+                                <li><a href="/kontak" className="hover:text-emerald-400 transition">Kontak &amp; Alamat Usaha</a></li>
                                 <li><a href="/status-jaringan" className="hover:text-emerald-400 transition">Status Jaringan Live</a></li>
                                 <li><a href="/customer/login" className="hover:text-emerald-400 transition">Portal Pelanggan</a></li>
                             </ul>
                         </div>
 
-                        {/* Col 3: Kontak CS */}
+                        {/* Col 3: Kontak Resmi */}
                         <div className="space-y-2.5">
-                            <h4 className="font-bold text-white uppercase text-xs tracking-wider">Hubungi Kami</h4>
-                            <ul className="space-y-2 text-slate-400">
-                                <li className="flex items-center gap-2">
-                                    <Phone size={14} className="text-emerald-400" />
-                                    <span>{settings.company_phone || '085158025553'}</span>
+                            <h4 className="font-bold text-white uppercase text-xs tracking-wider">Kontak &amp; Kantor Resmi</h4>
+                            <ul className="space-y-2 text-slate-400 text-[11px]">
+                                <li className="flex items-start gap-2">
+                                    <Mail size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                                    <span>info@rumahkitanet.com / cs@rumahkitanet.site</span>
                                 </li>
                                 <li className="flex items-center gap-2">
-                                    <MessageSquare size={14} className="text-emerald-400" />
-                                    <span>WhatsApp: {settings.company_whatsapp || '6285158025553'}</span>
+                                    <Phone size={14} className="text-emerald-400 shrink-0" />
+                                    <span>+62 851-5802-5553 (085158025553)</span>
                                 </li>
-                                <li className="flex items-center gap-2">
-                                    <MapPin size={14} className="text-emerald-400" />
-                                    <span>Kalianda, Lampung Selatan</span>
+                                <li className="flex items-start gap-2">
+                                    <MapPin size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+                                    <span>Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551</span>
                                 </li>
                             </ul>
                         </div>
                     </div>
 
                     <div className="pt-8 border-t border-slate-900 text-center text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
-                        <span>&copy; {new Date().getFullYear()} Rumah Kita Net. All Rights Reserved.</span>
+                        <span>&copy; {new Date().getFullYear()} Rumah Kita Net (Rumah Kita Network). All Rights Reserved.</span>
                         <div className="flex items-center gap-4">
-                            <a href="/status-jaringan" className="hover:text-slate-400">Monitoring Jaringan</a>
+                            <a href="/faq" className="hover:text-slate-400">FAQ</a>
                             <span>&middot;</span>
-                            <a href="/customer/login" className="hover:text-slate-400">Login Pelanggan</a>
+                            <a href="/terms-and-conditions" className="hover:text-slate-400">Syarat &amp; Ketentuan</a>
+                            <span>&middot;</span>
+                            <a href="/refund-policy" className="hover:text-slate-400">Refund Policy</a>
+                            <span>&middot;</span>
+                            <a href="/kontak" className="hover:text-slate-400">Kontak</a>
                         </div>
                     </div>
                 </div>

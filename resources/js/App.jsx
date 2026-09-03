@@ -35,6 +35,10 @@ const CustomerRegistrationForm = lazy(() => import('./pages/Customers/CustomerRe
 const CustomerProspectsPage = lazy(() => import('./pages/Customers/CustomerProspectsPage'));
 const PublicCustomerRegistrationPage = lazy(() => import('./pages/Public/PublicCustomerRegistrationPage'));
 const PromotionPage = lazy(() => import('./pages/Public/PromotionPage'));
+const FaqPage = lazy(() => import('./pages/Public/FaqPage'));
+const TermsAndConditionsPage = lazy(() => import('./pages/Public/TermsAndConditionsPage'));
+const RefundPolicyPage = lazy(() => import('./pages/Public/RefundPolicyPage'));
+const ContactPage = lazy(() => import('./pages/Public/ContactPage'));
 const ComplaintsPage = lazy(() => import('./pages/Complaints/ComplaintsPage'));
 const NetworkNoticePage = lazy(() => import('./pages/Settings/NetworkNoticePage'));
 const SendNotificationPage = lazy(() => import('./pages/Settings/SendNotificationPage'));
@@ -168,13 +172,34 @@ function AppLayout({ children }) {
         visible: false,
         message: '',
     });
-    const noNavbarRoutes = ['/login', '/register', '/forgot-password', '/', '/customer/login', '/customer/dashboard', '/status-jaringan', '/registrasi', '/daftar', '/promo', '/promosi'];
+    const noNavbarRoutes = [
+        '/login',
+        '/register',
+        '/forgot-password',
+        '/',
+        '/customer/login',
+        '/customer/dashboard',
+        '/status-jaringan',
+        '/registrasi',
+        '/daftar',
+        '/promo',
+        '/promosi',
+        '/faq',
+        '/terms-and-conditions',
+        '/syarat-ketentuan',
+        '/refund-policy',
+        '/kebijakan-pengembalian',
+        '/kontak',
+        '/contact',
+        '/privacy-policy',
+        '/kebijakan-privasi',
+    ];
     const isInvoicePage = location.pathname.startsWith('/invoice/');
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
     const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
-    const isPromoPage = location.pathname === '/promo' || location.pathname === '/promosi';
-    const showNavbar = !noNavbarRoutes.includes(location.pathname) && !isInvoicePage && !isCustomerRoute && !isPublicRegistration && !isPublicPortal && !isPromoPage;
+    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal;
+    const showNavbar = !isPublicPage;
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
         && WA_ALERT_ROLES.includes(window.appUserRole || '');
@@ -349,6 +374,15 @@ function App() {
                     {/* Public Promotion Page (Tanpa Login) */}
                     <Route path="/promo" element={<RouteSuspense><PromotionPage /></RouteSuspense>} />
                     <Route path="/promosi" element={<RouteSuspense><PromotionPage /></RouteSuspense>} />
+
+                    {/* Public Legal & Verification Pages (iPaymu Compliance) */}
+                    <Route path="/faq" element={<RouteSuspense><FaqPage /></RouteSuspense>} />
+                    <Route path="/terms-and-conditions" element={<RouteSuspense><TermsAndConditionsPage /></RouteSuspense>} />
+                    <Route path="/syarat-ketentuan" element={<RouteSuspense><TermsAndConditionsPage /></RouteSuspense>} />
+                    <Route path="/refund-policy" element={<RouteSuspense><RefundPolicyPage /></RouteSuspense>} />
+                    <Route path="/kebijakan-pengembalian" element={<RouteSuspense><RefundPolicyPage /></RouteSuspense>} />
+                    <Route path="/kontak" element={<RouteSuspense><ContactPage /></RouteSuspense>} />
+                    <Route path="/contact" element={<RouteSuspense><ContactPage /></RouteSuspense>} />
 
                     {/* Customer Verification & Prospects */}
                     <Route path="/customer-verification" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerVerificationPage />} />} />
