@@ -191,6 +191,25 @@ function CustomerLoginPage() {
                     </div>
                 </div>
 
+                {/* Footer Legal & Info Usaha */}
+                <div className="mt-8 text-center space-y-3 text-xs text-gray-600 max-w-lg mx-auto">
+                    <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 font-semibold text-gray-700">
+                        <a href="/promo" className="hover:text-emerald-600 transition">Promo &amp; Paket</a>
+                        <span>&middot;</span>
+                        <a href="/faq" className="hover:text-emerald-600 transition">FAQ</a>
+                        <span>&middot;</span>
+                        <a href="/terms-and-conditions" className="hover:text-emerald-600 transition">Syarat &amp; Ketentuan</a>
+                        <span>&middot;</span>
+                        <a href="/refund-policy" className="hover:text-emerald-600 transition">Refund Policy</a>
+                        <span>&middot;</span>
+                        <a href="/kontak" className="hover:text-emerald-600 transition">Kontak</a>
+                    </div>
+                    <p className="text-[11px] text-gray-500">
+                        <strong>Rumah Kita Net</strong> &bull; Email: <span className="font-mono">info@rumahkitanet.com</span> &bull; Telp: <span className="font-mono">+62 851-5802-5553</span><br />
+                        Alamat: Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551
+                    </p>
+                </div>
+
             </div>
         </div>
     );
