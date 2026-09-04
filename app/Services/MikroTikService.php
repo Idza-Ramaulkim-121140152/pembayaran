@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\MasterMikrotik;
 use Exception;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class MikroTikService
@@ -19,7 +21,7 @@ class MikroTikService
     private $forceFreshReads;
     private $hasFreshSession = false;
 
-    // Static connection pool untuk persistent connection antar request
+    // Static connection pool untuk persistent connection antar request dalam lifecycle PHP
     private static $connectionPool = [];
     private static $lastActivityTime = [];
 
@@ -36,7 +38,7 @@ class MikroTikService
         $this->port = $port ?? ($resolvedFromMaster['port'] ?? config('mikrotik.port', 8728));
         $this->timeout = $timeout ?? config('mikrotik.timeout', 5);
         $this->connectionLifetime = max(0, (int) config('mikrotik.connection_lifetime', 3600));
-        $this->forceFreshReads = (bool) config('mikrotik.force_fresh_reads', true);
+        $this->forceFreshReads = (bool) config('mikrotik.force_fresh_reads', false);
 
         // Load existing connection from pool if available and valid
         $this->loadFromPool();
@@ -68,7 +70,7 @@ class MikroTikService
                 'password_encrypted' => $active->password_encrypted,
             ];
         } catch (\Throwable $e) {
-            \Log::warning('Failed loading active Master MikroTik; fallback to env config.', [
+            Log::warning('Failed loading active Master MikroTik; fallback to env config.', [
                 'error' => $e->getMessage(),
             ]);
 
@@ -105,16 +107,13 @@ class MikroTikService
                 $this->isConnected = is_resource($this->socket);
                 
                 if ($this->isConnected) {
-                    \Log::info('Reusing existing MikroTik connection', [
+                    Log::debug('Reusing existing MikroTik connection from pool', [
                         'age_seconds' => $timeSinceLastActivity,
                         'remaining_seconds' => $this->connectionLifetime - $timeSinceLastActivity
                     ]);
                 }
             } else {
                 // Connection too old, clean it up
-                \Log::info('MikroTik connection expired, will reconnect', [
-                    'age_seconds' => $timeSinceLastActivity
-                ]);
                 $this->cleanupPoolConnection($poolKey);
             }
         }
@@ -140,11 +139,6 @@ class MikroTikService
         $poolKey = $this->getPoolKey();
         self::$connectionPool[$poolKey] = $this->socket;
         self::$lastActivityTime[$poolKey] = time();
-        
-        \Log::info('Saved MikroTik connection to pool', [
-            'pool_key' => $poolKey,
-            'lifetime_seconds' => $this->connectionLifetime
-        ]);
     }
 
     /**
@@ -170,6 +164,27 @@ class MikroTikService
         }
         unset(self::$connectionPool[$poolKey]);
         unset(self::$lastActivityTime[$poolKey]);
+    }
+
+    /**
+     * Clear all cached MikroTik query results
+     */
+    public function clearMikrotikCache(): void
+    {
+        Cache::forget('mikrotik:system_resources');
+        Cache::forget('mikrotik:identity');
+        Cache::forget('mikrotik:active_pppoe_connections');
+        Cache::forget('mikrotik:all_pppoe_secrets');
+        Cache::forget('mikrotik:isolated_secrets');
+        Cache::forget('mikrotik:isolated_username_map');
+        Cache::forget('mikrotik:interfaces_0');
+        Cache::forget('mikrotik:interfaces_1');
+        Cache::forget('mikrotik:dhcp_leases');
+        Cache::forget('mikrotik:dhcp_clients');
+        Cache::forget('mikrotik:bridge_hosts');
+        Cache::forget('mikrotik:arp_entries');
+        Cache::forget('monitoring_data');
+        Cache::forget('monitoring_data_api');
     }
 
     /**
@@ -243,6 +258,10 @@ class MikroTikService
      */
     public function connect()
     {
+        if ($this->isConnectionValid()) {
+            return true;
+        }
+
         try {
             $this->socket = @fsockopen($this->host, $this->port, $errno, $errstr, $this->timeout);
             
@@ -283,18 +302,16 @@ class MikroTikService
             // Save connection to pool for reuse
             $this->saveToPool();
             
-            \Log::info('New MikroTik connection established', [
+            Log::info('New MikroTik connection established', [
                 'host' => $this->host,
-                'will_expire_at' => $this->connectionLifetime > 0
-                    ? date('Y-m-d H:i:s', time() + $this->connectionLifetime)
-                    : null,
-                'pooling_enabled' => $this->shouldUseConnectionPool(),
-                'force_fresh_reads' => $this->forceFreshReads,
+                'user' => $this->user,
             ]);
             
             return true;
             
         } catch (Exception $e) {
+            $this->isConnected = false;
+            $this->socket = null;
             throw new Exception("Connection error: " . $e->getMessage());
         }
     }
@@ -305,11 +322,15 @@ class MikroTikService
     public function disconnect()
     {
         if ($this->socket && is_resource($this->socket)) {
-            fclose($this->socket);
+            @fclose($this->socket);
         }
         $this->socket = null;
         $this->isConnected = false;
         $this->hasFreshSession = false;
+
+        $poolKey = $this->getPoolKey();
+        unset(self::$connectionPool[$poolKey]);
+        unset(self::$lastActivityTime[$poolKey]);
     }
 
     /**
@@ -317,6 +338,10 @@ class MikroTikService
      */
     private function write($command, $param = true)
     {
+        if (!$this->socket || !is_resource($this->socket)) {
+            throw new Exception("Socket connection is closed.");
+        }
+
         fputs($this->socket, $this->encodeLength(strlen($command)) . $command);
         if ($param) {
             fputs($this->socket, $this->encodeLength(0));
@@ -328,23 +353,24 @@ class MikroTikService
      */
     private function read($parse = true)
     {
+        if (!$this->socket || !is_resource($this->socket)) {
+            return [];
+        }
+
         $response = [];
         $i = 0;
         
         while (true) {
             $i++;
             
-            // Check if there's data available to read
             $read = [$this->socket];
             $write = null;
             $except = null;
             
-            // Wait up to 1 second for data
             if (stream_select($read, $write, $except, 1) === false) {
                 break;
             }
             
-            // If no data available, we might be done
             if (empty($read)) {
                 break;
             }
@@ -357,9 +383,7 @@ class MikroTikService
                     $parsed = $this->parseLine($line);
                     if ($parsed) {
                         $response[] = $parsed;
-                        // Check if this is !done - but continue reading if more data available
                         if (isset($parsed['!done'])) {
-                            // Read the trailing length 0
                             $this->decodeLength();
                             break;
                         }
@@ -368,21 +392,15 @@ class MikroTikService
                     $response[] = $line;
                 }
             } else {
-                // Length 0 means end of a sentence
-                // Check if there's more data coming
                 $read = [$this->socket];
                 $write = null;
                 $except = null;
                 
-                // Short wait to see if more data is coming
                 if (stream_select($read, $write, $except, 0, 100000) === false || empty($read)) {
-                    // No more data, we're done
                     break;
                 }
-                // Otherwise continue reading next sentence
             }
             
-            // Safety limit
             if ($i > 20000) {
                 break;
             }
@@ -415,7 +433,16 @@ class MikroTikService
      */
     private function decodeLength()
     {
-        $byte = ord(fread($this->socket, 1));
+        if (!$this->socket || !is_resource($this->socket)) {
+            return 0;
+        }
+
+        $rawByte = fread($this->socket, 1);
+        if ($rawByte === false || $rawByte === '') {
+            return 0;
+        }
+
+        $byte = ord($rawByte);
         
         if ($byte & 0x80) {
             if (($byte & 0xC0) == 0x80) {
@@ -469,124 +496,89 @@ class MikroTikService
     }
 
     /**
-     * Execute command
+     * Execute command on MikroTik
      */
     public function command($command, $params = [], $forceFresh = false)
     {
-        $requiresFreshConnection = $forceFresh || ($this->forceFreshReads && !$this->hasFreshSession);
-
-        // Real-time reads should start with a fresh socket session.
-        if ($requiresFreshConnection && $this->isConnectionValid()) {
+        if ($forceFresh && $this->isConnectionValid()) {
             $this->disconnect();
         }
 
-        // Ensure we have a valid connection
         if (!$this->isConnectionValid()) {
-            // Disconnect first if there's a stale connection
             if ($this->socket && is_resource($this->socket)) {
                 $this->disconnect();
             }
             $this->connect();
         }
 
-        // Update activity time to keep connection alive
         $this->updateActivity();
 
-        // Send command
         $this->write($command, false);
-        
-        // Send parameters
         foreach ($params as $key => $value) {
             $this->write('=' . $key . '=' . $value, false);
         }
-        
-        // End command
         $this->write('', true);
         
-        // Read response
         $response = $this->read(true);
         
-        // Debug: log raw response before parsing
-        \Log::debug('MikroTik Raw Response for ' . $command, [
-            'command' => $command,
-            'raw_response_count' => count($response),
-            'raw_response' => $response
-        ]);
-        
-        // Parse response into structured array
         $result = [];
         $currentItem = [];
         $done = false;
         
         foreach ($response as $item) {
-            if (!$item || !is_array($item)) continue;
-            
-            // Handle different response types
-            if (isset($item['!re'])) {
-                // Reply - save current item and start new one
-                if (!empty($currentItem)) {
-                    $result[] = $currentItem;
+            if (is_array($item)) {
+                if (isset($item['!re'])) {
+                    if (!empty($currentItem)) {
+                        $result[] = $currentItem;
+                        $currentItem = [];
+                    }
+                } elseif (isset($item['!done'])) {
+                    if (!empty($currentItem)) {
+                        $result[] = $currentItem;
+                    }
+                    $done = true;
+                    break;
+                } elseif (isset($item['!trap'])) {
+                    $errorMsg = 'Command failed: ' . $command;
+                    foreach ($response as $r) {
+                        if (is_array($r) && isset($r['message'])) {
+                            $errorMsg .= ' - ' . $r['message'];
+                        }
+                    }
+                    throw new Exception($errorMsg);
+                } else {
+                    foreach ($item as $key => $value) {
+                        $currentItem[$key] = $value;
+                    }
                 }
-                $currentItem = [];
-            } else if (isset($item['!done'])) {
-                // Done - save last item and stop
-                if (!empty($currentItem)) {
-                    $result[] = $currentItem;
-                }
-                $done = true;
-                break;
-            } else if (isset($item['!trap'])) {
-                // Error - try to get detailed message
-                $errorMsg = 'Unknown error';
-                if (!empty($currentItem['message'])) {
-                    $errorMsg = $currentItem['message'];
-                } else if (!empty($currentItem)) {
-                    $errorMsg = json_encode($currentItem);
-                }
-                \Log::error('MikroTik trap error', [
-                    'command' => $command,
-                    'current_item' => $currentItem,
-                    'error_message' => $errorMsg
-                ]);
-                throw new Exception("Command error: " . $errorMsg);
-            } else if (isset($item['type'])) {
-                // Skip type markers
-                continue;
-            } else {
-                // Data attributes - merge into current item
-                $currentItem = array_merge($currentItem, $item);
             }
         }
         
-        // Save any remaining item
-        if (!$done && !empty($currentItem)) {
+        if (!empty($currentItem) && !$done) {
             $result[] = $currentItem;
         }
-        
-        \Log::debug('MikroTik Parsed Result for ' . $command, [
-            'result_count' => count($result),
-            'result' => $result
-        ]);
-        
-        // Keep connection alive for reuse within the same request
-        // Connection will be closed automatically in destructor
         
         return $result;
     }
 
     /**
-     * Get active PPPoE connections
+     * Get Active PPPoE Connections with smart short-term caching
      */
-    public function getActivePPPoEConnections()
+    public function getActivePPPoEConnections(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:active_pppoe_connections';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.active_pppoe', 15);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            // Try both methods and merge results
             $connections = [];
             
             // Method 1: /ppp/active/print
             try {
-                $response1 = $this->command('/ppp/active/print');
-                \Log::debug('MikroTik PPPoE Active Raw Response:', ['response' => $response1]);
+                $response1 = $this->command('/ppp/active/print', [], $forceFresh);
                 
                 foreach ($response1 as $item) {
                     $bytesIn = $this->extractNumericCounter($item, [
@@ -645,18 +637,15 @@ class MikroTikService
                     ];
                 }
             } catch (Exception $e) {
-                \Log::warning('Failed to get /ppp/active: ' . $e->getMessage());
+                Log::warning('Failed to get /ppp/active: ' . $e->getMessage());
             }
             
-            // Method 2: /interface/pppoe-server/print (for running interfaces)
+            // Method 2: /interface/pppoe-server/print (for running interfaces not in /ppp/active)
             try {
-                $response2 = $this->command('/interface/pppoe-server/print');
-                \Log::debug('MikroTik PPPoE Server Interfaces:', ['response' => $response2]);
+                $response2 = $this->command('/interface/pppoe-server/print', [], false);
                 
                 foreach ($response2 as $item) {
-                    // Only include running interfaces
                     if (($item['running'] ?? 'false') === 'true') {
-                        // Check if not already in list
                         $username = $item['user'] ?? null;
                         $exists = false;
                         foreach ($connections as $conn) {
@@ -672,7 +661,7 @@ class MikroTikService
                                 'name' => $username,
                                 'service' => $item['service'] ?? 'pppoe',
                                 'caller_id' => $item['remote-address'] ?? null,
-                                'address' => null, // Not available in this command
+                                'address' => null,
                                 'uptime' => $item['uptime'] ?? null,
                                 'encoding' => $item['encoding'] ?? null,
                                 'session_id' => null,
@@ -689,9 +678,13 @@ class MikroTikService
                     }
                 }
             } catch (Exception $e) {
-                \Log::warning('Failed to get /interface/pppoe-server: ' . $e->getMessage());
+                Log::warning('Failed to get /interface/pppoe-server: ' . $e->getMessage());
             }
             
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $connections, $cacheTtl);
+            }
+
             return $connections;
         } catch (Exception $e) {
             throw new Exception("Failed to get active connections: " . $e->getMessage());
@@ -699,15 +692,19 @@ class MikroTikService
     }
 
     /**
-     * Get router resources (CPU, Memory, etc)
+     * Get router resources (CPU, Memory, etc) with smart short-term caching
      */
-    public function getSystemResources()
+    public function getSystemResources(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:system_resources';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.resources', 30);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/system/resource/print');
-            
-            // Debug: log raw response
-            \Log::debug('MikroTik System Resources Raw Response:', ['response' => $response]);
+            $response = $this->command('/system/resource/print', [], $forceFresh);
             
             if (empty($response)) {
                 return null;
@@ -715,7 +712,7 @@ class MikroTikService
             
             $data = $response[0] ?? [];
             
-            return [
+            $res = [
                 'platform' => $data['platform'] ?? $data['architecture-name'] ?? null,
                 'board_name' => $data['board-name'] ?? null,
                 'version' => $data['version'] ?? null,
@@ -728,33 +725,57 @@ class MikroTikService
                 'free_hdd_space' => $data['free-hdd-space'] ?? null,
                 'total_hdd_space' => $data['total-hdd-space'] ?? null,
             ];
+
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $res, $cacheTtl);
+            }
+
+            return $res;
         } catch (Exception $e) {
             throw new Exception("Failed to get system resources: " . $e->getMessage());
         }
     }
 
     /**
-     * Get router identity
+     * Get router identity with smart caching
      */
-    public function getIdentity()
+    public function getIdentity(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:identity';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.identity', 60);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/system/identity/print');
-            return $response[0]['name'] ?? 'Unknown';
+            $response = $this->command('/system/identity/print', [], $forceFresh);
+            $identity = $response[0]['name'] ?? 'Unknown';
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $identity, $cacheTtl);
+            }
+            return $identity;
         } catch (Exception $e) {
             return 'Unknown';
         }
     }
 
     /**
-     * Get interface list, optionally including traffic statistics when available.
+     * Get interface list with smart caching
      */
-    public function getInterfaces(bool $includeStats = false)
+    public function getInterfaces(bool $includeStats = false, bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:interfaces_' . ($includeStats ? '1' : '0');
+        $cacheTtl = (int) config('mikrotik.cache_ttl.interfaces', 15);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
             $response = $includeStats
-                ? $this->command('/interface/print', ['stats' => ''])
-                : $this->command('/interface/print');
+                ? $this->command('/interface/print', ['stats' => ''], $forceFresh)
+                : $this->command('/interface/print', [], $forceFresh);
 
             $interfaces = [];
 
@@ -792,6 +813,10 @@ class MikroTikService
                         ? (int) (($rxBytes ?? 0) + ($txBytes ?? 0))
                         : null,
                 ];
+            }
+
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $interfaces, $cacheTtl);
             }
 
             return $interfaces;
@@ -836,10 +861,17 @@ class MikroTikService
     /**
      * Get DHCP client interfaces on the router.
      */
-    public function getDhcpClients()
+    public function getDhcpClients(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:dhcp_clients';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.dhcp', 30);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/ip/dhcp-client/print');
+            $response = $this->command('/ip/dhcp-client/print', [], $forceFresh);
             $clients = [];
 
             foreach ($response as $item) {
@@ -855,6 +887,10 @@ class MikroTikService
                 ];
             }
 
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $clients, $cacheTtl);
+            }
+
             return $clients;
         } catch (Exception $e) {
             throw new Exception("Failed to get DHCP clients: " . $e->getMessage());
@@ -862,12 +898,19 @@ class MikroTikService
     }
 
     /**
-     * Get DHCP leases from the router.
+     * Get DHCP leases from the router with caching.
      */
-    public function getDhcpLeases()
+    public function getDhcpLeases(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:dhcp_leases';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.dhcp', 30);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/ip/dhcp-server/lease/print');
+            $response = $this->command('/ip/dhcp-server/lease/print', [], $forceFresh);
             $leases = [];
 
             foreach ($response as $item) {
@@ -886,6 +929,10 @@ class MikroTikService
                 ];
             }
 
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $leases, $cacheTtl);
+            }
+
             return $leases;
         } catch (Exception $e) {
             throw new Exception("Failed to get DHCP leases: " . $e->getMessage());
@@ -895,10 +942,17 @@ class MikroTikService
     /**
      * Get bridge host entries from the router.
      */
-    public function getBridgeHosts()
+    public function getBridgeHosts(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:bridge_hosts';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.interfaces', 15);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/interface/bridge/host/print');
+            $response = $this->command('/interface/bridge/host/print', [], $forceFresh);
             $hosts = [];
 
             foreach ($response as $item) {
@@ -914,6 +968,10 @@ class MikroTikService
                 ];
             }
 
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $hosts, $cacheTtl);
+            }
+
             return $hosts;
         } catch (Exception $e) {
             throw new Exception("Failed to get bridge hosts: " . $e->getMessage());
@@ -923,10 +981,17 @@ class MikroTikService
     /**
      * Get ARP table entries from the router.
      */
-    public function getArpEntries()
+    public function getArpEntries(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:arp_entries';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.interfaces', 15);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/ip/arp/print');
+            $response = $this->command('/ip/arp/print', [], $forceFresh);
             $entries = [];
 
             foreach ($response as $item) {
@@ -942,6 +1007,10 @@ class MikroTikService
                 ];
             }
 
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $entries, $cacheTtl);
+            }
+
             return $entries;
         } catch (Exception $e) {
             throw new Exception("Failed to get ARP entries: " . $e->getMessage());
@@ -949,277 +1018,19 @@ class MikroTikService
     }
 
     /**
-     * Get last used IP address from PPPoE secrets
+     * Get all PPPoE secrets as a map of username => secret data with caching
      */
-    public function getLastIpAddress()
+    public function getAllPPPoESecrets(bool $forceFresh = false)
     {
+        $cacheKey = 'mikrotik:all_pppoe_secrets';
+        $cacheTtl = (int) config('mikrotik.cache_ttl.secrets', 30);
+
+        if (!$forceFresh && $cacheTtl > 0 && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+
         try {
-            $response = $this->command('/ppp/secret/print');
-            
-            $lastIp = '10.1.0.9'; // Default starting IP (akan di-increment jadi 10.1.0.10)
-            
-            foreach ($response as $secret) {
-                if (isset($secret['remote-address']) && !empty($secret['remote-address'])) {
-                    $ip = $secret['remote-address'];
-                    // Compare IPs - pastikan minimal 10.1.0.10
-                    if (ip2long($ip) >= ip2long('10.1.0.10') && ip2long($ip) > ip2long($lastIp)) {
-                        $lastIp = $ip;
-                    }
-                }
-            }
-            
-            return $lastIp;
-        } catch (Exception $e) {
-            \Log::error('Failed to get last IP: ' . $e->getMessage());
-            return '10.1.0.9';
-        }
-    }
-
-    /**
-     * Check if IP address is already used
-     */
-    public function isIpAddressUsed($ip)
-    {
-        try {
-            // Check in secrets
-            $secrets = $this->command('/ppp/secret/print');
-            foreach ($secrets as $secret) {
-                if (isset($secret['remote-address']) && $secret['remote-address'] === $ip) {
-                    return true;
-                }
-            }
-            
-            // Check in active connections
-            $actives = $this->command('/ppp/active/print');
-            foreach ($actives as $active) {
-                if (isset($active['address']) && $active['address'] === $ip) {
-                    return true;
-                }
-            }
-            
-            return false;
-        } catch (Exception $e) {
-            \Log::error('Failed to check IP usage: ' . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Get next available IP address
-     */
-    public function getNextIpAddress()
-    {
-        // Ensure connection is established
-        if (!$this->isConnectionValid()) {
-            $this->connect();
-        }
-        
-        $lastIp = $this->getLastIpAddress();
-        $parts = explode('.', $lastIp);
-        $lastOctet = (int)$parts[3];
-        
-        // Start from next IP after last used
-        $nextOctet = $lastOctet + 1;
-        
-        // Ensure minimum is 10.1.0.10
-        if ($nextOctet < 10) {
-            $nextOctet = 10;
-        }
-        
-        // Find first available IP
-        $maxTries = 245; // 254 - 10 + 1
-        for ($i = 0; $i < $maxTries; $i++) {
-            $testOctet = $nextOctet + $i;
-            
-            // Skip if exceeds 254
-            if ($testOctet > 254) {
-                break;
-            }
-            
-            $parts[3] = $testOctet;
-            $testIp = implode('.', $parts);
-            
-            // Check if this IP is already used
-            if (!$this->isIpAddressUsed($testIp)) {
-                \Log::info('Found available IP', ['ip' => $testIp]);
-                return $testIp;
-            }
-            
-            \Log::debug('IP already used, trying next', ['ip' => $testIp]);
-        }
-        
-        // If we get here, no available IP found
-        throw new Exception('No available IP address found in range 10.1.0.10-254');
-    }
-
-    /**
-     * Create PPPoE secret
-    /**
-     * Resolve a package name to an exact MikroTik profile name.
-     * Tries exact match, case-insensitive, and partial number match.
-     * Returns the matched profile name or the original input if no match found.
-     */
-    public function resolveProfileName($packageName)
-    {
-        try {
-            $profiles = $this->command('/ppp/profile/print');
-            $availableProfiles = array_map(fn($p) => $p['name'] ?? '', $profiles);
-
-            // 1. Exact match
-            if (in_array($packageName, $availableProfiles)) {
-                return $packageName;
-            }
-
-            // 2. Case-insensitive match
-            foreach ($availableProfiles as $ap) {
-                if (strtolower($ap) === strtolower($packageName)) {
-                    \Log::info('Profile resolved via case-insensitive match', ['input' => $packageName, 'matched' => $ap]);
-                    return $ap;
-                }
-            }
-
-            // 3. Extract number and match (e.g. "200k" → "Paket 200k", "150K" → "Paket 150k")
-            $number = preg_replace('/[^0-9]/', '', $packageName);
-            if ($number) {
-                foreach ($availableProfiles as $ap) {
-                    if (stripos($ap, $number) !== false && strtolower($ap) !== 'isolir' && strtolower($ap) !== 'default') {
-                        \Log::info('Profile resolved via number match', ['input' => $packageName, 'number' => $number, 'matched' => $ap]);
-                        return $ap;
-                    }
-                }
-            }
-
-            \Log::warning('Could not resolve profile name, using as-is', [
-                'input' => $packageName,
-                'available' => $availableProfiles,
-            ]);
-            return $packageName;
-        } catch (Exception $e) {
-            \Log::warning('Failed to resolve profile name', ['error' => $e->getMessage()]);
-            return $packageName;
-        }
-    }
-
-    /**
-     * Create a PPPoE secret on MikroTik
-     */
-    public function createPPPoESecret($name, $password, $service, $profile, $remoteAddress)
-    {
-        try {
-            \Log::info('Creating PPPoE secret', [
-                'name' => $name,
-                'password' => $password,
-                'service' => $service,
-                'profile' => $profile,
-                'remote-address' => $remoteAddress
-            ]);
-            
-            // Check if remote address is already used
-            if ($this->isIpAddressUsed($remoteAddress)) {
-                \Log::error('IP address already in use', [
-                    'ip' => $remoteAddress,
-                    'username' => $name
-                ]);
-                throw new Exception("IP address '{$remoteAddress}' sudah digunakan. Sistem akan mencoba mencari IP lain.");
-            }
-            
-            // Check if username already exists
-            try {
-                $existingSecrets = $this->command('/ppp/secret/print');
-                foreach ($existingSecrets as $secret) {
-                    if (isset($secret['name']) && $secret['name'] === $name) {
-                        \Log::warning('Username already exists in MikroTik', [
-                            'username' => $name,
-                            'existing' => $secret
-                        ]);
-                        throw new Exception("Username '{$name}' sudah digunakan. Silakan coba lagi untuk generate username baru.");
-                    }
-                }
-            } catch (Exception $e) {
-                if (strpos($e->getMessage(), 'sudah digunakan') !== false) {
-                    throw $e;
-                }
-                \Log::error('Failed to check existing username: ' . $e->getMessage());
-                // Continue anyway
-            }
-            
-            // Check if profile exists
-            try {
-                $profiles = $this->command('/ppp/profile/print');
-                $profileExists = false;
-                $availableProfiles = [];
-                
-                foreach ($profiles as $p) {
-                    if (isset($p['name'])) {
-                        $availableProfiles[] = $p['name'];
-                        if ($p['name'] === $profile) {
-                            $profileExists = true;
-                        }
-                    }
-                }
-                
-                if (!$profileExists) {
-                    \Log::warning('Profile not found in MikroTik', [
-                        'requested_profile' => $profile,
-                        'available_profiles' => $availableProfiles
-                    ]);
-                    throw new Exception("Profile '{$profile}' tidak ditemukan di MikroTik. Profile yang tersedia: " . implode(', ', $availableProfiles));
-                }
-                
-                \Log::info('Profile found', ['profile' => $profile]);
-            } catch (Exception $e) {
-                if (strpos($e->getMessage(), 'tidak ditemukan') !== false) {
-                    throw $e;
-                }
-                \Log::error('Failed to check profile: ' . $e->getMessage());
-                // Continue anyway, let MikroTik handle the error
-            }
-            
-            $params = [
-                'name' => $name,
-                'password' => $password,
-                'service' => $service,
-                'profile' => $profile,
-                'remote-address' => $remoteAddress,
-            ];
-            
-            \Log::info('Sending command to MikroTik', ['params' => $params]);
-            
-            $response = $this->command('/ppp/secret/add', $params);
-            
-            \Log::info('PPPoE Secret Created Successfully', [
-                'name' => $name,
-                'profile' => $profile,
-                'remote-address' => $remoteAddress,
-                'response' => $response
-            ]);
-            
-            return [
-                'success' => true,
-                'name' => $name,
-                'password' => $password,
-                'service' => $service,
-                'profile' => $profile,
-                'remote_address' => $remoteAddress,
-            ];
-        } catch (Exception $e) {
-            \Log::error('Failed to create PPPoE secret', [
-                'name' => $name,
-                'profile' => $profile,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            throw $e;
-        }
-    }
-
-    /**
-     * Get all PPPoE secrets as a map of username => secret data
-     */
-    public function getAllPPPoESecrets()
-    {
-        try {
-            $response = $this->command('/ppp/secret/print');
+            $response = $this->command('/ppp/secret/print', [], $forceFresh);
             $secrets = [];
             foreach ($response as $item) {
                 $name = $item['name'] ?? null;
@@ -1227,104 +1038,6 @@ class MikroTikService
                     $secrets[$name] = [
                         'id' => $item['.id'] ?? null,
                         'name' => $name,
-                        'profile' => $item['profile'] ?? null,
-                        'disabled' => $item['disabled'] ?? 'false',
-                        'remote_address' => $item['remote-address'] ?? null,
-                    ];
-                }
-            }
-            return $secrets;
-        } catch (Exception $e) {
-            \Log::error('Failed to get all PPPoE secrets', ['error' => $e->getMessage()]);
-            return null;
-        }
-    }
-
-    /**
-     * Get PPPoE secret by username
-     */
-    public function getPPPoESecret($username)
-    {
-        try {
-            \Log::info('Getting all PPPoE secrets to find username', ['username' => $username]);
-            
-            // Get all secrets and filter manually
-            $response = $this->command('/ppp/secret/print');
-            
-            \Log::debug('Got secrets from MikroTik', ['count' => count($response)]);
-            
-            if (empty($response)) {
-                \Log::warning('No secrets found in MikroTik');
-                return null;
-            }
-            
-            // Find secret by username
-            $secret = null;
-            foreach ($response as $item) {
-                if (isset($item['name']) && $item['name'] === $username) {
-                    $secret = $item;
-                    break;
-                }
-            }
-            
-            if (!$secret) {
-                \Log::warning('Secret not found', [
-                    'username' => $username,
-                    'total_secrets' => count($response)
-                ]);
-                return null;
-            }
-            
-            \Log::info('Secret found', ['username' => $username, 'secret' => $secret]);
-            
-            return [
-                'id' => $secret['.id'] ?? null,
-                'name' => $secret['name'] ?? null,
-                'password' => $secret['password'] ?? null,
-                'service' => $secret['service'] ?? null,
-                'profile' => $secret['profile'] ?? null,
-                'remote_address' => $secret['remote-address'] ?? null,
-                'local_address' => $secret['local-address'] ?? null,
-                'caller_id' => $secret['caller-id'] ?? null,
-                'disabled' => $secret['disabled'] ?? 'false',
-            ];
-        } catch (Exception $e) {
-            \Log::error('Failed to get PPPoE secret', [
-                'username' => $username,
-                'error' => $e->getMessage()
-            ]);
-            return null;
-        }
-    }
-
-    /**
-     * Get all PPPoE secrets with profile "Isolir"
-     */
-    public function getIsolatedSecrets()
-    {
-        try {
-            \Log::info('Getting isolated PPPoE secrets (profile: Isolir)');
-            
-            // Get all secrets
-            $response = $this->command('/ppp/secret/print');
-            
-            \Log::debug('Got secrets from MikroTik', ['count' => count($response)]);
-            
-            if (empty($response)) {
-                \Log::warning('No secrets found in MikroTik');
-                return [];
-            }
-            
-            // Filter secrets with profile "Isolir"
-            $isolatedSecrets = [];
-            foreach ($response as $item) {
-                $profile = $item['profile'] ?? '';
-                
-                // Check if profile is "Isolir" (case-insensitive)
-                if (strtolower($profile) === 'isolir') {
-                    $isolatedSecrets[] = [
-                        'id' => $item['.id'] ?? null,
-                        'name' => $item['name'] ?? null,
                         'password' => $item['password'] ?? null,
                         'service' => $item['service'] ?? null,
                         'profile' => $item['profile'] ?? null,
@@ -1335,13 +1048,247 @@ class MikroTikService
                     ];
                 }
             }
-            
-            \Log::info('Found isolated secrets', ['count' => count($isolatedSecrets)]);
-            
+
+            if ($cacheTtl > 0) {
+                Cache::put($cacheKey, $secrets, $cacheTtl);
+            }
+
+            return $secrets;
+        } catch (Exception $e) {
+            Log::error('Failed to get all PPPoE secrets', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Get PPPoE secret by username (uses cached secrets map first)
+     */
+    public function getPPPoESecret($username, bool $forceFresh = false)
+    {
+        try {
+            $normalizedUsername = strtolower(trim((string) $username));
+            if ($normalizedUsername === '') {
+                return null;
+            }
+
+            // Look up in cached secrets map
+            $allSecrets = $this->getAllPPPoESecrets($forceFresh);
+            if (is_array($allSecrets)) {
+                foreach ($allSecrets as $name => $data) {
+                    if (strtolower(trim((string) $name)) === $normalizedUsername) {
+                        return $data;
+                    }
+                }
+            }
+
+            // If not found in cache and not already forceFresh, try a single fresh fetch
+            if (!$forceFresh) {
+                $allSecrets = $this->getAllPPPoESecrets(true);
+                if (is_array($allSecrets)) {
+                    foreach ($allSecrets as $name => $data) {
+                        if (strtolower(trim((string) $name)) === $normalizedUsername) {
+                            return $data;
+                        }
+                    }
+                }
+            }
+
+            return null;
+        } catch (Exception $e) {
+            Log::error('Failed to get PPPoE secret for ' . $username, ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Get all PPPoE secrets with profile "Isolir" (uses cached secrets map)
+     */
+    public function getIsolatedSecrets(bool $forceFresh = false)
+    {
+        try {
+            $allSecrets = $this->getAllPPPoESecrets($forceFresh);
+            if (!$allSecrets) {
+                return [];
+            }
+
+            $isolatedSecrets = [];
+            foreach ($allSecrets as $secret) {
+                $profile = strtolower(trim((string) ($secret['profile'] ?? '')));
+                if ($profile === 'isolir') {
+                    $isolatedSecrets[] = $secret;
+                }
+            }
+
             return $isolatedSecrets;
         } catch (Exception $e) {
-            \Log::error('Failed to get isolated PPPoE secrets', [
-                'error' => $e->getMessage()
+            Log::error('Failed to get isolated PPPoE secrets', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /**
+     * Get last used IP address from PPPoE secrets
+     */
+    public function getLastIpAddress()
+    {
+        try {
+            $secrets = $this->getAllPPPoESecrets() ?? [];
+            $lastIp = '10.1.0.9';
+
+            foreach ($secrets as $secret) {
+                if (!empty($secret['remote_address'])) {
+                    $ip = $secret['remote_address'];
+                    if (ip2long($ip) >= ip2long('10.1.0.10') && ip2long($ip) > ip2long($lastIp)) {
+                        $lastIp = $ip;
+                    }
+                }
+            }
+
+            return $lastIp;
+        } catch (Exception $e) {
+            Log::error('Failed to get last IP: ' . $e->getMessage());
+            return '10.1.0.9';
+        }
+    }
+
+    /**
+     * Check if IP address is already used
+     */
+    public function isIpAddressUsed($ip)
+    {
+        try {
+            $secrets = $this->getAllPPPoESecrets() ?? [];
+            foreach ($secrets as $secret) {
+                if (isset($secret['remote_address']) && $secret['remote_address'] === $ip) {
+                    return true;
+                }
+            }
+
+            $actives = $this->getActivePPPoEConnections() ?? [];
+            foreach ($actives as $active) {
+                if (isset($active['address']) && $active['address'] === $ip) {
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (Exception $e) {
+            Log::error('Failed to check IP usage: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get next available IP address
+     */
+    public function getNextIpAddress()
+    {
+        $lastIp = $this->getLastIpAddress();
+        $parts = explode('.', $lastIp);
+        $lastOctet = (int) $parts[3];
+        $nextOctet = max(10, $lastOctet + 1);
+
+        $maxTries = 245;
+        for ($i = 0; $i < $maxTries; $i++) {
+            $testOctet = $nextOctet + $i;
+            if ($testOctet > 254) {
+                break;
+            }
+
+            $parts[3] = $testOctet;
+            $testIp = implode('.', $parts);
+
+            if (!$this->isIpAddressUsed($testIp)) {
+                Log::info('Found available IP', ['ip' => $testIp]);
+                return $testIp;
+            }
+        }
+
+        throw new Exception('No available IP address found in range 10.1.0.10-254');
+    }
+
+    /**
+     * Resolve a package name to an exact MikroTik profile name.
+     */
+    public function resolveProfileName($packageName)
+    {
+        try {
+            $profiles = $this->command('/ppp/profile/print');
+            $availableProfiles = array_map(fn($p) => $p['name'] ?? '', $profiles);
+
+            if (in_array($packageName, $availableProfiles)) {
+                return $packageName;
+            }
+
+            foreach ($availableProfiles as $ap) {
+                if (strtolower($ap) === strtolower($packageName)) {
+                    return $ap;
+                }
+            }
+
+            $number = preg_replace('/[^0-9]/', '', $packageName);
+            if ($number) {
+                foreach ($availableProfiles as $ap) {
+                    if (stripos($ap, $number) !== false && strtolower($ap) !== 'isolir' && strtolower($ap) !== 'default') {
+                        return $ap;
+                    }
+                }
+            }
+
+            return $packageName;
+        } catch (Exception $e) {
+            Log::warning('Failed to resolve profile name', ['error' => $e->getMessage()]);
+            return $packageName;
+        }
+    }
+
+    /**
+     * Create a PPPoE secret on MikroTik
+     */
+    public function createPPPoESecret($name, $password, $service, $profile, $remoteAddress)
+    {
+        try {
+            if ($this->isIpAddressUsed($remoteAddress)) {
+                throw new Exception("IP address '{$remoteAddress}' sudah digunakan. Sistem akan mencoba mencari IP lain.");
+            }
+
+            $existingSecret = $this->getPPPoESecret($name);
+            if ($existingSecret) {
+                throw new Exception("Username '{$name}' sudah digunakan. Silakan coba lagi untuk generate username baru.");
+            }
+
+            $params = [
+                'name' => $name,
+                'password' => $password,
+                'service' => $service,
+                'profile' => $profile,
+                'remote-address' => $remoteAddress,
+            ];
+
+            $response = $this->command('/ppp/secret/add', $params);
+
+            // Invalidate cache on creation
+            $this->clearMikrotikCache();
+
+            Log::info('PPPoE Secret Created Successfully', [
+                'name' => $name,
+                'profile' => $profile,
+                'remote-address' => $remoteAddress,
+            ]);
+
+            return [
+                'success' => true,
+                'name' => $name,
+                'password' => $password,
+                'service' => $service,
+                'profile' => $profile,
+                'remote_address' => $remoteAddress,
+            ];
+        } catch (Exception $e) {
+            Log::error('Failed to create PPPoE secret', [
+                'name' => $name,
+                'profile' => $profile,
+                'error' => $e->getMessage(),
             ]);
             throw $e;
         }
@@ -1361,7 +1308,8 @@ class MikroTikService
             '.id' => $secret['id'],
         ]);
 
-        \Log::info('PPPoE secret removed', ['username' => $username]);
+        $this->clearMikrotikCache();
+        Log::info('PPPoE secret removed', ['username' => $username]);
 
         return true;
     }
@@ -1372,38 +1320,32 @@ class MikroTikService
     public function isolateUser($username)
     {
         try {
-            \Log::info('Isolating user', ['username' => $username]);
-            
-            // Get current secret to find ID and current profile
             $secret = $this->getPPPoESecret($username);
             if (!$secret) {
                 throw new Exception("Secret not found for username: {$username}");
             }
-            
+
             $secretId = $secret['id'];
             $originalProfile = $secret['profile'];
-            
-            \Log::info('Found secret', ['id' => $secretId, 'current_profile' => $originalProfile]);
-            
-            // Change profile to "Isolir"
+
             $this->command('/ppp/secret/set', [
                 '.id' => $secretId,
                 'profile' => 'Isolir'
             ]);
-            
-            \Log::info('Profile changed to Isolir', ['username' => $username]);
 
             $this->disconnectActiveSession($username);
-            
+            $this->clearMikrotikCache();
+
+            Log::info('Profile changed to Isolir', ['username' => $username]);
+
             return [
                 'success' => true,
                 'username' => $username,
                 'original_profile' => $originalProfile,
                 'new_profile' => 'Isolir'
             ];
-            
         } catch (Exception $e) {
-            \Log::error('Failed to isolate user', [
+            Log::error('Failed to isolate user', [
                 'username' => $username,
                 'error' => $e->getMessage()
             ]);
@@ -1417,36 +1359,30 @@ class MikroTikService
     public function unrestrictUser($username, $targetProfile)
     {
         try {
-            \Log::info('Unrestricting user', ['username' => $username, 'target_profile' => $targetProfile]);
-            
-            // Get current secret to find ID
             $secret = $this->getPPPoESecret($username);
             if (!$secret) {
                 throw new Exception("Secret not found for username: {$username}");
             }
-            
+
             $secretId = $secret['id'];
-            
-            \Log::info('Found secret', ['id' => $secretId, 'current_profile' => $secret['profile']]);
-            
-            // Change profile back to target profile
+
             $this->command('/ppp/secret/set', [
                 '.id' => $secretId,
                 'profile' => $targetProfile
             ]);
-            
-            \Log::info('Profile restored', ['username' => $username, 'new_profile' => $targetProfile]);
 
             $this->disconnectActiveSession($username);
-            
+            $this->clearMikrotikCache();
+
+            Log::info('Profile restored', ['username' => $username, 'new_profile' => $targetProfile]);
+
             return [
                 'success' => true,
                 'username' => $username,
                 'profile' => $targetProfile
             ];
-            
         } catch (Exception $e) {
-            \Log::error('Failed to unrestrict user', [
+            Log::error('Failed to unrestrict user', [
                 'username' => $username,
                 'error' => $e->getMessage()
             ]);
@@ -1457,18 +1393,18 @@ class MikroTikService
     private function disconnectActiveSession(string $username): void
     {
         try {
-            $activeSessions = $this->command('/ppp/active/print');
+            $activeSessions = $this->command('/ppp/active/print', [], false);
             foreach ($activeSessions as $session) {
                 if (isset($session['name']) && $session['name'] === $username) {
                     $sessionId = $session['.id'] ?? null;
                     if ($sessionId) {
                         $this->command('/ppp/active/remove', ['.id' => $sessionId]);
-                        \Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
+                        Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
                     }
                 }
             }
         } catch (Exception $e) {
-            \Log::warning('Failed to disconnect active session', [
+            Log::warning('Failed to disconnect active session', [
                 'username' => $username,
                 'error' => $e->getMessage(),
             ]);
@@ -1482,25 +1418,12 @@ class MikroTikService
             return;
         }
 
-        // Don't disconnect automatically - let connection pool manage it
-        // Connection will be reused for configured lifetime
         $poolKey = $this->getPoolKey();
-        
         if (isset(self::$lastActivityTime[$poolKey])) {
             $timeSinceLastActivity = time() - self::$lastActivityTime[$poolKey];
-            
-            // Only disconnect if connection is too old
             if ($timeSinceLastActivity >= $this->connectionLifetime) {
-                \Log::info('Closing expired MikroTik connection', [
-                    'age_seconds' => $timeSinceLastActivity
-                ]);
                 $this->cleanupPoolConnection($poolKey);
                 $this->isConnected = false;
-            } else {
-                \Log::debug('Keeping MikroTik connection alive in pool', [
-                    'age_seconds' => $timeSinceLastActivity,
-                    'remaining_seconds' => $this->connectionLifetime - $timeSinceLastActivity
-                ]);
             }
         } else {
             $this->disconnect();

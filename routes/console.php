@@ -14,22 +14,22 @@ Schedule::command('finance:snapshot-balance')
     ->withoutOverlapping();
 
 Schedule::command('mikrotik:health-check')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
 Schedule::command('incident:run-odp-engine')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
 Schedule::command('billing:dunning-run')
-    ->everyMinute()
+    ->hourly()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
 Schedule::command('complaints:sla-watch')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
@@ -39,7 +39,7 @@ Schedule::command('system:health-check')
     ->withoutOverlapping();
 
 Schedule::command('customer:usage-snapshot')
-    ->everyMinute()
+    ->everyFiveMinutes()
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 

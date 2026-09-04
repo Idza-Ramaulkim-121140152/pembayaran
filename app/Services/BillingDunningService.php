@@ -509,6 +509,12 @@ class BillingDunningService
         }
 
         $mikrotik = new MikroTikService();
+        $allSecrets = $mikrotik->getAllPPPoESecrets() ?? [];
+        $secretsByUsername = [];
+        foreach ($allSecrets as $name => $secretData) {
+            $secretsByUsername[strtolower(trim((string) $name))] = $secretData;
+        }
+
         foreach ($customers as $customer) {
             if ((bool) ($customer->billing_auto_disabled ?? false)) {
                 $summary['auto_isolate_skipped_auto_disabled']++;
@@ -532,7 +538,8 @@ class BillingDunningService
             }
 
             try {
-                $secret = $mikrotik->getPPPoESecret((string) $customer->pppoe_username);
+                $pppoeUsername = strtolower(trim((string) $customer->pppoe_username));
+                $secret = $secretsByUsername[$pppoeUsername] ?? null;
                 if (!$secret) {
                     continue;
                 }
