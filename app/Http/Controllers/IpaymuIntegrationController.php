@@ -2,17 +2,22 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Invoice;
 use App\Models\SiteSetting;
+use App\Services\IpaymuPaymentProcessor;
 use App\Services\IpaymuService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class IpaymuIntegrationController extends Controller
 {
     protected IpaymuService $ipaymu;
+    protected IpaymuPaymentProcessor $processor;
 
-    public function __construct(IpaymuService $ipaymu)
+    public function __construct(IpaymuService $ipaymu, IpaymuPaymentProcessor $processor)
     {
         $this->ipaymu = $ipaymu;
+        $this->processor = $processor;
     }
 
     /**
@@ -28,12 +33,14 @@ class IpaymuIntegrationController extends Controller
 
         $appUrl = config('app.url', 'https://rumahkitanet.site');
         $serverIp = $this->ipaymu->getServerIp();
+        $isActive = $this->processor->isPaymentGatewayActive();
 
         // Perform balance & connection check
         $balanceResult = $this->ipaymu->checkBalance();
 
         return response()->json([
             'success' => true,
+            'is_active' => $isActive,
             'config' => [
                 'va' => $va,
                 'api_key' => $apiKey,
@@ -56,6 +63,27 @@ class IpaymuIntegrationController extends Controller
                 'message' => $balanceResult['response']['Message'] ?? ($balanceResult['curl_error'] ?: 'Unknown response'),
                 'raw_debug' => $balanceResult,
             ],
+        ]);
+    }
+
+    /**
+     * Toggle active / inactive state of payment gateway
+     */
+    public function toggleActive(Request $request)
+    {
+        $request->validate([
+            'active' => 'required|boolean',
+        ]);
+
+        $active = (bool) $request->input('active');
+        $this->processor->setPaymentGatewayActive($active);
+
+        return response()->json([
+            'success' => true,
+            'is_active' => $active,
+            'message' => $active
+                ? 'Payment Gateway iPaymu berhasil DIAKTIFKAN. Opsi pembayaran online sekarang tersedia untuk pelanggan.'
+                : 'Payment Gateway iPaymu berhasil DINONAKTIFKAN. Pelanggan hanya dapat menggunakan metode pembayaran transfer manual.',
         ]);
     }
 
@@ -103,7 +131,7 @@ class IpaymuIntegrationController extends Controller
             'buyer_phone' => 'nullable|string|max:20',
             'buyer_email' => 'nullable|email|max:100',
             'product_name' => 'nullable|string|max:150',
-            'va_bank' => 'nullable|string|max:20', // bca, bri, mandiri, bni, etc.
+            'va_bank' => 'nullable|string|max:20',
         ]);
 
         $amount = (float) $validated['amount'];
@@ -168,6 +196,21 @@ class IpaymuIntegrationController extends Controller
     /**
      * Check Transaction Status
      */
+    public function checkTransaction(Request $request)
+    {
+        $validated = $request->validate([
+            'transaction_id' => 'required|string|max:100',
+        ]);
+
+        $result = $this->ipaymu->checkTransaction($validated['transaction_id']);
+
+        return response()->json([
+            'success' => $result['success'],
+            'http_code' => $result['http_code'],
+            'result' => $result,
+        ]);
+    }
+
     /**
      * Handle Customer Return URL after payment checkout
      */
@@ -176,9 +219,27 @@ class IpaymuIntegrationController extends Controller
         $status = $request->query('status', 'berhasil');
         $trxId = $request->query('trx_id');
         $sid = $request->query('sid');
+        $invoiceLink = $request->query('invoice');
         $paymentMethod = $request->query('payment_method') ?: $request->query('tipe');
         $isSuccess = in_array(strtolower($status), ['berhasil', 'success', 'settlement', 'paid']);
         $isCancel = in_array(strtolower($status), ['batal', 'cancel', 'cancelled', 'failed', 'gagal']);
+
+        // If success and linked to an invoice, process confirmation immediately
+        if ($isSuccess) {
+            $invoice = null;
+            if ($invoiceLink) {
+                $invoice = Invoice::where('invoice_link', $invoiceLink)->first();
+            } elseif ($sid && str_starts_with($sid, 'INV-')) {
+                $parts = explode('-', $sid);
+                if (isset($parts[1]) && is_numeric($parts[1])) {
+                    $invoice = Invoice::find($parts[1]);
+                }
+            }
+
+            if ($invoice && $invoice->status !== 'paid') {
+                $this->processor->processSuccessfulPayment($invoice, $request->all());
+            }
+        }
 
         return view('payment.ipaymu_return', [
             'status' => $status,
@@ -211,7 +272,30 @@ class IpaymuIntegrationController extends Controller
     public function handleNotify(Request $request)
     {
         $payload = $request->all();
-        \Illuminate\Support\Facades\Log::info('iPaymu Webhook Notification Received:', $payload);
+        Log::info('iPaymu Webhook Notification Received:', $payload);
+
+        $status = strtolower((string) ($payload['status'] ?? $payload['status_code'] ?? ''));
+        $sid = (string) ($payload['sid'] ?? $payload['session_id'] ?? $payload['reference_id'] ?? '');
+        $trxId = (string) ($payload['trx_id'] ?? $payload['transaction_id'] ?? '');
+
+        $isPaid = in_array($status, ['berhasil', 'success', 'settlement', 'paid', '1', '200'], true);
+
+        if ($isPaid) {
+            $invoice = null;
+            // Match reference id pattern: INV-{id}-{timestamp}
+            if ($sid && preg_match('/INV-(\d+)/i', $sid, $matches)) {
+                $invoice = Invoice::find($matches[1]);
+            } elseif (!empty($payload['reference_id']) && preg_match('/INV-(\d+)/i', $payload['reference_id'], $matches)) {
+                $invoice = Invoice::find($matches[1]);
+            }
+
+            if ($invoice) {
+                $result = $this->processor->processSuccessfulPayment($invoice, $payload);
+                Log::info("iPaymu Webhook: Invoice #{$invoice->id} successfully processed:", $result);
+            } else {
+                Log::warning("iPaymu Webhook: No matching invoice found for reference ID '{$sid}'");
+            }
+        }
 
         return response()->json([
             'status' => 'success',

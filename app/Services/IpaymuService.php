@@ -7,35 +7,36 @@ use Illuminate\Support\Facades\Log;
 
 class IpaymuService
 {
-    protected string $va;
-    protected string $apiKey;
-    protected string $env; // 'production' or 'sandbox'
-
-    public function __construct()
-    {
-        $this->va = SiteSetting::get('ipaymu_va', env('IPAYMU_VA', '1179002377569258'));
-        $this->apiKey = SiteSetting::get('ipaymu_api_key', env('IPAYMU_API_KEY', '6670407D-18BA-4683-A5A8-E7EDEA2C66C7'));
-        $this->env = SiteSetting::get('ipaymu_env', env('IPAYMU_ENV', 'production'));
-    }
-
     public function getVa(): string
     {
-        return $this->va;
+        try {
+            return SiteSetting::get('ipaymu_va', env('IPAYMU_VA', '1179002377569258'));
+        } catch (\Throwable $e) {
+            return env('IPAYMU_VA', '1179002377569258');
+        }
     }
 
     public function getApiKey(): string
     {
-        return $this->apiKey;
+        try {
+            return SiteSetting::get('ipaymu_api_key', env('IPAYMU_API_KEY', '6670407D-18BA-4683-A5A8-E7EDEA2C66C7'));
+        } catch (\Throwable $e) {
+            return env('IPAYMU_API_KEY', '6670407D-18BA-4683-A5A8-E7EDEA2C66C7');
+        }
     }
 
     public function getEnv(): string
     {
-        return $this->env;
+        try {
+            return SiteSetting::get('ipaymu_env', env('IPAYMU_ENV', 'production'));
+        } catch (\Throwable $e) {
+            return env('IPAYMU_ENV', 'production');
+        }
     }
 
     public function getBaseUrl(): string
     {
-        return $this->env === 'sandbox'
+        return $this->getEnv() === 'sandbox'
             ? 'https://sandbox.ipaymu.com/api/v2'
             : 'https://my.ipaymu.com/api/v2';
     }
@@ -46,10 +47,13 @@ class IpaymuService
     public function generateSignature(string $method, array $body = []): array
     {
         $method = strtoupper($method);
+        $va = $this->getVa();
+        $apiKey = $this->getApiKey();
+
         $jsonBody = !empty($body) ? json_encode($body, JSON_UNESCAPED_SLASHES) : '';
         $bodyHash = strtolower(hash('sha256', $jsonBody));
-        $stringToSign = "{$method}:{$this->va}:{$bodyHash}:{$this->apiKey}";
-        $signature = hash_hmac('sha256', $stringToSign, $this->apiKey);
+        $stringToSign = "{$method}:{$va}:{$bodyHash}:{$apiKey}";
+        $signature = hash_hmac('sha256', $stringToSign, $apiKey);
         $timestamp = date('YmdHis');
 
         return [
@@ -71,9 +75,9 @@ class IpaymuService
 
         $headers = [
             'Content-Type: application/json',
-            'va: ' . $this->va,
+            'va: ' . $this->getVa(),
             'signature: ' . $sigData['signature'],
-            'timestamp: ' . $sigData['timestamp'],
+            'timestamp' => $sigData['timestamp'],
         ];
 
         $ch = curl_init($url);
@@ -121,7 +125,7 @@ class IpaymuService
     public function checkBalance(): array
     {
         return $this->request('/balance', 'POST', [
-            'account' => $this->va,
+            'account' => $this->getVa(),
         ]);
     }
 
@@ -162,8 +166,8 @@ class IpaymuService
             'email' => $params['email'] ?? 'test@rumahkitanet.com',
             'amount' => $params['amount'] ?? 10000,
             'notifyUrl' => $params['notifyUrl'] ?? "{$appUrl}/api/ipaymu/notify",
-            'paymentMethod' => $params['paymentMethod'] ?? 'qris', // 'qris', 'va', 'cstore', etc.
-            'paymentChannel' => $params['paymentChannel'] ?? 'mpm', // 'mpm', 'bca', 'bri', 'mandiri', etc.
+            'paymentMethod' => $params['paymentMethod'] ?? 'qris',
+            'paymentChannel' => $params['paymentChannel'] ?? 'mpm',
             'referenceId' => $params['referenceId'] ?? 'DIRECT-TEST-' . time(),
             'description' => $params['description'] ?? 'Uji Coba Direct Payment iPaymu',
         ];
@@ -178,7 +182,7 @@ class IpaymuService
     {
         return $this->request('/transaction', 'POST', [
             'transactionId' => $transactionId,
-            'account' => $this->va,
+            'account' => $this->getVa(),
         ]);
     }
 

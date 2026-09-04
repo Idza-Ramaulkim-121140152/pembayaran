@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { 
     Clock, Download, Upload, Phone, CheckCircle, AlertCircle, XCircle,
     QrCode, Building2, Copy, Check, CreditCard, ChevronRight, Wifi,
-    Calendar, User, MapPin, FileText, Printer
+    Calendar, User, MapPin, FileText, Printer, Zap, Sparkles, ExternalLink,
+    RefreshCw, ShieldCheck, ArrowRight
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -17,20 +18,62 @@ function InvoicePage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(null);
+
+    // Payment Gateway (iPaymu) State
+    const [gatewayActive, setGatewayActive] = useState(false);
+    const [paymentTab, setPaymentTab] = useState('gateway'); // 'gateway' | 'manual'
+    const [gatewayChannel, setGatewayChannel] = useState('qris'); // 'qris' | 'va' | 'redirect'
+    const [gatewayBank, setGatewayBank] = useState('bca');
+    const [gatewayLoading, setGatewayLoading] = useState(false);
+    const [gatewayData, setGatewayData] = useState(null);
+    const [gatewayError, setGatewayError] = useState('');
+    const [checkingStatus, setCheckingStatus] = useState(false);
+
+    // Manual Payment Modal State
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [paidAmount, setPaidAmount] = useState('');
     const [file, setFile] = useState(null);
     const [filePreview, setFilePreview] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [copiedField, setCopiedField] = useState(null);
     const [noProofIntent, setNoProofIntent] = useState(false);
     const [fieldErrors, setFieldErrors] = useState({});
     const [formError, setFormError] = useState('');
     const [fileInfo, setFileInfo] = useState(null);
 
+    const pollingRef = useRef(null);
+
     useEffect(() => {
         fetchData();
+        return () => {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+        };
     }, [invoiceLink]);
+
+    // Auto-poll status if gateway session is active and invoice is unpaid
+    useEffect(() => {
+        if (gatewayData && invoice && invoice.status !== 'paid') {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            pollingRef.current = setInterval(async () => {
+                try {
+                    const res = await fetch(`/api/invoice/${invoiceLink}`);
+                    if (res.ok) {
+                        const json = await res.json();
+                        if (json.data?.status === 'paid') {
+                            setInvoice(json.data);
+                            clearInterval(pollingRef.current);
+                        }
+                    }
+                } catch (e) {
+                    // ignore polling errors
+                }
+            }, 5000);
+        }
+        return () => {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+        };
+    }, [gatewayData, invoice, invoiceLink]);
 
     const MAX_PROOF_SIZE = 2 * 1024 * 1024;
     const ALLOWED_PROOF_MIME_TYPES = new Set([
@@ -100,8 +143,12 @@ function InvoicePage() {
             setInvoice(invoiceData.data);
             setPaidAmount(invoiceData.data.amount);
             setPaymentMethods(methodsData);
+
+            const isPgActive = invoiceData.payment_gateway?.is_active ?? false;
+            setGatewayActive(isPgActive);
+            setPaymentTab(isPgActive ? 'gateway' : 'manual');
             
-            // Set default payment method
+            // Set default payment method for manual
             const defaultMethod = methodsData.find(m => m.is_default) || methodsData[0];
             if (defaultMethod) setSelectedMethod(defaultMethod);
         } catch (err) {
@@ -112,11 +159,61 @@ function InvoicePage() {
         }
     };
 
+    const handleCreateIpaymuPayment = async (channelOverride = null, bankOverride = null) => {
+        const methodToUse = channelOverride || gatewayChannel;
+        const bankToUse = bankOverride || gatewayBank;
+
+        setGatewayLoading(true);
+        setGatewayError('');
+        setGatewayData(null);
+
+        try {
+            const res = await fetch(`/api/invoice/${invoiceLink}/pay-ipaymu`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    payment_method: methodToUse,
+                    va_bank: bankToUse,
+                }),
+            });
+
+            const json = await res.json();
+            if (json.success && json.response?.Data) {
+                setGatewayData(json.response.Data);
+            } else if (json.message) {
+                setGatewayError(json.message);
+            } else {
+                setGatewayError('Gagal membuat sesi pembayaran online. Silakan coba metode lain.');
+            }
+        } catch (err) {
+            setGatewayError('Koneksi ke server pembayaran terganggu. Silakan gunakan metode manual.');
+        } finally {
+            setGatewayLoading(false);
+        }
+    };
+
+    const checkManualStatus = async () => {
+        setCheckingStatus(true);
+        try {
+            const res = await fetch(`/api/invoice/${invoiceLink}`);
+            if (res.ok) {
+                const json = await res.json();
+                setInvoice(json.data);
+                if (json.data?.status === 'paid') {
+                    setSuccess('Pembayaran Anda telah berhasil diverifikasi lunas!');
+                }
+            }
+        } finally {
+            setCheckingStatus(false);
+        }
+    };
+
     const handleFileChange = (e) => {
         const selectedFile = e.target.files[0];
-        if (!selectedFile) {
-            return;
-        }
+        if (!selectedFile) return;
 
         const validation = validateProofFile(selectedFile);
         if (!validation.valid) {
@@ -135,47 +232,55 @@ function InvoicePage() {
             type: selectedFile.type || getFileExtension(selectedFile.name),
         });
 
-        if (filePreview) {
-            URL.revokeObjectURL(filePreview);
-        }
-
-        const isHeicType = (selectedFile.type || '').toLowerCase().includes('image/heic')
-            || (selectedFile.type || '').toLowerCase().includes('image/heif');
-
-        if (selectedFile.type.startsWith('image/') && !isHeicType) {
+        if (filePreview) URL.revokeObjectURL(filePreview);
+        if (selectedFile.type?.startsWith('image/')) {
             setFilePreview(URL.createObjectURL(selectedFile));
         } else {
             setFilePreview(null);
         }
     };
 
-    const closeConfirmModal = () => {
-        setShowConfirmModal(false);
-        setFormError('');
-        setFieldErrors({});
+    const openConfirmModal = () => {
         resetFileSelection();
         setNoProofIntent(false);
+        setFieldErrors({});
+        setFormError('');
+        setShowConfirmModal(true);
     };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        setFormError('');
+    const closeConfirmModal = () => {
+        resetFileSelection();
+        setNoProofIntent(false);
         setFieldErrors({});
+        setFormError('');
+        setShowConfirmModal(false);
+    };
+
+    const handleSubmitConfirmation = async (e) => {
+        e.preventDefault();
+        setFieldErrors({});
+        setFormError('');
+
+        if (!paidAmount || Number(paidAmount) <= 0) {
+            setFieldErrors((prev) => ({ ...prev, paid_amount: 'Nominal pembayaran wajib diisi.' }));
+            return;
+        }
 
         if (!file && !noProofIntent) {
-            setFieldErrors({
-                bukti_pembayaran: 'Centang "Saya kirim tanpa bukti" jika Anda ingin melanjutkan tanpa file.',
-            });
+            setFieldErrors((prev) => ({
+                ...prev,
+                bukti_pembayaran: 'Unggah bukti pembayaran atau centang opsi kirim tanpa bukti.',
+            }));
             return;
         }
 
         try {
             setSubmitting(true);
-            setError(null);
             const formData = new FormData();
             formData.append('paid_amount', paidAmount);
-            formData.append('without_proof', noProofIntent ? '1' : '0');
+            formData.append('payment_method_id', selectedMethod?.id || '');
+            formData.append('no_proof', noProofIntent ? '1' : '0');
+
             if (file) {
                 formData.append('bukti_pembayaran', file);
             }
@@ -196,23 +301,12 @@ function InvoicePage() {
 
             if (!response.ok) {
                 if (response.status === 422 && payload?.errors) {
-                    const normalizedErrors = Object.entries(payload.errors)
-                        .reduce((acc, [key, messages]) => {
-                            acc[key] = Array.isArray(messages) ? messages[0] : messages;
-                            return acc;
-                        }, {});
+                    const normalizedErrors = Object.entries(payload.errors).reduce((acc, [key, messages]) => {
+                        acc[key] = Array.isArray(messages) ? messages[0] : messages;
+                        return acc;
+                    }, {});
                     setFieldErrors(normalizedErrors);
                     setFormError(payload?.message || 'Data konfirmasi pembayaran tidak valid.');
-                    return;
-                }
-
-                if (response.status === 419) {
-                    setFormError('Sesi formulir sudah kedaluwarsa. Silakan muat ulang halaman lalu coba lagi.');
-                    return;
-                }
-
-                if (response.status === 403) {
-                    setFormError('Akses ditolak. Anda tidak diizinkan mengirim konfirmasi pembayaran.');
                     return;
                 }
 
@@ -222,11 +316,7 @@ function InvoicePage() {
             
             closeConfirmModal();
             await fetchData();
-            const hasProof = payload?.data?.has_payment_proof === true;
-            const successMessage = hasProof
-                ? 'Status menunggu konfirmasi. Bukti pembayaran berhasil tersimpan.'
-                : 'Status menunggu konfirmasi. Bukti pembayaran tidak tersedia (sesuai pilihan Anda).';
-            setSuccess(successMessage);
+            setSuccess('Konfirmasi berhasil terkirim! Admin akan memeriksa pembayaran Anda.');
         } catch (err) {
             setFormError(err.message || 'Gagal mengirim konfirmasi pembayaran');
         } finally {
@@ -234,16 +324,20 @@ function InvoicePage() {
         }
     };
 
-    const copyToClipboard = (text) => {
+    const copyToClipboard = (text, fieldName = null) => {
         navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        if (fieldName) {
+            setCopiedField(fieldName);
+            setTimeout(() => setCopiedField(null), 2000);
+        } else {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
     };
 
     const handlePrintInvoice = () => {
         const printUrl = "/invoice/" + encodeURIComponent(invoiceLink) + "/print";
         const printWindow = window.open(printUrl, "_blank", "width=1200,height=800");
-
         if (!printWindow) {
             setError("Popup cetak diblokir browser. Izinkan popup lalu coba lagi.");
         }
@@ -278,10 +372,10 @@ function InvoicePage() {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-white border-t-transparent mx-auto mb-4"></div>
-                    <p className="text-white/80">Memuat invoice...</p>
+            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-950 flex items-center justify-center p-4">
+                <div className="text-center space-y-3">
+                    <div className="animate-spin rounded-full h-14 w-14 border-4 border-emerald-400 border-t-transparent mx-auto"></div>
+                    <p className="text-white/80 font-semibold text-sm">Memuat Tagihan Invoice...</p>
                 </div>
             </div>
         );
@@ -289,13 +383,13 @@ function InvoicePage() {
 
     if (error && !invoice) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center">
-                    <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <XCircle className="text-red-500" size={40} />
+            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-950 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center space-y-4">
+                    <div className="w-20 h-20 bg-rose-100 rounded-full flex items-center justify-center mx-auto">
+                        <XCircle className="text-rose-500" size={40} />
                     </div>
-                    <h1 className="text-2xl font-bold text-gray-900 mb-2">Invoice Tidak Ditemukan</h1>
-                    <p className="text-gray-600">{error}</p>
+                    <h1 className="text-2xl font-bold text-gray-900">Invoice Tidak Ditemukan</h1>
+                    <p className="text-gray-600 text-sm">{error}</p>
                 </div>
             </div>
         );
@@ -308,386 +402,520 @@ function InvoicePage() {
     const timeRemaining = getTimeRemaining(invoice?.due_date);
     const canSubmit = !submitting && (file || noProofIntent);
 
-    return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 py-6 sm:py-8 px-3 sm:px-4 overflow-x-clip">
-            <div className="max-w-lg mx-auto">
-                {/* Header Card */}
-                <div className="bg-white rounded-t-3xl pt-8 px-6 pb-6 relative overflow-hidden">
-                    {/* Background Pattern */}
-                    <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full -translate-y-1/2 translate-x-1/2 opacity-50"></div>
-                    <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-purple-100 to-pink-100 rounded-full translate-y-1/2 -translate-x-1/2 opacity-50"></div>
-                    
-                    {/* Logo & Title */}
-                    <div className="relative text-center mb-6">
-                        <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-14 mx-auto mb-3" />
-                        <h1 className="text-xl font-bold text-gray-900">Invoice Pembayaran</h1>
-                        <p className="text-sm text-gray-500">#{invoice?.invoice_number || invoiceLink.slice(0, 8).toUpperCase()}</p>
-                        <button
-                            type="button"
-                            onClick={handlePrintInvoice}
-                            className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium"
-                        >
-                            <Printer size={16} /> Cetak Invoice
-                        </button>
-                    </div>
+    const qrString = gatewayData?.QrString || (gatewayData?.PaymentNo?.startsWith('000201') ? gatewayData.PaymentNo : null);
+    const qrImageSrc = gatewayData?.qr_image_url || (qrString ? `https://api.qrserver.com/v1/create-qr-code/?size=350x350&data=${encodeURIComponent(qrString)}` : null);
 
-                    {/* Status Badge */}
-                    <div className="flex justify-center mb-6">
-                        {isPaid ? (
-                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-full shadow-lg shadow-green-500/30">
-                                <CheckCircle size={18} />
-                                <span className="font-semibold">Lunas</span>
-                            </div>
-                        ) : isCancelled ? (
-                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-slate-500 to-gray-500 text-white rounded-full shadow-lg shadow-slate-500/30">
-                                <XCircle size={18} />
-                                <span className="font-semibold">Invoice Tidak Aktif</span>
-                            </div>
-                        ) : isWaiting ? (
-                            <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full shadow-lg shadow-blue-500/30 animate-pulse">
-                                <Clock size={18} />
-                                <span className="font-semibold">Menunggu Konfirmasi</span>
-                            </div>
-                        ) : (
-                            <div className={`inline-flex items-center gap-2 px-4 py-2 ${timeRemaining.isLate ? 'bg-gradient-to-r from-red-500 to-orange-500 shadow-red-500/30' : 'bg-gradient-to-r from-yellow-500 to-orange-500 shadow-yellow-500/30'} text-white rounded-full shadow-lg`}>
-                                <Clock size={18} />
-                                <span className="font-semibold">{timeRemaining.text}</span>
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 py-6 sm:py-10 px-3 sm:px-4 overflow-x-clip font-sans text-slate-100">
+            <div className="max-w-xl mx-auto space-y-4">
+                
+                {/* Main Card */}
+                <div className="bg-white text-slate-900 rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
+                    
+                    {/* Header */}
+                    <div className="pt-8 px-6 pb-6 relative overflow-hidden bg-gradient-to-b from-slate-50 to-white border-b border-gray-100">
+                        <div className="text-center mb-5">
+                            <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-12 mx-auto mb-2.5" />
+                            <h1 className="text-xl font-black text-gray-900 tracking-tight">Tagihan Layanan Internet</h1>
+                            <p className="text-xs text-gray-500 font-mono font-semibold">
+                                #{invoice?.invoice_number || invoiceLink.slice(0, 10).toUpperCase()}
+                            </p>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div className="flex justify-center mb-4">
+                            {isPaid ? (
+                                <div className="inline-flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-full shadow-lg shadow-emerald-500/30">
+                                    <CheckCircle size={18} />
+                                    <span className="font-extrabold text-sm">LUNAS / PEMBAYARAN BERHASIL</span>
+                                </div>
+                            ) : isCancelled ? (
+                                <div className="inline-flex items-center gap-2 px-4 py-2 bg-slate-500 text-white rounded-full shadow-md">
+                                    <XCircle size={18} />
+                                    <span className="font-semibold text-sm">Invoice Tidak Aktif</span>
+                                </div>
+                            ) : isWaiting ? (
+                                <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-full shadow-md animate-pulse">
+                                    <Clock size={18} />
+                                    <span className="font-semibold text-sm">Menunggu Konfirmasi Admin</span>
+                                </div>
+                            ) : (
+                                <div className={`inline-flex items-center gap-2 px-4 py-2 ${timeRemaining.isLate ? 'bg-rose-500 shadow-rose-500/30' : 'bg-amber-500 shadow-amber-500/30'} text-white rounded-full shadow-md`}>
+                                    <Clock size={18} />
+                                    <span className="font-bold text-sm">{timeRemaining.text}</span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Success / Paid Notice */}
+                        {isPaid && (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center space-y-1.5 animate-in fade-in">
+                                <p className="text-sm font-extrabold text-emerald-800">
+                                    ✅ Pembayaran Tagihan Telah Terkonfirmasi
+                                </p>
+                                <p className="text-xs text-emerald-700 leading-relaxed">
+                                    Masa aktif layanan Anda telah diperpanjang. Jika sebelumnya perangkat/layanan mengalami isolir, sistem otomatis telah mencabut isolir tersebut.
+                                </p>
                             </div>
                         )}
-                    </div>
 
-                    {/* Rejection Notice */}
-                    {isRejected && !isPaid && (
-                        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6">
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="text-red-500 shrink-0 mt-0.5" size={20} />
-                                <div>
-                                    <p className="font-semibold text-red-700">Pembayaran Ditolak</p>
-                                    <p className="text-sm text-red-600 mt-1">{invoice.tolak_info}</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {isCancelled && (
-                        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-6">
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="text-gray-500 shrink-0 mt-0.5" size={20} />
-                                <div>
-                                    <p className="font-semibold text-gray-700">Invoice Sudah Dinonaktifkan</p>
-                                    <p className="text-sm text-gray-600 mt-1">Tagihan ini sudah digantikan oleh invoice baru. Silakan gunakan link invoice terbaru dari admin.</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Alerts */}
-                    {error && <Alert type="error" message={error} onClose={() => setError(null)} className="mb-4" />}
-                    {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} className="mb-4" />}
-
-                    {/* Customer Info */}
-                    <div className="bg-gradient-to-r from-gray-50 to-slate-50 rounded-2xl p-4 mb-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                                    <User className="text-blue-600" size={20} />
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-500">Pelanggan</p>
-                                    <p className="font-semibold text-gray-900 text-sm break-words">{invoice?.customer?.name}</p>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
-                                    <Wifi className="text-green-600" size={20} />
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-500">Paket</p>
-                                    <p className="font-semibold text-gray-900 text-sm">{invoice?.customer?.package_type || '-'}</p>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-                                    <Calendar className="text-purple-600" size={20} />
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-500">Periode</p>
-                                    <p className="font-semibold text-gray-900 text-sm">{formatDate(invoice?.invoice_date)}</p>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-orange-100 rounded-xl flex items-center justify-center">
-                                    <Clock className="text-orange-600" size={20} />
-                                </div>
-                                <div>
-                                    <p className="text-xs text-gray-500">Jatuh Tempo</p>
-                                    <p className="font-semibold text-gray-900 text-sm">{formatDate(invoice?.due_date)}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Total Amount */}
-                    <div className="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-5 text-white text-center shadow-lg shadow-indigo-500/30">
-                        <p className="text-sm text-white/80 mb-1">Total Tagihan</p>
-                        <p className="text-3xl font-bold">{formatCurrency(invoice?.amount || 0)}</p>
-                    </div>
-                </div>
-
-                {/* Payment Methods Section - Only show if not paid */}
-                {!isPaid && !isCancelled && (
-                    <div className="bg-gray-50 px-6 py-6">
-                        <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                            <CreditCard size={20} className="text-indigo-600" />
-                            Pilih Metode Pembayaran
-                        </h3>
-                        
-                        <div className="space-y-3">
-                            {paymentMethods.map((method) => (
-                                <button
-                                    key={method.id}
-                                    onClick={() => setSelectedMethod(method)}
-                                    className={`w-full p-4 rounded-2xl border-2 transition-all text-left ${
-                                        selectedMethod?.id === method.id 
-                                            ? 'border-indigo-500 bg-indigo-50 shadow-lg shadow-indigo-500/20' 
-                                            : 'border-gray-200 bg-white hover:border-gray-300'
-                                    }`}
-                                >
-                                    <div className="flex items-center gap-4">
-                                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                                            method.type === 'qris' ? 'bg-purple-100' : 'bg-blue-100'
-                                        }`}>
-                                            {method.type === 'qris' 
-                                                ? <QrCode className="text-purple-600" size={24} />
-                                                : <Building2 className="text-blue-600" size={24} />
-                                            }
-                                        </div>
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-gray-900">
-                                                {method.type === 'qris' ? 'QRIS' : method.bank_name}
-                                            </p>
-                                            {method.type === 'bank_transfer' && (
-                                                <p className="text-sm text-gray-500">{method.account_name}</p>
-                                            )}
-                                            {method.type === 'qris' && (
-                                                <p className="text-sm text-gray-500">Semua aplikasi e-wallet</p>
-                                            )}
-                                        </div>
-                                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                                            selectedMethod?.id === method.id
-                                                ? 'border-indigo-500 bg-indigo-500'
-                                                : 'border-gray-300'
-                                        }`}>
-                                            {selectedMethod?.id === method.id && (
-                                                <Check className="text-white" size={14} />
-                                            )}
-                                        </div>
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Payment Details - Only show if not paid and method selected */}
-                {!isPaid && !isCancelled && selectedMethod && (
-                    <div className="bg-white px-6 py-6 border-t border-gray-100">
-                        {selectedMethod.type === 'qris' ? (
-                            <div className="text-center">
-                                <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 inline-block shadow-lg mb-4">
-                                    <img 
-                                        src={selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg'} 
-                                        alt="QRIS" 
-                                        className="w-56 h-56 object-contain"
-                                    />
-                                </div>
-                                <p className="text-sm text-gray-600 mb-4">
-                                    Scan QR Code dengan aplikasi pembayaran favorit Anda
-                                </p>
+                        {/* Actions: Save PDF & Print */}
+                        <div className="flex items-center justify-center gap-2.5 mt-4">
+                            {invoice?.document_token && (
                                 <a
-                                    href={selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg'}
-                                    download
-                                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded-xl shadow-lg shadow-yellow-500/30 hover:shadow-xl transition-all"
+                                    href={`/invoice-documents/${invoice.document_token}/download`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition shadow-xs"
                                 >
-                                    <Download size={20} />
-                                    Unduh QRIS
+                                    <Download size={14} />
+                                    <span>Simpan / Unduh PDF</span>
                                 </a>
+                            )}
+                            <button
+                                type="button"
+                                onClick={handlePrintInvoice}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition shadow-xs"
+                            >
+                                <Printer size={14} />
+                                <span>Cetak Invoice</span>
+                            </button>
+                        </div>
+
+                        {/* Customer & Package Info */}
+                        <div className="bg-gray-50 rounded-2xl p-4 mt-5 border border-gray-100 grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                                <p className="text-[10px] text-gray-500 font-bold uppercase">Pelanggan</p>
+                                <p className="font-bold text-gray-900 truncate">{invoice?.customer?.name || '-'}</p>
                             </div>
-                        ) : (
-                            <div className="space-y-4">
-                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4">
-                                    <p className="text-sm text-gray-500 mb-1">Bank</p>
-                                    <p className="text-xl font-bold text-gray-900">{selectedMethod.bank_name}</p>
+                            <div>
+                                <p className="text-[10px] text-gray-500 font-bold uppercase">Paket Layanan</p>
+                                <p className="font-bold text-gray-900 truncate">{invoice?.customer?.package_type || '-'}</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] text-gray-500 font-bold uppercase">Periode Tagihan</p>
+                                <p className="font-bold text-gray-900">{formatDate(invoice?.invoice_date)}</p>
+                            </div>
+                            <div>
+                                <p className="text-[10px] text-gray-500 font-bold uppercase">Jatuh Tempo</p>
+                                <p className="font-bold text-rose-600">{formatDate(invoice?.due_date)}</p>
+                            </div>
+                        </div>
+
+                        {/* Total Bill */}
+                        <div className="mt-4 p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-blue-900 text-white flex items-center justify-between shadow-lg shadow-indigo-950/20">
+                            <div>
+                                <p className="text-[11px] text-slate-300 font-bold uppercase">Total Tagihan</p>
+                                <p className="text-2xl sm:text-3xl font-black">{formatCurrency(invoice?.amount || 0)}</p>
+                            </div>
+                            {!isPaid && (
+                                <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-bold">
+                                    Belum Dibayar
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Unpaid Payment Area */}
+                    {!isPaid && !isCancelled && (
+                        <div className="p-6 space-y-5 bg-white">
+                            
+                            {/* Tab Switcher if Gateway is Active */}
+                            {gatewayActive && (
+                                <div className="flex rounded-2xl bg-gray-100 p-1 border border-gray-200 text-xs font-bold">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentTab('gateway')}
+                                        className={`flex-1 py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                            paymentTab === 'gateway'
+                                                ? 'bg-emerald-600 text-white shadow-md'
+                                                : 'text-gray-600 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        <Zap size={14} />
+                                        <span>Bayar Instan Otomatis (QRIS &amp; VA)</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentTab('manual')}
+                                        className={`flex-1 py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                            paymentTab === 'manual'
+                                                ? 'bg-slate-800 text-white shadow-md'
+                                                : 'text-gray-600 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        <Building2 size={14} />
+                                        <span>Transfer Manual</span>
+                                    </button>
                                 </div>
-                                <div className="bg-gradient-to-r from-gray-50 to-slate-50 rounded-2xl p-4">
-                                    <p className="text-sm text-gray-500 mb-1">Nama Rekening</p>
-                                    <p className="font-semibold text-gray-900">{selectedMethod.account_name}</p>
-                                </div>
-                                <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-4">
-                                    <p className="text-sm text-gray-500 mb-1">Nomor Rekening</p>
+                            )}
+
+                            {/* TAB 1: PAYMENT GATEWAY (iPaymu) */}
+                            {gatewayActive && paymentTab === 'gateway' && (
+                                <div className="space-y-4">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-xl font-bold font-mono text-gray-900">{selectedMethod.account_number}</p>
+                                        <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                            Pilih Metode Pembayaran Online:
+                                        </h3>
+                                        <span className="text-[10px] text-emerald-600 bg-emerald-50 font-extrabold px-2 py-0.5 rounded-md border border-emerald-200">
+                                            Verifikasi Otomatis
+                                        </span>
+                                    </div>
+
+                                    {/* Channel Buttons */}
+                                    <div className="grid grid-cols-3 gap-2.5 text-xs font-bold">
                                         <button
-                                            onClick={() => copyToClipboard(selectedMethod.account_number)}
-                                            className={`p-2 rounded-lg transition ${copied ? 'bg-green-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
+                                            type="button"
+                                            onClick={() => {
+                                                setGatewayChannel('qris');
+                                                handleCreateIpaymuPayment('qris');
+                                            }}
+                                            className={`p-3 rounded-2xl border-2 transition flex flex-col items-center justify-center gap-1.5 ${
+                                                gatewayChannel === 'qris'
+                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm'
+                                                    : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-white'
+                                            }`}
                                         >
-                                            {copied ? <Check size={20} /> : <Copy size={20} />}
+                                            <QrCode size={20} className={gatewayChannel === 'qris' ? 'text-emerald-600' : 'text-gray-400'} />
+                                            <span>QRIS Instan</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setGatewayChannel('va');
+                                                handleCreateIpaymuPayment('va', gatewayBank);
+                                            }}
+                                            className={`p-3 rounded-2xl border-2 transition flex flex-col items-center justify-center gap-1.5 ${
+                                                gatewayChannel === 'va'
+                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm'
+                                                    : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-white'
+                                            }`}
+                                        >
+                                            <CreditCard size={20} className={gatewayChannel === 'va' ? 'text-emerald-600' : 'text-gray-400'} />
+                                            <span>Virtual Account</span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setGatewayChannel('redirect');
+                                                handleCreateIpaymuPayment('redirect');
+                                            }}
+                                            className={`p-3 rounded-2xl border-2 transition flex flex-col items-center justify-center gap-1.5 ${
+                                                gatewayChannel === 'redirect'
+                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-900 shadow-sm'
+                                                    : 'border-gray-200 hover:border-gray-300 text-gray-700 bg-white'
+                                            }`}
+                                        >
+                                            <ExternalLink size={20} className={gatewayChannel === 'redirect' ? 'text-emerald-600' : 'text-gray-400'} />
+                                            <span>Kasir iPaymu</span>
                                         </button>
                                     </div>
+
+                                    {/* Bank Selector for VA */}
+                                    {gatewayChannel === 'va' && (
+                                        <div className="space-y-1 text-xs">
+                                            <label className="block font-bold text-gray-700">Pilih Bank Virtual Account:</label>
+                                            <div className="flex gap-2">
+                                                <select
+                                                    value={gatewayBank}
+                                                    onChange={(e) => {
+                                                        setGatewayBank(e.target.value);
+                                                        handleCreateIpaymuPayment('va', e.target.value);
+                                                    }}
+                                                    className="w-full p-2.5 rounded-xl border border-gray-300 text-xs font-semibold focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-gray-50 text-gray-900"
+                                                >
+                                                    <option value="bca">BCA Virtual Account</option>
+                                                    <option value="mandiri">Mandiri Virtual Account</option>
+                                                    <option value="bri">BRI Virtual Account</option>
+                                                    <option value="bni">BNI Virtual Account</option>
+                                                    <option value="bag">Bank Artha Graha (BAG)</option>
+                                                    <option value="cimb">CIMB Niaga Virtual Account</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Loading State */}
+                                    {gatewayLoading && (
+                                        <div className="p-8 text-center space-y-3 bg-gray-50 rounded-2xl border border-gray-200">
+                                            <RefreshCw size={28} className="animate-spin text-emerald-500 mx-auto" />
+                                            <p className="text-xs font-bold text-gray-600">Menghubungkan ke Gateway iPaymu...</p>
+                                        </div>
+                                    )}
+
+                                    {/* Error State */}
+                                    {gatewayError && (
+                                        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-center gap-2.5">
+                                            <AlertCircle size={18} className="shrink-0" />
+                                            <span>{gatewayError}</span>
+                                        </div>
+                                    )}
+
+                                    {/* Initial Prompt to generate payment */}
+                                    {!gatewayData && !gatewayLoading && !gatewayError && (
+                                        <div className="p-6 text-center space-y-3 bg-gray-50 rounded-2xl border border-dashed border-gray-300">
+                                            <QrCode size={36} className="text-emerald-600 mx-auto" />
+                                            <div className="space-y-1">
+                                                <p className="font-extrabold text-sm text-gray-900">Siap Melakukan Pembayaran</p>
+                                                <p className="text-xs text-gray-500">Klik tombol di bawah untuk menampilkan kode pembayaran instan Anda.</p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleCreateIpaymuPayment()}
+                                                className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs shadow-md transition inline-flex items-center gap-2"
+                                            >
+                                                <Zap size={15} />
+                                                <span>Tampilkan Kode Pembayaran</span>
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Payment Generated Display Box */}
+                                    {gatewayData && !gatewayLoading && (
+                                        <div className="p-5 rounded-3xl bg-slate-900 text-white border border-slate-800 space-y-4 shadow-xl">
+                                            
+                                            {/* QRIS Display */}
+                                            {gatewayChannel === 'qris' && (
+                                                <div className="text-center space-y-3">
+                                                    <div className="inline-block p-4 rounded-2xl bg-white border-2 border-emerald-500 shadow-md">
+                                                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100 text-slate-800 text-xs font-black">
+                                                            <span>QRIS STANDAR</span>
+                                                            <span className="text-[10px] text-emerald-600 uppercase bg-emerald-50 px-2 py-0.5 rounded-full">{gatewayData.Channel || 'MPM'}</span>
+                                                        </div>
+                                                        {qrImageSrc ? (
+                                                            <img
+                                                                src={qrImageSrc}
+                                                                alt="QRIS Pembayaran"
+                                                                className="w-56 h-56 mx-auto object-contain rounded-md"
+                                                            />
+                                                        ) : (
+                                                            <div className="w-56 h-56 flex items-center justify-center bg-gray-100 text-gray-500 text-xs font-semibold rounded-md">
+                                                                QRIS Dimuat...
+                                                            </div>
+                                                        )}
+                                                        <div className="pt-2 text-[11px] font-bold text-slate-700 border-t border-gray-100 mt-2 flex items-center justify-between">
+                                                            <span>NMID: {gatewayData.NMID || 'ID2022173022171'}</span>
+                                                            <span className="text-emerald-600 font-black">Rp {new Intl.NumberFormat('id-ID').format(gatewayData.Total || invoice?.amount)}</span>
+                                                        </div>
+                                                    </div>
+
+                                                    <p className="text-xs text-slate-300">
+                                                        Buka aplikasi e-wallet Anda (<strong>GoPay, OVO, DANA, ShopeePay, BCA, Livin, BRImo</strong>) lalu scan kode QR di atas.
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* Virtual Account Display */}
+                                            {gatewayChannel === 'va' && (
+                                                <div className="space-y-3 text-center">
+                                                    <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                                                        <p className="text-[10px] text-slate-400 font-bold uppercase">Nomor Virtual Account {gatewayData.Channel || gatewayBank.toUpperCase()}:</p>
+                                                        <div className="flex items-center justify-center gap-3">
+                                                            <span className="font-mono text-2xl font-black text-emerald-400 tracking-wider">
+                                                                {gatewayData.PaymentNo || gatewayData.Va || '-'}
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => copyToClipboard(gatewayData.PaymentNo || gatewayData.Va, 'va_no')}
+                                                                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition"
+                                                                title="Salin Nomor VA"
+                                                            >
+                                                                {copiedField === 'va_no' ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+                                                            </button>
+                                                        </div>
+                                                        <p className="text-xs text-slate-400">
+                                                            Total Bayar: <strong className="text-white">Rp {new Intl.NumberFormat('id-ID').format(gatewayData.Total || invoice?.amount)}</strong>
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Redirect / Kasir Link Display */}
+                                            {gatewayData.Url && (
+                                                <div className="pt-2 text-center">
+                                                    <a
+                                                        href={gatewayData.Url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs transition inline-flex items-center justify-center gap-2 shadow-lg"
+                                                    >
+                                                        <ExternalLink size={15} />
+                                                        <span>Buka Halaman Pembayaran Kasir iPaymu &rarr;</span>
+                                                    </a>
+                                                </div>
+                                            )}
+
+                                            {/* Status Indicator & Live Check */}
+                                            <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                                                    <span className="text-slate-300 text-[11px]">Menunggu pembayaran Anda...</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={checkManualStatus}
+                                                    disabled={checkingStatus}
+                                                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5"
+                                                >
+                                                    <RefreshCw size={12} className={checkingStatus ? 'animate-spin text-emerald-400' : ''} />
+                                                    <span>Cek Status</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                        )}
+                            )}
 
-                        {/* Payment Instructions */}
-                        {selectedMethod.instructions && (
-                            <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl">
-                                <h4 className="font-semibold text-amber-800 mb-2 flex items-center gap-2">
-                                    <FileText size={18} />
-                                    Panduan Pembayaran
-                                </h4>
-                                <p className="text-sm text-amber-700 whitespace-pre-line">{selectedMethod.instructions}</p>
-                            </div>
-                        )}
+                            {/* TAB 2: MANUAL TRANSFER / REKENING TOKO */}
+                            {(!gatewayActive || paymentTab === 'manual') && (
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                            Pilih Rekening Tujuan Transfer:
+                                        </h3>
+                                    </div>
 
-                        {/* Default Instructions */}
-                        {!selectedMethod.instructions && (
-                            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-2xl">
-                                <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
-                                    <FileText size={18} />
-                                    Cara Pembayaran
-                                </h4>
-                                {selectedMethod.type === 'qris' ? (
-                                    <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
-                                        <li>Simpan atau screenshot kode QRIS di atas</li>
-                                        <li>Buka aplikasi pembayaran (GoPay, OVO, Dana, LinkAja, dll)</li>
-                                        <li>Pilih menu "Scan QR" lalu upload gambar QRIS</li>
-                                        <li>Masukkan nominal sesuai tagihan</li>
-                                        <li>Konfirmasi pembayaran setelah berhasil</li>
-                                    </ol>
-                                ) : (
-                                    <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
-                                        <li>Salin nomor rekening di atas</li>
-                                        <li>Buka aplikasi m-Banking atau ATM</li>
-                                        <li>Pilih menu Transfer</li>
-                                        <li>Masukkan nomor rekening dan nominal</li>
-                                        <li>Konfirmasi pembayaran setelah berhasil</li>
-                                    </ol>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
+                                    <div className="space-y-2.5">
+                                        {paymentMethods.map((method) => (
+                                            <button
+                                                key={method.id}
+                                                type="button"
+                                                onClick={() => setSelectedMethod(method)}
+                                                className={`w-full p-4 rounded-2xl border-2 transition-all text-left flex items-center justify-between ${
+                                                    selectedMethod?.id === method.id 
+                                                        ? 'border-indigo-500 bg-indigo-50/70 shadow-sm' 
+                                                        : 'border-gray-200 bg-white hover:border-gray-300'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                                                        method.type === 'qris' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'
+                                                    }`}>
+                                                        {method.type === 'qris' ? <QrCode size={20} /> : <Building2 size={20} />}
+                                                    </div>
+                                                    <div>
+                                                        <p className="font-extrabold text-xs text-gray-900">
+                                                            {method.type === 'qris' ? 'QRIS Toko' : method.bank_name}
+                                                        </p>
+                                                        <p className="text-[11px] text-gray-500 font-mono">
+                                                            {method.type === 'qris' ? 'Scan Semua E-Wallet' : `${method.account_number} a.n ${method.account_name}`}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                                                    selectedMethod?.id === method.id ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'
+                                                }`}>
+                                                    {selectedMethod?.id === method.id && <Check className="text-white" size={12} />}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
 
-                {/* Confirmation Button - Only show if not paid and method selected */}
-                {!isPaid && !isCancelled && selectedMethod && (invoice?.status === 'unpaid' || isRejected) && (
-                    <div className="bg-white px-6 pb-6">
-                        <button
-                            onClick={() => {
-                                setFormError('');
-                                setFieldErrors({});
-                                setShowConfirmModal(true);
-                            }}
-                            className="w-full flex items-center justify-center gap-2 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-2xl shadow-lg shadow-indigo-500/30 hover:shadow-xl transition-all"
-                        >
-                            <Upload size={20} />
-                            Konfirmasi Pembayaran
-                            <ChevronRight size={20} />
-                        </button>
-                    </div>
-                )}
+                                    {/* Manual Method Details */}
+                                    {selectedMethod && (
+                                        <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200 space-y-3 text-xs">
+                                            {selectedMethod.type === 'qris' ? (
+                                                <div className="text-center space-y-2">
+                                                    <div className="p-3 bg-white rounded-xl inline-block border border-gray-200 shadow-xs">
+                                                        <img 
+                                                            src={selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg'} 
+                                                            alt="QRIS Manual" 
+                                                            className="w-48 h-48 object-contain mx-auto"
+                                                        />
+                                                    </div>
+                                                    <p className="text-[11px] text-gray-600">Scan QRIS manual dan simpan bukti transfer.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    <div className="flex justify-between items-center p-3 rounded-xl bg-white border border-gray-200">
+                                                        <div>
+                                                            <p className="text-[10px] text-gray-500">Nomor Rekening {selectedMethod.bank_name}</p>
+                                                            <p className="font-mono font-bold text-sm text-gray-900">{selectedMethod.account_number}</p>
+                                                            <p className="text-[11px] text-gray-600">a.n {selectedMethod.account_name}</p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => copyToClipboard(selectedMethod.account_number, 'manual_rek')}
+                                                            className="p-2 text-gray-500 hover:text-indigo-600 rounded-lg transition"
+                                                        >
+                                                            {copiedField === 'manual_rek' ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
 
-                {/* Footer */}
-                <div className="bg-white rounded-b-3xl px-6 py-6 border-t border-gray-100">
-                    <div className="text-center">
-                        <p className="text-sm text-gray-500 mb-3">Butuh bantuan?</p>
-                        <a
-                            href="https://wa.me/6285158025553"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-semibold rounded-xl shadow-lg shadow-green-500/30 hover:shadow-xl transition-all"
-                        >
-                            <Phone size={18} />
-                            Hubungi CS
-                        </a>
-                    </div>
-                    <p className="text-center text-xs text-gray-400 mt-4">
-                        (c) {new Date().getFullYear()} Rumah Kita Net. All rights reserved.
-                    </p>
+                                            <button
+                                                type="button"
+                                                onClick={openConfirmModal}
+                                                className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs transition flex items-center justify-center gap-2 shadow-sm"
+                                            >
+                                                <Upload size={14} />
+                                                <span>Konfirmasi Pembayaran Manual (Upload Bukti)</span>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Confirmation Modal */}
+            {/* Manual Confirmation Modal */}
             {showConfirmModal && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-2 sm:p-4">
-                    <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-                        <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-5 text-white">
-                            <h2 className="text-xl font-bold">Konfirmasi Pembayaran</h2>
-                            <p className="text-sm text-white/80 mt-1">Kirim bukti pembayaran Anda</p>
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-md w-full text-slate-900 space-y-4 shadow-2xl">
+                        <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                            <h3 className="font-extrabold text-base text-gray-900">Konfirmasi Pembayaran</h3>
+                            <button
+                                type="button"
+                                onClick={closeConfirmModal}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <XCircle size={20} />
+                            </button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto">
+                        <form onSubmit={handleSubmitConfirmation} className="space-y-4 text-xs">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Nominal yang Dibayarkan
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">Rp</span>
-                                    <input
-                                        type="number"
-                                        value={paidAmount}
-                                        onChange={(e) => setPaidAmount(e.target.value)}
-                                        min="1"
-                                        required
-                                        className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-lg font-semibold"
-                                    />
-                                </div>
+                                <label className="block font-bold text-gray-700 mb-1">Nominal yang Dibayar (Rp)</label>
+                                <input
+                                    type="number"
+                                    required
+                                    value={paidAmount}
+                                    onChange={(e) => setPaidAmount(e.target.value)}
+                                    className="w-full p-3 rounded-xl border border-gray-300 font-mono text-sm bg-gray-50 text-gray-900 focus:border-indigo-500"
+                                />
                                 {fieldErrors?.paid_amount && (
-                                    <p className="text-xs text-red-600 mt-2">{fieldErrors.paid_amount}</p>
+                                    <p className="text-[11px] text-rose-600 mt-1">{fieldErrors.paid_amount}</p>
                                 )}
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Bukti Pembayaran (opsional)
-                                </label>
-                                <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center hover:border-indigo-400 transition cursor-pointer">
+                                <label className="block font-bold text-gray-700 mb-1">Bukti Transfer (Foto / Screenshot)</label>
+                                <div className="border-2 border-dashed border-gray-300 rounded-2xl p-4 text-center hover:border-indigo-500 transition cursor-pointer">
                                     {filePreview ? (
-                                        <div className="space-y-3">
-                                            <img src={filePreview} alt="Preview" className="max-h-40 mx-auto rounded-lg" />
-                                            {fileInfo && (
-                                                <p className="text-xs text-gray-500">
-                                                    File terpilih: {fileInfo.name} • {formatFileSize(fileInfo.size)}
-                                                </p>
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={resetFileSelection}
-                                                className="text-sm text-red-600 hover:underline"
-                                            >
-                                                Hapus gambar
-                                            </button>
-                                        </div>
-                                    ) : file ? (
                                         <div className="space-y-2">
-                                            <FileText className="mx-auto text-gray-400" size={32} />
-                                            <p className="text-sm text-gray-600">{fileInfo?.name || file.name}</p>
-                                            <p className="text-xs text-gray-500">{formatFileSize(fileInfo?.size || file.size)}</p>
+                                            <img src={filePreview} alt="Preview" className="max-h-36 mx-auto rounded-lg" />
                                             <button
                                                 type="button"
                                                 onClick={resetFileSelection}
-                                                className="text-sm text-red-600 hover:underline"
+                                                className="text-xs text-rose-600 font-bold hover:underline"
                                             >
-                                                Hapus file
+                                                Ganti Foto
                                             </button>
                                         </div>
                                     ) : (
-                                        <label className="cursor-pointer">
-                                            <Upload className="mx-auto text-gray-400 mb-2" size={32} />
-                                            <p className="text-sm text-gray-600">Klik untuk upload bukti pembayaran</p>
-                                            <p className="text-xs text-gray-400 mt-1">JPG, PNG, PDF, WEBP, HEIC, HEIF (max 2MB)</p>
+                                        <label className="cursor-pointer block space-y-1">
+                                            <Upload size={24} className="mx-auto text-gray-400" />
+                                            <p className="font-bold text-gray-700">Pilih Bukti Pembayaran</p>
+                                            <p className="text-[10px] text-gray-400">JPG, PNG, PDF (max 2MB)</p>
                                             <input
                                                 type="file"
-                                                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.webp,.heic,.heif"
+                                                accept="image/*,application/pdf"
                                                 onChange={handleFileChange}
                                                 className="hidden"
                                             />
@@ -695,58 +923,38 @@ function InvoicePage() {
                                     )}
                                 </div>
                                 {fieldErrors?.bukti_pembayaran && (
-                                    <p className="text-xs text-red-600 mt-2">{fieldErrors.bukti_pembayaran}</p>
+                                    <p className="text-[11px] text-rose-600 mt-1">{fieldErrors.bukti_pembayaran}</p>
                                 )}
-                                <div className="mt-3 space-y-1">
-                                    <label className="flex items-start gap-2 text-sm text-gray-700">
-                                        <input
-                                            type="checkbox"
-                                            checked={noProofIntent}
-                                            disabled={!!file}
-                                            onChange={(e) => setNoProofIntent(e.target.checked)}
-                                            className="mt-1"
-                                        />
-                                        <span>Saya kirim tanpa bukti pembayaran</span>
-                                    </label>
-                                    {file && (
-                                        <p className="text-xs text-gray-500">Hapus file jika ingin mengirim tanpa bukti.</p>
-                                    )}
-                                </div>
                             </div>
 
                             {formError && (
-                                <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">
+                                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[11px]">
                                     {formError}
                                 </div>
                             )}
 
-                            <div className="flex gap-3 pt-2">
+                            <div className="flex gap-2.5 pt-2">
                                 <button
                                     type="button"
                                     onClick={closeConfirmModal}
-                                    className="flex-1 py-3 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition"
+                                    className="flex-1 py-3 rounded-xl border border-gray-300 font-bold text-gray-700 hover:bg-gray-50 transition"
                                 >
                                     Batal
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={!canSubmit}
-                                    className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold rounded-xl shadow-lg shadow-indigo-500/30 hover:shadow-xl disabled:opacity-50 transition flex items-center justify-center gap-2"
+                                    disabled={submitting}
+                                    className="flex-1 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                                 >
-                                    {submitting ? (
-                                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
-                                    ) : (
-                                        <>
-                                            <Check size={20} />
-                                            Kirim
-                                        </>
-                                    )}
+                                    {submitting ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                                    <span>Kirim Bukti</span>
                                 </button>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
+
         </div>
     );
 }

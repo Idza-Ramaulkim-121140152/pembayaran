@@ -1294,13 +1294,42 @@ class BillingController extends Controller
         $invoice = \App\Models\Invoice::where('invoice_link', $invoice_link)->with(['customer', 'items'])->firstOrFail();
         $this->appendPaymentProofAttributes($invoice);
 
+        $ipaymuProcessor = app(\App\Services\IpaymuPaymentProcessor::class);
+
         return response()->json([
             'data' => $invoice,
             'breakdown' => [
                 'total' => (float) $invoice->amount,
                 'items_count' => $invoice->items->count(),
             ],
+            'payment_gateway' => [
+                'is_active' => $ipaymuProcessor->isPaymentGatewayActive(),
+                'provider' => 'iPaymu',
+                'methods' => ['qris', 'va', 'redirect'],
+            ],
         ]);
+    }
+
+    public function createIpaymuPaymentForInvoice(Request $request, $invoice_link)
+    {
+        $invoice = \App\Models\Invoice::where('invoice_link', $invoice_link)->with('customer')->firstOrFail();
+
+        if ($invoice->status === 'paid') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tagihan ini sudah berstatus lunas.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'payment_method' => 'required|in:qris,va,redirect',
+            'va_bank' => 'nullable|string|max:20',
+        ]);
+
+        $processor = app(\App\Services\IpaymuPaymentProcessor::class);
+        $result = $processor->createInvoicePayment($invoice, $validated['payment_method'], $validated);
+
+        return response()->json($result);
     }
 
     public function confirmPaymentApi(Request $request, $invoiceId)

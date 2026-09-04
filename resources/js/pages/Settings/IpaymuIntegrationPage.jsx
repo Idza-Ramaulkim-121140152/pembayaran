@@ -57,10 +57,26 @@ export default function IpaymuIntegrationPage() {
     });
     const [testResult, setTestResult] = useState(null);
     const [showDebugLogs, setShowDebugLogs] = useState(true);
+    const [togglingActive, setTogglingActive] = useState(false);
 
     useEffect(() => {
         loadStatus();
     }, []);
+
+    const handleToggleActive = async () => {
+        const nextState = !statusData?.is_active;
+        setTogglingActive(true);
+        try {
+            const res = await apiClient.post('/ipaymu/toggle-active', { active: nextState });
+            if (res.data?.success) {
+                setStatusData((prev) => ({ ...prev, is_active: nextState }));
+            }
+        } catch (err) {
+            console.error('Gagal mengubah status aktif iPaymu', err);
+        } finally {
+            setTogglingActive(false);
+        }
+    };
 
     const loadStatus = async (isManualRefresh = false) => {
         try {
@@ -184,6 +200,66 @@ export default function IpaymuIntegrationPage() {
                         <ExternalLink size={14} />
                         Dashboard iPaymu
                     </a>
+                </div>
+            </div>
+
+            {/* Master Toggle: Aktifkan / Nonaktifkan Payment Gateway */}
+            <div className={`p-6 rounded-3xl border transition-all ${
+                statusData?.is_active
+                    ? 'bg-gradient-to-r from-emerald-900/40 via-teal-900/30 to-slate-900 border-emerald-500/50 shadow-lg shadow-emerald-950/30'
+                    : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 shadow-sm'
+            }`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start sm:items-center gap-4">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                            statusData?.is_active
+                                ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                                : 'bg-gray-100 dark:bg-slate-800 text-gray-400'
+                        }`}>
+                            <CreditCard size={24} />
+                        </div>
+                        <div className="space-y-1">
+                            <div className="flex items-center gap-2.5">
+                                <h3 className="font-extrabold text-base text-gray-900 dark:text-white">
+                                    Aktivasi Layanan Payment Gateway
+                                </h3>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                    statusData?.is_active
+                                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                        : 'bg-gray-200 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+                                }`}>
+                                    {statusData?.is_active ? '● AKTIF (ONLINE)' : '○ NONAKTIF (OFFLINE)'}
+                                </span>
+                            </div>
+                            <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed max-w-2xl">
+                                {statusData?.is_active
+                                    ? 'Layanan Payment Gateway aktif: Pelanggan yang menerima tagihan otomatis via WhatsApp/Portal dapat memilih dan membayar online instan (QRIS & Virtual Account) dengan pencabutan isolir dan perpanjangan masa aktif otomatis.'
+                                    : 'Layanan Payment Gateway nonaktif: Halaman tagihan invoice hanya akan menampilkan rekening bank transfer manual biasa. Aktifkan switch di samping untuk membuka pembayaran otomatis.'}
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                        <button
+                            type="button"
+                            onClick={handleToggleActive}
+                            disabled={togglingActive}
+                            className={`relative inline-flex h-8 w-16 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden disabled:opacity-50 ${
+                                statusData?.is_active ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-slate-700'
+                            }`}
+                            role="switch"
+                            aria-checked={statusData?.is_active}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                                    statusData?.is_active ? 'translate-x-8' : 'translate-x-0'
+                                }`}
+                            />
+                        </button>
+                        <span className="text-xs font-bold text-gray-700 dark:text-slate-300">
+                            {statusData?.is_active ? 'Aktif' : 'Mati'}
+                        </span>
+                    </div>
                 </div>
             </div>
 

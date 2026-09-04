@@ -89,6 +89,7 @@ Route::get('/portal_pelanggan/{token}', function () {
 
 // Route publik untuk akses invoice tanpa login
 Route::get('/api/invoice/{invoice_link}', [BillingController::class, 'showInvoiceApi'])->name('api.invoice.show');
+Route::post('/api/invoice/{invoice_link}/pay-ipaymu', [BillingController::class, 'createIpaymuPaymentForInvoice'])->name('api.invoice.pay-ipaymu');
 Route::get('/invoice/{invoice_link}/print', [InvoiceDocumentController::class, 'showPrint'])->name('invoice.public.print');
 Route::get('/invoice-documents/{token}/download', [InvoiceDocumentController::class, 'download'])->name('invoice-documents.public.download');
 Route::get('/invoice-documents/{token}/verify', [InvoiceDocumentController::class, 'verify'])->name('invoice-documents.public.verify');
@@ -672,6 +673,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/settings/ipaymu-integration', fn() => view('app'))->name('settings.ipaymu-integration');
         Route::get('/settings/payment-gateway', fn() => view('app'))->name('settings.payment-gateway');
         Route::get('/api/ipaymu/status', [IpaymuIntegrationController::class, 'getStatus'])->name('api.ipaymu.status');
+        Route::post('/api/ipaymu/toggle-active', [IpaymuIntegrationController::class, 'toggleActive'])->name('api.ipaymu.toggle-active');
         Route::post('/api/ipaymu/config', [IpaymuIntegrationController::class, 'saveConfig'])->name('api.ipaymu.config');
         Route::post('/api/ipaymu/test-payment', [IpaymuIntegrationController::class, 'testPayment'])->name('api.ipaymu.test-payment');
         Route::post('/api/ipaymu/check-transaction', [IpaymuIntegrationController::class, 'checkTransaction'])->name('api.ipaymu.check-transaction');
