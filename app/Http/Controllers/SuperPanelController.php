@@ -330,4 +330,59 @@ class SuperPanelController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * POST /api/super-panel/sync-genieacs
+     * Synchronize GenieACS live devices to OLT PON and ODPs
+     */
+    public function syncGenieAcs(Request $request): JsonResponse
+    {
+        try {
+            $oltId = $request->input('olt_id');
+            $result = $this->superPanelService->syncGenieAcsCrossMatching($oltId ? (int) $oltId : null);
+
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: syncGenieAcs error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal sinkronisasi GenieACS ke OLT: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/super-panel/reassign-onu
+     * Reassign an ONU to a different PON SFP Port or ODP
+     */
+    public function reassignOnu(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'onu_id' => 'required|integer',
+            'target_pon_port_id' => 'required|integer',
+            'target_odp_id' => 'nullable|integer',
+            'target_odp_port' => 'nullable|integer|min:1|max:24',
+        ]);
+
+        try {
+            $result = $this->superPanelService->reassignOnuPort(
+                (int) $validated['onu_id'],
+                (int) $validated['target_pon_port_id'],
+                !empty($validated['target_odp_id']) ? (int) $validated['target_odp_id'] : null,
+                !empty($validated['target_odp_port']) ? (int) $validated['target_odp_port'] : null
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => "Port pelanggan {$result['customer_name']} berhasil dialihkan ke {$result['new_pon_port']} (ONU #{$result['new_onu_index']}).",
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: reassignOnu error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengalihkan port ONU: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

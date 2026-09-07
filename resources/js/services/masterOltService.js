@@ -11,6 +11,8 @@ const masterOltService = {
     testSnmp: (id) => apiClient.post(`/master-olts/${id}/test-snmp`),
     updatePonPort: (oltId, portId, payload) => apiClient.put(`/master-olts/${oltId}/pon-ports/${portId}`, payload),
     syncTopology: (id) => apiClient.post(`/master-olts/${id}/sync-topology`),
+    syncGenieAcs: (oltId = null) => apiClient.post('/super-panel/sync-genieacs', { olt_id: oltId }),
+    reassignOnu: (payload) => apiClient.post('/super-panel/reassign-onu', payload),
 };
 
 export default masterOltService;

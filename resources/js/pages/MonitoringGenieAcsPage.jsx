@@ -733,6 +733,24 @@ export default function MonitoringGenieAcsPage() {
                                                                     PPPoE: {cust.pppoe_username}
                                                                 </span>
                                                             )}
+                                                            {row.matched_via === 'mikrotik_ip' && (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-[9px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded"
+                                                                    title={`Router ini berhasil dicocokkan otomatis via IP MikroTik (${row.ip_address || '-'})`}
+                                                                >
+                                                                    <Sparkles size={9} className="text-sky-600" />
+                                                                    Auto-Match IP MTK
+                                                                </span>
+                                                            )}
+                                                            {row.matched_via === 'mikrotik_mac' && (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded"
+                                                                    title={`Router ini berhasil dicocokkan otomatis via MAC MikroTik (${row.mac_address || '-'})`}
+                                                                >
+                                                                    <Sparkles size={9} className="text-indigo-600" />
+                                                                    Auto-Match MAC MTK
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         {cust.address && (
                                                             <p className="text-[10px] text-gray-400 mt-1 truncate max-w-xs flex items-center gap-1">
@@ -803,18 +821,34 @@ export default function MonitoringGenieAcsPage() {
                                             <td className="px-4 py-3.5">
                                                 {hasAcs ? (
                                                     <div>
-                                                        <div className="flex items-center gap-1.5">
+                                                        <div className="flex flex-wrap items-center gap-1.5">
                                                             <span className="font-bold text-gray-900">{row.product_class || 'ONT Router'}</span>
                                                             <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                 {row.manufacturer || 'ONT'}
                                                             </span>
+                                                            {row.engine === 'native_laravel_acs' && (
+                                                                <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Terkoneksi langsung ke Server ACS Laravel Native">
+                                                                    <Sparkles size={9} className="text-emerald-600" />
+                                                                    Native ACS
+                                                                </span>
+                                                            )}
+                                                            {row.pon_mode && (
+                                                                <span className="text-[9px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                                                                    {row.pon_mode}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         <p className="text-[11px] font-mono text-gray-500 mt-0.5">
                                                             SN: <strong>{row.serial_number || row.device_id?.split('-')[2] || '-'}</strong>
                                                         </p>
                                                         {row.ip_address && (
-                                                            <p className="text-[10px] font-mono text-gray-600 mt-0.5">
-                                                                IP: <strong>{row.ip_address}</strong>
+                                                            <p className="text-[10px] font-mono text-gray-600 mt-0.5 flex items-center gap-1">
+                                                                <span>IP: <strong>{row.ip_address}</strong></span>
+                                                                {row.matched_via === 'mikrotik_ip' && (
+                                                                    <span className="text-[8px] font-sans font-bold bg-sky-100 text-sky-800 px-1 py-0.2 rounded" title="IP ini dicocokkan dari MikroTik">
+                                                                        MTK
+                                                                    </span>
+                                                                )}
                                                             </p>
                                                         )}
                                                     </div>
@@ -826,18 +860,25 @@ export default function MonitoringGenieAcsPage() {
                                             {/* Optical RX Power */}
                                             <td className="px-4 py-3.5">
                                                 {hasAcs && rx !== null ? (
-                                                    <span
-                                                        className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
-                                                            row.rx_status === 'normal'
-                                                                ? 'bg-emerald-100 text-emerald-800'
-                                                                : row.rx_status === 'warning'
-                                                                ? 'bg-amber-100 text-amber-800'
-                                                                : 'bg-rose-100 text-rose-800'
-                                                        }`}
-                                                    >
-                                                        <Radio size={12} />
-                                                        {rx} dBm
-                                                    </span>
+                                                    <div>
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+                                                                row.rx_status === 'normal'
+                                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                                    : row.rx_status === 'warning'
+                                                                    ? 'bg-amber-100 text-amber-800'
+                                                                    : 'bg-rose-100 text-rose-800'
+                                                            }`}
+                                                        >
+                                                            <Radio size={12} />
+                                                            {rx} dBm
+                                                        </span>
+                                                        {row.temperature !== null && row.temperature !== undefined && (
+                                                            <p className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
+                                                                <span>🌡️ Suhu: <strong>{row.temperature}°C</strong></span>
+                                                            </p>
+                                                        )}
+                                                    </div>
                                                 ) : (
                                                     <span className="text-gray-400 text-[11px]">-</span>
                                                 )}

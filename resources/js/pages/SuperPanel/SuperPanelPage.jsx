@@ -37,11 +37,14 @@ import {
     X,
     Settings2,
     Zap,
+    Edit3,
+    Shuffle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Alert from '../../components/common/Alert';
 import Modal from '../../components/common/Modal';
 import apiClient from '../../services/api';
+import masterOltService from '../../services/masterOltService';
 import { attachSatelliteLayerWithFallback } from '../../utils/leafletTileFallback';
 
 function formatRupiah(amount) {
@@ -104,6 +107,18 @@ export default function SuperPanelPage() {
     const [loadingOlt, setLoadingOlt] = useState(false);
     const [selectedOltId, setSelectedOltId] = useState(null);
     const [selectedPonIndex, setSelectedPonIndex] = useState(1);
+    const [oltOnuSearch, setOltOnuSearch] = useState('');
+    const [oltSignalFilter, setOltSignalFilter] = useState('all'); // 'all' | 'good' | 'warning' | 'critical' | 'online' | 'offline'
+    const [visibleWifiPasswords, setVisibleWifiPasswords] = useState({});
+    const [syncingGenieAcs, setSyncingGenieAcs] = useState(false);
+    const [reassignModalOpen, setReassignModalOpen] = useState(false);
+    const [selectedOnuForReassign, setSelectedOnuForReassign] = useState(null);
+    const [reassignForm, setReassignForm] = useState({
+        target_pon_port_id: '',
+        target_odp_id: '',
+        target_odp_port: 1,
+    });
+    const [reassigning, setReassigning] = useState(false);
 
     // ==========================================
     // TAB 4: GENIEACS (GHCS) CPE SIGNALS STATE
@@ -627,6 +642,68 @@ export default function SuperPanelPage() {
         }
     };
 
+    // Toggle Wi-Fi password visibility
+    const toggleWifiPassword = (onuId) => {
+        setVisibleWifiPasswords((prev) => ({ ...prev, [onuId]: !prev[onuId] }));
+    };
+
+    // Trigger Auto-Match between GenieACS & OLT Ports
+    const handleSyncGenieAcsCrossMatching = async () => {
+        try {
+            setSyncingGenieAcs(true);
+            showToast('Mencocokkan 222 perangkat ONT GenieACS ke port SFP OLT & ODP...', 'info');
+            const res = await masterOltService.syncGenieAcs(selectedOltId);
+            if (res.data?.success) {
+                showToast(res.data.message || 'Sinkronisasi GenieACS & OLT berhasil!', 'success');
+                fetchOverviewStats();
+                fetchOltData(selectedOltId);
+                fetchOdpStockData();
+                fetchGisMapData();
+            }
+        } catch (err) {
+            showToast('Gagal sinkronisasi GenieACS: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setSyncingGenieAcs(false);
+        }
+    };
+
+    // Open Reassign Modal
+    const handleOpenReassignModal = (onu, currentPonId) => {
+        setSelectedOnuForReassign(onu);
+        setReassignForm({
+            target_pon_port_id: currentPonId || '',
+            target_odp_id: formOptions.odps?.[0]?.id || '',
+            target_odp_port: onu.odp_port_number || 1,
+        });
+        setReassignModalOpen(true);
+    };
+
+    // Save Reassign ONU
+    const handleSaveReassignOnu = async (e) => {
+        e?.preventDefault();
+        if (!selectedOnuForReassign?.id || !reassignForm.target_pon_port_id) return;
+        try {
+            setReassigning(true);
+            const res = await masterOltService.reassignOnu({
+                onu_id: selectedOnuForReassign.id,
+                target_pon_port_id: parseInt(reassignForm.target_pon_port_id, 10),
+                target_odp_id: reassignForm.target_odp_id ? parseInt(reassignForm.target_odp_id, 10) : null,
+                target_odp_port: parseInt(reassignForm.target_odp_port, 10) || 1,
+            });
+            if (res.data?.success) {
+                showToast(res.data.message || 'Port ONU berhasil dialihkan!');
+                setReassignModalOpen(false);
+                fetchOltData(selectedOltId);
+                fetchOverviewStats();
+                fetchOdpStockData();
+            }
+        } catch (err) {
+            showToast('Gagal mengalihkan port: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setReassigning(false);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-3 sm:p-6 space-y-6">
             {/* TOAST ALERT */}
@@ -1139,6 +1216,17 @@ export default function SuperPanelPage() {
                                     ))}
                                 </select>
                             )}
+
+                            <button
+                                onClick={handleSyncGenieAcsCrossMatching}
+                                disabled={syncingGenieAcs}
+                                className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-emerald-600/25 transition disabled:opacity-50"
+                                title="Cocokkan 222 perangkat ONT GenieACS ke slot SFP PON dan ODP secara otomatis"
+                            >
+                                <Zap className={`w-3.5 h-3.5 text-amber-300 ${syncingGenieAcs ? 'animate-spin' : ''}`} />
+                                {syncingGenieAcs ? 'Sinkronisasi 222 CPE...' : '⚡ Auto-Match OLT & GenieACS (222 CPE)'}
+                            </button>
+
                             <Link
                                 to="/settings/master-olt"
                                 className="px-3 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 transition"
@@ -1190,278 +1278,509 @@ export default function SuperPanelPage() {
                             <span className="text-xs text-slate-400 mt-2">Menghubungi modul telemetri SNMP OLT...</span>
                         </div>
                     ) : (
-                        oltData?.olts?.map((olt) => (
-                            <div key={olt.id} className="space-y-4">
-                                {/* OLT Chassis Header Card */}
-                                <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 border border-slate-700 rounded-2xl p-5 shadow-xl">
-                                    <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
-                                        <div className="flex items-center gap-3.5">
-                                            <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                                                <Server className="w-6 h-6" />
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center gap-2">
-                                                    <h2 className="text-lg font-black text-white">{olt.name}</h2>
-                                                    <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-xs border border-blue-500/30">
-                                                        {olt.brand} {olt.model}
-                                                    </span>
-                                                    {olt.simulation_mode ? (
-                                                        <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-xs border border-purple-500/30">
-                                                            Smart Simulation Mode
-                                                        </span>
-                                                    ) : (
-                                                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30">
-                                                            Real SNMP Live
-                                                        </span>
-                                                    )}
+                        oltData?.olts?.map((olt) => {
+                            // Calculate global health metrics for this OLT
+                            let totalOnusAllPons = 0;
+                            let onlineOnusAllPons = 0;
+                            let optimalSignalCount = 0;
+                            let warningSignalCount = 0;
+                            let criticalSignalCount = 0;
+
+                            olt.pon_ports?.forEach((p) => {
+                                totalOnusAllPons += (p.onus?.length || 0);
+                                p.onus?.forEach((o) => {
+                                    if (o.status === 'online') onlineOnusAllPons++;
+                                    const rx = o.optical_rx_dbm;
+                                    if (rx >= -24.0) optimalSignalCount++;
+                                    else if (rx >= -27.0) warningSignalCount++;
+                                    else criticalSignalCount++;
+                                });
+                            });
+
+                            return (
+                                <div key={olt.id} className="space-y-4">
+                                    {/* OLT Chassis Header Card */}
+                                    <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 border border-slate-700 rounded-2xl p-5 shadow-xl">
+                                        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-700/80 pb-4">
+                                            <div className="flex items-center gap-3.5">
+                                                <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                                                    <Server className="w-6 h-6" />
                                                 </div>
-                                                <p className="text-xs text-slate-400 mt-1">
-                                                    Host: <code className="text-slate-300">{olt.host}:{olt.snmp_port}</code> &bull; SNMP v{olt.snmp_version} &bull; Lokasi: {olt.location_address || 'Sentral NOC'}
+                                                <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <h2 className="text-lg font-black text-white">{olt.name}</h2>
+                                                        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-xs border border-blue-500/30 font-bold">
+                                                            {olt.brand} {olt.model}
+                                                        </span>
+                                                        {olt.simulation_mode ? (
+                                                            <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-xs border border-purple-500/30">
+                                                                Smart Simulation Mode
+                                                            </span>
+                                                        ) : (
+                                                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 font-semibold">
+                                                                Real SNMP Live
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs text-slate-400 mt-1">
+                                                        IP/Host: <code className="text-slate-200 font-semibold">{olt.host}</code> &bull; SNMP v{olt.snmp_version} (Port {olt.snmp_port || 161}) &bull; Telnet: {olt.telnet_port || 23} &bull; HTTP: {olt.http_port || 80} &bull; Lokasi: {olt.location_address || 'Sentral NOC Kalianda'}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-wrap items-center gap-2.5">
+                                                <button
+                                                    onClick={() => handleToggleOltSimulation(olt.id)}
+                                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
+                                                        olt.simulation_mode
+                                                            ? 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border-purple-500/40'
+                                                            : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'
+                                                    }`}
+                                                    title="Ubah mode antara Real SNMP dan Smart Simulation"
+                                                >
+                                                    <Zap className="w-3.5 h-3.5" />
+                                                    {olt.simulation_mode ? 'Ganti ke Real SNMP' : 'Ganti ke Simulasi'}
+                                                </button>
+
+                                                <button
+                                                    onClick={() => handleTestOltSnmp(olt.id)}
+                                                    disabled={testingOltSnmp}
+                                                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+                                                >
+                                                    <Radio className={`w-3.5 h-3.5 text-cyan-400 ${testingOltSnmp ? 'animate-spin' : ''}`} />
+                                                    {testingOltSnmp ? 'Probe...' : 'Test SNMP'}
+                                                </button>
+
+                                                <div className="text-right pl-3 border-l border-slate-700/60">
+                                                    <div className="text-[10px] text-slate-400">Status Chassis</div>
+                                                    <div className="text-xs font-bold text-emerald-400 flex items-center justify-end gap-1.5">
+                                                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                                        {olt.last_status?.toUpperCase() || 'ONLINE'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* OLT Hardware Telemetry Gauges */}
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mt-4">
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                                    <Cpu className="w-3.5 h-3.5 text-blue-400" /> CPU Load
+                                                </div>
+                                                <div className="text-lg font-black text-white mt-1">
+                                                    {olt.telemetry?.cpu_usage_percent || 18}%
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                                    <Database className="w-3.5 h-3.5 text-indigo-400" /> Memory RAM
+                                                </div>
+                                                <div className="text-lg font-black text-white mt-1">
+                                                    {olt.telemetry?.memory_usage_percent || 42}%
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                                    <Activity className="w-3.5 h-3.5 text-amber-400" /> Suhu SFP Card
+                                                </div>
+                                                <div className="text-lg font-black text-amber-400 mt-1">
+                                                    {olt.telemetry?.temperature_celsius || 41.5} °C
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                                    <Power className="w-3.5 h-3.5 text-emerald-400" /> Power Supply 1
+                                                </div>
+                                                <div className="text-xs font-bold text-emerald-400 mt-1.5 truncate">
+                                                    {olt.telemetry?.power_supply_1 || 'AC 220V - OK'}
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                                                    <Power className="w-3.5 h-3.5 text-cyan-400" /> Power Supply 2
+                                                </div>
+                                                <div className="text-xs font-bold text-cyan-400 mt-1.5 truncate">
+                                                    {olt.telemetry?.power_supply_2 || 'DC 48V - STANDBY'}
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                                                <div className="text-[11px] text-slate-400">Fan Status</div>
+                                                <div className="text-xs font-bold text-emerald-400 mt-1.5">
+                                                    {olt.telemetry?.fan_status || 'NORMAL (4500 RPM)'}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Global Signal Health Distribution Bar across All PONs */}
+                                        <div className="mt-4 pt-3 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-3 text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-slate-400 font-medium">Distribusi Sinyal OLT (Total {totalOnusAllPons} CPE):</span>
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold flex items-center gap-1.5">
+                                                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                                                    Optimal: {optimalSignalCount} ({totalOnusAllPons ? Math.round((optimalSignalCount / totalOnusAllPons) * 100) : 0}%)
+                                                </span>
+                                                <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold flex items-center gap-1.5">
+                                                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                                                    Waspada: {warningSignalCount} ({totalOnusAllPons ? Math.round((warningSignalCount / totalOnusAllPons) * 100) : 0}%)
+                                                </span>
+                                                <span className="px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-400 font-bold flex items-center gap-1.5">
+                                                    <span className="w-2 h-2 rounded-full bg-rose-400" />
+                                                    Kritis: {criticalSignalCount} ({totalOnusAllPons ? Math.round((criticalSignalCount / totalOnusAllPons) * 100) : 0}%)
+                                                </span>
+                                                <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/30 text-blue-300 font-bold flex items-center gap-1.5">
+                                                    Online: {onlineOnusAllPons} / {totalOnusAllPons}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* PON Ports Rack / Cards Matrix */}
+                                    <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-xl">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                    <Cable className="w-4 h-4 text-blue-400" />
+                                                    Slot Modul PON 1..{olt.total_pon_ports} (SFP Class C++ 2.5G/1.25G)
+                                                </h3>
+                                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                                    Pilih salah satu port PON di bawah untuk melihat rincian ONT/ONU pelanggan yang terhubung:
                                                 </p>
                                             </div>
+                                            <span className="text-xs text-slate-400 bg-slate-900 px-3 py-1 rounded-lg border border-slate-700">
+                                                Aktif: <strong className="text-blue-400">PON {selectedPonIndex}</strong>
+                                            </span>
                                         </div>
 
-                                        <div className="flex flex-wrap items-center gap-3">
-                                            <button
-                                                onClick={() => handleToggleOltSimulation(olt.id)}
-                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
-                                                    olt.simulation_mode
-                                                        ? 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border-purple-500/40'
-                                                        : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'
-                                                }`}
-                                                title="Ubah mode antara Real SNMP dan Smart Simulation"
-                                            >
-                                                <Zap className="w-3.5 h-3.5" />
-                                                {olt.simulation_mode ? 'Ganti ke Real SNMP' : 'Ganti ke Simulasi'}
-                                            </button>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+                                            {olt.pon_ports?.map((port) => {
+                                                const isSelected = selectedPonIndex === port.pon_index;
+                                                const isUp = port.oper_status === 'up';
+                                                const onusCount = port.onus?.length || port.total_onus || 0;
 
-                                            <button
-                                                onClick={() => handleTestOltSnmp(olt.id)}
-                                                disabled={testingOltSnmp}
-                                                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600 text-xs font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
-                                            >
-                                                <Radio className={`w-3.5 h-3.5 text-cyan-400 ${testingOltSnmp ? 'animate-spin' : ''}`} />
-                                                {testingOltSnmp ? 'Probe...' : 'Test SNMP'}
-                                            </button>
+                                                // Count signal health inside this PON
+                                                let ponOptimal = 0;
+                                                let ponWarning = 0;
+                                                let ponCritical = 0;
+                                                port.onus?.forEach((o) => {
+                                                    const rx = o.optical_rx_dbm;
+                                                    if (rx >= -24.0) ponOptimal++;
+                                                    else if (rx >= -27.0) ponWarning++;
+                                                    else ponCritical++;
+                                                });
 
-                                            <div className="text-right pl-2 border-l border-slate-700/60">
-                                                <div className="text-[10px] text-slate-400">Status Chassis</div>
-                                                <div className="text-xs font-bold text-emerald-400 flex items-center justify-end gap-1.5">
-                                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                                    {olt.last_status?.toUpperCase() || 'ONLINE'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                                return (
+                                                    <div
+                                                        key={port.id}
+                                                        onClick={() => setSelectedPonIndex(port.pon_index)}
+                                                        className={`rounded-xl border p-3 cursor-pointer transition flex flex-col justify-between ${
+                                                            isSelected
+                                                                ? 'bg-blue-600/25 border-blue-500 shadow-lg shadow-blue-600/20 ring-2 ring-blue-400'
+                                                                : 'bg-slate-900/80 border-slate-700/80 hover:border-slate-500'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-black text-white">PON {port.pon_index}</span>
+                                                            <span
+                                                                className={`w-2.5 h-2.5 rounded-full ${
+                                                                    isUp ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'
+                                                                }`}
+                                                                title={isUp ? 'PON Operasional UP' : 'PON Down'}
+                                                            />
+                                                        </div>
 
-                                    {/* OLT Hardware Telemetry Gauges */}
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 mt-4">
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                <Cpu className="w-3.5 h-3.5 text-blue-400" /> CPU Load
-                                            </div>
-                                            <div className="text-lg font-black text-white mt-1">
-                                                {olt.telemetry?.cpu_usage_percent || 18}%
-                                            </div>
-                                        </div>
+                                                        <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
+                                                            <div>TX: <strong className="text-slate-200">+{port.tx_power_dbm ? Number(port.tx_power_dbm).toFixed(2) : '4.25'} dBm</strong></div>
+                                                            <div>Temp: <strong className="text-slate-200">{port.temperature ? Number(port.temperature).toFixed(1) : '43.2'}°C</strong></div>
+                                                            <div>ONU: <strong className="text-emerald-400">{onusCount}</strong>/{port.max_onu_capacity || 64}</div>
+                                                        </div>
 
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                <Database className="w-3.5 h-3.5 text-indigo-400" /> Memory RAM
-                                            </div>
-                                            <div className="text-lg font-black text-white mt-1">
-                                                {olt.telemetry?.memory_usage_percent || 42}%
-                                            </div>
-                                        </div>
-
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                <Activity className="w-3.5 h-3.5 text-amber-400" /> Suhu SFP Card
-                                            </div>
-                                            <div className="text-lg font-black text-amber-400 mt-1">
-                                                {olt.telemetry?.temperature_celsius || 41.5} °C
-                                            </div>
+                                                        {/* Mini Signal Pills */}
+                                                        <div className="mt-2 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] font-mono">
+                                                            <span className="text-emerald-400 font-bold" title="Optimal (>= -24 dBm)">{ponOptimal}🟢</span>
+                                                            <span className="text-amber-400 font-bold" title="Waspada (-24..-27 dBm)">{ponWarning}🟡</span>
+                                                            <span className="text-rose-400 font-bold" title="Kritis (< -27 dBm)">{ponCritical}🔴</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
 
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                <Power className="w-3.5 h-3.5 text-emerald-400" /> Power Supply 1
-                                            </div>
-                                            <div className="text-xs font-bold text-emerald-400 mt-1.5 truncate">
-                                                {olt.telemetry?.power_supply_1 || 'AC 220V - OK'}
-                                            </div>
-                                        </div>
+                                        {/* Selected PON Port ONU List Table */}
+                                        {(() => {
+                                            const activePon = olt.pon_ports?.find((p) => p.pon_index === selectedPonIndex);
+                                            if (!activePon) return null;
 
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                                                <Power className="w-3.5 h-3.5 text-cyan-400" /> Power Supply 2
-                                            </div>
-                                            <div className="text-xs font-bold text-cyan-400 mt-1.5 truncate">
-                                                {olt.telemetry?.power_supply_2 || 'DC 48V - STANDBY'}
-                                            </div>
-                                        </div>
+                                            // Apply search and signal filters
+                                            const filteredOnus = (activePon.onus || []).filter((onu) => {
+                                                if (oltOnuSearch) {
+                                                    const q = oltOnuSearch.toLowerCase();
+                                                    const matchName = onu.customer_name?.toLowerCase().includes(q);
+                                                    const matchPppoe = onu.pppoe_username?.toLowerCase().includes(q);
+                                                    const matchSn = onu.serial_number?.toLowerCase().includes(q);
+                                                    const matchOdp = onu.odp_name?.toLowerCase().includes(q);
+                                                    if (!matchName && !matchPppoe && !matchSn && !matchOdp) return false;
+                                                }
 
-                                        <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-3">
-                                            <div className="text-[11px] text-slate-400">Fan Status</div>
-                                            <div className="text-xs font-bold text-emerald-400 mt-1.5">
-                                                {olt.telemetry?.fan_status || 'NORMAL (4500 RPM)'}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
+                                                if (oltSignalFilter !== 'all') {
+                                                    const rx = onu.optical_rx_dbm;
+                                                    if (oltSignalFilter === 'good' && !(rx >= -24.0)) return false;
+                                                    if (oltSignalFilter === 'warning' && !(rx < -24.0 && rx >= -27.0)) return false;
+                                                    if (oltSignalFilter === 'critical' && !(rx < -27.0)) return false;
+                                                    if (oltSignalFilter === 'online' && onu.status !== 'online') return false;
+                                                    if (oltSignalFilter === 'offline' && onu.status === 'online') return false;
+                                                }
 
-                                {/* PON Ports Rack / Cards Matrix */}
-                                <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-xl">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                            <Cable className="w-4 h-4 text-blue-400" />
-                                            Slot Modul PON 1..{olt.total_pon_ports} (SFP Class C++ 2.5G/1.25G)
-                                        </h3>
-                                        <span className="text-xs text-slate-400">
-                                            Pilih port PON untuk melihat daftar ONT/ONU pelanggan yang terhubung:
-                                        </span>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-                                        {olt.pon_ports?.map((port) => {
-                                            const isSelected = selectedPonIndex === port.pon_index;
-                                            const isUp = port.oper_status === 'up';
+                                                return true;
+                                            });
 
                                             return (
-                                                <div
-                                                    key={port.id}
-                                                    onClick={() => setSelectedPonIndex(port.pon_index)}
-                                                    className={`rounded-xl border p-3 cursor-pointer transition flex flex-col justify-between ${
-                                                        isSelected
-                                                            ? 'bg-blue-600/25 border-blue-500 shadow-lg shadow-blue-600/20 ring-1 ring-blue-400'
-                                                            : 'bg-slate-900/80 border-slate-700/80 hover:border-slate-600'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-xs font-bold text-white">PON {port.pon_index}</span>
-                                                        <span
-                                                            className={`w-2 h-2 rounded-full ${
-                                                                isUp ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'
-                                                            }`}
-                                                        />
+                                                <div className="mt-6 pt-5 border-t border-slate-700/80">
+                                                    {/* Toolbar & Filter Bar */}
+                                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                                                        <div>
+                                                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                                                                <span>Daftar ONU ONT Terhubung di <strong className="text-blue-400">{activePon.name}</strong></span>
+                                                                <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[11px] border border-blue-500/30">
+                                                                    {activePon.pon_identifier || `PON 1/1/${activePon.pon_index}`}
+                                                                </span>
+                                                            </h4>
+                                                            <p className="text-xs text-slate-400 mt-0.5">
+                                                                Menampilkan {filteredOnus.length} dari {activePon.onus?.length || 0} ONT terdaftar pada slot SFP ini (Kapasitas: {activePon.max_onu_capacity || 64} ONT).
+                                                            </p>
+                                                        </div>
+
+                                                        <div className="flex flex-wrap items-center gap-2.5">
+                                                            {/* Search Input */}
+                                                            <div className="relative w-full sm:w-64">
+                                                                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Cari pelanggan, SN, ODP..."
+                                                                    value={oltOnuSearch}
+                                                                    onChange={(e) => setOltOnuSearch(e.target.value)}
+                                                                    className="w-full pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                                                                />
+                                                            </div>
+
+                                                            {/* Signal Quality Filter */}
+                                                            <select
+                                                                value={oltSignalFilter}
+                                                                onChange={(e) => setOltSignalFilter(e.target.value)}
+                                                                className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+                                                            >
+                                                                <option value="all">Semua Sinyal ({activePon.onus?.length || 0})</option>
+                                                                <option value="good">🟢 Optimal (>= -24 dBm)</option>
+                                                                <option value="warning">🟡 Waspada (-24 s/d -27 dBm)</option>
+                                                                <option value="critical">🔴 Kritis (&lt; -27 dBm)</option>
+                                                                <option value="online">Online</option>
+                                                                <option value="offline">Offline</option>
+                                                            </select>
+                                                        </div>
                                                     </div>
 
-                                                    <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
-                                                        <div>TX: <strong className="text-slate-200">+{port.tx_power_dbm?.toFixed(2)} dBm</strong></div>
-                                                        <div>Temp: <strong className="text-slate-200">{port.temperature?.toFixed(1)}°C</strong></div>
-                                                        <div>ONU: <strong className="text-emerald-400">{port.online_onus}</strong>/{port.total_onus}</div>
+                                                    {/* Table of ONUs */}
+                                                    <div className="overflow-x-auto rounded-xl border border-slate-700/80 shadow-inner">
+                                                        <table className="w-full text-left text-xs text-slate-300">
+                                                            <thead className="bg-slate-900 text-slate-400 uppercase text-[10px] font-semibold border-b border-slate-700">
+                                                                <tr>
+                                                                    <th className="py-3 px-3">Slot & Status</th>
+                                                                    <th className="py-3 px-3">Pelanggan & Kontak</th>
+                                                                    <th className="py-3 px-3">Perangkat ONT</th>
+                                                                    <th className="py-3 px-3">Distribusi ODP</th>
+                                                                    <th className="py-3 px-3">Optik RX (dBm)</th>
+                                                                    <th className="py-3 px-3">GenieACS Live WiFi</th>
+                                                                    <th className="py-3 px-3 text-right">Aksi NOC & Teknisi</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-800 bg-slate-900/40">
+                                                                {filteredOnus.length === 0 ? (
+                                                                    <tr>
+                                                                        <td colSpan="7" className="py-8 text-center text-slate-500">
+                                                                            Tidak ada data ONU yang sesuai dengan kriteria filter pada {activePon.name}.
+                                                                        </td>
+                                                                    </tr>
+                                                                ) : (
+                                                                    filteredOnus.map((onu) => {
+                                                                        const rx = onu.optical_rx_dbm;
+                                                                        const isCritical = rx < -27.0;
+                                                                        const isWarning = rx >= -27.0 && rx < -24.0;
+                                                                        const isPasswordVisible = !!visibleWifiPasswords[onu.id];
+
+                                                                        return (
+                                                                            <tr key={onu.id} className="hover:bg-slate-800/60 transition">
+                                                                                {/* Slot & Status */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-mono font-bold text-blue-400">
+                                                                                        ONU #{onu.onu_index}
+                                                                                    </div>
+                                                                                    <span
+                                                                                        className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold mt-1 ${
+                                                                                            onu.status === 'online'
+                                                                                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                                                                                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                                                        }`}
+                                                                                    >
+                                                                                        <span className={`w-1.5 h-1.5 rounded-full mr-1 ${onu.status === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                                                                                        {onu.status?.toUpperCase() || 'ONLINE'}
+                                                                                    </span>
+                                                                                </td>
+
+                                                                                {/* Customer Info */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-bold text-white flex items-center gap-1.5">
+                                                                                        <span>{onu.customer_name || 'Pelanggan'}</span>
+                                                                                        {onu.customer_phone && (
+                                                                                            <a
+                                                                                                href={`https://wa.me/${onu.customer_phone.replace(/^0/, '62').replace(/\D/g, '')}`}
+                                                                                                target="_blank"
+                                                                                                rel="noopener noreferrer"
+                                                                                                title={`Hubungi WhatsApp: ${onu.customer_phone}`}
+                                                                                                className="text-emerald-400 hover:text-emerald-300"
+                                                                                            >
+                                                                                                💬
+                                                                                            </a>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="text-[11px] font-mono text-blue-400 mt-0.5">
+                                                                                        PPPoE: {onu.pppoe_username || '-'}
+                                                                                    </div>
+                                                                                    {onu.ip_address && (
+                                                                                        <div className="text-[10px] text-slate-500 font-mono">
+                                                                                            IP: {onu.ip_address}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </td>
+
+                                                                                {/* ONT Device Info */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-medium text-slate-200">
+                                                                                        {onu.model || 'FD511GW (VSOL)'}
+                                                                                    </div>
+                                                                                    <div className="text-[11px] font-mono text-slate-400">
+                                                                                        SN: {onu.serial_number}
+                                                                                    </div>
+                                                                                    <div className="text-[10px] text-slate-500">
+                                                                                        Jarak: {onu.distance_meter || 1200} m
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* ODP Topology */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-semibold text-slate-200">
+                                                                                        {onu.odp_name || 'ODP Sentral'}
+                                                                                    </div>
+                                                                                    <div className="text-[11px] text-emerald-400 font-medium">
+                                                                                        Slot Port: {onu.odp_port_number ? `Port ${onu.odp_port_number}` : 'Port 1'}
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* Optical RX Power */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="flex items-center gap-1.5">
+                                                                                        <span
+                                                                                            className={`inline-block px-2 py-0.5 rounded text-xs font-black ${
+                                                                                                isCritical
+                                                                                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
+                                                                                                    : isWarning
+                                                                                                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                                                                                    : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                                                                            }`}
+                                                                                        >
+                                                                                            {rx !== null && rx !== undefined ? `${Number(rx).toFixed(2)} dBm` : '-'}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                    <div className="text-[10px] font-semibold text-slate-400 mt-1 uppercase">
+                                                                                        {isCritical ? '🔴 Kritis / Redup' : (isWarning ? '🟡 Waspada' : '🟢 Optimal')}
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* GenieACS Live Wi-Fi */}
+                                                                                <td className="py-3 px-3">
+                                                                                    <div className="font-semibold text-cyan-300 flex items-center gap-1">
+                                                                                        <Wifi className="w-3 h-3 text-cyan-400" />
+                                                                                        <span>{onu.wifi_ssid || 'RUMAHKITA_WIFI'}</span>
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] font-mono text-slate-400">
+                                                                                        <span>Pass: {isPasswordVisible ? (onu.wifi_password || '******') : '••••••••'}</span>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => toggleWifiPassword(onu.id)}
+                                                                                            className="text-slate-400 hover:text-white"
+                                                                                            title="Lihat / Sembunyikan Password"
+                                                                                        >
+                                                                                            {isPasswordVisible ? <EyeOff className="w-3 h-3 text-amber-400" /> : <Eye className="w-3 h-3 text-slate-400" />}
+                                                                                        </button>
+                                                                                    </div>
+                                                                                    <div className="text-[10px] text-purple-300 flex items-center gap-1 mt-0.5">
+                                                                                        <Smartphone className="w-3 h-3" />
+                                                                                        <span>{onu.active_devices_count || 3} Klien Terhubung</span>
+                                                                                    </div>
+                                                                                </td>
+
+                                                                                {/* Actions */}
+                                                                                <td className="py-3 px-3 text-right">
+                                                                                    <div className="flex items-center justify-end gap-1.5">
+                                                                                        <button
+                                                                                            onClick={() => handleOpenReassignModal(onu, activePon.id)}
+                                                                                            title="Pindah Port PON / ODP Pelanggan"
+                                                                                            className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-semibold text-[11px] flex items-center gap-1 transition"
+                                                                                        >
+                                                                                            <Shuffle className="w-3 h-3" />
+                                                                                            Pindah Port
+                                                                                        </button>
+
+                                                                                        <button
+                                                                                            onClick={() => handleTraceCustomerFromOutside(onu.pppoe_username || onu.customer_name)}
+                                                                                            title="Lacak Jalur Topologi 360°"
+                                                                                            className="px-2.5 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 font-semibold text-[11px] transition"
+                                                                                        >
+                                                                                            Trace 360°
+                                                                                        </button>
+
+                                                                                        {onu.genie_device_id && (
+                                                                                            <>
+                                                                                                <button
+                                                                                                    onClick={() => handleRefreshCpe(onu.genie_device_id)}
+                                                                                                    disabled={cpeActionLoading[onu.genie_device_id] === 'refresh'}
+                                                                                                    title="Refresh Parameter TR-069"
+                                                                                                    className="p-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition"
+                                                                                                >
+                                                                                                    <RefreshCw className={`w-3.5 h-3.5 ${cpeActionLoading[onu.genie_device_id] === 'refresh' ? 'animate-spin' : ''}`} />
+                                                                                                </button>
+
+                                                                                                <button
+                                                                                                    onClick={() => handleRebootCpe(onu.genie_device_id)}
+                                                                                                    disabled={cpeActionLoading[onu.genie_device_id] === 'reboot'}
+                                                                                                    title="Reboot ONT Pelanggan"
+                                                                                                    className="p-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 transition"
+                                                                                                >
+                                                                                                    <Power className="w-3.5 h-3.5" />
+                                                                                                </button>
+                                                                                            </>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })
+                                                                )}
+                                                            </tbody>
+                                                        </table>
                                                     </div>
                                                 </div>
                                             );
-                                        })}
+                                        })()}
                                     </div>
-
-                                    {/* Selected PON Port ONU List Table */}
-                                    {(() => {
-                                        const activePon = olt.pon_ports?.find((p) => p.pon_index === selectedPonIndex);
-                                        if (!activePon) return null;
-
-                                        return (
-                                            <div className="mt-5 pt-4 border-t border-slate-700/70">
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-2">
-                                                        <span>Daftar ONU ONT Terhubung di <strong>{activePon.name}</strong></span>
-                                                        <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-[10px]">
-                                                            {activePon.pon_identifier}
-                                                        </span>
-                                                    </h4>
-                                                    <span className="text-xs text-slate-400">
-                                                        Total: {activePon.onus?.length || 0} ONU (Kapasitas Maks: {activePon.max_onu_capacity || 64})
-                                                    </span>
-                                                </div>
-
-                                                <div className="overflow-x-auto rounded-xl border border-slate-700/80">
-                                                    <table className="w-full text-left text-xs text-slate-300">
-                                                        <thead className="bg-slate-900/90 text-slate-400 uppercase text-[10px] font-semibold border-b border-slate-700">
-                                                            <tr>
-                                                                <th className="py-2.5 px-3">Slot ONU</th>
-                                                                <th className="py-2.5 px-3">Nama Pelanggan</th>
-                                                                <th className="py-2.5 px-3">PPPoE Username</th>
-                                                                <th className="py-2.5 px-3">Serial Number ONT</th>
-                                                                <th className="py-2.5 px-3">Model</th>
-                                                                <th className="py-2.5 px-3">Optik RX (dBm)</th>
-                                                                <th className="py-2.5 px-3">Jarak</th>
-                                                                <th className="py-2.5 px-3">Status</th>
-                                                                <th className="py-2.5 px-3 text-right">Aksi</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody className="divide-y divide-slate-800 bg-slate-900/40">
-                                                            {activePon.onus?.length === 0 ? (
-                                                                <tr>
-                                                                    <td colSpan="9" className="py-6 text-center text-slate-500">
-                                                                        Belum ada ONU yang terhubung pada port PON ini.
-                                                                    </td>
-                                                                </tr>
-                                                            ) : (
-                                                                activePon.onus?.map((onu) => (
-                                                                    <tr key={onu.id} className="hover:bg-slate-800/50 transition">
-                                                                        <td className="py-2 px-3 font-mono font-bold text-blue-400">
-                                                                            ONU #{onu.onu_index}
-                                                                        </td>
-                                                                        <td className="py-2 px-3 font-medium text-white">
-                                                                            {onu.customer_name || '-'}
-                                                                        </td>
-                                                                        <td className="py-2 px-3 font-mono text-slate-300">
-                                                                            {onu.pppoe_username || '-'}
-                                                                        </td>
-                                                                        <td className="py-2 px-3 font-mono text-slate-400">
-                                                                            {onu.serial_number}
-                                                                        </td>
-                                                                        <td className="py-2 px-3 text-slate-400">
-                                                                            {onu.model || 'F609 GPON'}
-                                                                        </td>
-                                                                        <td className="py-2 px-3 font-bold">
-                                                                            <span
-                                                                                className={
-                                                                                    onu.optical_rx_dbm < -27
-                                                                                        ? 'text-rose-400'
-                                                                                        : onu.optical_rx_dbm < -24
-                                                                                        ? 'text-amber-400'
-                                                                                        : 'text-emerald-400'
-                                                                                }
-                                                                            >
-                                                                                {onu.optical_rx_dbm?.toFixed(2)} dBm
-                                                                            </span>
-                                                                        </td>
-                                                                        <td className="py-2 px-3 text-slate-400">
-                                                                            {onu.distance_meter || 1200} m
-                                                                        </td>
-                                                                        <td className="py-2 px-3">
-                                                                            <span
-                                                                                className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                                                                    onu.status === 'online'
-                                                                                        ? 'bg-emerald-500/20 text-emerald-400'
-                                                                                        : 'bg-rose-500/20 text-rose-400'
-                                                                                }`}
-                                                                            >
-                                                                                {onu.status?.toUpperCase()}
-                                                                            </span>
-                                                                        </td>
-                                                                        <td className="py-2 px-3 text-right">
-                                                                            <button
-                                                                                onClick={() => handleTraceCustomerFromOutside(onu.pppoe_username || onu.customer_name)}
-                                                                                className="px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 font-semibold text-[11px] transition"
-                                                                            >
-                                                                                Trace 360° &rarr;
-                                                                            </button>
-                                                                        </td>
-                                                                    </tr>
-                                                                ))
-                                                            )}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
                                 </div>
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             )}
@@ -2181,6 +2500,113 @@ export default function SuperPanelPage() {
                             </button>
                         </div>
                     </div>
+                </Modal>
+            )}
+
+            {/* ========================================================================= */}
+            {/* MODAL 3: PINDAH PORT PON & ODP PELANGGAN */}
+            {/* ========================================================================= */}
+            {reassignModalOpen && selectedOnuForReassign && (
+                <Modal
+                    isOpen={reassignModalOpen}
+                    onClose={() => setReassignModalOpen(false)}
+                    title={`Pindah Port PON / ODP: ${selectedOnuForReassign.customer_name || selectedOnuForReassign.serial_number}`}
+                >
+                    <form onSubmit={handleSaveReassignOnu} className="space-y-4 text-xs text-slate-300">
+                        <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-700/60 space-y-1">
+                            <div className="flex justify-between">
+                                <span className="text-slate-400">Pelanggan:</span>
+                                <strong className="text-white">{selectedOnuForReassign.customer_name || '-'}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-400">PPPoE Username:</span>
+                                <span className="font-mono text-blue-400">{selectedOnuForReassign.pppoe_username || '-'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-400">ONT Serial Number:</span>
+                                <span className="font-mono text-slate-200">{selectedOnuForReassign.serial_number}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-400">Model ONT:</span>
+                                <span>{selectedOnuForReassign.model || 'FD511GW (VSOL GPON)'}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-400">Posisi SFP Saat Ini:</span>
+                                <span className="text-amber-300 font-bold">PON #{selectedPonIndex} (Slot #{selectedOnuForReassign.onu_index})</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-300 font-medium mb-1">
+                                Pilih Target Slot Port SFP PON (OLT VSOL):
+                            </label>
+                            <select
+                                value={reassignForm.target_pon_port_id}
+                                onChange={(e) => setReassignForm({ ...reassignForm, target_pon_port_id: e.target.value })}
+                                required
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white font-semibold focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Pilih Port PON --</option>
+                                {oltData?.olts
+                                    ?.find((o) => o.id === selectedOltId)
+                                    ?.pon_ports?.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name} ({p.pon_identifier || `PON 1/1/${p.pon_index}`}) - Terisi {p.onus?.length || 0}/{p.max_onu_capacity || 64} ONU
+                                        </option>
+                                    ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-300 font-medium mb-1">
+                                Pilih Box ODP Distribusi:
+                            </label>
+                            <select
+                                value={reassignForm.target_odp_id}
+                                onChange={(e) => setReassignForm({ ...reassignForm, target_odp_id: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Tetap / Jangan Ubah ODP --</option>
+                                {formOptions.odps?.map((odp) => (
+                                    <option key={odp.id} value={odp.id}>
+                                        {odp.name} ({odp.code}) - {odp.location_address || 'Sentral'}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-300 font-medium mb-1">
+                                Nomor Slot Port ODP (1..16):
+                            </label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="64"
+                                value={reassignForm.target_odp_port}
+                                onChange={(e) => setReassignForm({ ...reassignForm, target_odp_port: parseInt(e.target.value, 10) || 1 })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
+                            <button
+                                type="button"
+                                onClick={() => setReassignModalOpen(false)}
+                                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 font-semibold"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={reassigning || !reassignForm.target_pon_port_id}
+                                className="px-4 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 rounded-xl text-white font-bold flex items-center gap-1.5 shadow-lg shadow-amber-600/30 disabled:opacity-50"
+                            >
+                                {reassigning && <Loader className="w-3.5 h-3.5 animate-spin" />}
+                                Simpan & Alihkan Port
+                            </button>
+                        </div>
+                    </form>
                 </Modal>
             )}
         </div>

@@ -62,8 +62,12 @@ use App\Http\Controllers\WhatsAppPaymentWebhookController;
 use App\Http\Controllers\GenieAcsMonitoringController;
 use App\Http\Controllers\IpaymuIntegrationController;
 use App\Http\Controllers\SuperPanelController;
-use App\Models\User;
-use App\Services\PaymentReceiverService;
+// ==========================================
+// Native TR-069 (CWMP) ACS Server Endpoint (Public for CPE ONTs)
+// ==========================================
+Route::any('/acs', [\App\Http\Controllers\Acs\Tr069AcsController::class, 'handle'])->name('acs.endpoint');
+Route::any('/tr069', [\App\Http\Controllers\Acs\Tr069AcsController::class, 'handle'])->name('tr069.endpoint');
+Route::any('/cpe', [\App\Http\Controllers\Acs\Tr069AcsController::class, 'handle'])->name('cpe.endpoint');
 
 // Root domain dinonaktifkan untuk landing page publik.
 Route::get('/', function () {
@@ -402,6 +406,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/genieacs/devices/{deviceId}/assign-customer', [GenieAcsMonitoringController::class, 'assignCustomer'])->name('api.genieacs.assign-customer');
         Route::post('/api/genieacs/send-portal-link', [GenieAcsMonitoringController::class, 'sendPortalLinkWhatsApp'])->name('api.genieacs.send-portal-link');
 
+        // Native Laravel TR-069 ACS Management API
+        Route::get('/api/native-acs/devices', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'devices'])->name('api.native-acs.devices');
+        Route::get('/api/native-acs/devices/{id}', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'show'])->name('api.native-acs.show');
+        Route::post('/api/native-acs/devices/{id}/wifi', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'updateWifi'])->name('api.native-acs.wifi.update');
+        Route::post('/api/native-acs/devices/{id}/reboot', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'reboot'])->name('api.native-acs.reboot');
+        Route::post('/api/native-acs/devices/{id}/refresh', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'refresh'])->name('api.native-acs.refresh');
+        Route::post('/api/native-acs/devices/{id}/assign-customer', [\App\Http\Controllers\Acs\AcsDashboardController::class, 'assignCustomer'])->name('api.native-acs.assign-customer');
+
         // WhatsApp API
         Route::get('/api/whatsapp/status', [WhatsAppController::class, 'status'])->name('api.whatsapp.status');
         Route::get('/api/whatsapp/qr', [WhatsAppController::class, 'qr'])->name('api.whatsapp.qr');
@@ -442,6 +454,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/customer-mapping/{customerId}', [SuperPanelController::class, 'updateCustomerMapping'])->name('api.super-panel.customer-mapping');
             Route::post('/odp-config/{odpId}', [SuperPanelController::class, 'updateOdpConfig'])->name('api.super-panel.odp-config');
             Route::post('/sync-topology', [SuperPanelController::class, 'syncTopology'])->name('api.super-panel.sync-topology');
+            Route::post('/sync-genieacs', [SuperPanelController::class, 'syncGenieAcs'])->name('api.super-panel.sync-genieacs');
+            Route::post('/reassign-onu', [SuperPanelController::class, 'reassignOnu'])->name('api.super-panel.reassign-onu');
             Route::post('/cpe/{deviceId}/reboot', [SuperPanelController::class, 'rebootCpe'])->name('api.super-panel.cpe.reboot');
             Route::post('/cpe/{deviceId}/refresh', [SuperPanelController::class, 'refreshCpe'])->name('api.super-panel.cpe.refresh');
             Route::get('/form-options', [SuperPanelController::class, 'formOptions'])->name('api.super-panel.form-options');

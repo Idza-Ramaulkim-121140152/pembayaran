@@ -514,14 +514,40 @@ class SuperPanelService
     }
 
     /**
-     * Get OLT SNMP Telemetry and PON Port Status Cards
+     * Get OLT SNMP Telemetry and PON Port Status Cards enriched with Live GenieACS CPE Data
      */
     public function getOltSnmpMonitoringData(?int $oltId = null): array
     {
         $this->oltSnmpService->ensureDefaultOltSetup();
 
+        // 1. Fetch live GenieACS devices to overlay real-time Wi-Fi & optical signals
+        $genieDevices = [];
+        try {
+            $genieData = $this->genieAcsService->getAllDevicesSummary();
+            $genieDevices = $genieData['devices'] ?? [];
+        } catch (\Throwable $e) {
+            Log::warning('SuperPanelService: GenieACS live fetch in OLT telemetry error: ' . $e->getMessage());
+        }
+
+        $genieByPppoe = [];
+        $genieBySerial = [];
+        $genieByCustId = [];
+        foreach ($genieDevices as $g) {
+            if (!empty($g['pppoe_username'])) {
+                $genieByPppoe[strtolower(trim($g['pppoe_username']))] = $g;
+            }
+            if (!empty($g['serial_number'])) {
+                $genieBySerial[strtoupper(trim($g['serial_number']))] = $g;
+            }
+            if (!empty($g['customer']['id'])) {
+                $genieByCustId[$g['customer']['id']] = $g;
+            }
+        }
+
         $query = MasterOlt::query()->with([
-            'ponPorts' => fn ($q) => $q->orderBy('pon_index')->with(['onus' => fn ($o) => $o->with('customer')]),
+            'ponPorts' => fn ($q) => $q->orderBy('pon_index')->with([
+                'onus' => fn ($o) => $o->with(['customer' => fn ($c) => $c->with('odpBox')]),
+            ]),
         ]);
 
         if ($oltId) {
@@ -532,16 +558,143 @@ class SuperPanelService
 
         $olts = $query->get();
 
-        $resultOlts = $olts->map(function (MasterOlt $olt) {
+        $resultOlts = $olts->map(function (MasterOlt $olt) use ($genieByPppoe, $genieBySerial, $genieByCustId, $genieDevices) {
             $telemetry = $this->oltSnmpService->getOltTelemetry($olt);
-            
+
+            $oltTotalOnus = 0;
+            $oltOnlineOnus = 0;
+            $oltCriticalSignals = 0;
+            $oltWarningSignals = 0;
+            $oltOptimalSignals = 0;
+
+            $ponPortsData = $olt->ponPorts->map(function (OltPonPort $port) use ($genieByPppoe, $genieBySerial, $genieByCustId, &$oltTotalOnus, &$oltOnlineOnus, &$oltCriticalSignals, &$oltWarningSignals, &$oltOptimalSignals) {
+                $portGoodCount = 0;
+                $portWarningCount = 0;
+                $portCriticalCount = 0;
+                $portOnlineCount = 0;
+
+                $onusData = $port->onus->map(function ($onu) use ($genieByPppoe, $genieBySerial, $genieByCustId, &$portGoodCount, &$portWarningCount, &$portCriticalCount, &$portOnlineCount) {
+                    $cust = $onu->customer;
+                    $pppoe = strtolower(trim((string) ($cust?->pppoe_username ?: '')));
+                    $serial = strtoupper(trim((string) ($onu->serial_number ?: '')));
+
+                    // Find matched GenieACS device
+                    $gDev = $genieByPppoe[$pppoe] ?? ($genieBySerial[$serial] ?? ($cust ? ($genieByCustId[$cust->id] ?? null) : null));
+
+                    $rxPower = (float) $onu->optical_rx_dbm;
+                    $isOnline = $onu->status === 'online';
+                    $ssid = null;
+                    $wifiPass = null;
+                    $wifiClients = 0;
+                    $deviceId = null;
+                    $hasGenie = false;
+
+                    if ($gDev) {
+                        $hasGenie = true;
+                        $deviceId = $gDev['device_id'] ?? null;
+                        if (!empty($gDev['rx_power']) && is_numeric($gDev['rx_power'])) {
+                            $rxPower = (float) $gDev['rx_power'];
+                        }
+                        if (isset($gDev['is_online'])) {
+                            $isOnline = (bool) $gDev['is_online'];
+                        }
+                        $ssid = $gDev['ssid'] ?? null;
+                        $wifiPass = $gDev['wifi_password'] ?? null;
+                        $wifiClients = (int) ($gDev['wifi_clients_count'] ?? 0);
+                    }
+
+                    if ($isOnline) {
+                        $portOnlineCount++;
+                    }
+
+                    $signalQuality = 'good';
+                    if ($rxPower < -27.0) {
+                        $signalQuality = 'critical';
+                        $portCriticalCount++;
+                    } elseif ($rxPower < -24.0) {
+                        $signalQuality = 'warning';
+                        $portWarningCount++;
+                    } else {
+                        $portGoodCount++;
+                    }
+
+                    $odpName = '-';
+                    $odpPortNum = 1;
+                    if ($cust && $cust->odpBox) {
+                        $odpName = $cust->odpBox->name;
+                        $odpPortNum = $cust->odp_port_number ?: 1;
+                    }
+
+                    return [
+                        'id' => $onu->id,
+                        'onu_index' => $onu->onu_index,
+                        'customer_id' => $cust?->id,
+                        'customer_name' => $cust?->name ?? 'Belum Terhubung',
+                        'customer_code' => $cust ? ('CUST-' . str_pad((string) $cust->id, 4, '0', STR_PAD_LEFT)) : '-',
+                        'customer_phone' => $cust?->phone,
+                        'customer_address' => $cust?->address,
+                        'pppoe_username' => $cust?->pppoe_username ?: '-',
+                        'serial_number' => $onu->serial_number,
+                        'mac_address' => $onu->mac_address ?: ($gDev['mac_address'] ?? '-'),
+                        'model' => $onu->model ?: ($gDev['product_class'] ?? 'GPON ONT'),
+                        'optical_rx_dbm' => $rxPower,
+                        'optical_tx_dbm' => (float) $onu->optical_tx_dbm,
+                        'distance_meter' => $onu->distance_meter ?: 1200,
+                        'status' => $isOnline ? 'online' : 'offline',
+                        'signal_quality' => $signalQuality,
+                        'odp_name' => $odpName,
+                        'odp_port_number' => $odpPortNum,
+                        'has_genieacs' => $hasGenie,
+                        'genie_device_id' => $deviceId,
+                        'ssid' => $ssid,
+                        'wifi_ssid' => $ssid,
+                        'wifi_password' => $wifiPass,
+                        'wifi_clients_count' => $wifiClients,
+                        'active_devices_count' => $wifiClients,
+                    ];
+                });
+
+                $totalOnus = $onusData->count();
+                $oltTotalOnus += $totalOnus;
+                $oltOnlineOnus += $portOnlineCount;
+                $oltCriticalSignals += $portCriticalCount;
+                $oltWarningSignals += $portWarningCount;
+                $oltOptimalSignals += $portGoodCount;
+
+                return [
+                    'id' => $port->id,
+                    'pon_index' => $port->pon_index,
+                    'pon_identifier' => $port->pon_identifier,
+                    'name' => $port->name,
+                    'admin_status' => $port->admin_status,
+                    'oper_status' => $port->oper_status,
+                    'tx_power_dbm' => (float) $port->tx_power_dbm,
+                    'temperature' => (float) $port->temperature,
+                    'voltage' => (float) $port->voltage,
+                    'current_ma' => (float) $port->current_ma,
+                    'total_onus' => $totalOnus,
+                    'online_onus' => $portOnlineCount,
+                    'offline_onus' => max(0, $totalOnus - $portOnlineCount),
+                    'max_onu_capacity' => $port->max_onu_capacity,
+                    'description' => $port->description,
+                    'signal_health' => [
+                        'good' => $portGoodCount,
+                        'warning' => $portWarningCount,
+                        'critical' => $portCriticalCount,
+                    ],
+                    'onus' => $onusData,
+                ];
+            });
+
             return [
                 'id' => $olt->id,
                 'name' => $olt->name,
                 'brand' => $olt->brand,
                 'model' => $olt->model,
                 'host' => $olt->host,
+                'username' => $olt->username ?: 'admin',
                 'snmp_port' => $olt->snmp_port ?: 161,
+                'telnet_port' => $olt->telnet_port ?: 23,
                 'snmp_version' => $olt->snmp_version ?: '2c',
                 'snmp_community' => '***',
                 'is_active' => (bool) $olt->is_active,
@@ -551,39 +704,16 @@ class SuperPanelService
                 'last_status' => $olt->last_status ?: 'online',
                 'last_checked_at' => $olt->last_checked_at ? Carbon::parse($olt->last_checked_at)->toIso8601String() : null,
                 'telemetry' => $telemetry,
-                'pon_ports' => $olt->ponPorts->map(function (OltPonPort $port) {
-                    return [
-                        'id' => $port->id,
-                        'pon_index' => $port->pon_index,
-                        'pon_identifier' => $port->pon_identifier,
-                        'name' => $port->name,
-                        'admin_status' => $port->admin_status,
-                        'oper_status' => $port->oper_status,
-                        'tx_power_dbm' => (float) $port->tx_power_dbm,
-                        'temperature' => (float) $port->temperature,
-                        'voltage' => (float) $port->voltage,
-                        'current_ma' => (float) $port->current_ma,
-                        'total_onus' => $port->total_onus,
-                        'online_onus' => $port->online_onus,
-                        'offline_onus' => $port->offline_onus,
-                        'max_onu_capacity' => $port->max_onu_capacity,
-                        'description' => $port->description,
-                        'onus' => $port->onus->map(fn ($onu) => [
-                            'id' => $onu->id,
-                            'onu_index' => $onu->onu_index,
-                            'serial_number' => $onu->serial_number,
-                            'mac_address' => $onu->mac_address,
-                            'model' => $onu->model,
-                            'optical_rx_dbm' => (float) $onu->optical_rx_dbm,
-                            'optical_tx_dbm' => (float) $onu->optical_tx_dbm,
-                            'distance_meter' => $onu->distance_meter,
-                            'status' => $onu->status,
-                            'customer_name' => $onu->customer?->name,
-                            'customer_code' => $onu->customer ? ('CUST-' . str_pad((string) $onu->customer->id, 4, '0', STR_PAD_LEFT)) : '-',
-                            'pppoe_username' => $onu->customer?->pppoe_username,
-                        ]),
-                    ];
-                }),
+                'summary' => [
+                    'total_registered_onu' => $oltTotalOnus,
+                    'online_onus' => $oltOnlineOnus,
+                    'offline_onus' => max(0, $oltTotalOnus - $oltOnlineOnus),
+                    'optimal_signals' => $oltOptimalSignals,
+                    'warning_signals' => $oltWarningSignals,
+                    'critical_signals' => $oltCriticalSignals,
+                    'genieacs_total_devices' => count($genieDevices),
+                ],
+                'pon_ports' => $ponPortsData,
             ];
         });
 
@@ -591,6 +721,34 @@ class SuperPanelService
             'olts' => $resultOlts,
             'selected_olt_id' => $olts->first()?->id,
         ];
+    }
+
+    /**
+     * Trigger One-Click Auto-Match between GenieACS CPEs and OLT Ports
+     */
+    public function syncGenieAcsCrossMatching(?int $oltId = null): array
+    {
+        $olt = $oltId ? MasterOlt::findOrFail($oltId) : $this->oltSnmpService->ensureDefaultOltSetup();
+        $result = $this->oltSnmpService->syncWithGenieAcsTopology($olt, true);
+        
+        Cache::forget('super_panel_overview_stats');
+        Cache::forget('genieacs_devices_summary_fast');
+
+        return [
+            'success' => true,
+            'message' => "Berhasil mensinkronkan {$result['matched_genieacs']} perangkat GenieACS ke {$olt->name} (PON 1..{$olt->total_pon_ports}) dan ODP.",
+            'data' => $result,
+        ];
+    }
+
+    /**
+     * Move / Reassign an ONU to another PON SFP Port or ODP
+     */
+    public function reassignOnuPort(int $onuId, int $targetPonPortId, ?int $targetOdpId = null, ?int $targetOdpPort = null): array
+    {
+        $result = $this->oltSnmpService->reassignCustomerOnu($onuId, $targetPonPortId, $targetOdpId, $targetOdpPort);
+        Cache::forget('super_panel_overview_stats');
+        return $result;
     }
 
     /**

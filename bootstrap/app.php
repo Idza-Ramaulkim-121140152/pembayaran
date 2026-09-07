@@ -14,6 +14,10 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(\App\Http\Middleware\DisableSearchIndexing::class);
         $middleware->validateCsrfTokens(except: [
+            'acs',
+            'acs/*',
+            'tr069',
+            'tr069/*',
             'api/whatsapp/webhooks/payments',
             'api/public/*',
             'api/customer/*',
