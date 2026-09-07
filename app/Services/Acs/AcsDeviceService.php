@@ -67,43 +67,47 @@ class AcsDeviceService
         $device->spec_version = $decoded['spec_version'];
         $device->provisioning_code = $decoded['provisioning_code'];
 
-        $device->pon_mode = $decoded['pon_mode'];
-        $device->optical_rx_power = $decoded['optical_rx_power'];
-        $device->optical_tx_power = $decoded['optical_tx_power'];
-        $device->temperature = $decoded['temperature'];
-        $device->device_uptime = $decoded['device_uptime'];
-        $device->device_uptime_seconds = $decoded['device_uptime_seconds'];
-        $device->ppp_uptime = $decoded['ppp_uptime'];
-        $device->ppp_uptime_seconds = $decoded['ppp_uptime_seconds'];
+        $device->pon_mode = $decoded['pon_mode'] ?: ($device->pon_mode ?: 'EPON');
+        $device->optical_rx_power = $decoded['optical_rx_power'] ?? $device->optical_rx_power;
+        $device->optical_tx_power = $decoded['optical_tx_power'] ?? $device->optical_tx_power;
+        $device->temperature = $decoded['temperature'] ?? $device->temperature;
+        $device->device_uptime = $decoded['device_uptime'] ?: $device->device_uptime;
+        $device->device_uptime_seconds = $decoded['device_uptime_seconds'] ?? $device->device_uptime_seconds;
+        $device->ppp_uptime = $decoded['ppp_uptime'] ?: $device->ppp_uptime;
+        $device->ppp_uptime_seconds = $decoded['ppp_uptime_seconds'] ?? $device->ppp_uptime_seconds;
 
-        $device->pppoe_username = $matched['pppoe_username'] ?: $decoded['pppoe_username'];
+        $device->pppoe_username = $matched['pppoe_username'] ?: ($decoded['pppoe_username'] ?: $device->pppoe_username);
         $device->pppoe_password = $decoded['pppoe_password'] ?: $device->pppoe_password;
-        $device->pppoe_ip = $decoded['pppoe_ip'];
-        $device->wan_ip = $decoded['wan_ip'];
-        $device->wan_mac = $decoded['wan_mac'];
-        $device->lan_mac = $decoded['lan_mac'];
-        $device->ip_address = $clientIp;
+        $device->pppoe_ip = $decoded['pppoe_ip'] ?: $device->pppoe_ip;
+        $device->wan_ip = $decoded['wan_ip'] ?: $device->wan_ip;
+        $device->wan_mac = $decoded['wan_mac'] ?: $device->wan_mac;
+        $device->lan_mac = $decoded['lan_mac'] ?: $device->lan_mac;
+        $device->ip_address = $clientIp ?: $device->ip_address;
 
-        $device->wifi_ssid = $decoded['wifi_ssid'];
+        $device->wifi_ssid = $decoded['wifi_ssid'] ?: $device->wifi_ssid;
         $device->wifi_password = $decoded['wifi_password'] ?: $device->wifi_password;
-        $device->wifi_enabled = $decoded['wifi_enabled'];
-        $device->wifi_ssid_5g = $decoded['wifi_ssid_5g'];
+        $device->wifi_enabled = $decoded['wifi_enabled'] ?? $device->wifi_enabled;
+        $device->wifi_ssid_5g = $decoded['wifi_ssid_5g'] ?: $device->wifi_ssid_5g;
         $device->wifi_password_5g = $decoded['wifi_password_5g'] ?: $device->wifi_password_5g;
-        $device->wifi_enabled_5g = $decoded['wifi_enabled_5g'];
-        $device->wifi_clients_count = $decoded['wifi_clients_count'];
+        $device->wifi_enabled_5g = $decoded['wifi_enabled_5g'] ?? $device->wifi_enabled_5g;
+        $device->wifi_clients_count = !empty($decoded['hosts']) ? count($decoded['hosts']) : ($decoded['wifi_clients_count'] ?: $device->wifi_clients_count);
 
-        $device->connection_request_url = $decoded['connection_request_url'];
-        $device->connection_request_user = $decoded['connection_request_user'];
-        $device->connection_request_pass = $decoded['connection_request_pass'];
+        $device->connection_request_url = $decoded['connection_request_url'] ?: $device->connection_request_url;
+        $device->connection_request_user = $decoded['connection_request_user'] ?: $device->connection_request_user;
+        $device->connection_request_pass = $decoded['connection_request_pass'] ?: $device->connection_request_pass;
 
         $device->customer_id = $matched['customer_id'] ?: $device->customer_id;
         $device->matched_via = $matched['matched_via'] ?: $device->matched_via;
         $device->is_online = true;
         $device->last_inform_at = now();
-        $device->vendor_raw_summary = [
-            'events' => $informData['events'] ?? [],
-            'param_count' => count($params),
-        ];
+
+        $rawSummary = $device->vendor_raw_summary ?? [];
+        $rawSummary['events'] = $informData['events'] ?? [];
+        $rawSummary['param_count'] = count($params);
+        if (!empty($decoded['all_ssids'])) {
+            $rawSummary['ssids'] = $decoded['all_ssids'];
+        }
+        $device->vendor_raw_summary = $rawSummary;
 
         $device->save();
 
