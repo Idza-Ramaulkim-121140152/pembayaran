@@ -21,15 +21,15 @@ class LandingPageController extends Controller
     public function getData()
     {
         $promotions = Promotion::active()->orderBy('sort_order')->get();
-        $packages = Package::active()->get();
+        $packages = Package::publicRegistration()->get();
         
         $settings = [
             'company_name' => SiteSetting::get('company_name', 'Rumah Kita Network'),
             'company_tagline' => SiteSetting::get('company_tagline', 'Wifi Rumahan Murah dan Stabil'),
             'company_phone' => SiteSetting::get('company_phone', '+6285158025553'),
             'company_whatsapp' => SiteSetting::get('company_whatsapp', '+6285158025553'),
-            'company_email' => SiteSetting::get('company_email', ''),
-            'company_address' => SiteSetting::get('company_address', ''),
+            'company_email' => SiteSetting::get('company_email', 'rumahkita69@gmail.com'),
+            'company_address' => SiteSetting::get('company_address', 'Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)'),
             'installation_fee' => SiteSetting::get('installation_fee', '250000'),
             'installation_promo' => SiteSetting::get('installation_promo', 'GRATIS'),
             'promo_text' => SiteSetting::get('promo_text', 'GRATIS BIAYA PEMASANGAN'),
@@ -51,7 +51,7 @@ class LandingPageController extends Controller
     public function getPromoData()
     {
         $promotions = Promotion::active()->orderBy('sort_order')->get();
-        $packages = Package::active()->orderBy('price')->get()->map(function ($pkg) {
+        $packages = Package::publicRegistration()->orderBy('price')->get()->map(function ($pkg) {
             $speedRaw = (string) $pkg->speed;
             $speedDisplay = str_ends_with(strtolower($speedRaw), 'mbps') ? $speedRaw : "{$speedRaw} Mbps";
             
@@ -78,9 +78,9 @@ class LandingPageController extends Controller
                 'speed_raw' => $pkg->speed,
                 'price' => $price,
                 'price_formatted' => 'Rp ' . number_format($price, 0, ',', '.'),
-                'max_devices' => $pkg->max_devices ?: ($price <= 177000 ? 4 : ($price <= 200000 ? 6 : 10)),
+                'max_devices' => $pkg->device_count ?: ($price <= 177000 ? 4 : ($price <= 200000 ? 6 : 10)),
                 'description' => $pkg->description ?: "Paket internet super cepat {$speedDisplay} cocok untuk kebutuhan keluarga dan rumah.",
-                'is_popular' => str_contains(strtolower($pkg->name), 'gold') || str_contains(strtolower($pkg->name), '200k') || str_contains(strtolower($pkg->name), '25mbps') || str_contains(strtolower($pkg->name), '20mbps'),
+                'is_popular' => (bool) $pkg->is_popular,
                 'features' => $features,
             ];
         });
