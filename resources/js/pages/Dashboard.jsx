@@ -1216,7 +1216,7 @@ function Dashboard() {
                 {borrowerDebts.length > 0 && (
                     <SectionFrame eyebrow="Pinjaman" title="Hutang Saya ke Perusahaan">
                         <div className="grid gap-4">
-                            {borrowerDebts.map((item) => (
+                            {borrowerDebts.slice(0, 5).map((item) => (
                                 <DashboardPanelSurface key={item.id} accent="amber">
                                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                         <div>

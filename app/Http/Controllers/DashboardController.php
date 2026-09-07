@@ -851,6 +851,7 @@ class DashboardController extends Controller
                 ->whereIn('status', ['outstanding', 'rejected_by_receiver'])
                 ->with(['invoice:id,invoice_link,customer_id', 'confirmedBy:id,name'])
                 ->orderByDesc('occurred_at')
+                ->limit(5)
                 ->get()
                 ->map(function ($loan) {
                     return [
