@@ -254,4 +254,93 @@ class AcsDeviceService
         }
         return "{$mfrClean}-{$prodClean}-{$snClean}";
     }
+
+    /**
+     * Process GetParameterValuesResponse from CPE
+     */
+    public function processGetParameterValuesResponse(AcsDevice $device, array $params, array $types = []): void
+    {
+        if (empty($params)) return;
+
+        // 1. Decode multi-vendor parameters from the returned set
+        $decoded = $this->decoder->decode($params, [
+            'manufacturer' => $device->manufacturer,
+            'oui' => $device->oui,
+            'product_class' => $device->product_class,
+            'serial_number' => $device->serial_number,
+        ]);
+
+        // 2. Update device attributes if new non-empty values are found
+        if (!empty($decoded['wifi_ssid'])) {
+            $device->wifi_ssid = $decoded['wifi_ssid'];
+        }
+        if (!empty($decoded['wifi_password'])) {
+            $device->wifi_password = $decoded['wifi_password'];
+        }
+        if (!empty($decoded['wifi_ssid_5g'])) {
+            $device->wifi_ssid_5g = $decoded['wifi_ssid_5g'];
+        }
+        if (!empty($decoded['wifi_password_5g'])) {
+            $device->wifi_password_5g = $decoded['wifi_password_5g'];
+        }
+        if ($decoded['wifi_enabled'] !== null) {
+            $device->wifi_enabled = $decoded['wifi_enabled'];
+        }
+        if ($decoded['optical_rx_power'] !== null) {
+            $device->optical_rx_power = $decoded['optical_rx_power'];
+        }
+        if ($decoded['optical_tx_power'] !== null) {
+            $device->optical_tx_power = $decoded['optical_tx_power'];
+        }
+        if ($decoded['temperature'] !== null) {
+            $device->temperature = $decoded['temperature'];
+        }
+        if ($decoded['device_uptime_seconds'] !== null) {
+            $device->device_uptime_seconds = $decoded['device_uptime_seconds'];
+            $device->device_uptime = $decoded['device_uptime'];
+        }
+        if ($decoded['ppp_uptime_seconds'] !== null) {
+            $device->ppp_uptime_seconds = $decoded['ppp_uptime_seconds'];
+            $device->ppp_uptime = $decoded['ppp_uptime'];
+        }
+        if (!empty($decoded['pppoe_username'])) {
+            $device->pppoe_username = $decoded['pppoe_username'];
+        }
+        if (!empty($decoded['pppoe_password'])) {
+            $device->pppoe_password = $decoded['pppoe_password'];
+        }
+        if (!empty($decoded['pppoe_ip'])) {
+            $device->pppoe_ip = $decoded['pppoe_ip'];
+        }
+        if (!empty($decoded['wan_ip'])) {
+            $device->wan_ip = $decoded['wan_ip'];
+        }
+        if (!empty($decoded['wan_mac'])) {
+            $device->wan_mac = $decoded['wan_mac'];
+        }
+        if (!empty($decoded['lan_mac'])) {
+            $device->lan_mac = $decoded['lan_mac'];
+        }
+
+        // Keep multi-ssid array in vendor_raw_summary
+        if (!empty($decoded['all_ssids'])) {
+            $summary = $device->vendor_raw_summary ?? [];
+            $summary['ssids'] = $decoded['all_ssids'];
+            $device->vendor_raw_summary = $summary;
+        }
+
+        // 3. Sync Connected Hosts
+        if (!empty($decoded['hosts'])) {
+            $this->syncConnectedHosts($device, $decoded['hosts']);
+            $device->wifi_clients_count = count($decoded['hosts']);
+        } elseif ($decoded['wifi_clients_count'] > 0) {
+            $device->wifi_clients_count = $decoded['wifi_clients_count'];
+        }
+
+        // 4. Save individual parameters into acs_device_parameters
+        $this->saveDeviceParameters($device, $params, $types);
+
+        $device->save();
+        Log::info("AcsDeviceService: Updated device #{$device->id} ({$device->device_id}) via GetParameterValuesResponse: SSID={$device->wifi_ssid}, Clients={$device->wifi_clients_count}, RX={$device->optical_rx_power}");
+    }
 }

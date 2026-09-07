@@ -114,13 +114,49 @@ class AcsVendorDecoder
             $params['Device.Ethernet.Interface.1.MACAddress'] ?? null,
         ]);
 
-        // WiFi 2.4GHz
-        $wifiSsid = $this->firstNonEmpty([
+        // Multi-SSID List Detection (SSID 1 .. 8)
+        $allSsids = [];
+        for ($i = 1; $i <= 8; $i++) {
+            $sName = $this->firstNonEmpty([
+                $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.SSID"] ?? null,
+                $params["InternetGatewayDevice.LANDevice.2.WLANConfiguration.{$i}.SSID"] ?? null,
+                $params["Device.WiFi.SSID.{$i}.SSID"] ?? null,
+            ]);
+
+            if (!empty($sName)) {
+                $sPass = $this->firstNonEmpty([
+                    $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.KeyPassphrase"] ?? null,
+                    $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.PreSharedKey.1.KeyPassphrase"] ?? null,
+                    $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.PreSharedKey.1.PreSharedKey"] ?? null,
+                    $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.X_CMS_KeyPassphrase"] ?? null,
+                    $params["InternetGatewayDevice.LANDevice.2.WLANConfiguration.{$i}.KeyPassphrase"] ?? null,
+                    $params["Device.WiFi.AccessPoint.{$i}.Security.KeyPassphrase"] ?? null,
+                ]);
+
+                $sEn = $this->toBool(
+                    $params["InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.Enable"]
+                    ?? $params["InternetGatewayDevice.LANDevice.2.WLANConfiguration.{$i}.Enable"]
+                    ?? ($params["Device.WiFi.SSID.{$i}.Enable"] ?? true)
+                );
+
+                $allSsids[] = [
+                    'index' => $i,
+                    'ssid' => $sName,
+                    'password' => $sPass,
+                    'enabled' => $sEn,
+                    'path' => "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}",
+                    'password_path' => "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$i}.KeyPassphrase",
+                ];
+            }
+        }
+
+        // WiFi 2.4GHz (Primary SSID)
+        $wifiSsid = $allSsids[0]['ssid'] ?? $this->firstNonEmpty([
             $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'] ?? null,
             $params['Device.WiFi.SSID.1.SSID'] ?? null,
         ]);
 
-        $wifiPass = $this->firstNonEmpty([
+        $wifiPass = $allSsids[0]['password'] ?? $this->firstNonEmpty([
             $params['VirtualParameters.WlanPassword'] ?? null,
             $params['VirtualParameters.wlanPassword'] ?? null,
             $params['VirtualParameters.wifiPassword'] ?? null,
@@ -131,26 +167,39 @@ class AcsVendorDecoder
             $params['Device.WiFi.AccessPoint.1.Security.KeyPassphrase'] ?? null,
         ]);
 
-        $wifiEnabled = $this->toBool($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable'] ?? ($params['Device.WiFi.SSID.1.Enable'] ?? true));
+        $wifiEnabled = $allSsids[0]['enabled'] ?? $this->toBool($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable'] ?? ($params['Device.WiFi.SSID.1.Enable'] ?? true));
 
-        // WiFi 5GHz
-        $wifiSsid5g = $this->firstNonEmpty([
-            $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID'] ?? null,
-            $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID'] ?? null,
-            $params['Device.WiFi.SSID.2.SSID'] ?? null,
-        ]);
+        // Secondary SSID / 5GHz (e.g. SSID 2 or 5)
+        $wifiSsid5g = null;
+        $wifiPass5g = null;
+        $wifiEnabled5g = false;
 
-        $wifiPass5g = $this->firstNonEmpty([
-            $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase'] ?? null,
-            $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase'] ?? null,
-            $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase'] ?? null,
-            $wifiPass, // Fallback to 2.4G key if shared
-        ]);
+        if (count($allSsids) > 1) {
+            $wifiSsid5g = $allSsids[1]['ssid'];
+            $wifiPass5g = $allSsids[1]['password'];
+            $wifiEnabled5g = $allSsids[1]['enabled'];
+        } else {
+            $wifiSsid5g = $this->firstNonEmpty([
+                $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID'] ?? null,
+                $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID'] ?? null,
+                $params['Device.WiFi.SSID.2.SSID'] ?? null,
+            ]);
 
-        $wifiEnabled5g = !empty($wifiSsid5g) && $this->toBool($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Enable'] ?? ($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable'] ?? true));
+            $wifiPass5g = $this->firstNonEmpty([
+                $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase'] ?? null,
+                $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.KeyPassphrase'] ?? null,
+                $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase'] ?? null,
+                $wifiPass, // Fallback to 2.4G key if shared
+            ]);
+
+            $wifiEnabled5g = !empty($wifiSsid5g) && $this->toBool($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.Enable'] ?? ($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable'] ?? true));
+        }
+
+        // Connected Hosts Table
+        $hosts = $this->extractConnectedHosts($params);
 
         // Connected WiFi Clients count
-        $wifiClients = $this->extractWifiClientsCount($params);
+        $wifiClients = $this->extractWifiClientsCount($params, count($hosts));
 
         // Connection Request URL & Credentials
         $connReqUrl = $this->firstNonEmpty([
@@ -167,9 +216,6 @@ class AcsVendorDecoder
             $params['InternetGatewayDevice.ManagementServer.ConnectionRequestPassword'] ?? null,
             $params['Device.ManagementServer.ConnectionRequestPassword'] ?? null,
         ]);
-
-        // Connected Hosts Table
-        $hosts = $this->extractConnectedHosts($params);
 
         return [
             'manufacturer' => $manufacturer,
@@ -200,6 +246,7 @@ class AcsVendorDecoder
             'wifi_ssid_5g' => $wifiSsid5g,
             'wifi_password_5g' => $wifiPass5g,
             'wifi_enabled_5g' => $wifiEnabled5g,
+            'all_ssids' => $allSsids,
             'wifi_clients_count' => $wifiClients,
             'connection_request_url' => $connReqUrl,
             'connection_request_user' => $connReqUser,
@@ -233,7 +280,11 @@ class AcsVendorDecoder
             $params['InternetGatewayDevice.WANDevice.1.WANEponInterfaceConfig.RxPower'] ?? null,
             $params['InternetGatewayDevice.WANDevice.1.WANGponInterfaceConfig.RXPower'] ?? null,
             $params['InternetGatewayDevice.WANDevice.1.WANGponInterfaceConfig.RxPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RXPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.RxPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.RxPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_OpticalInfo.RxPower'] ?? null,
+            $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_OpticalInfo.RXPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_ZTE-COM_OpticalInfo.RxPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_HW_OpticalParameter.RxPower'] ?? null,
             $params['InternetGatewayDevice.X_ITU_G988_Optics.RxPower'] ?? null,
@@ -247,6 +298,14 @@ class AcsVendorDecoder
             if ($val !== null) return $val;
         }
 
+        // Generic fallback scanner for any parameter containing rxpower
+        foreach ($params as $k => $v) {
+            if ((stripos($k, 'rxpower') !== false || stripos($k, 'rx_power') !== false) && $v !== null && trim((string)$v) !== '') {
+                $val = $this->cleanOpticalValue($v);
+                if ($val !== null) return $val;
+            }
+        }
+
         return null;
     }
 
@@ -256,7 +315,11 @@ class AcsVendorDecoder
             $params['VirtualParameters.TXPower'] ?? null,
             $params['InternetGatewayDevice.WANDevice.1.WANEponInterfaceConfig.TxPower'] ?? null,
             $params['InternetGatewayDevice.WANDevice.1.WANGponInterfaceConfig.TXPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.TXPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_GponInterfaceConfig.TxPower'] ?? null,
+            $params['InternetGatewayDevice.WANDevice.1.X_CT-COM_EponInterfaceConfig.TxPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_OpticalInfo.TxPower'] ?? null,
+            $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_OpticalInfo.TXPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_ZTE-COM_OpticalInfo.TxPower'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.X_HW_OpticalParameter.TxPower'] ?? null,
             $params['Device.Optical.Interface.1.TxPower'] ?? null,
@@ -266,6 +329,14 @@ class AcsVendorDecoder
             if ($raw === null || trim((string)$raw) === '' || trim((string)$raw) === 'N/A') continue;
             $val = $this->cleanOpticalValue($raw);
             if ($val !== null) return $val;
+        }
+
+        // Generic fallback scanner for any parameter containing txpower
+        foreach ($params as $k => $v) {
+            if ((stripos($k, 'txpower') !== false || stripos($k, 'tx_power') !== false) && $v !== null && trim((string)$v) !== '') {
+                $val = $this->cleanOpticalValue($v);
+                if ($val !== null) return $val;
+            }
         }
 
         return null;
@@ -298,19 +369,28 @@ class AcsVendorDecoder
     private function extractTemperature(array $params): ?float
     {
         $tempCandidates = [
-            $params['VirtualParameters.gettemp'] ?? null,
+            $params['VirtualParameters.Temperature'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.Temperature'] ?? null,
-            $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_Temperature'] ?? null,
-            $params['InternetGatewayDevice.WANDevice.1.WANEponInterfaceConfig.TransceiverTemperature'] ?? null,
-            $params['InternetGatewayDevice.WANDevice.1.WANGponInterfaceConfig.TransceiverTemperature'] ?? null,
-            $params['Device.DeviceInfo.TemperatureStatus.TemperatureSensor.1.Value'] ?? null,
+            $params['InternetGatewayDevice.DeviceInfo.X_CT-COM_OpticalInfo.Temperature'] ?? null,
+            $params['InternetGatewayDevice.DeviceInfo.X_ZTE-COM_OpticalInfo.Temperature'] ?? null,
+            $params['Device.DeviceInfo.TemperatureStatus.Temperature'] ?? null,
         ];
 
         foreach ($tempCandidates as $raw) {
             if ($raw === null || trim((string)$raw) === '') continue;
-            if (preg_match('/([0-9]+(?:\.[0-9]+)?)/', (string)$raw, $m)) {
-                $val = (float) $m[1];
-                if ($val > 200) $val = $val / 10.0;
+            if (is_numeric($raw)) {
+                $val = (float) $raw;
+                if ($val > 1000) $val = $val / 1000.0;
+                elseif ($val > 150) $val = $val / 10.0;
+                return round($val, 1);
+            }
+        }
+
+        foreach ($params as $k => $v) {
+            if (stripos($k, 'temperature') !== false && $v !== null && trim((string)$v) !== '' && is_numeric($v)) {
+                $val = (float)$v;
+                if ($val > 1000) $val = $val / 1000.0;
+                elseif ($val > 150) $val = $val / 10.0;
                 return round($val, 1);
             }
         }
@@ -321,9 +401,10 @@ class AcsVendorDecoder
     private function extractDeviceUptime(array $params): ?int
     {
         $uptimeCandidates = [
+            $params['VirtualParameters.getuptime'] ?? null,
             $params['InternetGatewayDevice.DeviceInfo.UpTime'] ?? null,
+            $params['InternetGatewayDevice.DeviceInfo.Uptime'] ?? null,
             $params['Device.DeviceInfo.UpTime'] ?? null,
-            $params['VirtualParameters.getdeviceuptime'] ?? null,
         ];
 
         foreach ($uptimeCandidates as $raw) {
@@ -367,8 +448,12 @@ class AcsVendorDecoder
         return null;
     }
 
-    private function extractWifiClientsCount(array $params): int
+    private function extractWifiClientsCount(array $params, int $hostsFound = 0): int
     {
+        if ($hostsFound > 0) {
+            return $hostsFound;
+        }
+
         if (isset($params['VirtualParameters.activedevices']) && is_numeric($params['VirtualParameters.activedevices'])) {
             return (int) $params['VirtualParameters.activedevices'];
         }
@@ -389,7 +474,7 @@ class AcsVendorDecoder
         // Count active hosts from LAN Hosts table
         $activeHosts = 0;
         foreach ($params as $k => $v) {
-            if (preg_match('/InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.\d+\.Active$/', $k) && $this->toBool($v)) {
+            if (preg_match('/Hosts\.Host\.\d+\.Active$/i', $k) && $this->toBool($v)) {
                 $activeHosts++;
             }
         }
@@ -401,11 +486,11 @@ class AcsVendorDecoder
     {
         $hosts = [];
 
-        // 1. Scan InternetGatewayDevice.LANDevice.1.Hosts.Host.*
+        // 1. Scan InternetGatewayDevice.LANDevice.*.Hosts.Host.* and Device.Hosts.Host.*
         foreach ($params as $k => $v) {
-            if (preg_match('/InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(MACAddress|IPAddress|HostName|Active|InterfaceType)/', $k, $m)) {
+            if (preg_match('/(?:InternetGatewayDevice\.LANDevice\.\d+\.Hosts\.Host|Device\.Hosts\.Host)\.(\d+)\.(MACAddress|PhysAddress|IPAddress|IPv4Address|HostName|UserHostName|DeviceName|Active|InterfaceType)/i', $k, $m)) {
                 $idx = $m[1];
-                $prop = $m[2];
+                $prop = strtolower($m[2]);
 
                 if (!isset($hosts[$idx])) {
                     $hosts[$idx] = [
@@ -417,19 +502,27 @@ class AcsVendorDecoder
                     ];
                 }
 
-                if ($prop === 'MACAddress') $hosts[$idx]['mac_address'] = trim($v);
-                if ($prop === 'IPAddress') $hosts[$idx]['ip_address'] = trim($v);
-                if ($prop === 'HostName') $hosts[$idx]['hostname'] = trim($v);
-                if ($prop === 'Active') $hosts[$idx]['is_active'] = $this->toBool($v);
-                if ($prop === 'InterfaceType') {
-                    $hosts[$idx]['interface_type'] = stripos($v, '802.11') !== false || stripos($v, 'Wi-Fi') !== false ? 'Wi-Fi' : 'Ethernet';
+                if (in_array($prop, ['macaddress', 'physaddress'], true) && !empty($v)) {
+                    $hosts[$idx]['mac_address'] = trim($v);
+                }
+                if (in_array($prop, ['ipaddress', 'ipv4address'], true) && !empty($v)) {
+                    $hosts[$idx]['ip_address'] = trim($v);
+                }
+                if (in_array($prop, ['hostname', 'userhostname', 'devicename'], true) && !empty($v)) {
+                    $hosts[$idx]['hostname'] = trim($v);
+                }
+                if ($prop === 'active') {
+                    $hosts[$idx]['is_active'] = $this->toBool($v);
+                }
+                if ($prop === 'interfacetype') {
+                    $hosts[$idx]['interface_type'] = (stripos($v, '802.11') !== false || stripos($v, 'Wi-Fi') !== false || stripos($v, 'wireless') !== false) ? 'Wi-Fi' : 'Ethernet';
                 }
             }
         }
 
         // 2. Scan WLAN Associated Devices
         foreach ($params as $k => $v) {
-            if (preg_match('/WLANConfiguration\.(\d+)\.AssociatedDevice\.(\d+)\.(AssociatedDeviceMACAddress|MACAddress)/', $k, $m)) {
+            if (preg_match('/WLANConfiguration\.(\d+)\.AssociatedDevice\.(\d+)\.(AssociatedDeviceMACAddress|MACAddress)/i', $k, $m)) {
                 $wlanIdx = $m[1];
                 $assocIdx = $m[2];
                 $mac = trim($v);

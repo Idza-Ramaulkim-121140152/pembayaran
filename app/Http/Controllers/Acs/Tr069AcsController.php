@@ -154,9 +154,89 @@ class Tr069AcsController extends Controller
             return $this->dispatchTask($session, $pendingTask, $clientIp, $cwmpId);
         }
 
+        // No pending manual task. Check if auto-discovery or periodic parameter refresh is needed:
+        // 1. Missing WiFi SSID
+        // 2. Or no connected hosts scanned yet
+        // 3. Or last successful probe was > 10 minutes ago
+        $needsDiscovery = empty($device->wifi_ssid) || $device->connectedHosts()->count() === 0;
+
+        if (!$needsDiscovery) {
+            $lastSuccess = AcsTask::query()
+                ->where('acs_device_id', $device->id)
+                ->where('name', 'getParameterValues')
+                ->where('status', 'completed')
+                ->latest('completed_at')
+                ->value('completed_at');
+
+            if (!$lastSuccess || \Carbon\Carbon::parse($lastSuccess)->diffInMinutes(now()) >= 10) {
+                $needsDiscovery = true;
+            }
+        }
+
+        if ($needsDiscovery) {
+            $this->queueDiscoveryTasks($device);
+            $nextTask = AcsTask::query()
+                ->where('acs_device_id', $device->id)
+                ->where('status', 'pending')
+                ->oldest('created_at')
+                ->first();
+
+            if ($nextTask) {
+                return $this->dispatchTask($session, $nextTask, $clientIp, $cwmpId);
+            }
+        }
+
         // No pending tasks, end session
         $session->update(['state' => 'closed']);
         return response('', 204);
+    }
+
+    /**
+     * Queue automatic discovery tasks for missing WiFi, Hosts, and WAN parameters
+     */
+    private function queueDiscoveryTasks(AcsDevice $device): void
+    {
+        $hasPending = AcsTask::query()
+            ->where('acs_device_id', $device->id)
+            ->where('status', 'pending')
+            ->exists();
+        if ($hasPending) return;
+
+        // Task 1: WLAN Configuration (SSID 1, 2, Passwords, Clients)
+        AcsTask::create([
+            'acs_device_id' => $device->id,
+            'name' => 'getParameterValues',
+            'payload' => [
+                'parameter_names' => [
+                    'InternetGatewayDevice.LANDevice.1.WLANConfiguration.',
+                ],
+            ],
+            'status' => 'pending',
+        ]);
+
+        // Task 2: Connected LAN Hosts (Phones, laptops, IPs, MACs, Hostnames)
+        AcsTask::create([
+            'acs_device_id' => $device->id,
+            'name' => 'getParameterValues',
+            'payload' => [
+                'parameter_names' => [
+                    'InternetGatewayDevice.LANDevice.1.Hosts.',
+                ],
+            ],
+            'status' => 'pending',
+        ]);
+
+        // Task 3: WAN / PPPoE Connection & Uptime
+        AcsTask::create([
+            'acs_device_id' => $device->id,
+            'name' => 'getParameterValues',
+            'payload' => [
+                'parameter_names' => [
+                    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.',
+                ],
+            ],
+            'status' => 'pending',
+        ]);
     }
 
     /**
@@ -211,7 +291,7 @@ class Tr069AcsController extends Controller
     }
 
     /**
-     * Handle RPC response from CPE (SetParameterValuesResponse, etc.)
+     * Handle RPC response from CPE (SetParameterValuesResponse, GetParameterValuesResponse, etc.)
      */
     private function handleRpcResponse(?AcsSession $session, array $parsed, string $rawXml, string $clientIp, string $cwmpId): Response
     {
@@ -224,6 +304,15 @@ class Tr069AcsController extends Controller
                 ]);
             }
             $this->logMessage($session->acs_device_id, 'in', $parsed['type'], $rawXml, $clientIp);
+
+            // Process returned parameters if GetParameterValuesResponse
+            if ($parsed['type'] === 'GetParameterValuesResponse') {
+                $params = $parsed['parameters'] ?? [];
+                $types = $parsed['parameter_types'] ?? [];
+                if (!empty($params) && $session->device) {
+                    $this->deviceService->processGetParameterValuesResponse($session->device, $params, $types);
+                }
+            }
         }
 
         // Check if there is ANOTHER pending task in queue
@@ -261,6 +350,20 @@ class Tr069AcsController extends Controller
                 ]);
             }
             $this->logMessage($session->acs_device_id, 'in', 'Fault', $rawXml, $clientIp);
+        }
+
+        // Continue to next task if available instead of terminating immediately
+        if ($session && $session->acs_device_id) {
+            $nextTask = AcsTask::query()
+                ->where('acs_device_id', $session->acs_device_id)
+                ->where('status', 'pending')
+                ->oldest('created_at')
+                ->first();
+
+            if ($nextTask) {
+                return $this->dispatchTask($session, $nextTask, $clientIp, $cwmpId);
+            }
+
             $session->update(['state' => 'closed']);
         }
 
@@ -270,8 +373,8 @@ class Tr069AcsController extends Controller
     private function logMessage(?int $deviceId, string $direction, string $eventType, ?string $content, string $ip): void
     {
         try {
-            // Keep logs reasonable in size
-            $trimmed = $content ? substr($content, 0, 5000) : null;
+            // Keep full XML for troubleshooting (up to 100k)
+            $trimmed = $content ? substr($content, 0, 100000) : null;
             AcsLog::query()->create([
                 'acs_device_id' => $deviceId,
                 'direction' => $direction,

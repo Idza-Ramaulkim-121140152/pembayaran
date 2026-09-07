@@ -794,14 +794,53 @@ class GenieAcsService
                 }
 
                 $lanHosts = $nativeDevice->connectedHosts->map(fn($h) => [
-                    'name' => $h->host_name ?: 'Perangkat Klien',
+                    'name' => $h->hostname ?: 'Perangkat Klien',
                     'ip_address' => $h->ip_address,
                     'mac_address' => $h->mac_address,
                     'type' => $h->interface_type ?: 'WiFi',
                     'is_active' => (bool) $h->is_active,
                     'last_seen' => $h->last_seen_at?->toIso8601String(),
-                    'signal_strength' => $h->signal_strength,
+                    'signal_strength' => $h->rssi,
                 ])->values()->all();
+
+                $detectedSsids = $nativeDevice->vendor_raw_summary['ssids'] ?? [];
+                $ssidsList = [];
+                if (!empty($detectedSsids)) {
+                    foreach ($detectedSsids as $s) {
+                        $idx = $s['index'] ?? 1;
+                        $ssidsList[] = [
+                            'ssid' => $s['ssid'],
+                            'name' => $s['ssid'],
+                            'path' => $s['path'] ?? "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$idx}",
+                            'password_path' => $s['password_path'] ?? "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$idx}.KeyPassphrase",
+                            'current_password' => $s['password'] ?? null,
+                            'enabled' => $s['enabled'] ?? true,
+                            'band' => $idx == 1 ? '2.4GHz (Utama)' : "SSID {$idx}",
+                            'channel' => $idx == 1 ? '2.4 GHz' : "SSID {$idx}",
+                        ];
+                    }
+                } else {
+                    $ssidsList[] = [
+                        'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
+                        'name' => $nativeDevice->wifi_ssid ?: 'WiFi',
+                        'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                        'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+                        'current_password' => $nativeDevice->wifi_password,
+                        'band' => '2.4GHz',
+                        'channel' => '2.4 GHz',
+                    ];
+                    if (!empty($nativeDevice->wifi_ssid_5g)) {
+                        $ssidsList[] = [
+                            'ssid' => $nativeDevice->wifi_ssid_5g,
+                            'name' => $nativeDevice->wifi_ssid_5g,
+                            'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2',
+                            'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase',
+                            'current_password' => $nativeDevice->wifi_password_5g,
+                            'band' => 'SSID 2 / 5GHz',
+                            'channel' => 'SSID 2',
+                        ];
+                    }
+                }
 
                 $summary = [
                     'device_id' => $nativeDevice->device_id,
@@ -824,14 +863,7 @@ class GenieAcsService
                     'last_inform_at' => $nativeDevice->last_inform_at?->toIso8601String(),
                     'registered_at' => $nativeDevice->registered_at?->toIso8601String(),
                     'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                    'ssids' => [
-                        [
-                            'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                            'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
-                            'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-                            'current_password' => $nativeDevice->wifi_password,
-                        ]
-                    ],
+                    'ssids' => $ssidsList,
                 ];
 
                 $telemetry = [
@@ -870,6 +902,13 @@ class GenieAcsService
                     'device_summary' => $summary,
                 ];
 
+                $rawWritableWifiTargets = array_map(fn($s) => [
+                    'ssid' => $s['ssid'],
+                    'path' => $s['path'],
+                    'password_path' => $s['password_path'],
+                    'current_password' => $s['current_password'],
+                ], $ssidsList);
+
                 return [
                     'device_id' => $nativeDevice->device_id,
                     'engine' => 'native_laravel_acs',
@@ -879,14 +918,7 @@ class GenieAcsService
                     'wifi_password' => $nativeDevice->wifi_password,
                     'lan_hosts' => $lanHosts,
                     'customer' => $customerData,
-                    'raw_writable_wifi_targets' => [
-                        [
-                            'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                            'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
-                            'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-                            'current_password' => $nativeDevice->wifi_password,
-                        ]
-                    ],
+                    'raw_writable_wifi_targets' => $rawWritableWifiTargets,
                 ];
             }
         } catch (\Throwable $e) {
