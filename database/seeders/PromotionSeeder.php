@@ -51,8 +51,8 @@ class PromotionSeeder extends Seeder
             'tagline' => 'Internet Cepat untuk Keluarga Indonesia',
             'phone' => '081234567890',
             'whatsapp' => '081234567890',
-            'email' => 'info@rumahkitanet.com',
-            'address' => 'Jl. Contoh No. 123, Kota, Indonesia',
+            'email' => 'rumahkita69@gmail.com',
+            'address' => 'Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)',
             'instagram' => 'rumahkitanet',
             'facebook' => 'rumahkitanet',
         ];

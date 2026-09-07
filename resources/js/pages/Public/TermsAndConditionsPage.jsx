@@ -169,7 +169,7 @@ export default function TermsAndConditionsPage() {
                 <div className="p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-2">
                     <h3 className="font-bold text-white">Pertanyaan Mengenai Syarat &amp; Ketentuan?</h3>
                     <p className="text-slate-400">
-                        Jika Anda memiliki pertanyaan seputar dokumen ini, silakan hubungi tim legal &amp; operasional kami melalui email: <strong className="text-white">info@rumahkitanet.com</strong> atau WhatsApp: <strong className="text-white">+62 851-5802-5553</strong>.
+                        Jika Anda memiliki pertanyaan seputar dokumen ini, silakan hubungi tim legal &amp; operasional kami melalui email: <strong className="text-white">rumahkita69@gmail.com</strong> atau WhatsApp: <strong className="text-white">+62 851-5802-5553</strong>.
                     </p>
                 </div>
             </main>
@@ -207,7 +207,7 @@ export default function TermsAndConditionsPage() {
                             <ul className="space-y-2 text-slate-400 text-[11px]">
                                 <li className="flex items-start gap-2">
                                     <Mail size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>info@rumahkitanet.com / cs@rumahkitanet.site</span>
+                                    <span>rumahkita69@gmail.com</span>
                                 </li>
                                 <li className="flex items-center gap-2">
                                     <Phone size={14} className="text-emerald-400 shrink-0" />
@@ -215,7 +215,7 @@ export default function TermsAndConditionsPage() {
                                 </li>
                                 <li className="flex items-start gap-2">
                                     <MapPin size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551</span>
+                                    <span>Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</span>
                                 </li>
                             </ul>
                         </div>

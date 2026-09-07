@@ -739,6 +739,20 @@ function PromoManagementPage() {
                                 />
                             </div>
 
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Alamat Kantor Usaha
+                                </label>
+                                <textarea
+                                    name="company_address"
+                                    rows={2}
+                                    value={settings.company_address || ''}
+                                    onChange={handleSettingsChange}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 text-sm"
+                                    placeholder="Alamat lengkap usaha"
+                                />
+                            </div>
+
                             <hr />
 
                             <h4 className="font-semibold text-gray-900">Pengaturan Hero Section</h4>

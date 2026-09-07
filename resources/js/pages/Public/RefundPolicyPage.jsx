@@ -142,7 +142,7 @@ export default function RefundPolicyPage() {
                         <p>Untuk mengajukan permohonan pengembalian dana, pelanggan dapat mengikuti langkah berikut:</p>
                         <ol className="list-decimal list-inside space-y-2 pl-2">
                             <li>
-                                <strong>Hubungi Layanan Pelanggan:</strong> Kirim pesan ke WhatsApp Customer Service (<strong className="text-white">+62 851-5802-5553</strong>) atau email ke <strong className="text-white">info@rumahkitanet.com</strong> dengan subjek <em>"Pengajuan Refund - [Nama Pelanggan] - [Nomor WhatsApp/ID Pelanggan]"</em>.
+                                <strong>Hubungi Layanan Pelanggan:</strong> Kirim pesan ke WhatsApp Customer Service (<strong className="text-white">+62 851-5802-5553</strong>) atau email ke <strong className="text-white">rumahkita69@gmail.com</strong> dengan subjek <em>"Pengajuan Refund - [Nama Pelanggan] - [Nomor WhatsApp/ID Pelanggan]"</em>.
                             </li>
                             <li>
                                 <strong>Lampirkan Bukti Pendukung:</strong> Sertakan bukti transfer pembayaran resmi, nomor invoice / tagihan, serta alasan pengajuan refund.
@@ -185,7 +185,7 @@ export default function RefundPolicyPage() {
                             WhatsApp Layanan Refund
                         </a>
                         <a
-                            href="mailto:info@rumahkitanet.com"
+                            href="mailto:rumahkita69@gmail.com"
                             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs transition"
                         >
                             <Mail size={14} />
@@ -228,7 +228,7 @@ export default function RefundPolicyPage() {
                             <ul className="space-y-2 text-slate-400 text-[11px]">
                                 <li className="flex items-start gap-2">
                                     <Mail size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>info@rumahkitanet.com / cs@rumahkitanet.site</span>
+                                    <span>rumahkita69@gmail.com</span>
                                 </li>
                                 <li className="flex items-center gap-2">
                                     <Phone size={14} className="text-emerald-400 shrink-0" />
@@ -236,7 +236,7 @@ export default function RefundPolicyPage() {
                                 </li>
                                 <li className="flex items-start gap-2">
                                     <MapPin size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551</span>
+                                    <span>Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</span>
                                 </li>
                             </ul>
                         </div>

@@ -1096,7 +1096,7 @@ export default function PromotionPage() {
                             <ul className="space-y-2 text-slate-400 text-[11px]">
                                 <li className="flex items-start gap-2">
                                     <Mail size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>info@rumahkitanet.com / cs@rumahkitanet.site</span>
+                                    <span>rumahkita69@gmail.com</span>
                                 </li>
                                 <li className="flex items-center gap-2">
                                     <Phone size={14} className="text-emerald-400 shrink-0" />
@@ -1104,7 +1104,7 @@ export default function PromotionPage() {
                                 </li>
                                 <li className="flex items-start gap-2">
                                     <MapPin size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551</span>
+                                    <span>Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</span>
                                 </li>
                             </ul>
                         </div>

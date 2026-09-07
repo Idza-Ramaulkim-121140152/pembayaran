@@ -64,9 +64,9 @@
             </div>
         </div>
         <div class="box">
-            <div>{{ $customerData['company_address'] ?: 'Dusun Kebun Agung Selatan RT.07 RW.01, Kec. Kalianda, Kabupaten Lampung Selatan, Lampung 35551' }}</div>
+            <div>{{ $customerData['company_address'] ?: 'Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)' }}</div>
             <div>HP. {{ $customerData['company_phone'] ?? '-' }}</div>
-            <div>{{ $customerData['company_email'] ?? '' }}</div>
+            <div>{{ $customerData['company_email'] ?? 'rumahkita69@gmail.com' }}</div>
         </div>
     </div>
 

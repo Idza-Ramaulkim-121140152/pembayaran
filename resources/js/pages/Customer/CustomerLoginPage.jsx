@@ -205,8 +205,8 @@ function CustomerLoginPage() {
                         <a href="/kontak" className="hover:text-emerald-600 transition">Kontak</a>
                     </div>
                     <p className="text-[11px] text-gray-500">
-                        <strong>Rumah Kita Net</strong> &bull; Email: <span className="font-mono">info@rumahkitanet.com</span> &bull; Telp: <span className="font-mono">+62 851-5802-5553</span><br />
-                        Alamat: Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551
+                        <strong>Rumah Kita Net</strong> &bull; Email: <span className="font-mono">rumahkita69@gmail.com</span> &bull; Telp: <span className="font-mono">+62 851-5802-5553</span><br />
+                        Alamat: Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)
                     </p>
                 </div>
 

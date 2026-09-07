@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
 class CustomerAgreementService
 {
     private const DEFAULT_COMPANY_NAME = 'PT. RUMAH KITA NETWORK';
-    private const DEFAULT_COMPANY_ADDRESS = 'Dusun Kebun Agung Selatan No.RT.07, rw01, Kec. Kalianda, Kabupaten Lampung Selatan, Lampung 35551';
+    private const DEFAULT_COMPANY_ADDRESS = 'Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)';
 
     public function generate(Customer $customer, array $input = [], array $files = [], ?int $generatedBy = null): CustomerAgreement
     {
@@ -94,7 +94,7 @@ class CustomerAgreementService
             'company_address' => SiteSetting::get('contract_company_address', self::DEFAULT_COMPANY_ADDRESS),
             'company_phone' => SiteSetting::get('company_phone', '085158025553'),
             'company_whatsapp' => SiteSetting::get('company_whatsapp', '085158025553'),
-            'company_email' => SiteSetting::get('company_email', 'info@rumahkitanet.com'),
+            'company_email' => SiteSetting::get('company_email', 'rumahkita69@gmail.com'),
             'director_name' => 'Idza Ramaulkim',
             'customer_name' => $customer->name,
             'ktp_number' => $this->maskNik($rawNik),

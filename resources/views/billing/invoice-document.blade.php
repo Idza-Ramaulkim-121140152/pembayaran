@@ -187,8 +187,8 @@
                             </td>
                             <td>
                                 <p class="company-name">RUMAH KITA NETWORK</p>
-                                <p class="company-address">Jl. H. M. Yunus, Kebun Agung Selatan, Desa Taman Agung, Kalianda, Lampung Selatan, Lampung</p>
-                                <p class="company-address">Telp: +6285158025553</p>
+                                <p class="company-address">Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</p>
+                                <p class="company-address">Email: rumahkita69@gmail.com | Telp: +6285158025553</p>
                             </td>
                         </tr>
                     </table>

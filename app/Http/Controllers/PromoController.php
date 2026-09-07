@@ -190,7 +190,7 @@ class PromoController extends Controller
     {
         $allowedKeys = [
             'company_name', 'company_tagline', 'company_phone', 'company_whatsapp',
-            'company_email', 'hero_title', 'hero_subtitle', 'installation_fee',
+            'company_email', 'company_address', 'hero_title', 'hero_subtitle', 'installation_fee',
         ];
         
         $data = $request->only($allowedKeys);

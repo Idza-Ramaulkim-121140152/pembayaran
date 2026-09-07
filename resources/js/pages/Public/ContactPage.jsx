@@ -109,9 +109,9 @@ export default function ContactPage() {
                             <h3 className="font-extrabold text-white text-base">Alamat Kantor Usaha</h3>
                             <p className="text-xs font-semibold text-emerald-400">Rumah Kita Net (Rumah Kita Network)</p>
                             <p className="text-xs text-slate-300 leading-relaxed">
-                                Desa Taman Agung, Kecamatan Kalianda,<br />
-                                Kabupaten Lampung Selatan, Provinsi Lampung,<br />
-                                Kode Pos: <strong>35551</strong>, Indonesia.
+                                Kebun Agung, RT:002 RW:001, Taman Agung,<br />
+                                Kecamatan Kalianda, Kabupaten Lampung Selatan,<br />
+                                Provinsi Lampung (35551), Indonesia.
                             </p>
                         </div>
                     </div>
@@ -152,10 +152,7 @@ export default function ContactPage() {
                             <h3 className="font-extrabold text-white text-base">Email &amp; Jam Operasional</h3>
                             <p className="text-xs text-slate-400">Email Resmi:</p>
                             <p className="text-xs font-bold text-white font-mono">
-                                info@rumahkitanet.com
-                            </p>
-                            <p className="text-xs font-bold text-slate-300 font-mono">
-                                cs@rumahkitanet.site
+                                rumahkita69@gmail.com
                             </p>
                             <div className="pt-2 text-[11px] text-slate-400 space-y-1 border-t border-slate-800/80">
                                 <p><strong>Kantor:</strong> Senin - Sabtu: 08.00 - 17.00 WIB</p>
@@ -353,7 +350,7 @@ export default function ContactPage() {
                             <ul className="space-y-2 text-slate-400 text-[11px]">
                                 <li className="flex items-start gap-2">
                                     <Mail size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>info@rumahkitanet.com / cs@rumahkitanet.site</span>
+                                    <span>rumahkita69@gmail.com</span>
                                 </li>
                                 <li className="flex items-center gap-2">
                                     <Phone size={14} className="text-emerald-400 shrink-0" />
@@ -361,7 +358,7 @@ export default function ContactPage() {
                                 </li>
                                 <li className="flex items-start gap-2">
                                     <MapPin size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                                    <span>Desa Taman Agung, Kec. Kalianda, Kab. Lampung Selatan, Lampung 35551</span>
+                                    <span>Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</span>
                                 </li>
                             </ul>
                         </div>
