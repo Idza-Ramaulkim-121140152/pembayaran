@@ -89,13 +89,13 @@ class SuperPanelService
 
             try {
                 $sessions = $this->mikroTikService->getActivePPPoEConnections();
-                if ($sessions['status'] ?? false) {
+                if (is_array($sessions)) {
                     $mikrotikConnected = true;
-                    $activeSessionsCount = count($sessions['data'] ?? []);
+                    $activeSessionsCount = count($sessions);
                 }
-                $secrets = $this->mikroTikService->getPPPoESecret();
-                if ($secrets['status'] ?? false) {
-                    foreach ($secrets['data'] ?? [] as $sec) {
+                $secrets = $this->mikroTikService->getAllPPPoESecrets();
+                if (is_array($secrets)) {
+                    foreach ($secrets as $sec) {
                         $profile = strtolower($sec['profile'] ?? '');
                         if (str_contains($profile, 'isolir') || str_contains($profile, 'isolasi')) {
                             $isolatedCount++;
@@ -522,10 +522,12 @@ class SuperPanelService
 
         $query = MasterOlt::query()->with([
             'ponPorts' => fn ($q) => $q->orderBy('pon_index')->with(['onus' => fn ($o) => $o->with('customer')]),
-        ])->where('is_active', true);
+        ]);
 
         if ($oltId) {
             $query->where('id', $oltId);
+        } else {
+            $query->orderByDesc('is_active')->orderBy('name');
         }
 
         $olts = $query->get();
@@ -539,8 +541,8 @@ class SuperPanelService
                 'brand' => $olt->brand,
                 'model' => $olt->model,
                 'host' => $olt->host,
-                'snmp_port' => $olt->snmp_port,
-                'snmp_version' => $olt->snmp_version,
+                'snmp_port' => $olt->snmp_port ?: 161,
+                'snmp_version' => $olt->snmp_version ?: '2c',
                 'snmp_community' => '***',
                 'is_active' => (bool) $olt->is_active,
                 'simulation_mode' => (bool) $olt->simulation_mode,
@@ -548,7 +550,7 @@ class SuperPanelService
                 'location_address' => $olt->location_address,
                 'last_status' => $olt->last_status ?: 'online',
                 'last_checked_at' => $olt->last_checked_at ? Carbon::parse($olt->last_checked_at)->toIso8601String() : null,
-                'telemetry' => $telemetry['telemetry_data'] ?? [],
+                'telemetry' => $telemetry,
                 'pon_ports' => $olt->ponPorts->map(function (OltPonPort $port) {
                     return [
                         'id' => $port->id,
@@ -748,21 +750,21 @@ class SuperPanelService
         try {
             if ($customer->pppoe_username) {
                 $sessions = $this->mikroTikService->getActivePPPoEConnections();
-                if ($sessions['status'] ?? false) {
-                    $matchedSession = collect($sessions['data'] ?? [])->firstWhere('name', $customer->pppoe_username);
+                if (is_array($sessions)) {
+                    $matchedSession = collect($sessions)->firstWhere('name', $customer->pppoe_username);
                     if ($matchedSession) {
                         $mikrotikInfo['is_online'] = true;
                         $mikrotikInfo['ip_address'] = $matchedSession['address'] ?? null;
-                        $mikrotikInfo['caller_id_mac'] = $matchedSession['caller-id'] ?? null;
+                        $mikrotikInfo['caller_id_mac'] = $matchedSession['caller_id'] ?? ($matchedSession['caller-id'] ?? null);
                         $mikrotikInfo['session_uptime'] = $matchedSession['uptime'] ?? '3d 14h 22m';
-                        $mikrotikInfo['bytes_in'] = (int) ($matchedSession['bytes-in'] ?? 0);
-                        $mikrotikInfo['bytes_out'] = (int) ($matchedSession['bytes-out'] ?? 0);
+                        $mikrotikInfo['bytes_in'] = (int) ($matchedSession['bytes_in'] ?? ($matchedSession['bytes-in'] ?? 0));
+                        $mikrotikInfo['bytes_out'] = (int) ($matchedSession['bytes_out'] ?? ($matchedSession['bytes-out'] ?? 0));
                     }
                 }
 
                 $secret = $this->mikroTikService->getPPPoESecret($customer->pppoe_username);
-                if ($secret['status'] ?? false) {
-                    $profile = strtolower($secret['data']['profile'] ?? '');
+                if (is_array($secret)) {
+                    $profile = strtolower($secret['profile'] ?? '');
                     if (str_contains($profile, 'isolir') || str_contains($profile, 'isolasi')) {
                         $mikrotikInfo['is_isolated'] = true;
                     }

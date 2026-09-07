@@ -30,6 +30,7 @@ use App\Http\Controllers\DistributionRouteController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\MasterWilayahController;
 use App\Http\Controllers\MasterMikrotikController;
+use App\Http\Controllers\MasterOltController;
 use App\Http\Controllers\CustomerMobilePasswordController;
 use App\Http\Controllers\CustomerBillingProfileController;
 use App\Http\Controllers\InstallationWorkflowController;
@@ -638,6 +639,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::get('/settings/master-wilayah', fn() => view('app'))->name('master-wilayah.settings');
         Route::get('/settings/master-mikrotik', fn() => view('app'))->name('master-mikrotik.settings');
+        Route::get('/settings/master-olt', fn() => view('app'))->name('master-olt.settings');
+        Route::get('/settings/master-olts', fn() => view('app'))->name('master-olts.settings');
         Route::get('/settings/customer-wifi-links', fn() => view('app'))->name('settings.customer-wifi-links');
 
         Route::get('/api/master-wilayah', [MasterWilayahController::class, 'index'])->name('api.master-wilayah.index');
@@ -657,6 +660,17 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::delete('/api/master-mikrotik/{masterMikrotik}', [MasterMikrotikController::class, 'destroy'])->name('api.master-mikrotik.destroy');
         Route::patch('/api/master-mikrotik/{masterMikrotik}/activate', [MasterMikrotikController::class, 'activate'])->name('api.master-mikrotik.activate');
         Route::post('/api/master-mikrotik/{masterMikrotik}/test-connection', [MasterMikrotikController::class, 'testConnection'])->name('api.master-mikrotik.test-connection');
+
+        Route::get('/api/master-olts', [MasterOltController::class, 'index'])->name('api.master-olts.index');
+        Route::post('/api/master-olts', [MasterOltController::class, 'store'])->name('api.master-olts.store');
+        Route::get('/api/master-olts/{olt}', [MasterOltController::class, 'show'])->name('api.master-olts.show');
+        Route::put('/api/master-olts/{olt}', [MasterOltController::class, 'update'])->name('api.master-olts.update');
+        Route::delete('/api/master-olts/{olt}', [MasterOltController::class, 'destroy'])->name('api.master-olts.destroy');
+        Route::patch('/api/master-olts/{olt}/activate', [MasterOltController::class, 'activate'])->name('api.master-olts.activate');
+        Route::post('/api/master-olts/{olt}/toggle-simulation', [MasterOltController::class, 'toggleSimulation'])->name('api.master-olts.toggle-simulation');
+        Route::post('/api/master-olts/{olt}/test-snmp', [MasterOltController::class, 'testSnmp'])->name('api.master-olts.test-snmp');
+        Route::put('/api/master-olts/{olt}/pon-ports/{ponPort}', [MasterOltController::class, 'updatePonPort'])->name('api.master-olts.update-pon-port');
+        Route::post('/api/master-olts/{olt}/sync-topology', [MasterOltController::class, 'syncTopology'])->name('api.master-olts.sync-topology');
 
         // Packages API
         Route::get('/api/packages', [PackageController::class, 'index'])->name('api.packages.index');

@@ -45,6 +45,7 @@ const NetworkNoticePage = lazy(() => import('./pages/Settings/NetworkNoticePage'
 const SendNotificationPage = lazy(() => import('./pages/Settings/SendNotificationPage'));
 const MasterWilayahPage = lazy(() => import('./pages/Settings/MasterWilayahPage'));
 const MasterMikrotikPage = lazy(() => import('./pages/Settings/MasterMikrotikPage'));
+const MasterOltPage = lazy(() => import('./pages/MasterData/MasterOltPage'));
 const MasterDataPage = lazy(() => import('./pages/Settings/MasterDataPage'));
 const AccessPolicyPage = lazy(() => import('./pages/Settings/AccessPolicyPage'));
 const CustomerPackageManagementPage = lazy(() => import('./pages/Settings/CustomerPackageManagementPage'));
@@ -422,6 +423,8 @@ function App() {
                     <Route path="/settings/send-notification" element={<GuardedRoute permissionKey="master.network_notice.manage" element={<SendNotificationPage />} />} />
                     <Route path="/settings/master-wilayah" element={<GuardedRoute permissionKey="master.wilayah.manage" element={<MasterWilayahPage />} />} />
                     <Route path="/settings/master-mikrotik" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterMikrotikPage />} />} />
+                    <Route path="/settings/master-olt" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterOltPage />} />} />
+                    <Route path="/settings/master-olts" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterOltPage />} />} />
                     <Route path="/settings/customer-wifi-links" element={<GuardedRoute permissionKey="master.customer_wifi_links.manage" element={<CustomerWifiLinksPage />} />} />
                     <Route path="/settings/master-data" element={<GuardedRoute permissionKey="masterdata.view" element={<MasterDataPage />} />} />
                     <Route path="/settings/access-policy" element={<GuardedRoute permissionKey="access_policy.manage" element={<AccessPolicyPage />} />} />

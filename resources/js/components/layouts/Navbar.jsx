@@ -28,6 +28,7 @@ import {
 	ClipboardList,
 	Landmark,
 	Wifi,
+    Server,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -75,6 +76,7 @@ const ACCESS = {
     masterData: ['superadmin', 'admin', 'finance'],
     masterWilayah: ['superadmin', 'admin'],
     masterMikrotik: ['superadmin', 'admin'],
+    masterOlt: ['superadmin', 'admin'],
     customerWifiLinks: ['superadmin', 'admin'],
     packages: ['superadmin', 'admin'],
     promo: ['superadmin', 'admin'],
@@ -131,6 +133,7 @@ const MENU_PERMISSION_MAP = {
     masterData: 'masterdata.view',
     masterWilayah: 'master.wilayah.manage',
     masterMikrotik: 'master.mikrotik.manage',
+    masterOlt: 'master.mikrotik.manage',
     customerWifiLinks: 'master.customer_wifi_links.manage',
     packages: 'master.package.manage',
     promo: 'master.promo.manage',
@@ -212,6 +215,7 @@ const MENU_GROUPS = [
             { key: 'promo', label: 'Promosi', to: '/settings/promo', icon: Megaphone, match: (p) => p === '/settings/promo' },
             { key: 'masterWilayah', label: 'Master Wilayah', to: '/settings/master-wilayah', icon: MapPin, match: (p) => p === '/settings/master-wilayah' },
             { key: 'masterMikrotik', label: 'Master Mikrotik', to: '/settings/master-mikrotik', icon: Activity, match: (p) => p === '/settings/master-mikrotik' },
+            { key: 'masterOlt', label: 'Master OLT', to: '/settings/master-olt', icon: Server, match: (p) => p.startsWith('/settings/master-olt') },
             { key: 'customerWifiLinks', label: 'Link WiFi Pelanggan', to: '/settings/customer-wifi-links', icon: Wifi, match: (p) => p === '/settings/customer-wifi-links' },
             { key: 'networkNotices', label: 'Info Gangguan', to: '/settings/network-notices', icon: AlertTriangle, match: (p) => p === '/settings/network-notices' },
             { key: 'waNotification', label: 'Notifikasi WA', to: '/settings/send-notification', icon: Send, match: (p) => p === '/settings/send-notification' },
