@@ -60,6 +60,7 @@ use App\Http\Controllers\ReconciliationCenterController;
 use App\Http\Controllers\WhatsAppPaymentWebhookController;
 use App\Http\Controllers\GenieAcsMonitoringController;
 use App\Http\Controllers\IpaymuIntegrationController;
+use App\Http\Controllers\SuperPanelController;
 use App\Models\User;
 use App\Services\PaymentReceiverService;
 
@@ -228,6 +229,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         ->name('api.customers.mobile-password.reset');
     
     // View routes - Return React app view (any authenticated user)
+    Route::get('/super-panel', fn() => view('app'))->name('super-panel');
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
     Route::get('/monitoring-genieacs', fn() => view('app'))->name('monitoring.genieacs');
@@ -427,6 +429,22 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/installations/work-orders/{installationWorkOrder}', [InstallationWorkflowController::class, 'showWorkOrder'])->middleware('permission:installation.view')->name('api.installations.work-orders.show');
         Route::put('/api/installations/checklists/{installationChecklist}', [InstallationWorkflowController::class, 'updateChecklist'])->middleware('permission:installation.manage')->name('api.installations.checklists.update');
         Route::post('/api/installations/work-orders/{installationWorkOrder}/complete', [InstallationWorkflowController::class, 'completeWorkOrder'])->middleware('permission:installation.manage')->name('api.installations.work-orders.complete');
+
+        // Super Panel (Pusat Kendali Jaringan Terpadu) API
+        Route::prefix('api/super-panel')->group(function () {
+            Route::get('/overview', [SuperPanelController::class, 'overview'])->name('api.super-panel.overview');
+            Route::get('/gis-map', [SuperPanelController::class, 'gisMap'])->name('api.super-panel.gis-map');
+            Route::get('/odp-stock', [SuperPanelController::class, 'odpStock'])->name('api.super-panel.odp-stock');
+            Route::get('/olt-telemetry/{oltId?}', [SuperPanelController::class, 'oltTelemetry'])->name('api.super-panel.olt-telemetry');
+            Route::get('/genie-signals', [SuperPanelController::class, 'genieSignals'])->name('api.super-panel.genie-signals');
+            Route::get('/customer-trace/{customerQuery}', [SuperPanelController::class, 'customerTrace'])->name('api.super-panel.customer-trace');
+            Route::post('/customer-mapping/{customerId}', [SuperPanelController::class, 'updateCustomerMapping'])->name('api.super-panel.customer-mapping');
+            Route::post('/odp-config/{odpId}', [SuperPanelController::class, 'updateOdpConfig'])->name('api.super-panel.odp-config');
+            Route::post('/sync-topology', [SuperPanelController::class, 'syncTopology'])->name('api.super-panel.sync-topology');
+            Route::post('/cpe/{deviceId}/reboot', [SuperPanelController::class, 'rebootCpe'])->name('api.super-panel.cpe.reboot');
+            Route::post('/cpe/{deviceId}/refresh', [SuperPanelController::class, 'refreshCpe'])->name('api.super-panel.cpe.refresh');
+            Route::get('/form-options', [SuperPanelController::class, 'formOptions'])->name('api.super-panel.form-options');
+        });
     }); // end teknisi routes
 
     // Billing/Penagihan API (permission-driven, role-agnostic)

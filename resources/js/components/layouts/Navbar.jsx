@@ -61,6 +61,7 @@ const ACCESS = {
     distributionRoute: ['superadmin', 'admin', 'teknisi'],
     installation: ['superadmin', 'admin', 'teknisi'],
     incidents: ['superadmin', 'admin', 'teknisi'],
+    superPanel: ['superadmin', 'admin', 'teknisi', 'finance'],
     monitoring: ['superadmin', 'admin', 'teknisi'],
     monitoringMaps: ['superadmin', 'admin', 'teknisi'],
     monitoringGenieAcs: ['superadmin', 'admin', 'teknisi'],
@@ -116,6 +117,7 @@ const MENU_PERMISSION_MAP = {
     distributionRoute: 'odp.mapping.view',
     installation: 'installation.view',
     incidents: 'incident.view',
+    superPanel: 'monitoring.view',
     monitoring: 'monitoring.view',
     monitoringMaps: 'monitoring.maps.view',
     monitoringGenieAcs: 'monitoring.view',
@@ -149,6 +151,7 @@ const MENU_GROUPS = [
         icon: Wrench,
         items: [
             { key: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: Home, match: (p) => p === '/dashboard' },
+            { key: 'superPanel', label: 'Super Panel', to: '/super-panel', icon: Shield, match: (p) => p.startsWith('/super-panel') },
             { key: 'dashboardPrediction', label: 'Prediksi', to: '/dashboard/prediksi', icon: Brain, match: (p) => p === '/dashboard/prediksi' },
             { key: 'pelanggan', label: 'Pelanggan', to: '/customers', icon: Users, match: (p) => p.startsWith('/customers') || p.startsWith('/pelanggan') },
             { key: 'verifikasi', label: 'Verifikasi', to: '/customer-verification', icon: ClipboardList, match: (p) => p.startsWith('/customer-verification') || p.startsWith('/customer-prospects') },

@@ -55,6 +55,7 @@ const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivit
 const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
 const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
 const Monitoring = lazy(() => import('./pages/Monitoring'));
+const SuperPanelPage = lazy(() => import('./pages/SuperPanel/SuperPanelPage'));
 const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
 const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
@@ -435,6 +436,7 @@ function App() {
                     <Route path="/aduan" element={<GuardedRoute permissionKey="complaint.view" element={<ComplaintsPage />} />} />
                     
                     {/* Monitoring */}
+                    <Route path="/super-panel" element={<GuardedRoute permissionKey="monitoring.view" element={<SuperPanelPage />} />} />
                     <Route path="/monitoring" element={<GuardedRoute permissionKey="monitoring.view" element={<Monitoring />} />} />
                     <Route path="/monitoring-maps" element={<GuardedRoute permissionKey="monitoring.maps.view" element={<MonitoringMaps />} />} />
                     <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringGenieAcsPage />} />} />

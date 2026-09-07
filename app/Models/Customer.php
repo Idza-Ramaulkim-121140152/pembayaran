@@ -18,7 +18,8 @@ class Customer extends Model
         'mobile_password_reset_at', 'mobile_password_reset_meta', 'mobile_password_reset_by_user_id',
         'portal_login_enabled',
         'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
-        'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp'
+        'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp',
+        'olt_id', 'pon_port_id', 'olt_onu_id', 'odp_port_number', 'dropcore_cable_length_meters'
     ];
 
     protected $casts = [
@@ -110,6 +111,11 @@ class Customer extends Model
         return $this->belongsTo(\App\Models\Odp::class, 'odp_id');
     }
 
+    public function odpBox()
+    {
+        return $this->belongsTo(\App\Models\Odp::class, 'odp_id');
+    }
+
     public function odpLegacy()
     {
         return $this->belongsTo(\App\Models\Odp::class, 'odp', 'nama');
@@ -163,5 +169,20 @@ class Customer extends Model
     public function dusun()
     {
         return $this->belongsTo(MasterWilayahDusun::class, 'dusun_id');
+    }
+
+    public function olt()
+    {
+        return $this->belongsTo(\App\Models\MasterOlt::class, 'olt_id');
+    }
+
+    public function ponPort()
+    {
+        return $this->belongsTo(\App\Models\OltPonPort::class, 'pon_port_id');
+    }
+
+    public function onu()
+    {
+        return $this->belongsTo(\App\Models\OltOnu::class, 'olt_onu_id');
     }
 }
