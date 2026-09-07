@@ -411,10 +411,10 @@ export default function MonitoringGenieAcsPage() {
                 <div>
                     <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
                         <Router className="h-8 w-8 text-emerald-600" />
-                        Monitoring Perangkat & Pelanggan (GenieACS)
+                        Monitoring Perangkat & Pelanggan (TR-069 ACS Native)
                     </h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Pantau perangkat ONT/Router pelanggan, total klien terhubung, kepatuhan batas paket (Aman, Siaga, Kritis), redaman optik, dan remote setting WiFi.
+                        Pantau perangkat ONT/Router pelanggan via Server TR-069 ACS Native Laravel, total klien terhubung, kepatuhan batas paket, redaman optik, dan remote setting WiFi.
                     </p>
                 </div>
 
@@ -426,7 +426,7 @@ export default function MonitoringGenieAcsPage() {
                         className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 transition"
                     >
                         <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
-                        {syncing ? 'Menyinkronkan...' : 'Sinkronkan dari ACS (Force Sync)'}
+                        {syncing ? 'Menyinkronkan...' : 'Sinkronkan Data ACS'}
                     </button>
                     <button
                         type="button"
@@ -497,9 +497,10 @@ export default function MonitoringGenieAcsPage() {
                 </div>
 
                 {/* Ada GenieACS */}
+                {/* Ada ACS */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ada GenieACS</p>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ada ACS</p>
                         <div className="rounded-xl bg-purple-50 p-2 text-purple-600">
                             <UserCheck size={18} />
                         </div>
@@ -532,7 +533,7 @@ export default function MonitoringGenieAcsPage() {
                     <p className="mt-1 text-[11px] text-gray-400">Sinyal &lt; -27 dBm</p>
                 </div>
 
-                {/* Belum Ada GenieACS */}
+                {/* Belum Ada ACS */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Belum Ada ACS</p>
@@ -551,8 +552,8 @@ export default function MonitoringGenieAcsPage() {
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                     {[
                         { key: 'all', label: `Semua (${(stats.total_customers || 0) + (stats.unassigned_devices || 0)})`, icon: Users },
-                        { key: 'with_acs', label: `Ada GenieACS (${stats.customers_with_acs || 0})`, icon: UserCheck },
-                        { key: 'without_acs', label: `Belum Ada GenieACS (${stats.customers_without_acs || 0})`, icon: UserMinus },
+                        { key: 'with_acs', label: `Ada ACS (${stats.customers_with_acs || 0})`, icon: UserCheck },
+                        { key: 'without_acs', label: `Belum Ada ACS (${stats.customers_without_acs || 0})`, icon: UserMinus },
                         { key: 'online', label: `Online (${stats.online_devices || 0})`, icon: Wifi },
                         { key: 'offline', label: `Offline (${stats.offline_devices || 0})`, icon: WifiOff },
                         { key: 'critical_rx', label: `Redaman Kritis (${stats.critical_rx_count || 0})`, icon: AlertTriangle },

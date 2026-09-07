@@ -81,6 +81,27 @@ class AcsTaskService
     }
 
     /**
+     * Queue a setParameterValues task for a device
+     */
+    public function queueSetParameterValues(AcsDevice $device, array $parameters, bool $triggerWakeup = true): AcsTask
+    {
+        $task = AcsTask::create([
+            'acs_device_id' => $device->id,
+            'name' => 'setParameterValues',
+            'payload' => [
+                'parameters' => $parameters,
+            ],
+            'status' => 'pending',
+        ]);
+
+        if ($triggerWakeup) {
+            $this->triggerConnectionRequest($device);
+        }
+
+        return $task;
+    }
+
+    /**
      * Queue a reboot task for a device
      */
     public function queueReboot(AcsDevice $device, bool $triggerWakeup = true): AcsTask

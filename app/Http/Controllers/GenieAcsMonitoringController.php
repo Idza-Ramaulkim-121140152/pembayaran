@@ -251,6 +251,25 @@ class GenieAcsMonitoringController extends Controller
             return response()->json(['message' => 'Pelanggan tidak ditemukan.'], 404);
         }
 
+        // Update Native ACS Device if present
+        $nativeDevice = \App\Models\AcsDevice::where('device_id', $deviceId)
+            ->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)
+            ->first();
+
+        if ($nativeDevice) {
+            $nativeDevice->customer_id = $customer->id;
+            if ($customer->pppoe_username && empty($nativeDevice->pppoe_username)) {
+                $nativeDevice->pppoe_username = $customer->pppoe_username;
+            }
+            $nativeDevice->matched_via = 'manual_assignment';
+            $nativeDevice->save();
+
+            if (empty($customer->home_router_host) && ($nativeDevice->wan_ip ?: $nativeDevice->ip_address)) {
+                $customer->home_router_host = $nativeDevice->wan_ip ?: $nativeDevice->ip_address;
+                $customer->save();
+            }
+        }
+
         // Clear summary cache
         Cache::forget('genieacs_devices_summary_fast');
 
