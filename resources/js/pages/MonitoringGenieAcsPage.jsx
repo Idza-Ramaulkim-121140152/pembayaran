@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
     Activity,
@@ -171,8 +171,10 @@ export default function MonitoringGenieAcsPage() {
         }
     };
 
-    // Fetch Devices & Customers
+    // Fetch Devices & Customers with race-condition prevention
+    const requestSeqRef = useRef(0);
     const loadDevices = async (fresh = false) => {
+        const currentSeq = ++requestSeqRef.current;
         try {
             setError('');
             if (fresh) {
@@ -189,21 +191,93 @@ export default function MonitoringGenieAcsPage() {
                 search: searchQuery.trim() || undefined,
             });
 
+            if (currentSeq !== requestSeqRef.current) {
+                return; // An asynchronous request triggered later has superseded this one
+            }
+
             setStats(response.data?.stats || {});
             setPackages(response.data?.packages || []);
             setDevices(response.data?.devices || []);
         } catch (err) {
-            setError(err.response?.data?.message || err.message || 'Gagal memuat data monitoring perangkat GenieACS.');
+            if (currentSeq === requestSeqRef.current) {
+                setError(err.response?.data?.message || err.message || 'Gagal memuat data monitoring perangkat GenieACS.');
+            }
         } finally {
-            setLoading(false);
-            setRefreshing(false);
-            setSyncing(false);
+            if (currentSeq === requestSeqRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+                setSyncing(false);
+            }
         }
     };
 
     useEffect(() => {
         loadDevices(false);
     }, [statusFilter, capacityFilter, packageFilter]);
+
+    // Client-side instantaneous filtering & safety net against any race conditions
+    const filteredDevices = useMemo(() => {
+        return devices.filter((d) => {
+            // Filter status
+            if (statusFilter === 'online') {
+                if (!d.is_online || !d.has_genieacs) return false;
+            } else if (statusFilter === 'offline') {
+                if (d.is_online || !d.has_genieacs) return false;
+            } else if (statusFilter === 'with_acs') {
+                if (!d.has_genieacs || d.is_unassigned) return false;
+            } else if (statusFilter === 'without_acs') {
+                if (d.has_genieacs) return false;
+            } else if (statusFilter === 'unassigned') {
+                if (!d.is_unassigned) return false;
+            } else if (statusFilter === 'critical_rx') {
+                if (d.rx_status !== 'critical') return false;
+            } else if (statusFilter === 'warning_rx') {
+                if (d.rx_status !== 'warning') return false;
+            }
+
+            // Filter capacity
+            if (capacityFilter === 'safe') {
+                if (d.capacity_status !== 'safe') return false;
+            } else if (capacityFilter === 'warning') {
+                if (d.capacity_status !== 'warning') return false;
+            } else if (capacityFilter === 'critical') {
+                if (d.capacity_status !== 'critical') return false;
+            } else if (capacityFilter === 'overlimit') {
+                if (!['warning', 'critical'].includes(d.capacity_status)) return false;
+            } else if (capacityFilter === 'no_limit') {
+                if (d.capacity_status !== 'no_limit') return false;
+            }
+
+            // Filter package
+            if (packageFilter !== 'all' && packageFilter !== '') {
+                const pkgId = String(d.customer?.package_id || '');
+                const pkgName = String(d.customer?.package_name || '').toLowerCase();
+                if (pkgId !== packageFilter && !pkgName.includes(packageFilter.toLowerCase())) return false;
+            }
+
+            // Filter search (if query entered)
+            if (searchQuery.trim() !== '') {
+                const q = searchQuery.toLowerCase().trim();
+                const devId = (d.device_id || '').toLowerCase();
+                const sn = (d.serial_number || '').toLowerCase();
+                const pppoe = (d.pppoe_username || '').toLowerCase();
+                const ip = (d.ip_address || '').toLowerCase();
+                const mac = (d.mac_address || '').toLowerCase();
+                const ssid = (d.ssid || '').toLowerCase();
+                const custName = (d.customer?.name || '').toLowerCase();
+                const custPhone = (d.customer?.phone || '').toLowerCase();
+                const custAddr = (d.customer?.address || '').toLowerCase();
+                const pkgName = (d.customer?.package_name || '').toLowerCase();
+
+                const match = devId.includes(q) || sn.includes(q) || pppoe.includes(q) ||
+                    ip.includes(q) || mac.includes(q) || ssid.includes(q) ||
+                    custName.includes(q) || custPhone.includes(q) || custAddr.includes(q) || pkgName.includes(q);
+                if (!match) return false;
+            }
+
+            return true;
+        });
+    }, [devices, statusFilter, capacityFilter, packageFilter, searchQuery]);
 
     const handleSearchSubmit = (e) => {
         e.preventDefault();
@@ -660,7 +734,7 @@ export default function MonitoringGenieAcsPage() {
                         <p className="text-sm font-medium text-gray-500">Memuat sinkronisasi pelanggan dan GenieACS...</p>
                     </div>
                 </div>
-            ) : devices.length === 0 ? (
+            ) : filteredDevices.length === 0 ? (
                 <div className="flex min-h-[250px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white p-8 text-center shadow-sm">
                     <Router className="h-12 w-12 text-gray-300" />
                     <p className="mt-3 text-base font-semibold text-gray-700">Tidak ada data yang sesuai filter.</p>
@@ -681,7 +755,7 @@ export default function MonitoringGenieAcsPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {devices.map((row, idx) => {
+                                {filteredDevices.map((row, idx) => {
                                     const hasAcs = row.has_genieacs;
                                     const isUnassigned = row.is_unassigned;
                                     const isOnline = row.is_online;
@@ -693,7 +767,7 @@ export default function MonitoringGenieAcsPage() {
 
                                     return (
                                         <tr
-                                            key={row.device_id || `cust-${cust?.id || idx}`}
+                                            key={row.device_id ? `dev-${row.device_id}` : `cust-${cust?.id || idx}`}
                                             className={`transition ${!hasAcs ? 'bg-amber-50/20 hover:bg-amber-50/50' : 'hover:bg-gray-50/70'}`}
                                         >
                                             {/* Pelanggan & Paket */}

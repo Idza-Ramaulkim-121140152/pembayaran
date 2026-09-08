@@ -34,19 +34,19 @@ class GenieAcsMonitoringController extends Controller
 
             // 1. Filter by status
             if ($statusFilter === 'online') {
-                $devices = $devices->where('is_online', true);
+                $devices = $devices->filter(fn($d) => !empty($d['is_online']) && !empty($d['has_genieacs']));
             } elseif ($statusFilter === 'offline') {
-                $devices = $devices->where('has_genieacs', true)->where('is_online', false);
+                $devices = $devices->filter(fn($d) => empty($d['is_online']) && !empty($d['has_genieacs']));
             } elseif ($statusFilter === 'with_acs') {
-                $devices = $devices->where('has_genieacs', true)->where('is_unassigned', false);
+                $devices = $devices->filter(fn($d) => !empty($d['has_genieacs']) && empty($d['is_unassigned']));
             } elseif ($statusFilter === 'without_acs') {
-                $devices = $devices->where('has_genieacs', false);
+                $devices = $devices->filter(fn($d) => empty($d['has_genieacs']));
             } elseif ($statusFilter === 'unassigned') {
-                $devices = $devices->where('is_unassigned', true);
+                $devices = $devices->filter(fn($d) => !empty($d['is_unassigned']));
             } elseif ($statusFilter === 'critical_rx') {
-                $devices = $devices->where('rx_status', 'critical');
+                $devices = $devices->filter(fn($d) => ($d['rx_status'] ?? '') === 'critical');
             } elseif ($statusFilter === 'warning_rx') {
-                $devices = $devices->where('rx_status', 'warning');
+                $devices = $devices->filter(fn($d) => ($d['rx_status'] ?? '') === 'warning');
             }
 
             // 2. Filter by device capacity compliance (Aman / Siaga / Kritis / Overlimit)

@@ -361,42 +361,50 @@ class GenieAcsService
 
             $parsedAcsDevices[$deviceId] = $devData;
 
+            $pickBetterDevice = function (?array $existing, array $candidate): array {
+                if (!$existing) return $candidate;
+                if (!empty($candidate['is_online']) && empty($existing['is_online'])) return $candidate;
+                if (empty($candidate['is_online']) && !empty($existing['is_online'])) return $existing;
+                $tCandidate = !empty($candidate['last_inform_at']) ? strtotime($candidate['last_inform_at']) : 0;
+                $tExisting = !empty($existing['last_inform_at']) ? strtotime($existing['last_inform_at']) : 0;
+                return ($tCandidate >= $tExisting) ? $candidate : $existing;
+            };
+
             if ($pppoe !== '') {
-                $devicesByPppoe[strtolower(trim($pppoe))] = $devData;
+                $devicesByPppoe[strtolower(trim($pppoe))] = $pickBetterDevice($devicesByPppoe[strtolower(trim($pppoe))] ?? null, $devData);
             }
             if ($ipAddress !== '') {
-                $devicesByIp[trim($ipAddress)] = $devData;
+                $devicesByIp[trim($ipAddress)] = $pickBetterDevice($devicesByIp[trim($ipAddress)] ?? null, $devData);
             }
             if ($macAddress !== '') {
                 $cleanMac = strtolower(str_replace([':', '-', '.'], '', trim($macAddress)));
-                $devicesByMac[$cleanMac] = $devData;
+                $devicesByMac[$cleanMac] = $pickBetterDevice($devicesByMac[$cleanMac] ?? null, $devData);
             }
         }
 
-        $unifiedList = [];
-        $customersWithAcsCount = 0;
-        $customersWithoutAcsCount = 0;
-        $totalConnectedClients = 0;
-        $safeCapacityCount = 0;
-        $warningCapacityCount = 0;
-        $criticalCapacityCount = 0;
-        $overlimitCapacityCount = 0;
-        $processedCustomerIds = [];
+        // --- STEP A: Map each Customer to at most ONE best ACS Device ---
+        $customerDeviceMap = []; // [customer_id => devData]
+        $assignedDeviceIds = []; // [device_id => customer_id]
 
-        // 1. Process all Customers from database
+        // Pass 1: Direct matching (Manual Cache -> Direct PPPoE -> Router IP -> MikroTik Lookup)
         foreach ($customers as $c) {
             $matchedDev = null;
             $pppoeClean = $c->pppoe_username ? strtolower(trim($c->pppoe_username)) : '';
 
-            // 1.1 Match by PPPoE (Direct or MikroTik double-checked)
-            if ($pppoeClean !== '' && isset($devicesByPppoe[$pppoeClean])) {
+            // 1. Manual map cache
+            $manualDevId = Cache::get("genieacs_customer_device:{$c->id}");
+            if ($manualDevId && isset($parsedAcsDevices[$manualDevId])) {
+                $matchedDev = $parsedAcsDevices[$manualDevId];
+            }
+            // 2. Match by PPPoE
+            elseif ($pppoeClean !== '' && isset($devicesByPppoe[$pppoeClean])) {
                 $matchedDev = $devicesByPppoe[$pppoeClean];
             }
-            // 1.2 Match by customer configured router IP
+            // 3. Match by customer router IP
             elseif (!empty($c->home_router_host) && isset($devicesByIp[trim($c->home_router_host)])) {
                 $matchedDev = $devicesByIp[trim($c->home_router_host)];
             }
-            // 1.3 Match by customer's MikroTik IP or MAC mapping
+            // 4. Match by MikroTik IP/MAC
             elseif ($pppoeClean !== '' && isset($mikrotikLookup['by_pppoe'][$pppoeClean])) {
                 $mtkEntry = $mikrotikLookup['by_pppoe'][$pppoeClean];
                 if (!empty($mtkEntry['ip_address']) && isset($devicesByIp[$mtkEntry['ip_address']])) {
@@ -408,6 +416,53 @@ class GenieAcsService
                     }
                 }
             }
+
+            if ($matchedDev) {
+                $customerDeviceMap[$c->id] = $matchedDev;
+                $assignedDeviceIds[$matchedDev['device_id']] = $c->id;
+            }
+        }
+
+        // Pass 2: Check unassigned ACS devices for fallback matching to customers without ACS
+        foreach ($parsedAcsDevices as $devId => $devData) {
+            if (isset($assignedDeviceIds[$devId])) {
+                continue;
+            }
+
+            $devPppoe = $devData['pppoe_username'] ? strtolower(trim($devData['pppoe_username'])) : '';
+            $matchedCustomer = null;
+
+            if ($devPppoe !== '') {
+                $matchedCustomer = $customers->first(function ($cust) use ($devPppoe, $customerDeviceMap) {
+                    return !isset($customerDeviceMap[$cust->id]) && strtolower(trim((string)$cust->pppoe_username)) === $devPppoe;
+                });
+            }
+
+            if (!$matchedCustomer && !empty($devData['ip_address']) && isset($mikrotikLookup['by_ip'][$devData['ip_address']])) {
+                $mtkUser = strtolower(trim($mikrotikLookup['by_ip'][$devData['ip_address']]['username']));
+                $matchedCustomer = $customers->first(function ($cust) use ($mtkUser, $customerDeviceMap) {
+                    return !isset($customerDeviceMap[$cust->id]) && strtolower(trim((string)$cust->pppoe_username)) === $mtkUser;
+                });
+            }
+
+            if ($matchedCustomer) {
+                $customerDeviceMap[$matchedCustomer->id] = $devData;
+                $assignedDeviceIds[$devId] = $matchedCustomer->id;
+            }
+        }
+
+        // --- STEP B: Build unifiedList with EXACTLY ONE row per Customer ---
+        $unifiedList = [];
+        $customersWithAcsCount = 0;
+        $customersWithoutAcsCount = 0;
+        $totalConnectedClients = 0;
+        $safeCapacityCount = 0;
+        $warningCapacityCount = 0;
+        $criticalCapacityCount = 0;
+        $overlimitCapacityCount = 0;
+
+        foreach ($customers as $c) {
+            $matchedDev = $customerDeviceMap[$c->id] ?? null;
 
             // Resolve Customer Package
             $pkg = $c->package ?: ($c->package_type ? ($packagesByName[strtolower(trim($c->package_type))] ?? null) : null);
@@ -437,8 +492,6 @@ class GenieAcsService
 
             if ($matchedDev) {
                 $customersWithAcsCount++;
-                $processedCustomerIds[$c->id] = true;
-                $processedAcsDeviceIds[$matchedDev['device_id']] = true;
                 $clients = (int) ($matchedDev['wifi_clients_count'] ?? 0);
                 $isOnline = (bool) ($matchedDev['is_online'] ?? false);
 
@@ -456,9 +509,7 @@ class GenieAcsService
                         $capacityStatus = 'safe';
                         $capacityLabel = "Aman ({$clients}/{$maxDevices})";
                         $capacityDiff = 0;
-                        if ($isOnline) {
-                            $safeCapacityCount++;
-                        }
+                        if ($isOnline) $safeCapacityCount++;
                     } elseif ($clients === $maxDevices + 1) {
                         $capacityStatus = 'warning';
                         $capacityLabel = "Siaga (+1) ({$clients}/{$maxDevices})";
@@ -522,130 +573,28 @@ class GenieAcsService
             }
         }
 
-        // 2. Include any ACS devices that are NOT matched to any database customer
+        // --- STEP C: Add Unassigned ACS Devices (devices not linked to any customer) ---
         $unassignedCount = 0;
         foreach ($parsedAcsDevices as $devId => $devData) {
-            if (isset($processedAcsDeviceIds[$devId])) {
+            if (isset($assignedDeviceIds[$devId])) {
                 continue;
             }
 
-            // Fallback attempt to link with unmatched customer via PPPoE or MikroTik IP
-            $matchedCustomer = null;
-            $devPppoe = $devData['pppoe_username'] ? strtolower(trim($devData['pppoe_username'])) : '';
-            if ($devPppoe !== '') {
-                $matchedCustomer = $customers->first(function ($cust) use ($devPppoe, $processedCustomerIds) {
-                    return !isset($processedCustomerIds[$cust->id]) && strtolower(trim((string)$cust->pppoe_username)) === $devPppoe;
-                });
-            }
-            if (!$matchedCustomer && !empty($devData['ip_address']) && isset($mikrotikLookup['by_ip'][$devData['ip_address']])) {
-                $mtkUser = strtolower(trim($mikrotikLookup['by_ip'][$devData['ip_address']]['username']));
-                $matchedCustomer = $customers->first(function ($cust) use ($mtkUser, $processedCustomerIds) {
-                    return !isset($processedCustomerIds[$cust->id]) && strtolower(trim((string)$cust->pppoe_username)) === $mtkUser;
-                });
+            $unassignedCount++;
+            $clients = (int) ($devData['wifi_clients_count'] ?? 0);
+            if ($devData['is_online']) {
+                $totalConnectedClients += $clients;
             }
 
-            if ($matchedCustomer) {
-                $processedCustomerIds[$matchedCustomer->id] = true;
-                $processedAcsDeviceIds[$devId] = true;
-                $customersWithAcsCount++;
-                if ($customersWithoutAcsCount > 0) {
-                    $customersWithoutAcsCount--;
-                }
-
-                $pkg = $matchedCustomer->package ?: ($matchedCustomer->package_type ? ($packagesByName[strtolower(trim($matchedCustomer->package_type))] ?? null) : null);
-                $packageName = $pkg?->name ?? ($matchedCustomer->package_type ?: '-');
-                $packageSpeed = $pkg?->speed ?? null;
-                $packagePrice = $pkg?->price ?? null;
-                $maxDevices = $pkg && $pkg->device_count !== null && $pkg->device_count > 0 ? (int) $pkg->device_count : null;
-
-                $portalToken = $this->generateCustomerPortalToken($matchedCustomer->id);
-                $portalUrl = url("/portal-pelanggan/{$portalToken}");
-
-                $custPayload = [
-                    'id' => $matchedCustomer->id,
-                    'name' => $matchedCustomer->name,
-                    'phone' => $matchedCustomer->phone,
-                    'address' => $matchedCustomer->address,
-                    'pppoe_username' => $matchedCustomer->pppoe_username,
-                    'package_id' => $pkg?->id ?? $matchedCustomer->package_id,
-                    'package_name' => $packageName,
-                    'package_speed' => $packageSpeed,
-                    'package_price' => $packagePrice,
-                    'package_max_devices' => $maxDevices,
-                    'is_active' => (bool) $matchedCustomer->is_active,
-                    'portal_token' => $portalToken,
-                    'portal_url' => $portalUrl,
-                ];
-
-                $clients = (int) ($devData['wifi_clients_count'] ?? 0);
-                $isOnline = (bool) ($devData['is_online'] ?? false);
-                if ($isOnline) {
-                    $totalConnectedClients += $clients;
-                }
-
-                $capacityStatus = 'no_limit';
-                $capacityLabel = 'Tanpa Batas';
-                $capacityDiff = 0;
-
-                if ($maxDevices !== null && $maxDevices > 0) {
-                    if ($clients <= $maxDevices) {
-                        $capacityStatus = 'safe';
-                        $capacityLabel = "Aman ({$clients}/{$maxDevices})";
-                        $capacityDiff = 0;
-                        if ($isOnline) $safeCapacityCount++;
-                    } elseif ($clients === $maxDevices + 1) {
-                        $capacityStatus = 'warning';
-                        $capacityLabel = "Siaga (+1) ({$clients}/{$maxDevices})";
-                        $capacityDiff = 1;
-                        if ($isOnline) {
-                            $warningCapacityCount++;
-                            $overlimitCapacityCount++;
-                        }
-                    } else {
-                        $capacityStatus = 'critical';
-                        $over = $clients - $maxDevices;
-                        $capacityLabel = "Kritis (+{$over}) ({$clients}/{$maxDevices})";
-                        $capacityDiff = $over;
-                        if ($isOnline) {
-                            $criticalCapacityCount++;
-                            $overlimitCapacityCount++;
-                        }
-                    }
-                }
-
-                // Remove existing offline entry for this customer from unifiedList if present
-                $unifiedList = array_values(array_filter($unifiedList, function ($item) use ($matchedCustomer) {
-                    return !($item['customer']['id'] ?? null === $matchedCustomer->id && !$item['has_genieacs']);
-                }));
-
-                $unifiedList[] = array_merge($devData, [
-                    'has_genieacs' => true,
-                    'is_unassigned' => false,
-                    'customer' => $custPayload,
-                    'capacity_status' => $capacityStatus,
-                    'capacity_label' => $capacityLabel,
-                    'capacity_diff' => $capacityDiff,
-                    'max_devices' => $maxDevices,
-                    'portal_token' => $portalToken,
-                    'portal_url' => $portalUrl,
-                ]);
-            } else {
-                $unassignedCount++;
-                $clients = (int) ($devData['wifi_clients_count'] ?? 0);
-                if ($devData['is_online']) {
-                    $totalConnectedClients += $clients;
-                }
-
-                $unifiedList[] = array_merge($devData, [
-                    'has_genieacs' => true,
-                    'is_unassigned' => true,
-                    'customer' => null,
-                    'capacity_status' => 'no_limit',
-                    'capacity_label' => "{$clients} Klien (Router Belum Tertaut)",
-                    'capacity_diff' => 0,
-                    'max_devices' => null,
-                ]);
-            }
+            $unifiedList[] = array_merge($devData, [
+                'has_genieacs' => true,
+                'is_unassigned' => true,
+                'customer' => null,
+                'capacity_status' => 'no_limit',
+                'capacity_label' => "{$clients} Klien (Router Belum Tertaut)",
+                'capacity_diff' => 0,
+                'max_devices' => null,
+            ]);
         }
 
         // Sort: Online first, then with_acs, then alphabetical by customer name or device id
