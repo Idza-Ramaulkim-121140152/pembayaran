@@ -642,6 +642,30 @@ export default function SuperPanelPage() {
         }
     };
 
+    // Auto-Discover OLT Hardware, Ports, & Connected Devices
+    const [autoDiscoveringOlt, setAutoDiscoveringOlt] = useState(false);
+    const handleAutoDiscoverOlt = async () => {
+        const targetOltId = selectedOltId || oltData?.olts?.[0]?.id;
+        if (!targetOltId) {
+            showToast('Pilih atau daftarkan OLT terlebih dahulu.', 'warning');
+            return;
+        }
+        try {
+            setAutoDiscoveringOlt(true);
+            showToast('Mendeteksi spesifikasi, port PON, dan daftar perangkat langsung dari OLT...', 'info');
+            const res = await masterOltService.autoDiscover(targetOltId);
+            if (res.data?.success) {
+                showToast(res.data.message || 'Auto-discovery OLT berhasil!');
+                fetchOltData(targetOltId);
+                fetchOverviewStats();
+            }
+        } catch (err) {
+            showToast('Gagal auto-discovery: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setAutoDiscoveringOlt(false);
+        }
+    };
+
     // Toggle Wi-Fi password visibility
     const toggleWifiPassword = (onuId) => {
         setVisibleWifiPasswords((prev) => ({ ...prev, [onuId]: !prev[onuId] }));
@@ -1216,6 +1240,16 @@ export default function SuperPanelPage() {
                                     ))}
                                 </select>
                             )}
+
+                            <button
+                                onClick={handleAutoDiscoverOlt}
+                                disabled={autoDiscoveringOlt}
+                                className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-lg shadow-orange-600/25 transition disabled:opacity-50"
+                                title="Ambil spesifikasi, port PON, dan daftar perangkat (ONU/ONT) langsung dari OLT fisik"
+                            >
+                                <Zap className={`w-3.5 h-3.5 text-yellow-200 ${autoDiscoveringOlt ? 'animate-spin' : ''}`} />
+                                {autoDiscoveringOlt ? 'Mendeteksi OLT...' : '⚡ Auto-Discover dari OLT'}
+                            </button>
 
                             <button
                                 onClick={handleSyncGenieAcsCrossMatching}

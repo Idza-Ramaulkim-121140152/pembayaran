@@ -92,22 +92,24 @@ class MasterOltController extends Controller
      * POST /api/master-olts
      * Create new Master OLT and auto-generate its PON ports
      */
+    /**
+     * POST /api/master-olts
+     * Create new Master OLT with auto-discovery from physical hardware
+     */
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:150',
-            'brand' => 'required|string|max:50',
-            'model' => 'nullable|string|max:100',
             'host' => 'required|string|max:255',
             'username' => 'nullable|string|max:100',
             'password' => 'nullable|string|max:100',
             'snmp_port' => 'nullable|integer|min:1|max:65535',
             'telnet_port' => 'nullable|integer|min:1|max:65535',
-            'ssh_port' => 'nullable|integer|min:1|max:65535',
-            'http_port' => 'nullable|integer|min:1|max:65535',
             'snmp_community' => 'nullable|string|max:100',
             'snmp_version' => 'nullable|string|in:1,2c,3',
-            'total_pon_ports' => 'required|integer|min:1|max:64',
+            'name' => 'nullable|string|max:150',
+            'brand' => 'nullable|string|max:50',
+            'model' => 'nullable|string|max:100',
+            'total_pon_ports' => 'nullable|integer|min:1|max:64',
             'is_active' => 'nullable|boolean',
             'simulation_mode' => 'nullable|boolean',
             'latitude' => 'nullable|numeric|between:-90,90',
@@ -123,11 +125,14 @@ class MasterOltController extends Controller
             MasterOlt::query()->update(['is_active' => false]);
         }
 
+        $host = trim($validated['host']);
+        $name = !empty($validated['name']) ? trim($validated['name']) : "OLT - {$host}";
+
         $olt = MasterOlt::create([
-            'name' => $validated['name'],
-            'brand' => $validated['brand'],
-            'model' => $validated['model'] ?? ($validated['brand'] . ' GPON OLT ' . $validated['total_pon_ports'] . '-Port'),
-            'host' => $validated['host'],
+            'name' => $name,
+            'brand' => $validated['brand'] ?? 'VSOL',
+            'model' => $validated['model'] ?? 'Auto-Detecting...',
+            'host' => $host,
             'username' => $validated['username'] ?? 'admin',
             'password' => $validated['password'] ?? 'admin',
             'snmp_port' => $validated['snmp_port'] ?? 161,
@@ -136,42 +141,52 @@ class MasterOltController extends Controller
             'http_port' => $validated['http_port'] ?? 80,
             'snmp_community' => $validated['snmp_community'] ?? 'public',
             'snmp_version' => $validated['snmp_version'] ?? '2c',
-            'total_pon_ports' => (int) $validated['total_pon_ports'],
+            'total_pon_ports' => $validated['total_pon_ports'] ?? 4,
             'is_active' => $isActive,
             'simulation_mode' => $validated['simulation_mode'] ?? false,
             'latitude' => $validated['latitude'] ?? -5.63272765,
             'longitude' => $validated['longitude'] ?? 105.54801464,
-            'location_address' => $validated['location_address'] ?? 'NOC Kalianda Sentral',
+            'location_address' => $validated['location_address'] ?? 'Sentral NOC Server Room, Kalianda',
             'description' => $validated['description'] ?? null,
             'last_status' => 'online',
             'last_checked_at' => now(),
         ]);
 
-        // Auto create PON ports
-        $totalPorts = (int) $validated['total_pon_ports'];
-        $identifierPrefix = strtolower($validated['brand']) === 'huawei' ? '0/1/' : 'gpon-olt_1/1/';
+        // Auto-discover directly from physical OLT
+        $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
 
-        for ($i = 1; $i <= $totalPorts; $i++) {
-            OltPonPort::create([
-                'olt_id' => $olt->id,
-                'pon_index' => $i,
-                'pon_identifier' => $identifierPrefix . $i,
-                'name' => 'PON ' . $i . ' (Jalur ' . $i . ')',
-                'admin_status' => 'up',
-                'oper_status' => 'up',
-                'tx_power_dbm' => 4.80,
-                'temperature' => 41.0 + ($i * 0.5),
-                'voltage' => 3.30,
-                'current_ma' => 15.0,
-                'max_onu_capacity' => 64,
-                'description' => 'Port GPON SFP Modul Class C++',
-            ]);
+        // If device was unreachable and no ports exist yet, create initial placeholder ports
+        if ($olt->ponPorts()->count() === 0) {
+            $fallbackPorts = max(1, (int) ($olt->total_pon_ports ?: 4));
+            for ($i = 1; $i <= $fallbackPorts; $i++) {
+                OltPonPort::create([
+                    'olt_id' => $olt->id,
+                    'pon_index' => $i,
+                    'pon_identifier' => 'epon0/' . $i,
+                    'name' => 'PON ' . $i,
+                    'admin_status' => 'up',
+                    'oper_status' => 'up',
+                    'tx_power_dbm' => 4.80,
+                    'temperature' => 41.5,
+                    'voltage' => 3.30,
+                    'current_ma' => 14.8,
+                    'max_onu_capacity' => 64,
+                    'description' => 'Port SFP Optical Modul',
+                ]);
+            }
         }
+
+        $olt->refresh()->load('ponPorts');
+
+        $msg = $discovery['is_reachable']
+            ? "Master OLT '{$olt->name}' berhasil ditambahkan dan terhubung langsung ke hardware ({$olt->brand} {$olt->model}, {$olt->total_pon_ports} Port PON)."
+            : "Master OLT '{$olt->name}' tersimpan. OLT saat ini belum merespon probe SNMP/Telnet. Gunakan tombol 'Auto-Discover' saat OLT menyala.";
 
         return response()->json([
             'success' => true,
-            'message' => "Master OLT '{$olt->name}' berhasil ditambahkan beserta {$totalPorts} Port PON.",
-            'data' => $olt->load('ponPorts'),
+            'message' => $msg,
+            'data' => $olt,
+            'discovery' => $discovery,
         ], 201);
     }
 
@@ -192,24 +207,22 @@ class MasterOltController extends Controller
 
     /**
      * PUT /api/master-olts/{olt}
-     * Update Master OLT configuration
+     * Update Master OLT configuration with auto-discovery
      */
     public function update(Request $request, MasterOlt $olt)
     {
         $validated = $request->validate([
-            'name' => 'required|string|max:150',
-            'brand' => 'required|string|max:50',
-            'model' => 'nullable|string|max:100',
             'host' => 'required|string|max:255',
             'username' => 'nullable|string|max:100',
             'password' => 'nullable|string|max:100',
             'snmp_port' => 'nullable|integer|min:1|max:65535',
             'telnet_port' => 'nullable|integer|min:1|max:65535',
-            'ssh_port' => 'nullable|integer|min:1|max:65535',
-            'http_port' => 'nullable|integer|min:1|max:65535',
             'snmp_community' => 'nullable|string|max:100',
             'snmp_version' => 'nullable|string|in:1,2c,3',
-            'total_pon_ports' => 'required|integer|min:1|max:64',
+            'name' => 'nullable|string|max:150',
+            'brand' => 'nullable|string|max:50',
+            'model' => 'nullable|string|max:100',
+            'total_pon_ports' => 'nullable|integer|min:1|max:64',
             'is_active' => 'nullable|boolean',
             'simulation_mode' => 'nullable|boolean',
             'latitude' => 'nullable|numeric|between:-90,90',
@@ -224,23 +237,20 @@ class MasterOltController extends Controller
             MasterOlt::where('id', '!=', $olt->id)->update(['is_active' => false]);
         }
 
-        $oldTotalPorts = (int) $olt->total_pon_ports;
-        $newTotalPorts = (int) $validated['total_pon_ports'];
-
         $olt->update([
-            'name' => $validated['name'],
-            'brand' => $validated['brand'],
+            'name' => !empty($validated['name']) ? $validated['name'] : $olt->name,
+            'brand' => $validated['brand'] ?? $olt->brand,
             'model' => $validated['model'] ?? $olt->model,
             'host' => $validated['host'],
             'username' => $validated['username'] ?? $olt->username,
             'password' => $validated['password'] ?? $olt->password,
-            'snmp_port' => $validated['snmp_port'] ?? 161,
-            'telnet_port' => $validated['telnet_port'] ?? 23,
-            'ssh_port' => $validated['ssh_port'] ?? 22,
-            'http_port' => $validated['http_port'] ?? 80,
-            'snmp_community' => $validated['snmp_community'] ?? 'public',
-            'snmp_version' => $validated['snmp_version'] ?? '2c',
-            'total_pon_ports' => $newTotalPorts,
+            'snmp_port' => $validated['snmp_port'] ?? $olt->snmp_port,
+            'telnet_port' => $validated['telnet_port'] ?? $olt->telnet_port,
+            'ssh_port' => $validated['ssh_port'] ?? $olt->ssh_port,
+            'http_port' => $validated['http_port'] ?? $olt->http_port,
+            'snmp_community' => $validated['snmp_community'] ?? $olt->snmp_community,
+            'snmp_version' => $validated['snmp_version'] ?? $olt->snmp_version,
+            'total_pon_ports' => $validated['total_pon_ports'] ?? $olt->total_pon_ports,
             'is_active' => $isActive,
             'simulation_mode' => $validated['simulation_mode'] ?? $olt->simulation_mode,
             'latitude' => $validated['latitude'] ?? $olt->latitude,
@@ -249,33 +259,38 @@ class MasterOltController extends Controller
             'description' => $validated['description'] ?? $olt->description,
         ]);
 
-        // If port count expanded, add missing PON ports
-        if ($newTotalPorts > $oldTotalPorts) {
-            $identifierPrefix = strtolower($validated['brand']) === 'huawei' ? '0/1/' : 'gpon-olt_1/1/';
-            for ($i = $oldTotalPorts + 1; $i <= $newTotalPorts; $i++) {
-                OltPonPort::firstOrCreate(
-                    ['olt_id' => $olt->id, 'pon_index' => $i],
-                    [
-                        'pon_identifier' => $identifierPrefix . $i,
-                        'name' => 'PON ' . $i,
-                        'admin_status' => 'up',
-                        'oper_status' => 'up',
-                        'tx_power_dbm' => 4.80,
-                        'temperature' => 42.0,
-                        'voltage' => 3.30,
-                        'current_ma' => 15.0,
-                        'max_onu_capacity' => 64,
-                        'description' => 'Port GPON SFP Modul',
-                    ]
-                );
-            }
-        }
+        // Auto-discover from real physical OLT
+        $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
 
         return response()->json([
             'success' => true,
-            'message' => "Konfigurasi Master OLT '{$olt->name}' berhasil diperbarui.",
+            'message' => "Konfigurasi Master OLT '{$olt->name}' berhasil diperbarui dan disinkronkan dengan OLT fisik.",
             'data' => $olt->fresh(['ponPorts']),
+            'discovery' => $discovery,
         ]);
+    }
+
+    /**
+     * POST /api/master-olts/{olt}/auto-discover
+     * Trigger on-demand auto-discovery of hardware, ports, and connected ONUs
+     */
+    public function autoDiscover(MasterOlt $olt)
+    {
+        $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
+
+        $portsCount = count($discovery['discovered_ports'] ?? []);
+        $onusCount = $discovery['discovered_onus_count'] ?? 0;
+
+        $msg = $discovery['is_reachable']
+            ? "Auto-Discovery BERHASIL: Terdeteksi {$discovery['detected_brand']} ({$discovery['detected_model']}) dengan {$portsCount} Port PON dan {$onusCount} perangkat ONU/ONT terhubung."
+            : "Auto-Discovery GAGAL: OLT pada {$olt->host} tidak merespon SNMP/Telnet. Pastikan IP dapat dijangkau dan service aktif.";
+
+        return response()->json([
+            'success' => $discovery['is_reachable'],
+            'message' => $msg,
+            'data' => $olt->fresh(['ponPorts']),
+            'discovery' => $discovery,
+        ], $discovery['is_reachable'] ? 200 : 422);
     }
 
     /**

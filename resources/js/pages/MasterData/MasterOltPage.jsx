@@ -40,19 +40,14 @@ const OLT_BRANDS = [
 const INITIAL_FORM = {
     id: null,
     name: '',
-    brand: 'ZTE',
-    model: 'ZTE C320 GPON 8-Port',
     host: '',
+    username: 'admin',
+    password: '',
     snmp_port: 161,
+    telnet_port: 23,
     snmp_community: 'public',
     snmp_version: '2c',
-    total_pon_ports: 8,
     is_active: true,
-    simulation_mode: false,
-    latitude: -5.63272765,
-    longitude: 105.54801464,
-    location_address: 'Sentral NOC Server Room, Kalianda',
-    description: '',
 };
 
 function MasterOltPage() {
@@ -74,6 +69,10 @@ function MasterOltPage() {
     // Modal SNMP Test State
     const [snmpTestResult, setSnmpTestResult] = useState(null);
     const [testingSnmpId, setTestingSnmpId] = useState(null);
+
+    // Auto-Discovery State
+    const [discoveringId, setDiscoveringId] = useState(null);
+    const [discoveryResult, setDiscoveryResult] = useState(null);
 
     const isEdit = useMemo(() => !!form.id, [form.id]);
 
@@ -104,19 +103,14 @@ function MasterOltPage() {
         setForm({
             id: olt.id,
             name: olt.name || '',
-            brand: olt.brand || 'ZTE',
-            model: olt.model || '',
             host: olt.host || '',
+            username: olt.username || 'admin',
+            password: olt.password || '',
             snmp_port: olt.snmp_port || 161,
+            telnet_port: olt.telnet_port || 23,
             snmp_community: olt.snmp_community === '***' ? 'public' : (olt.snmp_community || 'public'),
             snmp_version: olt.snmp_version || '2c',
-            total_pon_ports: olt.total_pon_ports || 8,
             is_active: !!olt.is_active,
-            simulation_mode: !!olt.simulation_mode,
-            latitude: olt.latitude || -5.63272765,
-            longitude: olt.longitude || 105.54801464,
-            location_address: olt.location_address || '',
-            description: olt.description || '',
         });
         setIsFormOpen(true);
         setError(null);
@@ -131,28 +125,29 @@ function MasterOltPage() {
             setSuccess(null);
 
             const payload = {
-                name: form.name.trim(),
-                brand: form.brand,
-                model: form.model?.trim() || `${form.brand} GPON OLT ${form.total_pon_ports}-Port`,
+                name: form.name?.trim() || `OLT - ${form.host.trim()}`,
                 host: form.host.trim(),
+                username: form.username?.trim() || 'admin',
+                password: form.password?.trim() || 'admin',
                 snmp_port: Number(form.snmp_port) || 161,
-                snmp_community: form.snmp_community.trim() || 'public',
+                telnet_port: Number(form.telnet_port) || 23,
+                snmp_community: form.snmp_community?.trim() || 'public',
                 snmp_version: form.snmp_version || '2c',
-                total_pon_ports: Number(form.total_pon_ports) || 8,
                 is_active: !!form.is_active,
-                simulation_mode: !!form.simulation_mode,
-                latitude: Number(form.latitude) || -5.63272765,
-                longitude: Number(form.longitude) || 105.54801464,
-                location_address: form.location_address?.trim() || null,
-                description: form.description?.trim() || null,
             };
 
             if (isEdit) {
-                await masterOltService.update(form.id, payload);
-                setSuccess(`Master OLT '${payload.name}' berhasil diperbarui.`);
+                const res = await masterOltService.update(form.id, payload);
+                setSuccess(res.data?.message || `Master OLT '${payload.name}' berhasil diperbarui.`);
+                if (res.data?.discovery) {
+                    setDiscoveryResult(res.data.discovery);
+                }
             } else {
-                await masterOltService.create(payload);
-                setSuccess(`Master OLT '${payload.name}' berhasil ditambahkan.`);
+                const res = await masterOltService.create(payload);
+                setSuccess(res.data?.message || `Master OLT '${payload.name}' berhasil ditambahkan.`);
+                if (res.data?.discovery) {
+                    setDiscoveryResult(res.data.discovery);
+                }
             }
 
             setIsFormOpen(false);
@@ -161,6 +156,23 @@ function MasterOltPage() {
             setError(err.response?.data?.message || 'Gagal menyimpan konfigurasi OLT.');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleAutoDiscover = async (olt) => {
+        try {
+            setDiscoveringId(olt.id);
+            setError(null);
+            setSuccess(null);
+            const res = await masterOltService.autoDiscover(olt.id);
+            setDiscoveryResult(res.data?.discovery || null);
+            setSuccess(res.data?.message || `Auto-discovery OLT '${olt.name}' berhasil.`);
+            await fetchOlts();
+        } catch (err) {
+            setDiscoveryResult(err.response?.data?.discovery || null);
+            setError(err.response?.data?.message || 'Gagal menjalankan auto-discovery pada OLT.');
+        } finally {
+            setDiscoveringId(null);
         }
     };
 
@@ -389,6 +401,16 @@ function MasterOltPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <button
                                             type="button"
+                                            onClick={() => handleAutoDiscover(olt)}
+                                            disabled={discoveringId === olt.id}
+                                            className="px-3 py-1.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                                            title="Ambil spesifikasi, port PON, dan daftar perangkat terhubung langsung dari OLT"
+                                        >
+                                            <Zap size={14} className={discoveringId === olt.id ? 'animate-spin text-yellow-200' : ''} />
+                                            {discoveringId === olt.id ? 'Mendeteksi...' : 'Auto-Discover OLT'}
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => handleTestSnmp(olt)}
                                             disabled={testingSnmpId === olt.id}
                                             className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition flex items-center gap-1.5"
@@ -405,8 +427,8 @@ function MasterOltPage() {
                                                     : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
                                             }`}
                                         >
-                                            <Zap size={14} />
-                                            {isSim ? 'Ganti ke Real SNMP' : 'Ganti ke Simulasi'}
+                                            <Activity size={14} />
+                                            {isSim ? 'Mode Simulasi' : 'Real SNMP Live'}
                                         </button>
                                         <button
                                             type="button"
@@ -538,17 +560,70 @@ function MasterOltPage() {
                 </div>
             )}
 
+            {/* DISCOVERY RESULT MODAL */}
+            {discoveryResult && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-gray-100">
+                        <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                            <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                                <Zap className="text-orange-500" />
+                                Hasil Auto-Discovery OLT Fisik
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={() => setDiscoveryResult(null)}
+                                className="text-gray-400 hover:text-gray-600"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3 text-xs">
+                            <div className="p-3.5 rounded-2xl bg-orange-50/70 border border-orange-200 space-y-1.5 text-slate-800">
+                                <p><strong>Host OLT:</strong> <span className="font-mono font-bold text-orange-900">{discoveryResult.host}</span></p>
+                                <p><strong>Status Jaringan:</strong> {discoveryResult.is_reachable ? <span className="text-emerald-600 font-bold">ONLINE &amp; TERHUBUNG ({discoveryResult.latency_ms} ms)</span> : <span className="text-rose-600 font-bold">TIDAK MERESPON</span>}</p>
+                                <p><strong>Konektivitas:</strong> SNMP {discoveryResult.snmp_connected ? '🟢 Aktif' : '🔴 Mati'} &bull; Telnet {discoveryResult.telnet_connected ? '🟢 Aktif' : '🔴 Mati'}</p>
+                            </div>
+
+                            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-slate-700">
+                                <p><strong>Merk Terdeteksi:</strong> <span className="font-bold text-gray-900">{discoveryResult.detected_brand || '-'}</span></p>
+                                <p><strong>Model Perangkat:</strong> <span className="font-bold text-indigo-700">{discoveryResult.detected_model || '-'}</span></p>
+                                {discoveryResult.sys_descr && <p className="text-[11px] text-gray-500 font-mono"><strong>SysDescr:</strong> {discoveryResult.sys_descr}</p>}
+                                {discoveryResult.uptime && <p><strong>Uptime:</strong> {discoveryResult.uptime}</p>}
+                                <p><strong>Port PON Terdeteksi:</strong> <span className="font-bold text-emerald-600">{discoveryResult.discovered_ports?.length || 0} Port Fisik</span></p>
+                                <p><strong>Perangkat ONU/ONT Terhubung:</strong> <span className="font-bold text-blue-600">{discoveryResult.discovered_onus_count || 0} Unit</span></p>
+                            </div>
+
+                            {discoveryResult.errors && Object.keys(discoveryResult.errors).length > 0 && (
+                                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
+                                    <p className="font-bold">Catatan Diagnostik:</p>
+                                    {Object.entries(discoveryResult.errors).map(([k, v]) => (
+                                        <p key={k}>&bull; {k.toUpperCase()}: {v}</p>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-2 flex justify-end">
+                            <Button variant="secondary" onClick={() => setDiscoveryResult(null)}>
+                                Tutup
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* FORM MODAL: TAMBAH / EDIT MASTER OLT */}
             {isFormOpen && (
                 <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-                    <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-6 shadow-2xl my-8">
+                    <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 space-y-6 shadow-2xl my-8">
                         <div className="flex items-center justify-between pb-4 border-b border-gray-100">
                             <div>
                                 <h3 className="font-black text-xl text-gray-900">
                                     {isEdit ? 'Edit Master OLT' : 'Tambah Master OLT Baru'}
                                 </h3>
                                 <p className="text-xs text-gray-500">
-                                    Konfigurasikan vendor, alamat IP host SNMP, port, dan jumlah port PON.
+                                    Cukup masukkan IP host dan kredensial. Spesifikasi dan port akan dideteksi otomatis.
                                 </p>
                             </div>
                             <button
@@ -560,65 +635,63 @@ function MasterOltPage() {
                             </button>
                         </div>
 
+                        {/* AUTO-DISCOVERY HINT BANNER */}
+                        <div className="p-4 rounded-2xl bg-orange-50 border border-orange-200 flex items-start gap-3">
+                            <div className="p-2 bg-orange-100 rounded-xl text-orange-600 shrink-0">
+                                <Zap size={18} />
+                            </div>
+                            <div className="text-xs text-orange-900 leading-relaxed">
+                                <p className="font-bold">Auto-Discovery Otomatis dari OLT</p>
+                                <p className="text-orange-700 text-[11px] mt-0.5">
+                                    Sistem akan mengambil merk OLT, model perangkat, jumlah port PON SFP, daya optik TX, dan seluruh daftar ONU/ONT yang terhubung langsung dari OLT fisik via SNMP dan Telnet.
+                                </p>
+                            </div>
+                        </div>
+
                         <form onSubmit={handleSubmitForm} className="space-y-4 text-xs">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="sm:col-span-2">
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Nama Perangkat OLT <span className="text-rose-500">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        required
-                                        value={form.name}
-                                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                                        placeholder="Contoh: OLT Utama - Sentral NOC Kalianda"
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
-                                    />
-                                </div>
-
+                            <div className="space-y-4">
                                 <div>
                                     <label className="block font-bold text-gray-700 mb-1">
-                                        Vendor / Brand OLT <span className="text-rose-500">*</span>
-                                    </label>
-                                    <select
-                                        value={form.brand}
-                                        onChange={(e) => setForm({ ...form, brand: e.target.value })}
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
-                                    >
-                                        {OLT_BRANDS.map((b) => (
-                                            <option key={b} value={b}>{b}</option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Model / Tipe Chassis
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={form.model}
-                                        onChange={(e) => setForm({ ...form, model: e.target.value })}
-                                        placeholder="Contoh: ZTE C320 GPON 8-Port"
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Host IP / Domain SNMP <span className="text-rose-500">*</span>
+                                        IP Address / Host OLT <span className="text-rose-500">*</span>
                                     </label>
                                     <input
                                         type="text"
                                         required
                                         value={form.host}
                                         onChange={(e) => setForm({ ...form, host: e.target.value })}
-                                        placeholder="Contoh: 10.10.10.1 atau 192.168.10.2"
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
+                                        placeholder="Contoh: 192.168.27.88 atau 10.10.10.1"
+                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono font-bold"
                                     />
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block font-bold text-gray-700 mb-1">
+                                            Username OLT (Telnet/CLI)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={form.username}
+                                            onChange={(e) => setForm({ ...form, username: e.target.value })}
+                                            placeholder="admin"
+                                            className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-bold text-gray-700 mb-1">
+                                            Password OLT (Telnet/CLI)
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={form.password}
+                                            onChange={(e) => setForm({ ...form, password: e.target.value })}
+                                            placeholder="admin"
+                                            className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                                     <div>
                                         <label className="block font-bold text-gray-700 mb-1">
                                             Port SNMP
@@ -627,7 +700,30 @@ function MasterOltPage() {
                                             type="number"
                                             value={form.snmp_port}
                                             onChange={(e) => setForm({ ...form, snmp_port: e.target.value })}
-                                            className="w-full px-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
+                                            className="w-full px-3 py-2 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-xs font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-bold text-gray-700 mb-1">
+                                            Port Telnet
+                                        </label>
+                                        <input
+                                            type="number"
+                                            value={form.telnet_port}
+                                            onChange={(e) => setForm({ ...form, telnet_port: e.target.value })}
+                                            className="w-full px-3 py-2 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-xs font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block font-bold text-gray-700 mb-1">
+                                            SNMP Community
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={form.snmp_community}
+                                            onChange={(e) => setForm({ ...form, snmp_community: e.target.value })}
+                                            placeholder="public"
+                                            className="w-full px-3 py-2 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-xs font-mono"
                                         />
                                     </div>
                                     <div>
@@ -637,7 +733,7 @@ function MasterOltPage() {
                                         <select
                                             value={form.snmp_version}
                                             onChange={(e) => setForm({ ...form, snmp_version: e.target.value })}
-                                            className="w-full px-3 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
+                                            className="w-full px-3 py-2 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-xs font-mono"
                                         >
                                             <option value="1">v1</option>
                                             <option value="2c">v2c</option>
@@ -648,105 +744,33 @@ function MasterOltPage() {
 
                                 <div>
                                     <label className="block font-bold text-gray-700 mb-1">
-                                        Community Read String
+                                        Nama Label OLT <span className="text-gray-400 font-normal">(Opsional)</span>
                                     </label>
                                     <input
                                         type="text"
-                                        value={form.snmp_community}
-                                        onChange={(e) => setForm({ ...form, snmp_community: e.target.value })}
-                                        placeholder="public"
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Total Port PON SFP <span className="text-rose-500">*</span>
-                                    </label>
-                                    <select
-                                        value={form.total_pon_ports}
-                                        onChange={(e) => setForm({ ...form, total_pon_ports: Number(e.target.value) })}
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-bold text-orange-600"
-                                    >
-                                        <option value={4}>4 Port PON</option>
-                                        <option value={8}>8 Port PON</option>
-                                        <option value={16}>16 Port PON</option>
-                                        <option value={32}>32 Port PON</option>
-                                        <option value={64}>64 Port PON</option>
-                                    </select>
-                                </div>
-
-                                <div className="sm:col-span-2">
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Lokasi Alamat Server Room / NOC
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={form.location_address}
-                                        onChange={(e) => setForm({ ...form, location_address: e.target.value })}
-                                        placeholder="Contoh: Sentral NOC Room Kalianda, Jl. Utama No. 1"
+                                        value={form.name}
+                                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                                        placeholder="Contoh: OLT Sentral NOC Kalianda (Otomatis jika dikosongkan)"
                                         className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
                                     />
                                 </div>
 
-                                <div>
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Latitude Koordinat GIS
+                                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={form.is_active}
+                                            onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+                                            className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
+                                        />
+                                        <div>
+                                            <p className="font-bold text-gray-800 text-xs">Set Sebagai OLT Utama (Active)</p>
+                                            <p className="text-[11px] text-gray-500">
+                                                OLT utama akan menjadi default di Super Panel, WebGIS, dan Customer Tracer.
+                                            </p>
+                                        </div>
                                     </label>
-                                    <input
-                                        type="number"
-                                        step="any"
-                                        value={form.latitude}
-                                        onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
-                                    />
                                 </div>
-
-                                <div>
-                                    <label className="block font-bold text-gray-700 mb-1">
-                                        Longitude Koordinat GIS
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="any"
-                                        value={form.longitude}
-                                        onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-                                        className="w-full px-3.5 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm font-mono"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Toggles */}
-                            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                                <label className="flex items-center gap-3 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={form.simulation_mode}
-                                        onChange={(e) => setForm({ ...form, simulation_mode: e.target.checked })}
-                                        className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
-                                    />
-                                    <div>
-                                        <p className="font-bold text-gray-800 text-xs">Aktifkan Smart Simulation Mode</p>
-                                        <p className="text-[11px] text-gray-500">
-                                            Gunakan simulasi cerdas berpresisi tinggi jika komputer Anda belum terhubung langsung ke OLT fisik.
-                                        </p>
-                                    </div>
-                                </label>
-
-                                <label className="flex items-center gap-3 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={form.is_active}
-                                        onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
-                                        className="w-4 h-4 text-orange-600 rounded focus:ring-orange-500"
-                                    />
-                                    <div>
-                                        <p className="font-bold text-gray-800 text-xs">Set Sebagai OLT Utama (Active)</p>
-                                        <p className="text-[11px] text-gray-500">
-                                            OLT utama akan otomatis menjadi default di WebGIS dan Customer Tracer.
-                                        </p>
-                                    </div>
-                                </label>
                             </div>
 
                             <div className="pt-4 flex items-center justify-end gap-3 border-t border-gray-100">
@@ -762,9 +786,10 @@ function MasterOltPage() {
                                     type="submit"
                                     variant="primary"
                                     disabled={saving}
-                                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                                    className="bg-orange-600 hover:bg-orange-700 text-white flex items-center gap-1.5"
                                 >
-                                    {saving ? 'Menyimpan...' : isEdit ? 'Simpan Perubahan' : 'Tambah OLT'}
+                                    <Zap size={14} className={saving ? 'animate-spin' : ''} />
+                                    {saving ? 'Mendeteksi OLT...' : isEdit ? 'Simpan & Deteksi Ulang' : 'Simpan & Deteksi Otomatis'}
                                 </Button>
                             </div>
                         </form>

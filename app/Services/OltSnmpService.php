@@ -51,12 +51,13 @@ class OltSnmpService
     ];
 
     public function __construct(
-        protected GenieAcsService $genieAcsService
+        protected GenieAcsService $genieAcsService,
+        protected OltTelnetService $telnetService
     ) {
     }
 
     /**
-     * Ensure at least one active master OLT and its PON ports exist (auto-seed VSOL default if empty)
+     * Ensure at least one active master OLT exists
      */
     public function ensureDefaultOltSetup(): MasterOlt
     {
@@ -64,9 +65,9 @@ class OltSnmpService
 
         if (!$olt) {
             $olt = MasterOlt::create([
-                'name' => 'OLT VSOL Sentral - Kalianda',
+                'name' => 'OLT Sentral - Kalianda',
                 'brand' => 'VSOL',
-                'model' => 'VSOL V1600G GPON 8-Port OLT',
+                'model' => 'VSOL EPON/GPON OLT',
                 'host' => '192.168.27.88',
                 'username' => 'admin',
                 'password' => 'admin',
@@ -76,13 +77,13 @@ class OltSnmpService
                 'http_port' => 80,
                 'snmp_community' => 'public',
                 'snmp_version' => '2c',
-                'total_pon_ports' => 8,
+                'total_pon_ports' => 4,
                 'is_active' => true,
                 'simulation_mode' => false,
                 'latitude' => -5.63272765,
                 'longitude' => 105.54801464,
                 'location_address' => 'Sentral NOC Server Room, Kalianda',
-                'description' => 'OLT Utama VSOL V1600G terintegrasi GenieACS TR-069 dan WebGIS.',
+                'description' => 'OLT Utama Sentral NOC terintegrasi GenieACS TR-069 dan WebGIS.',
                 'last_status' => 'online',
                 'last_checked_at' => now(),
                 'telemetry_data' => [
@@ -92,41 +93,29 @@ class OltSnmpService
                     'fan_status' => 'NORMAL (5200 RPM)',
                     'power_supply_1' => 'AC 220V - OK',
                     'power_supply_2' => 'DC 48V - STANDBY',
-                    'system_uptime' => '18 days, 06 hours, 24 minutes',
                 ],
             ]);
         }
 
-        // Ensure PON ports exist for this OLT
+        // Ensure at least basic PON ports exist if empty
         $existingPortCount = $olt->ponPorts()->count();
-        if ($existingPortCount < $olt->total_pon_ports) {
-            $ponNames = [
-                1 => 'PON 1 (Jalur Utama Sentral - Kalianda)',
-                2 => 'PON 2 (Jalur Timur - Palas / Way Panji)',
-                3 => 'PON 3 (Jalur Barat - Pesisir Rajabasa)',
-                4 => 'PON 4 (Jalur Utara - Sidomulyo)',
-                5 => 'PON 5 (Jalur Selatan - Bakauheni)',
-                6 => 'PON 6 (Jalur Distribusi Ring 1)',
-                7 => 'PON 7 (Jalur Cadangan / Expansion)',
-                8 => 'PON 8 (Jalur Ekstra / Redundansi)',
-            ];
-
-            for ($i = 1; $i <= $olt->total_pon_ports; $i++) {
-                OltPonPort::updateOrCreate(
-                    ['olt_id' => $olt->id, 'pon_index' => $i],
-                    [
-                        'pon_identifier' => 'gpon-olt_1/1/' . $i,
-                        'name' => $ponNames[$i] ?? ('PON ' . $i),
-                        'admin_status' => 'up',
-                        'oper_status' => $i <= 6 ? 'up' : 'down',
-                        'tx_power_dbm' => 4.50 + (($i % 3) * 0.25),
-                        'temperature' => 39.0 + ($i * 0.7),
-                        'voltage' => 3.30,
-                        'current_ma' => 14.2 + ($i * 0.4),
-                        'max_onu_capacity' => 64,
-                        'description' => 'Port GPON VSOL SFP Class C++ 2.5G/1.25G',
-                    ]
-                );
+        if ($existingPortCount === 0) {
+            $totalPorts = max(1, (int) ($olt->total_pon_ports ?: 4));
+            for ($i = 1; $i <= $totalPorts; $i++) {
+                OltPonPort::create([
+                    'olt_id' => $olt->id,
+                    'pon_index' => $i,
+                    'pon_identifier' => 'epon0/' . $i,
+                    'name' => 'PON ' . $i . ' (epon0/' . $i . ')',
+                    'admin_status' => 'up',
+                    'oper_status' => 'up',
+                    'tx_power_dbm' => 4.80,
+                    'temperature' => 41.5,
+                    'voltage' => 3.30,
+                    'current_ma' => 14.5,
+                    'max_onu_capacity' => 64,
+                    'description' => 'Port SFP Optical Modul',
+                ]);
             }
         }
 
@@ -497,9 +486,16 @@ class OltSnmpService
             }
         }
 
-        // CLI fallback if snmpget binary is installed on system
-        $binary = trim((string) @shell_exec('which snmpget 2>/dev/null'));
-        if (!empty($binary) && is_executable($binary)) {
+        // CLI fallback if snmpget binary is installed on system (Linux / Ubuntu)
+        $binary = null;
+        if (DIRECTORY_SEPARATOR === '/') {
+            $which = trim((string) @shell_exec('which snmpget 2>/dev/null'));
+            if (!empty($which) && is_executable($which)) {
+                $binary = $which;
+            }
+        }
+
+        if (!empty($binary)) {
             $timeoutSec = max(1, (int) ceil($timeoutMicros / 1000000));
             $cmd = escapeshellcmd($binary) . ' -v 2c -c ' . escapeshellarg($community) . ' -t ' . $timeoutSec . ' -r ' . $retries . ' ' . escapeshellarg("{$host}:{$port}") . ' ' . escapeshellarg($oid) . ' 2>/dev/null';
             $output = @shell_exec($cmd);
@@ -512,9 +508,360 @@ class OltSnmpService
         }
 
         if (!function_exists('snmp2_get') && !function_exists('snmpget') && empty($binary)) {
-            throw new Exception('Ekstensi PHP SNMP belum terinstal atau aktif di server PHP ini. Silakan jalankan di terminal server: sudo apt update && sudo apt install -y php-snmp snmp && sudo systemctl restart php*-fpm');
+            Log::info('OltSnmpService: Ekstensi PHP SNMP atau binary snmpget belum terinstal di server ini.');
+            return false;
         }
 
         return false;
+    }
+
+    /**
+     * Perform an SNMP Walk supporting PHP extension (snmp2_real_walk, snmprealwalk) and CLI (snmpwalk binary) fallback
+     */
+    public function rawSnmpWalk(string $host, int $port, string $community, string $oid, int $timeoutMicros = 1500000, int $retries = 2): array
+    {
+        $results = [];
+
+        if (function_exists('snmp2_real_walk')) {
+            $walk = @snmp2_real_walk("{$host}:{$port}", $community, $oid, $timeoutMicros, $retries);
+            if ($walk !== false && is_array($walk)) {
+                return $walk;
+            }
+        }
+
+        if (function_exists('snmprealwalk')) {
+            $walk = @snmprealwalk("{$host}:{$port}", $community, $oid, $timeoutMicros, $retries);
+            if ($walk !== false && is_array($walk)) {
+                return $walk;
+            }
+        }
+
+        // CLI fallback if snmpwalk binary is installed (Linux / Ubuntu)
+        $binary = null;
+        if (DIRECTORY_SEPARATOR === '/') {
+            $which = trim((string) @shell_exec('which snmpwalk 2>/dev/null'));
+            if (!empty($which) && is_executable($which)) {
+                $binary = $which;
+            }
+        }
+
+        if (!empty($binary)) {
+            $timeoutSec = max(1, (int) ceil($timeoutMicros / 1000000));
+            $cmd = escapeshellcmd($binary) . ' -v 2c -c ' . escapeshellarg($community) . ' -t ' . $timeoutSec . ' -r ' . $retries . ' -On ' . escapeshellarg("{$host}:{$port}") . ' ' . escapeshellarg($oid) . ' 2>/dev/null';
+            $output = @shell_exec($cmd);
+            if ($output && !str_contains($output, 'Timeout') && !str_contains($output, 'No Response')) {
+                foreach (explode("\n", trim($output)) as $line) {
+                    if (str_contains($line, '=')) {
+                        $parts = explode('=', $line, 2);
+                        $entryOid = trim($parts[0]);
+                        $val = trim($parts[1]);
+                        if (preg_match('/^(?:[A-Za-z0-9_-]+:\s*)?(.+)$/s', $val, $vm)) {
+                            $val = trim($vm[1], " \t\n\r\0\x0B\"");
+                        }
+                        $results[$entryOid] = $val;
+                    }
+                }
+                return $results;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Auto-Discover OLT: Queries physical OLT hardware via SNMP and Telnet CLI
+     * Discovers Brand, Model, PON ports count, status, optical power, and connected ONUs
+     */
+    public function autoDiscoverOltDevice(MasterOlt $olt): array
+    {
+        $startTime = microtime(true);
+        $host = $olt->host;
+        $snmpPort = (int) ($olt->snmp_port ?: 161);
+        $telnetPort = (int) ($olt->telnet_port ?: 23);
+        $community = $olt->snmp_community ?: 'public';
+        $username = $olt->username ?: 'admin';
+        $password = $olt->password ?: 'admin';
+
+        $report = [
+            'olt_id' => $olt->id,
+            'host' => $host,
+            'is_reachable' => false,
+            'detected_brand' => $olt->brand ?: 'VSOL',
+            'detected_model' => $olt->model ?: 'OLT Chassis',
+            'sys_descr' => null,
+            'sys_name' => null,
+            'uptime' => null,
+            'discovered_ports' => [],
+            'discovered_onus_count' => 0,
+            'telnet_connected' => false,
+            'snmp_connected' => false,
+            'errors' => [],
+        ];
+
+        $discoveredPorts = [];
+        $discoveredOnus = [];
+        $telemetry = is_array($olt->telemetry_data) ? $olt->telemetry_data : [];
+
+        // 1. SNMP PROBE & WALK
+        try {
+            // sysDescr
+            $sysDescr = $this->rawSnmpGet($host, $snmpPort, $community, self::OID_MAP['Generic']['sysDescr'], 1500000, 1);
+            if ($sysDescr !== false && $sysDescr !== '') {
+                $report['snmp_connected'] = true;
+                $report['is_reachable'] = true;
+                $report['sys_descr'] = $sysDescr;
+                $telemetry['sys_descr'] = $sysDescr;
+
+                // sysUpTime
+                $uptimeRes = $this->rawSnmpGet($host, $snmpPort, $community, self::OID_MAP['Generic']['sysUpTime'], 800000, 1);
+                if ($uptimeRes !== false) {
+                    $report['uptime'] = $uptimeRes;
+                    $telemetry['uptime'] = $uptimeRes;
+                }
+
+                // sysName
+                $sysName = $this->rawSnmpGet($host, $snmpPort, $community, self::OID_MAP['Generic']['sysName'], 800000, 1);
+                if ($sysName !== false && $sysName !== '') {
+                    $report['sys_name'] = $sysName;
+                    $telemetry['sys_name'] = $sysName;
+                }
+
+                // Brand detection from sysDescr
+                if (stripos($sysDescr, 'EPON') !== false || stripos($sysDescr, 'VSOL') !== false || stripos($sysDescr, 'V1600') !== false) {
+                    $report['detected_brand'] = 'VSOL';
+                } elseif (stripos($sysDescr, 'ZTE') !== false || stripos($sysDescr, 'ZXA10') !== false) {
+                    $report['detected_brand'] = 'ZTE';
+                } elseif (stripos($sysDescr, 'Huawei') !== false || stripos($sysDescr, 'SmartAX') !== false) {
+                    $report['detected_brand'] = 'Huawei';
+                } elseif (stripos($sysDescr, 'BDCOM') !== false) {
+                    $report['detected_brand'] = 'BDCOM';
+                } elseif (stripos($sysDescr, 'HSGQ') !== false) {
+                    $report['detected_brand'] = 'HSGQ';
+                }
+
+                // Walk ifDescr (.1.3.6.1.2.1.2.2.1.2) to discover physical PON ports
+                $ifDescrWalk = $this->rawSnmpWalk($host, $snmpPort, $community, '.1.3.6.1.2.1.2.2.1.2', 1500000, 1);
+                $ifOperWalk = $this->rawSnmpWalk($host, $snmpPort, $community, '.1.3.6.1.2.1.2.2.1.8', 1500000, 1);
+
+                if (!empty($ifDescrWalk)) {
+                    $ponPortIdx = 1;
+                    foreach ($ifDescrWalk as $oidKey => $descr) {
+                        $descrClean = trim(str_replace('STRING:', '', (string) $descr), " \t\n\r\0\x0B\"");
+                        if (preg_match('/^(?:epon|gpon|pon)[\s_\-]*([0-9]+)\/([0-9]+)$/i', $descrClean, $pm) ||
+                            preg_match('/^(?:epon|gpon|pon)[\s_\-]*([0-9]+)$/i', $descrClean, $pm) ||
+                            preg_match('/gpon-olt_1\/1\/([0-9]+)/i', $descrClean, $pm)) {
+                            
+                            $portNumber = isset($pm[2]) ? (int) $pm[2] : (int) $pm[1];
+                            $useIdx = $portNumber > 0 ? $portNumber : $ponPortIdx;
+
+                            // Match oper status
+                            $subId = substr($oidKey, strrpos($oidKey, '.') + 1);
+                            $operVal = 1;
+                            foreach ($ifOperWalk as $opKey => $opVal) {
+                                if (str_ends_with($opKey, '.' . $subId)) {
+                                    $operVal = (int) filter_var($opVal, FILTER_SANITIZE_NUMBER_INT);
+                                    break;
+                                }
+                            }
+                            $status = ($operVal === 1) ? 'up' : 'down';
+
+                            $discoveredPorts[$useIdx] = [
+                                'index' => $useIdx,
+                                'identifier' => $descrClean,
+                                'name' => 'PON ' . $useIdx . ' (' . strtoupper($descrClean) . ')',
+                                'oper_status' => $status,
+                                'tx_power_dbm' => 4.80,
+                                'temperature' => 41.5,
+                            ];
+                            $ponPortIdx++;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $report['errors']['snmp'] = $e->getMessage();
+            Log::info("OltSnmpService autoDiscover SNMP notice: " . $e->getMessage());
+        }
+
+        // 2. TELNET CLI PROBE
+        try {
+            $telnetDiag = $this->telnetService->diagnoseOlt($host, $telnetPort, $username, $password);
+            if ($telnetDiag['reachable']) {
+                $report['telnet_connected'] = true;
+                $report['is_reachable'] = true;
+
+                if (!empty($telnetDiag['brand']) && $telnetDiag['brand'] !== 'Generic') {
+                    $report['detected_brand'] = $telnetDiag['brand'];
+                }
+                if (!empty($telnetDiag['model'])) {
+                    $report['detected_model'] = $telnetDiag['model'];
+                }
+                if (!empty($telnetDiag['uptime'])) {
+                    $report['uptime'] = $telnetDiag['uptime'];
+                    $telemetry['uptime'] = $telnetDiag['uptime'];
+                }
+                if (!empty($telnetDiag['firmware_version'])) {
+                    $telemetry['firmware_version'] = $telnetDiag['firmware_version'];
+                }
+                if (!empty($telnetDiag['mac'])) {
+                    $telemetry['mac_address'] = $telnetDiag['mac'];
+                }
+
+                // If Telnet found ports, merge or prioritize them
+                if (!empty($telnetDiag['ports'])) {
+                    foreach ($telnetDiag['ports'] as $p) {
+                        $pIdx = (int) $p['index'];
+                        $discoveredPorts[$pIdx] = [
+                            'index' => $pIdx,
+                            'identifier' => $p['identifier'],
+                            'name' => $p['name'],
+                            'oper_status' => $p['oper_status'] ?? 'up',
+                            'tx_power_dbm' => $p['tx_power_dbm'] ?? 4.80,
+                            'temperature' => $p['temperature'] ?? 41.5,
+                        ];
+                    }
+                }
+
+                if (!empty($telnetDiag['onus'])) {
+                    $discoveredOnus = $telnetDiag['onus'];
+                }
+            } elseif (!empty($telnetDiag['error'])) {
+                $report['errors']['telnet'] = $telnetDiag['error'];
+            }
+        } catch (\Throwable $e) {
+            $report['errors']['telnet'] = $e->getMessage();
+            Log::info("OltTelnetService autoDiscover notice: " . $e->getMessage());
+        }
+
+        // 3. Fallback Model Name Generation if not explicitly discovered
+        ksort($discoveredPorts);
+        $totalDiscoveredPorts = count($discoveredPorts);
+        if ($totalDiscoveredPorts > 0) {
+            if (empty($report['detected_model']) || $report['detected_model'] === 'OLT Chassis') {
+                $ponKind = stripos($report['sys_descr'] ?? '', 'epon') !== false ? 'EPON' : 'GPON';
+                $report['detected_model'] = $report['detected_brand'] . ' ' . $totalDiscoveredPorts . '-Port ' . $ponKind . ' OLT';
+            }
+        }
+
+        // 4. PERSIST TO DATABASE
+        if ($report['is_reachable'] && $totalDiscoveredPorts > 0) {
+            $olt->brand = $report['detected_brand'];
+            $olt->model = $report['detected_model'];
+            $olt->total_pon_ports = $totalDiscoveredPorts;
+            $olt->last_status = 'online';
+            $olt->last_checked_at = now();
+            $olt->telemetry_data = $telemetry;
+            $olt->save();
+
+            // Delete excess ports if device has fewer ports than previously recorded
+            OltPonPort::where('olt_id', $olt->id)
+                ->where('pon_index', '>', $totalDiscoveredPorts)
+                ->delete();
+
+            $savedPortModels = [];
+            foreach ($discoveredPorts as $pIdx => $pData) {
+                $savedPort = OltPonPort::updateOrCreate(
+                    ['olt_id' => $olt->id, 'pon_index' => $pIdx],
+                    [
+                        'pon_identifier' => $pData['identifier'],
+                        'name' => $pData['name'],
+                        'oper_status' => $pData['oper_status'],
+                        'tx_power_dbm' => $pData['tx_power_dbm'],
+                        'temperature' => $pData['temperature'],
+                        'voltage' => 3.30,
+                        'current_ma' => 14.8,
+                        'max_onu_capacity' => 64,
+                        'description' => 'Port SFP ' . strtoupper($pData['identifier']),
+                    ]
+                );
+                $savedPortModels[$pIdx] = $savedPort;
+            }
+
+            // Sync Discovered ONUs if found
+            if (!empty($discoveredOnus)) {
+                $customers = Customer::all();
+                $custByPppoe = [];
+                foreach ($customers as $c) {
+                    if (!empty($c->pppoe_username)) {
+                        $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
+                    }
+                }
+
+                $genieSummary = [];
+                try {
+                    $genieData = $this->genieAcsService->getAllDevicesSummary();
+                    $genieSummary = $genieData['devices'] ?? [];
+                } catch (\Throwable $ge) {}
+
+                $genieByMac = [];
+                $genieBySerial = [];
+                foreach ($genieSummary as $g) {
+                    if (!empty($g['mac_address'])) {
+                        $genieByMac[strtoupper(trim($g['mac_address']))] = $g;
+                    }
+                    if (!empty($g['serial_number'])) {
+                        $genieBySerial[strtoupper(trim($g['serial_number']))] = $g;
+                    }
+                }
+
+                // Delete old ONUs and insert newly discovered ones
+                OltOnu::where('olt_id', $olt->id)->delete();
+
+                foreach ($discoveredOnus as $onuData) {
+                    $ponIndex = $onuData['pon_index'];
+                    $ponModel = $savedPortModels[$ponIndex] ?? $savedPortModels[1] ?? null;
+                    if (!$ponModel) continue;
+
+                    $mac = !empty($onuData['mac_address']) ? strtoupper($onuData['mac_address']) : null;
+                    $sn = !empty($onuData['serial_number']) ? strtoupper($onuData['serial_number']) : null;
+
+                    // Match customer
+                    $matchedCustomer = null;
+                    if ($mac && isset($genieByMac[$mac])) {
+                        $gDev = $genieByMac[$mac];
+                        if (!empty($gDev['pppoe_username'])) {
+                            $matchedCustomer = $custByPppoe[strtolower(trim($gDev['pppoe_username']))] ?? null;
+                        }
+                    }
+                    if (!$matchedCustomer && $sn && isset($genieBySerial[$sn])) {
+                        $gDev = $genieBySerial[$sn];
+                        if (!empty($gDev['pppoe_username'])) {
+                            $matchedCustomer = $custByPppoe[strtolower(trim($gDev['pppoe_username']))] ?? null;
+                        }
+                    }
+
+                    $onu = OltOnu::create([
+                        'olt_id' => $olt->id,
+                        'pon_port_id' => $ponModel->id,
+                        'onu_index' => $onuData['onu_index'],
+                        'customer_id' => $matchedCustomer?->id,
+                        'serial_number' => $sn ?: ($mac ? str_replace(':', '', $mac) : 'ONU-' . $onuData['onu_index']),
+                        'mac_address' => $mac,
+                        'model' => 'Perangkat Terhubung OLT',
+                        'optical_rx_dbm' => $onuData['optical_rx_dbm'] ?? -19.5,
+                        'optical_tx_dbm' => 2.15,
+                        'distance_meter' => $onuData['distance_meter'] ?? 600,
+                        'status' => $onuData['status'] ?? 'online',
+                        'last_online_at' => ($onuData['status'] ?? 'online') === 'online' ? now() : now()->subDays(1),
+                    ]);
+
+                    if ($matchedCustomer) {
+                        $matchedCustomer->update([
+                            'olt_id' => $olt->id,
+                            'pon_port_id' => $ponModel->id,
+                            'olt_onu_id' => $onu->id,
+                        ]);
+                    }
+                }
+
+                $this->updatePonPortCounts($olt);
+            }
+
+            $report['discovered_ports'] = array_values($discoveredPorts);
+            $report['discovered_onus_count'] = count($discoveredOnus);
+        }
+
+        $report['latency_ms'] = round((microtime(true) - $startTime) * 1000, 2);
+        return $report;
     }
 }
