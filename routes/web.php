@@ -390,6 +390,9 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
         // Isolir API
         Route::get('/api/isolir', [IsolirController::class, 'index'])->name('api.isolir.index');
+        Route::post('/api/isolir/send-dismantle-notice', [IsolirController::class, 'sendDismantleNotice'])->name('api.isolir.send-dismantle-notice');
+        Route::get('/api/isolir/dismantle-history/{identifier}', [IsolirController::class, 'dismantleHistory'])->name('api.isolir.dismantle-history');
+        Route::get('/api/isolir/default-message', [IsolirController::class, 'defaultMessage'])->name('api.isolir.default-message');
 
         // Monitoring API
         Route::get('/api/monitoring', [MonitoringController::class, 'getData'])->name('api.monitoring.data');
