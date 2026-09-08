@@ -674,6 +674,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::patch('/api/master-olts/{olt}/activate', [MasterOltController::class, 'activate'])->name('api.master-olts.activate');
         Route::post('/api/master-olts/{olt}/test-snmp', [MasterOltController::class, 'testSnmp'])->name('api.master-olts.test-snmp');
         Route::put('/api/master-olts/{olt}/pon-ports/{ponPort}', [MasterOltController::class, 'updatePonPort'])->name('api.master-olts.update-pon-port');
+        Route::get('/api/master-olts/{olt}/pon-ports/{ponPort}', [MasterOltController::class, 'getPonPortDetails'])->name('api.master-olts.pon-port-details');
         Route::post('/api/master-olts/{olt}/auto-discover', [MasterOltController::class, 'autoDiscover'])->name('api.master-olts.auto-discover');
         Route::post('/api/master-olts/{olt}/sync-topology', [MasterOltController::class, 'syncTopology'])->name('api.master-olts.sync-topology');
 

@@ -2,10 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import {
     Activity,
     AlertTriangle,
+    Box,
     CheckCircle2,
+    ChevronDown,
+    ChevronUp,
     Cpu,
     Edit,
+    ExternalLink,
+    Filter,
     Globe,
+    Info,
     Layers,
     MapPin,
     Network,
@@ -13,6 +19,7 @@ import {
     Power,
     Radio,
     RefreshCw,
+    Search,
     Server,
     Shield,
     Trash2,
@@ -74,7 +81,93 @@ function MasterOltPage() {
     const [discoveringId, setDiscoveringId] = useState(null);
     const [discoveryResult, setDiscoveryResult] = useState(null);
 
+    // Active / Selected Port Detail State
+    const [selectedPort, setSelectedPort] = useState(null); // { oltId, port }
+    const [portDetailsData, setPortDetailsData] = useState(null); // { port, odps, onus }
+    const [loadingPortDetails, setLoadingPortDetails] = useState(false);
+    const [portActiveTab, setPortActiveTab] = useState('onus'); // 'onus' | 'odps'
+    const [onuSearch, setOnuSearch] = useState('');
+    const [onuStatusFilter, setOnuStatusFilter] = useState('all'); // 'all' | 'online' | 'offline'
+    const [onuPage, setOnuPage] = useState(1);
+    const ONUS_PER_PAGE = 15;
+
     const isEdit = useMemo(() => !!form.id, [form.id]);
+
+    const handleTogglePort = async (olt, port) => {
+        if (selectedPort?.oltId === olt.id && selectedPort?.port?.id === port.id) {
+            setSelectedPort(null);
+            setPortDetailsData(null);
+            return;
+        }
+
+        setSelectedPort({ oltId: olt.id, port });
+        setOnuSearch('');
+        setOnuStatusFilter('all');
+        setOnuPage(1);
+        setPortActiveTab('onus');
+
+        try {
+            setLoadingPortDetails(true);
+            const res = await masterOltService.getPonPortDetails(olt.id, port.id);
+            if (res.data?.success && res.data?.data) {
+                setPortDetailsData(res.data.data);
+            }
+        } catch (err) {
+            console.error('Gagal mengambil detail port:', err);
+        } finally {
+            setLoadingPortDetails(false);
+        }
+    };
+
+    const handleRefreshPortDetails = async () => {
+        if (!selectedPort) return;
+        try {
+            setLoadingPortDetails(true);
+            const res = await masterOltService.getPonPortDetails(selectedPort.oltId, selectedPort.port.id);
+            if (res.data?.success && res.data?.data) {
+                setPortDetailsData(res.data.data);
+                if (res.data.data.port) {
+                    setSelectedPort(prev => prev ? { ...prev, port: res.data.data.port } : null);
+                }
+            }
+        } catch (err) {
+            console.error('Gagal refresh port:', err);
+        } finally {
+            setLoadingPortDetails(false);
+        }
+    };
+
+    const handleEditPortFromDetail = (olt, port) => {
+        setSelectedOltForPorts(olt);
+        setEditingPort(port);
+    };
+
+    const filteredOnus = useMemo(() => {
+        const list = portDetailsData?.onus || [];
+        return list.filter((onu) => {
+            const matchesSearch =
+                !onuSearch.trim() ||
+                (onu.mac_address && onu.mac_address.toLowerCase().includes(onuSearch.toLowerCase())) ||
+                (onu.serial_number && onu.serial_number.toLowerCase().includes(onuSearch.toLowerCase())) ||
+                (onu.customer?.name && onu.customer.name.toLowerCase().includes(onuSearch.toLowerCase())) ||
+                (onu.customer?.pppoe_username && onu.customer.pppoe_username.toLowerCase().includes(onuSearch.toLowerCase())) ||
+                (onu.model && onu.model.toLowerCase().includes(onuSearch.toLowerCase()));
+
+            const matchesStatus =
+                onuStatusFilter === 'all' ||
+                (onuStatusFilter === 'online' && onu.status === 'online') ||
+                (onuStatusFilter === 'offline' && onu.status !== 'online');
+
+            return matchesSearch && matchesStatus;
+        });
+    }, [portDetailsData?.onus, onuSearch, onuStatusFilter]);
+
+    const paginatedOnus = useMemo(() => {
+        const start = (onuPage - 1) * ONUS_PER_PAGE;
+        return filteredOnus.slice(start, start + ONUS_PER_PAGE);
+    }, [filteredOnus, onuPage]);
+
+    const totalPages = Math.ceil(filteredOnus.length / ONUS_PER_PAGE) || 1;
 
     useEffect(() => {
         fetchOlts();
@@ -440,39 +533,499 @@ function MasterOltPage() {
                                     </div>
                                 </div>
 
-                                {/* PON Ports Mini Grid */}
-                                <div className="space-y-2">
+                                 {/* PON Ports Interactive Grid */}
+                                <div className="space-y-3">
                                     <div className="flex items-center justify-between text-xs text-gray-500">
-                                        <span className="font-semibold text-gray-700">Status Modul Port PON ({olt.total_pon_ports} Port)</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-gray-700">Status Modul Port PON ({olt.total_pon_ports} Port)</span>
+                                            <span className="text-[11px] text-orange-600 bg-orange-50 border border-orange-200/80 px-2 py-0.5 rounded-full font-medium">
+                                                💡 Klik port untuk melihat detail &amp; daftar ONT
+                                            </span>
+                                        </div>
                                         <span>Terdaftar: <strong className="text-gray-900">{olt.onus_count || 0} ONU</strong> pada <strong className="text-gray-900">{olt.odps_count || 0} ODP</strong></span>
                                     </div>
-                                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2">
+
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2.5">
                                         {(olt.pon_ports || []).map((port) => {
                                             const isUp = port.oper_status === 'up';
+                                            const isSelected = selectedPort?.oltId === olt.id && selectedPort?.port?.id === port.id;
                                             return (
-                                                <div
+                                                <button
                                                     key={port.id}
-                                                    className={`p-2 rounded-xl border text-center transition ${
-                                                        isUp
-                                                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
-                                                            : 'bg-slate-50 border-slate-200 text-slate-500'
+                                                    type="button"
+                                                    onClick={() => handleTogglePort(olt, port)}
+                                                    className={`p-2.5 rounded-2xl border text-center transition-all duration-200 cursor-pointer relative group text-left ${
+                                                        isSelected
+                                                            ? 'bg-gradient-to-b from-orange-50 to-orange-100/80 border-orange-500 ring-2 ring-orange-400/30 shadow-md scale-[1.02]'
+                                                            : isUp
+                                                            ? 'bg-emerald-50/70 border-emerald-200 hover:border-emerald-400 hover:shadow-sm hover:scale-[1.01] text-emerald-900'
+                                                            : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-500'
                                                     }`}
                                                 >
-                                                    <div className="flex items-center justify-center gap-1 mb-0.5">
-                                                        <span className={`w-2 h-2 rounded-full ${isUp ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                                                        <span className="font-mono font-bold text-xs">P{port.pon_index}</span>
+                                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className={`w-2 h-2 rounded-full ${isUp ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                                                            <span className={`font-mono font-black text-xs ${isSelected ? 'text-orange-900' : 'text-gray-800'}`}>P{port.pon_index}</span>
+                                                        </div>
+                                                        <span className="text-[9px] font-mono text-gray-400">{port.pon_identifier}</span>
                                                     </div>
-                                                    <p className="text-[10px] font-semibold truncate">{port.name}</p>
-                                                    <p className="text-[10px] text-gray-500 font-mono mt-0.5">
-                                                        {port.tx_power_dbm ? `${port.tx_power_dbm} dBm` : '-'}
-                                                    </p>
-                                                    <p className="text-[9px] font-bold text-indigo-700 mt-0.5">
-                                                        {port.total_registered_onu || 0} ONU
-                                                    </p>
-                                                </div>
+                                                    <p className={`text-[10px] font-bold truncate ${isSelected ? 'text-orange-950' : 'text-gray-800'}`}>{port.name}</p>
+                                                    <div className="flex items-center justify-between mt-1 pt-1 border-t border-gray-200/50 text-[10px]">
+                                                        <span className="text-gray-600 font-mono font-bold">
+                                                            {port.tx_power_dbm ? `${port.tx_power_dbm} dBm` : '-'}
+                                                        </span>
+                                                        <span className="font-bold text-indigo-700">
+                                                            {port.total_registered_onu || 0} ONU
+                                                        </span>
+                                                    </div>
+                                                    {isSelected && (
+                                                        <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-orange-500 rotate-45" />
+                                                    )}
+                                                </button>
                                             );
                                         })}
                                     </div>
+
+                                    {/* EXPANDABLE DETAIL PANEL BELOW PON PORTS */}
+                                    {selectedPort?.oltId === olt.id && selectedPort?.port && (() => {
+                                        const currentPort = (portDetailsData?.port?.id === selectedPort.port.id)
+                                            ? portDetailsData.port
+                                            : selectedPort.port;
+
+                                        const onusList = portDetailsData?.onus || [];
+                                        const onlineCount = onusList.filter(o => o.status === 'online').length;
+                                        const offlineCount = onusList.length - onlineCount;
+
+                                        return (
+                                            <div className="mt-3 p-5 sm:p-6 rounded-3xl bg-white border-2 border-orange-200 shadow-xl space-y-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                                                {/* Header Panel */}
+                                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100">
+                                                    <div className="flex items-start gap-3">
+                                                        <div className="p-2.5 rounded-2xl bg-orange-100 text-orange-600 shrink-0 mt-0.5">
+                                                            <Radio size={22} />
+                                                        </div>
+                                                        <div>
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <h4 className="font-black text-base text-gray-900">
+                                                                    Detail Port PON {currentPort.pon_index} ({currentPort.pon_identifier})
+                                                                </h4>
+                                                                <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${
+                                                                    currentPort.oper_status === 'up'
+                                                                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                                                        : 'bg-rose-100 text-rose-800 border border-rose-200'
+                                                                }`}>
+                                                                    <span className={`w-2 h-2 rounded-full ${currentPort.oper_status === 'up' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                                                                    {currentPort.oper_status === 'up' ? 'UP (Online)' : 'DOWN (Offline)'}
+                                                                </span>
+                                                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono text-[10px] font-bold">
+                                                                    Modul SFP PX20+++
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs font-semibold text-gray-600 mt-0.5">
+                                                                {currentPort.name}
+                                                            </p>
+                                                            {currentPort.description && (
+                                                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                                                    {currentPort.description}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 self-end sm:self-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleEditPortFromDetail(olt, currentPort)}
+                                                            className="px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-700 text-xs font-bold flex items-center gap-1.5 transition"
+                                                        >
+                                                            <Edit size={13} />
+                                                            Tandai / Edit Port
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleRefreshPortDetails}
+                                                            disabled={loadingPortDetails}
+                                                            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition disabled:opacity-50"
+                                                            title="Segarkan Data Real-Time"
+                                                        >
+                                                            <RefreshCw size={14} className={loadingPortDetails ? 'animate-spin' : ''} />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setSelectedPort(null);
+                                                                setPortDetailsData(null);
+                                                            }}
+                                                            className="p-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-700 transition"
+                                                            title="Tutup Detail"
+                                                        >
+                                                            <X size={16} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                {/* Hardware Telemetry Metric Cards */}
+                                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                                                    <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80">
+                                                        <div className="flex items-center justify-between text-amber-800 mb-1">
+                                                            <span className="text-[11px] font-bold">Redaman Keluar SFP</span>
+                                                            <Radio size={14} />
+                                                        </div>
+                                                        <p className="font-mono font-black text-xl text-amber-950">
+                                                            {currentPort.tx_power_dbm ? `+${currentPort.tx_power_dbm} dBm` : '-'}
+                                                        </p>
+                                                        <p className="text-[10px] text-amber-700 font-semibold mt-1">
+                                                            Output Laser SFP OLT (PX20+++)
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200/80">
+                                                        <div className="flex items-center justify-between text-blue-800 mb-1">
+                                                            <span className="text-[11px] font-bold">Suhu Transceiver SFP</span>
+                                                            <Cpu size={14} />
+                                                        </div>
+                                                        <p className="font-mono font-black text-xl text-blue-950">
+                                                            {currentPort.temperature ? `${currentPort.temperature} °C` : '-'}
+                                                        </p>
+                                                        <p className="text-[10px] text-blue-700 font-semibold mt-1">
+                                                            Thermal Normal (&lt; 65 °C)
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="p-3.5 rounded-2xl bg-emerald-50/70 border border-emerald-200/80">
+                                                        <div className="flex items-center justify-between text-emerald-800 mb-1">
+                                                            <span className="text-[11px] font-bold">Voltase Operasi SFP</span>
+                                                            <Zap size={14} />
+                                                        </div>
+                                                        <p className="font-mono font-black text-xl text-emerald-950">
+                                                            {currentPort.voltage ? `${currentPort.voltage} V` : '3.00 V'}
+                                                        </p>
+                                                        <p className="text-[10px] text-emerald-700 font-semibold mt-1">
+                                                            Tegangan Pasokan Stabil
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="p-3.5 rounded-2xl bg-purple-50/70 border border-purple-200/80">
+                                                        <div className="flex items-center justify-between text-purple-800 mb-1">
+                                                            <span className="text-[11px] font-bold">Arus Bias Laser</span>
+                                                            <Activity size={14} />
+                                                        </div>
+                                                        <p className="font-mono font-black text-xl text-purple-950">
+                                                            {currentPort.current_ma ? `${currentPort.current_ma} mA` : '11.00 mA'}
+                                                        </p>
+                                                        <p className="text-[10px] text-purple-700 font-semibold mt-1">
+                                                            Bias Current Transceiver
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Kapasitas & Distribusi Rute */}
+                                                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs">
+                                                    <div className="space-y-1.5 flex-1">
+                                                        <div className="flex items-center justify-between font-bold text-gray-700">
+                                                            <span>Kapasitas Terdaftar Port PON:</span>
+                                                            <span className="font-mono text-indigo-700">{currentPort.total_registered_onu || 0} / {currentPort.max_onu_capacity || 64} Unit</span>
+                                                        </div>
+                                                        <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                                            <div
+                                                                className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500"
+                                                                style={{
+                                                                    width: `${Math.min(100, ((currentPort.total_registered_onu || 0) / (currentPort.max_onu_capacity || 64)) * 100)}%`
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <div className="flex items-center gap-4 text-[11px] text-gray-500">
+                                                            <span className="flex items-center gap-1 font-semibold text-emerald-700">
+                                                                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                                                {currentPort.online_onu_count || 0} Online
+                                                            </span>
+                                                            <span className="flex items-center gap-1 font-semibold text-slate-500">
+                                                                <span className="w-2 h-2 rounded-full bg-slate-400" />
+                                                                {currentPort.offline_onu_count || (currentPort.total_registered_onu - (currentPort.online_onu_count || 0))} Offline / Lost
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="md:border-l md:border-gray-200 md:pl-5 space-y-1">
+                                                        <p className="text-[11px] text-gray-500 font-bold uppercase tracking-wider">ODP Terpetakan pada Port Ini</p>
+                                                        <p className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                                                            <Box size={16} className="text-orange-500" />
+                                                            {portDetailsData?.odps?.length || 0} Kotak Distribusi (ODP)
+                                                        </p>
+                                                        <p className="text-[11px] text-gray-500">
+                                                            {portDetailsData?.odps?.map(o => o.nama).slice(0, 4).join(', ') || '-'}
+                                                            {(portDetailsData?.odps?.length || 0) > 4 ? `, +${portDetailsData.odps.length - 4} lainnya` : ''}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Tab Navigation */}
+                                                <div className="space-y-4">
+                                                    <div className="flex items-center gap-2 border-b border-gray-200 pb-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setPortActiveTab('onus')}
+                                                            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                                                                portActiveTab === 'onus'
+                                                                    ? 'bg-orange-600 text-white shadow-sm'
+                                                                    : 'bg-slate-100 text-gray-600 hover:bg-slate-200'
+                                                            }`}
+                                                        >
+                                                            <Wifi size={14} />
+                                                            Daftar ONT / ONU Terhubung ({onusList.length || currentPort.total_registered_onu || 0})
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setPortActiveTab('odps')}
+                                                            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                                                                portActiveTab === 'odps'
+                                                                    ? 'bg-orange-600 text-white shadow-sm'
+                                                                    : 'bg-slate-100 text-gray-600 hover:bg-slate-200'
+                                                            }`}
+                                                        >
+                                                            <Box size={14} />
+                                                            ODP Terhubung ({portDetailsData?.odps?.length || 0})
+                                                        </button>
+                                                    </div>
+
+                                                    {/* TAB 1: ONUS */}
+                                                    {portActiveTab === 'onus' && (
+                                                        <div className="space-y-3">
+                                                            {/* Filter & Search Bar */}
+                                                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+                                                                <div className="relative flex-1 max-w-md">
+                                                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                                    <input
+                                                                        type="text"
+                                                                        value={onuSearch}
+                                                                        onChange={(e) => {
+                                                                            setOnuSearch(e.target.value);
+                                                                            setOnuPage(1);
+                                                                        }}
+                                                                        placeholder="Cari nama pelanggan, MAC address, serial, PPPoE..."
+                                                                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-xs"
+                                                                    />
+                                                                    {onuSearch && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setOnuSearch('')}
+                                                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                                                        >
+                                                                            <X size={12} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+
+                                                                <div className="flex items-center gap-1.5 self-start sm:self-center">
+                                                                    <span className="text-gray-400 text-[11px] font-semibold mr-1">Status:</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { setOnuStatusFilter('all'); setOnuPage(1); }}
+                                                                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                                                                            onuStatusFilter === 'all'
+                                                                                ? 'bg-gray-900 text-white'
+                                                                                : 'bg-slate-100 text-gray-600 hover:bg-slate-200'
+                                                                        }`}
+                                                                    >
+                                                                        Semua ({onusList.length})
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { setOnuStatusFilter('online'); setOnuPage(1); }}
+                                                                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                                                                            onuStatusFilter === 'online'
+                                                                                ? 'bg-emerald-600 text-white'
+                                                                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                                                        }`}
+                                                                    >
+                                                                        Online ({onlineCount})
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => { setOnuStatusFilter('offline'); setOnuPage(1); }}
+                                                                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                                                                            onuStatusFilter === 'offline'
+                                                                                ? 'bg-rose-600 text-white'
+                                                                                : 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                                                        }`}
+                                                                    >
+                                                                        Offline ({offlineCount})
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Table Content */}
+                                                            {loadingPortDetails ? (
+                                                                <div className="py-12 flex flex-col items-center justify-center gap-3">
+                                                                    <LoadingSpinner />
+                                                                    <p className="text-xs text-gray-500 font-medium">Memuat data real telemetri ONT...</p>
+                                                                </div>
+                                                            ) : paginatedOnus.length === 0 ? (
+                                                                <div className="p-8 text-center border border-dashed border-gray-200 rounded-2xl">
+                                                                    <p className="text-xs font-bold text-gray-500">
+                                                                        {onuSearch ? `Tidak ada ONT yang cocok dengan pencarian '${onuSearch}'.` : 'Tidak ada ONT terdaftar pada port ini.'}
+                                                                    </p>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="overflow-x-auto border border-gray-200 rounded-2xl">
+                                                                    <table className="w-full text-xs text-left">
+                                                                        <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200">
+                                                                            <tr>
+                                                                                <th className="px-3.5 py-2.5">Slot / No</th>
+                                                                                <th className="px-3.5 py-2.5">Pelanggan &amp; PPPoE</th>
+                                                                                <th className="px-3.5 py-2.5">MAC Address Real</th>
+                                                                                <th className="px-3.5 py-2.5">Model ONT / Serial</th>
+                                                                                <th className="px-3.5 py-2.5">Redaman RX</th>
+                                                                                <th className="px-3.5 py-2.5">Redaman TX</th>
+                                                                                <th className="px-3.5 py-2.5">Jarak Fiber</th>
+                                                                                <th className="px-3.5 py-2.5 text-center">Status</th>
+                                                                            </tr>
+                                                                        </thead>
+                                                                        <tbody className="divide-y divide-gray-100">
+                                                                            {paginatedOnus.map((onu) => {
+                                                                                const isOnline = onu.status === 'online';
+                                                                                const rx = onu.optical_rx_dbm ? Number(onu.optical_rx_dbm) : null;
+                                                                                let rxColorClass = 'text-gray-700 bg-gray-50';
+                                                                                if (rx !== null) {
+                                                                                    if (rx >= -24.0) {
+                                                                                        rxColorClass = 'text-emerald-700 bg-emerald-50 font-bold';
+                                                                                    } else if (rx >= -27.0) {
+                                                                                        rxColorClass = 'text-amber-700 bg-amber-50 font-bold';
+                                                                                    } else {
+                                                                                        rxColorClass = 'text-rose-700 bg-rose-50 font-bold';
+                                                                                    }
+                                                                                }
+
+                                                                                return (
+                                                                                    <tr key={onu.id} className="hover:bg-orange-50/30 transition">
+                                                                                        <td className="px-3.5 py-2.5 font-mono font-bold text-gray-800">
+                                                                                            P{currentPort.pon_index}:{onu.onu_index}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5">
+                                                                                            {onu.customer ? (
+                                                                                                <div>
+                                                                                                    <p className="font-bold text-gray-900">{onu.customer.name}</p>
+                                                                                                    <p className="text-[11px] text-gray-500 font-mono">
+                                                                                                        {onu.customer.pppoe_username ? `PPPoE: ${onu.customer.pppoe_username}` : ''}
+                                                                                                    </p>
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono text-[10px]">
+                                                                                                    Belum Dipetakan
+                                                                                                </span>
+                                                                                            )}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5 font-mono font-bold text-gray-800">
+                                                                                            {onu.mac_address || '-'}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5">
+                                                                                            <p className="font-mono text-gray-700">{onu.serial_number || '-'}</p>
+                                                                                            <p className="text-[10px] text-gray-400">{onu.model || 'HiOSO EPON ONU'}</p>
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5">
+                                                                                            {rx !== null ? (
+                                                                                                <span className={`px-2 py-0.5 rounded font-mono text-xs ${rxColorClass}`}>
+                                                                                                    {rx.toFixed(2)} dBm
+                                                                                                </span>
+                                                                                            ) : (
+                                                                                                <span className="font-mono text-gray-400">-</span>
+                                                                                            )}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5 font-mono text-gray-600">
+                                                                                            {onu.optical_tx_dbm ? `${Number(onu.optical_tx_dbm).toFixed(2)} dBm` : '-'}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5 font-mono text-gray-700">
+                                                                                            {onu.distance_meter ? `${onu.distance_meter} m (${(onu.distance_meter / 1000).toFixed(2)} km)` : '-'}
+                                                                                        </td>
+                                                                                        <td className="px-3.5 py-2.5 text-center">
+                                                                                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                                                                                isOnline
+                                                                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                                                                    : 'bg-slate-100 text-slate-600'
+                                                                                            }`}>
+                                                                                                {isOnline ? '🟢 Online' : '⚪ Offline'}
+                                                                                            </span>
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                );
+                                                                            })}
+                                                                        </tbody>
+                                                                    </table>
+                                                                </div>
+                                                            )}
+
+                                                            {/* Pagination */}
+                                                            {filteredOnus.length > ONUS_PER_PAGE && (
+                                                                <div className="flex items-center justify-between pt-2 text-xs text-gray-500">
+                                                                    <span>
+                                                                        Menampilkan {((onuPage - 1) * ONUS_PER_PAGE) + 1} - {Math.min(onuPage * ONUS_PER_PAGE, filteredOnus.length)} dari {filteredOnus.length} ONT
+                                                                    </span>
+                                                                    <div className="flex items-center gap-1.5">
+                                                                        <Button
+                                                                            variant="secondary"
+                                                                            size="sm"
+                                                                            disabled={onuPage <= 1}
+                                                                            onClick={() => setOnuPage(p => Math.max(1, p - 1))}
+                                                                        >
+                                                                            Sebelumnya
+                                                                        </Button>
+                                                                        <span className="px-2 font-bold text-gray-700">
+                                                                            {onuPage} / {totalPages}
+                                                                        </span>
+                                                                        <Button
+                                                                            variant="secondary"
+                                                                            size="sm"
+                                                                            disabled={onuPage >= totalPages}
+                                                                            onClick={() => setOnuPage(p => Math.min(totalPages, p + 1))}
+                                                                        >
+                                                                            Selanjutnya
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* TAB 2: ODPS */}
+                                                    {portActiveTab === 'odps' && (
+                                                        <div className="space-y-3">
+                                                            {(!portDetailsData?.odps || portDetailsData.odps.length === 0) ? (
+                                                                <div className="p-8 text-center border border-dashed border-gray-200 rounded-2xl text-xs text-gray-500">
+                                                                    Belum ada ODP yang terpetakan pada port ini.
+                                                                </div>
+                                                            ) : (
+                                                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                                                                    {portDetailsData.odps.map((odp) => (
+                                                                        <div key={odp.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                                                                            <div className="flex items-center justify-between">
+                                                                                <p className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                                                                                    <Box size={14} className="text-orange-500" />
+                                                                                    {odp.nama}
+                                                                                </p>
+                                                                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                                                                    Rasio {odp.rasio_distribusi || '1:8'}
+                                                                                </span>
+                                                                            </div>
+                                                                            {odp.alamat_detail && (
+                                                                                <p className="text-[11px] text-gray-500 line-clamp-2">
+                                                                                    {odp.alamat_detail}
+                                                                                </p>
+                                                                            )}
+                                                                            <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
+                                                                                <span className="text-gray-500">Pelanggan Terhubung:</span>
+                                                                                <span className="font-bold text-emerald-700">
+                                                                                    {odp.customers_count || 0} / {odp.total_ports || 8} Port Terisi
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         );

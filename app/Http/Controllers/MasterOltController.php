@@ -454,6 +454,57 @@ class MasterOltController extends Controller
     }
 
     /**
+     * GET /api/master-olts/{olt}/pon-ports/{ponPort}
+     * Get detailed port data including all connected ONUs and ODPs
+     */
+    public function getPonPortDetails(MasterOlt $olt, OltPonPort $ponPort)
+    {
+        if ($ponPort->olt_id !== $olt->id) {
+            return response()->json(['success' => false, 'message' => 'Port PON tidak cocok dengan OLT.'], 404);
+        }
+
+        $ponPort->loadCount(['onus', 'odps', 'customers']);
+
+        $odps = $ponPort->odps()
+            ->withCount('customers')
+            ->orderBy('nama')
+            ->get(['id', 'nama', 'alamat_detail', 'total_ports', 'rasio_distribusi', 'feeder_cable_info', 'distribution_line']);
+
+        $onus = $ponPort->onus()
+            ->with(['customer' => function ($q) {
+                $q->select('id', 'name', 'pppoe_username', 'phone', 'address', 'package_type', 'odp');
+            }])
+            ->orderBy('onu_index')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'port' => [
+                    'id' => $ponPort->id,
+                    'olt_id' => $ponPort->olt_id,
+                    'pon_index' => $ponPort->pon_index,
+                    'pon_identifier' => $ponPort->pon_identifier,
+                    'name' => $ponPort->name,
+                    'admin_status' => $ponPort->admin_status ?: 'up',
+                    'oper_status' => $ponPort->oper_status ?: 'up',
+                    'tx_power_dbm' => (float) $ponPort->tx_power_dbm,
+                    'temperature' => (float) $ponPort->temperature,
+                    'voltage' => (float) $ponPort->voltage,
+                    'current_ma' => (float) $ponPort->current_ma,
+                    'total_registered_onu' => (int) $ponPort->total_registered_onu,
+                    'online_onu_count' => (int) $ponPort->online_onu_count,
+                    'offline_onu_count' => (int) $ponPort->offline_onu_count,
+                    'max_onu_capacity' => (int) ($ponPort->max_onu_capacity ?: 64),
+                    'description' => $ponPort->description,
+                ],
+                'odps' => $odps,
+                'onus' => $onus,
+            ],
+        ]);
+    }
+
+    /**
      * POST /api/master-olts/{olt}/sync-topology
      * Run full topology reconciliation for this OLT
      */
