@@ -891,6 +891,7 @@ export default function SuperPanelPage() {
 
             // Right-click anywhere on the map to place a new ODP/ODC point
             map.on('contextmenu', (e) => {
+                map.closePopup();
                 setCreateNodeForm(prev => ({
                     ...prev,
                     latitude: parseFloat(e.latlng.lat.toFixed(8)),
@@ -1417,20 +1418,25 @@ export default function SuperPanelPage() {
     // Window handlers for popup actions
     useEffect(() => {
         window.superPanelTraceCustomer = (customerId) => {
+            mapInstanceRef.current?.closePopup();
             handleTraceCustomerFromOutside(customerId);
         };
         window.superPanelShowOdpStock = (odpId) => {
+            mapInstanceRef.current?.closePopup();
             setActiveTab('odp_stock');
         };
         window.superPanelTraceOlt = (oltId) => {
+            mapInstanceRef.current?.closePopup();
             setSelectedOltId(parseInt(oltId, 10));
             setActiveTab('olt_snmp');
         };
         window.superPanelEnableDragMode = () => {
+            mapInstanceRef.current?.closePopup();
             setIsDragMode(true);
             showToast('🔓 Mode Geser Titik Diaktifkan! Semua marker (OLT, ODC, ODP, & Pelanggan) sekarang bisa digeser langsung di peta. Posisi baru otomatis tersimpan.', 'warning');
         };
         window.superPanelOpenEditNode = (nodeId) => {
+            mapInstanceRef.current?.closePopup();
             const idInt = parseInt(nodeId, 10);
             const currentGis = gisDataRef.current;
             const found = (currentGis?.odp_nodes || []).find(n => n.id === idInt) ||
@@ -1456,6 +1462,7 @@ export default function SuperPanelPage() {
             }
         };
         window.superPanelOpenEditOlt = (oltId) => {
+            mapInstanceRef.current?.closePopup();
             const idInt = parseInt(oltId, 10);
             const currentGis = gisDataRef.current;
             const found = (currentGis?.olt_nodes || []).find(o => o.id === idInt);
@@ -1471,6 +1478,7 @@ export default function SuperPanelPage() {
             }
         };
         window.superPanelOpenEditCustomer = (customerId) => {
+            mapInstanceRef.current?.closePopup();
             const idInt = parseInt(customerId, 10);
             const currentGis = gisDataRef.current;
             const found = (currentGis?.customer_nodes || []).find(c => c.id === idInt);
@@ -1791,7 +1799,7 @@ export default function SuperPanelPage() {
         <div className="min-h-screen bg-slate-900 text-slate-100 p-3 sm:p-6 space-y-6">
             {/* TOAST ALERT */}
             {toast && (
-                <div className="fixed top-5 right-5 z-50 animate-bounce">
+                <div className="fixed top-5 right-5 z-[10000] animate-bounce">
                     <Alert
                         type={toast.type === 'error' ? 'danger' : (toast.type === 'info' ? 'info' : 'success')}
                         title={toast.type === 'error' ? 'Kesalahan' : 'Informasi'}
@@ -2112,7 +2120,10 @@ export default function SuperPanelPage() {
                             {/* Add New Node Button */}
                             <button
                                 type="button"
-                                onClick={() => setShowCreateNodeModal(true)}
+                                onClick={() => {
+                                    mapInstanceRef.current?.closePopup();
+                                    setShowCreateNodeModal(true);
+                                }}
                                 className="px-3 py-1.5 rounded-xl font-bold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 transition text-xs shadow-lg shadow-blue-600/30"
                             >
                                 <Plus className="w-3.5 h-3.5" />
@@ -3491,6 +3502,7 @@ export default function SuperPanelPage() {
                     isOpen={!!selectedOltForEdit}
                     onClose={() => setSelectedOltForEdit(null)}
                     title={`⚡ Edit Master OLT: ${selectedOltForEdit.name}`}
+                    size="lg"
                 >
                     <div className="space-y-4 text-xs text-slate-300">
                         <div>
@@ -3570,6 +3582,7 @@ export default function SuperPanelPage() {
                     isOpen={!!selectedOdpForEdit}
                     onClose={() => setSelectedOdpForEdit(null)}
                     title={`Konfigurasi Titik: ${selectedOdpForEdit.name || selectedOdpForEdit.nama} (${selectedOdpForEdit.device_type === 'odc' ? 'ODC Cabinet' : 'ODP Box'})`}
+                    size="xl"
                 >
                     <NodeFormFields
                         form={editOdpForm}
@@ -3593,6 +3606,7 @@ export default function SuperPanelPage() {
                     isOpen={showCreateNodeModal}
                     onClose={() => setShowCreateNodeModal(false)}
                     title="Tambah Titik Baru (ODP / ODC)"
+                    size="xl"
                 >
                     <NodeFormFields
                         form={createNodeForm}
@@ -3705,6 +3719,7 @@ export default function SuperPanelPage() {
                     isOpen={!!selectedCustomerForEdit}
                     onClose={() => setSelectedCustomerForEdit(null)}
                     title={`👤 Pindah / Edit Pelanggan: ${selectedCustomerForEdit.name}`}
+                    size="lg"
                 >
                     <div className="space-y-4 text-xs text-slate-300">
                         <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-700/60 flex items-center justify-between">

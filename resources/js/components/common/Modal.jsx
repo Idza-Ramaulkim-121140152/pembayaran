@@ -9,6 +9,7 @@ function Modal({
     theme = 'default',
     disableBackdropClose = false,
     hideCloseButton = false,
+    zIndex = 'z-[9999]',
 }) {
     if (!isOpen) return null;
 
@@ -51,7 +52,7 @@ function Modal({
     };
 
     return (
-        <div className="fixed inset-0 z-[70] overflow-y-auto">
+        <div className={`fixed inset-0 ${zIndex} overflow-y-auto`}>
             <div className={`fixed inset-0 ${activeTheme.backdrop}`} onClick={handleClose} />
 
             <div className="flex min-h-full items-center justify-center p-4">
