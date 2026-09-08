@@ -484,9 +484,8 @@ class SuperPanelService
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%")
-                  ->orWhere('location_address', 'like', "%{$search}%");
+                $q->where('nama', 'like', "%{$search}%")
+                  ->orWhere('alamat_detail', 'like', "%{$search}%");
             });
         }
 
@@ -557,9 +556,9 @@ class SuperPanelService
 
             return [
                 'id' => $odp->id,
-                'name' => $odp->name,
-                'code' => $odp->code,
-                'location_address' => $odp->location_address,
+                'name' => $odp->nama,
+                'code' => $odp->nama,
+                'location_address' => $odp->alamat_detail,
                 'latitude' => (float) $odp->latitude,
                 'longitude' => (float) $odp->longitude,
                 'olt_id' => $odp->olt_id,
@@ -1307,9 +1306,8 @@ class SuperPanelService
         if (isset($data['longitude'])) {
             $odp->longitude = $data['longitude'];
         }
-        if (isset($data['location_address'])) {
-            $odp->location_address = $data['location_address'];
-            $odp->alamat_detail = $data['location_address'];
+        if (isset($data['location_address']) || isset($data['alamat_detail'])) {
+            $odp->alamat_detail = $data['location_address'] ?? $data['alamat_detail'];
         }
 
         $odp->save();

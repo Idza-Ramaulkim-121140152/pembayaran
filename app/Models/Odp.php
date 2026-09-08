@@ -57,9 +57,19 @@ class Odp extends Model
         return $this->nama;
     }
 
+    public function setNameAttribute($value): void
+    {
+        $this->attributes['nama'] = $value;
+    }
+
     public function getLocationAddressAttribute(): ?string
     {
         return $this->alamat_detail;
+    }
+
+    public function setLocationAddressAttribute($value): void
+    {
+        $this->attributes['alamat_detail'] = $value;
     }
 
     public function getIsOdcAttribute(): bool
