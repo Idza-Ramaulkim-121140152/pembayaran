@@ -32,6 +32,15 @@ class Tr069AcsController extends Controller
         $rawXml = $request->getContent();
         $clientIp = (string) $request->ip();
 
+        // Handle GET / HEAD request (e.g. browser probe or ONT HTTP reachability check)
+        if ($request->isMethod('GET') || $request->isMethod('HEAD')) {
+            return response("Native TR-069 ACS Server is running.\nEndpoint: /acs\nClient IP: {$clientIp}\nTime: " . now()->toIso8601String() . "\n", 200, [
+                'Content-Type' => 'text/plain; charset=utf-8',
+            ]);
+        }
+
+        Log::info("Tr069AcsController: Inbound {$request->method()} from IP {$clientIp}, length=" . strlen($rawXml));
+
         // 1. Parse inbound XML
         $parsed = $this->soapEngine->parseInboundXml($rawXml);
         $cwmpId = $parsed['cwmp_id'] ?? '1';
