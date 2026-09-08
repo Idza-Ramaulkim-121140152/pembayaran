@@ -14,6 +14,7 @@ class Odp extends Model
         'device_type',
         'parent_type',
         'parent_id',
+        'parent_port',
         'rasio_spesial',
         'rasio_distribusi',
         'foto',

@@ -233,11 +233,25 @@ class SuperPanelService
         }
 
         // Trace and calculate optical budget for each node
+        $childOdpsByParentId = [];
+        foreach ($allOdps as $childNode) {
+            if ($childNode->parent_id && in_array($childNode->parent_type, ['odp', 'odc'])) {
+                $childOdpsByParentId[$childNode->parent_id][] = [
+                    'id' => $childNode->id,
+                    'name' => $childNode->nama ?: $childNode->name,
+                    'device_type' => $childNode->device_type ?: 'odp',
+                    'parent_port' => $childNode->parent_port,
+                    'rasio_spesial' => $childNode->rasio_spesial,
+                ];
+            }
+        }
+
         $computedNodeData = [];
         foreach ($allOdps as $node) {
             $isOdc = ($node->device_type ?? 'odp') === 'odc';
             $parentType = $node->parent_type ?: 'pon';
             $parentId = $node->parent_id;
+            $parentPort = $node->parent_port;
 
             $parentNode = null;
             $fromCoords = null;
@@ -247,10 +261,20 @@ class SuperPanelService
             if (($parentType === 'odc' || $parentType === 'odp') && $parentId && isset($nodesById[$parentId])) {
                 $parentNode = $nodesById[$parentId];
                 $fromCoords = [(float)$parentNode->latitude, (float)$parentNode->longitude];
-                $parentLabel = ($parentNode->device_type === 'odc' ? 'ODC ' : 'ODP ') . ($parentNode->nama ?: $parentNode->name);
+                $portSuffix = $parentPort ? ($parentPort === 'thru' ? ' (Thru)' : " (Port {$parentPort})") : '';
+                $parentLabel = ($parentNode->device_type === 'odc' ? 'ODC ' : 'ODP ') . ($parentNode->nama ?: $parentNode->name) . $portSuffix;
                 
-                if (isset($computedNodeData[$parentId]['optical_calc']['thru_output_power_dbm'])) {
-                    $inputPower = $computedNodeData[$parentId]['optical_calc']['thru_output_power_dbm'];
+                if (isset($computedNodeData[$parentId]['optical_calc'])) {
+                    $pCalc = $computedNodeData[$parentId]['optical_calc'];
+                    if ($parentPort === 'thru' && isset($pCalc['thru_output_power_dbm'])) {
+                        $inputPower = $pCalc['thru_output_power_dbm'];
+                    } elseif (!empty($parentPort) && isset($pCalc['drop_output_power_dbm'])) {
+                        $inputPower = $pCalc['drop_output_power_dbm'];
+                    } elseif (isset($pCalc['thru_output_power_dbm'])) {
+                        $inputPower = $pCalc['thru_output_power_dbm'];
+                    } elseif (isset($pCalc['drop_output_power_dbm'])) {
+                        $inputPower = $pCalc['drop_output_power_dbm'];
+                    }
                 }
             } else {
                 $oltNode = $node->olt_id && isset($oltById[$node->olt_id]) ? $oltById[$node->olt_id] : $olts->first();
@@ -290,9 +314,17 @@ class SuperPanelService
             $isOdc = ($odp->device_type ?? 'odp') === 'odc';
             $computed = $computedNodeData[$odp->id] ?? null;
             $optCalc = $computed['optical_calc'] ?? null;
+            $childOdps = $childOdpsByParentId[$odp->id] ?? [];
 
             $capacity = (int) ($odp->total_ports ?: ($isOdc ? 24 : 8));
-            $used = $odp->customers->count();
+            $custCount = $odp->customers->count();
+            $odpPortsUsed = 0;
+            foreach ($childOdps as $co) {
+                if (!empty($co['parent_port']) && $co['parent_port'] !== 'thru') {
+                    $odpPortsUsed++;
+                }
+            }
+            $used = $custCount + $odpPortsUsed;
             $free = max(0, $capacity - $used);
             $occupancyPercent = $capacity > 0 ? round(($used / $capacity) * 100, 1) : 0;
 
@@ -323,7 +355,9 @@ class SuperPanelService
                 'location_address' => $odp->alamat_detail ?: $odp->location_address,
                 'parent_type' => $odp->parent_type ?: 'pon',
                 'parent_id' => $odp->parent_id,
+                'parent_port' => $odp->parent_port,
                 'parent_name' => $computed['parent_label'] ?? 'PON OLT',
+                'child_odps' => $childOdps,
                 'rasio_spesial' => $odp->rasio_spesial,
                 'rasio_distribusi' => $odp->rasio_distribusi,
                 'schematic_data' => $odp->schematic_data,
@@ -341,7 +375,7 @@ class SuperPanelService
                 'occupancy_percent' => $occupancyPercent,
                 'stock_status' => $stockStatus,
                 'status_color' => $color,
-                'connected_customers_count' => $used,
+                'connected_customers_count' => $custCount,
                 'customers' => $odp->customers->map(fn ($c) => [
                     'id' => $c->id,
                     'customer_id' => 'CUST-' . str_pad((string) $c->id, 4, '0', STR_PAD_LEFT),
@@ -371,6 +405,7 @@ class SuperPanelService
                     'from_type' => $odp->parent_type ?: 'pon',
                     'to_type' => $isOdc ? 'odc' : 'odp',
                     'from_id' => $odp->parent_id ?: $odp->pon_port_id,
+                    'from_port' => $odp->parent_port,
                     'olt_id' => $odp->olt_id ?: ($olts->first()?->id),
                     'to_id' => $odp->id,
                     'from_name' => $parentName,
@@ -1279,6 +1314,13 @@ class SuperPanelService
             }
         }
 
+        if (array_key_exists('parent_port', $data)) {
+            $odp->parent_port = !empty($data['parent_port']) ? (string) $data['parent_port'] : null;
+        }
+        if ($odp->parent_type !== 'odp') {
+            $odp->parent_port = null;
+        }
+
         if (array_key_exists('rasio_spesial', $data)) {
             $odp->rasio_spesial = !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null;
         }
@@ -1335,6 +1377,9 @@ class SuperPanelService
                     }
                     if (array_key_exists('id', $schematic['input_source'])) {
                         $odp->parent_id = !empty($schematic['input_source']['id']) ? (int)$schematic['input_source']['id'] : null;
+                    }
+                    if (array_key_exists('port', $schematic['input_source'])) {
+                        $odp->parent_port = !empty($schematic['input_source']['port']) ? (string)$schematic['input_source']['port'] : null;
                     }
                 }
 
@@ -1462,11 +1507,17 @@ class SuperPanelService
             }
         }
 
+        $parentPort = null;
+        if ($parentType === 'odp' && !empty($data['parent_port'])) {
+            $parentPort = (string) $data['parent_port'];
+        }
+
         $node = Odp::create([
             'nama' => $data['nama'] ?? ($deviceType === 'odc' ? 'ODC-BARU' : 'ODP-BARU'),
             'device_type' => $deviceType,
             'parent_type' => $parentType,
             'parent_id' => $parentId,
+            'parent_port' => $parentPort,
             'rasio_spesial' => !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null,
             'rasio_distribusi' => $distRatio,
             'total_ports' => $totalPorts,

@@ -170,12 +170,23 @@ function NodeFormFields({
             const pid = parseInt(form.parent_id, 10);
             const parentInGis = (gisData?.odp_nodes || []).find(n => n.id === pid) ||
                                 (gisData?.odc_nodes || []).find(n => n.id === pid);
-            if (parentInGis?.optical_calc?.thru_output_power_dbm !== undefined) {
-                return parseFloat(parentInGis.optical_calc.thru_output_power_dbm);
+            if (parentInGis?.optical_calc) {
+                if (form.parent_port === 'thru' && parentInGis.optical_calc.thru_output_power_dbm !== undefined) {
+                    return parseFloat(parentInGis.optical_calc.thru_output_power_dbm);
+                }
+                if (form.parent_port && parentInGis.optical_calc.drop_output_power_dbm !== undefined) {
+                    return parseFloat(parentInGis.optical_calc.drop_output_power_dbm);
+                }
+                if (parentInGis.optical_calc.thru_output_power_dbm !== undefined) {
+                    return parseFloat(parentInGis.optical_calc.thru_output_power_dbm);
+                }
+                if (parentInGis.optical_calc.drop_output_power_dbm !== undefined) {
+                    return parseFloat(parentInGis.optical_calc.drop_output_power_dbm);
+                }
             }
         }
         return 10.0;
-    }, [form.parent_type, form.parent_id, form.olt_id, form.pon_port_id, formOptions, gisData]);
+    }, [form.parent_type, form.parent_id, form.parent_port, form.olt_id, form.pon_port_id, formOptions, gisData]);
 
     const opticalSim = useMemo(() => {
         return calculateOpticalEstimate(
@@ -199,12 +210,139 @@ function NodeFormFields({
         return (formOptions?.odps || []).filter(o => !excludeNodeId || o.id !== excludeNodeId);
     }, [formOptions, excludeNodeId]);
 
+    const selectedParentOdp = useMemo(() => {
+        if (form.parent_type !== 'odp' || !form.parent_id) return null;
+        const pid = parseInt(form.parent_id, 10);
+        return (gisData?.odp_nodes || []).find(o => o.id === pid) ||
+               (formOptions?.odps || []).find(o => o.id === pid) || null;
+    }, [form.parent_type, form.parent_id, gisData, formOptions]);
+
+    const parentPortOptions = useMemo(() => {
+        if (!selectedParentOdp) return [];
+        const opts = [];
+        const currentEditingId = excludeNodeId || nodeObject?.id || form.id;
+
+        // 1. Thru Port if parent has Rasio Spesial (Coupler tap)
+        const hasSpecialRatio = selectedParentOdp.rasio_spesial && selectedParentOdp.rasio_spesial !== 'none';
+        if (hasSpecialRatio) {
+            const otherOdpThru = (gisData?.odp_nodes || []).find(
+                n => n.parent_id === selectedParentOdp.id &&
+                     n.parent_type === 'odp' &&
+                     n.id !== currentEditingId &&
+                     String(n.parent_port) === 'thru'
+            );
+            const isCurrentOdpThru = String(form.parent_port) === 'thru';
+            const thruPower = selectedParentOdp.optical_calc?.thru_output_power_dbm;
+            const powerStr = thruPower !== undefined ? ` (${thruPower >= 0 ? '+' : ''}${thruPower} dBm)` : '';
+
+            opts.push({
+                value: 'thru',
+                isThru: true,
+                label: otherOdpThru
+                    ? `🔴 Port Thru (Terpakai ODP: ${otherOdpThru.name || otherOdpThru.nama})`
+                    : isCurrentOdpThru
+                    ? `🟢 Port Thru (Jalur Estafet Coupler Lolos • Terhubung ke ODP ini)${powerStr}`
+                    : `⚡ Port Thru (Jalur Estafet Coupler Lolos • Bebas / Tersedia)${powerStr}`,
+                disabled: !!otherOdpThru,
+                isCurrent: isCurrentOdpThru,
+                status: otherOdpThru ? 'occupied_odp' : (isCurrentOdpThru ? 'active' : 'available'),
+                power: thruPower,
+            });
+        }
+
+        // 2. Splitter Distribution Ports (1 .. total_ports)
+        const totalPorts = selectedParentOdp.total_ports || (PLC_PORT_MAP[selectedParentOdp.rasio_distribusi] || 8);
+        
+        // Customers on parent
+        const parentCustomers = selectedParentOdp.customers || 
+            (gisData?.customer_nodes || []).filter(c => c.odp_id === selectedParentOdp.id) || [];
+        
+        // Other downstream ODPs on parent
+        const otherChildOdps = (gisData?.odp_nodes || []).filter(
+            n => n.parent_id === selectedParentOdp.id &&
+                 n.parent_type === 'odp' &&
+                 n.id !== currentEditingId
+        );
+
+        const dropPower = selectedParentOdp.optical_calc?.drop_output_power_dbm;
+        const dropPowerStr = dropPower !== undefined ? ` (${dropPower >= 0 ? '+' : ''}${dropPower} dBm)` : '';
+
+        const activeNumPort = Number(form.parent_port);
+        const maxPort = Math.max(totalPorts, !isNaN(activeNumPort) && activeNumPort > 0 ? activeNumPort : 0);
+
+        for (let p = 1; p <= maxPort; p++) {
+            const portStr = String(p);
+            const custs = parentCustomers.filter(c => Number(c.odp_port_number) === p);
+            const otherOdps = otherChildOdps.filter(n => String(n.parent_port) === portStr);
+            const isCurrentOdp = String(form.parent_port) === portStr;
+
+            let label = '';
+            let disabled = false;
+            let status = 'available';
+
+            if (otherOdps.length > 0 && custs.length > 0) {
+                const odpNames = otherOdps.map(o => o.name || o.nama).join(', ');
+                const custNames = custs.map(c => c.name).join(', ');
+                label = `🔴 Port ${p} (Terpakai ODP: ${odpNames} & Pelanggan: ${custNames})`;
+                disabled = true;
+                status = 'occupied_both';
+            } else if (otherOdps.length > 0) {
+                const odpNames = otherOdps.map(o => o.name || o.nama).join(', ');
+                label = `🔴 Port ${p} (Terpakai ODP: ${odpNames})`;
+                disabled = true;
+                status = 'occupied_odp';
+            } else if (custs.length > 0) {
+                const custNames = custs.map(c => c.name).join(', ');
+                label = `🔴 Port ${p} (Terpakai Pelanggan: ${custNames})`;
+                disabled = true;
+                status = 'occupied_customer';
+            } else if (isCurrentOdp) {
+                label = `🟢 Port ${p} (Terhubung ke ODP ini - Aktif)${dropPowerStr}`;
+                disabled = false;
+                status = 'active';
+            } else {
+                label = `🟢 Port ${p} [KOSONG / TERSEDIA]${dropPowerStr}`;
+                disabled = false;
+                status = 'available';
+            }
+
+            opts.push({
+                value: portStr,
+                portNumber: p,
+                label,
+                disabled,
+                isCurrent: isCurrentOdp,
+                status,
+                power: dropPower,
+            });
+        }
+
+        return opts;
+    }, [selectedParentOdp, form.parent_port, form.id, excludeNodeId, nodeObject, gisData]);
+
     const nodeCustomers = useMemo(() => {
         if (nodeObject?.customers && Array.isArray(nodeObject.customers)) {
             return nodeObject.customers;
         }
         if (nodeObject?.id && gisData?.customer_nodes) {
             return gisData.customer_nodes.filter(c => c.odp_id === nodeObject.id);
+        }
+        return [];
+    }, [nodeObject, gisData]);
+
+    const nodeChildOdps = useMemo(() => {
+        if (nodeObject?.child_odps && Array.isArray(nodeObject.child_odps)) {
+            return nodeObject.child_odps;
+        }
+        if (nodeObject?.id && gisData?.odp_nodes) {
+            return gisData.odp_nodes
+                .filter(n => n.parent_id === nodeObject.id && n.id !== nodeObject.id)
+                .map(n => ({
+                    id: n.id,
+                    name: n.name || n.nama,
+                    parent_port: n.parent_port,
+                    rasio_spesial: n.rasio_spesial,
+                }));
         }
         return [];
     }, [nodeObject, gisData]);
@@ -268,11 +406,14 @@ function NodeFormFields({
             input_source: {
                 type: form.parent_type || 'pon',
                 id: form.parent_id || form.olt_id || '',
-                label: form.parent_type === 'odp' ? 'Estafet ODP' : (form.parent_type === 'odc' ? 'Dari ODC' : 'Port PON OLT')
+                port: form.parent_port || null,
+                label: form.parent_type === 'odp'
+                    ? `Estafet ODP ${selectedParentOdp?.name || ''} (${form.parent_port ? (form.parent_port === 'thru' ? 'Thru' : 'Port ' + form.parent_port) : 'Port ?'})`
+                    : (form.parent_type === 'odc' ? 'Dari ODC' : 'Port PON OLT')
             },
             notes: ''
         };
-    }, [form.schematic_data, form.rasio_spesial, form.rasio_distribusi, form.parent_type, form.parent_id, form.olt_id, nodeObject]);
+    }, [form.schematic_data, form.rasio_spesial, form.rasio_distribusi, form.parent_type, form.parent_id, form.parent_port, form.olt_id, nodeObject, selectedParentOdp]);
 
     return (
         <div className="space-y-4 text-xs text-slate-300">
@@ -377,6 +518,7 @@ function NodeFormFields({
                         availableOdcs={availableOdcs}
                         availableOlts={formOptions?.olts || []}
                         customerList={nodeCustomers}
+                        childOdps={nodeChildOdps}
                         totalPorts={form.total_ports || 8}
                         isOdc={form.device_type === 'odc'}
                         onApplySummary={({ rasio_spesial, rasio_distribusi, total_ports }) => {
@@ -407,7 +549,7 @@ function NodeFormFields({
                         <div className="grid grid-cols-3 gap-2">
                             <button
                                 type="button"
-                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'pon', parent_id: '' }))}
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'pon', parent_id: '', parent_port: '' }))}
                                 className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
                                     form.parent_type === 'pon'
                                         ? 'bg-blue-600 text-white font-bold'
@@ -418,7 +560,7 @@ function NodeFormFields({
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odc', parent_id: availableOdcs[0]?.id || '' }))}
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odc', parent_id: availableOdcs[0]?.id || '', parent_port: '' }))}
                                 className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
                                     form.parent_type === 'odc'
                                         ? 'bg-purple-600 text-white font-bold'
@@ -429,7 +571,7 @@ function NodeFormFields({
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odp', parent_id: availableOdps[0]?.id || '' }))}
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odp', parent_id: availableOdps[0]?.id || '', parent_port: '' }))}
                                 className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
                                     form.parent_type === 'odp'
                                         ? 'bg-amber-600 text-white font-bold'
@@ -499,20 +641,79 @@ function NodeFormFields({
                         )}
 
                         {form.parent_type === 'odp' && (
-                            <div className="pt-1">
-                                <label className="block text-slate-400 mb-1">Pilih ODP Sumber (Estafet Hop Sebelumnya)</label>
-                                <select
-                                    value={form.parent_id || ''}
-                                    onChange={(e) => setForm(prev => ({ ...prev, parent_id: e.target.value }))}
-                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500"
-                                >
-                                    <option value="">-- Pilih ODP Sumber --</option>
-                                    {availableOdps.map((odp) => (
-                                        <option key={odp.id} value={odp.id}>
-                                            📦 {odp.name || odp.nama} {odp.rasio_spesial ? `(Rasio: ${odp.rasio_spesial})` : ''}
-                                        </option>
-                                    ))}
-                                </select>
+                            <div className="pt-1 space-y-3">
+                                <div>
+                                    <label className="block text-slate-300 mb-1 font-medium flex items-center justify-between">
+                                        <span>1. Pilih ODP Sumber (Estafet Hop Sebelumnya)</span>
+                                        {selectedParentOdp && (
+                                            <span className="text-[11px] text-amber-400 font-normal">
+                                                {selectedParentOdp.rasio_spesial && selectedParentOdp.rasio_spesial !== 'none' ? `Coupler ${selectedParentOdp.rasio_spesial}` : 'Tanpa Coupler'} • Splitter {selectedParentOdp.rasio_distribusi || '1:8'}
+                                            </span>
+                                        )}
+                                    </label>
+                                    <select
+                                        value={form.parent_id || ''}
+                                        onChange={(e) => {
+                                            const newParentId = e.target.value;
+                                            setForm(prev => ({
+                                                ...prev,
+                                                parent_id: newParentId,
+                                                parent_port: prev.parent_id === newParentId ? prev.parent_port : '',
+                                            }));
+                                        }}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500 font-medium"
+                                    >
+                                        <option value="">-- Pilih ODP Sumber --</option>
+                                        {availableOdps.map((odp) => (
+                                            <option key={odp.id} value={odp.id}>
+                                                📦 {odp.name || odp.nama} {odp.rasio_spesial ? `(Rasio: ${odp.rasio_spesial})` : ''} {odp.rasio_distribusi ? `(Dist: ${odp.rasio_distribusi})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {form.parent_id && (
+                                    <div className="p-3 bg-slate-950/80 border border-amber-500/40 rounded-xl space-y-2">
+                                        <label className="block text-slate-200 font-bold flex items-center justify-between">
+                                            <span className="flex items-center gap-1.5 text-amber-300">
+                                                <Cable className="w-4 h-4 text-amber-400" />
+                                                2. Pilih Port Output pada {selectedParentOdp?.name || selectedParentOdp?.nama || 'ODP Sumber'}
+                                            </span>
+                                            {form.parent_port && (
+                                                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                                    Terpilih: {form.parent_port === 'thru' ? 'Port Thru' : `Port ${form.parent_port}`}
+                                                </span>
+                                            )}
+                                        </label>
+
+                                        <select
+                                            value={form.parent_port || ''}
+                                            onChange={(e) => setForm(prev => ({ ...prev, parent_port: e.target.value }))}
+                                            className="w-full px-3 py-2.5 bg-slate-900 border-2 border-amber-500/50 rounded-xl text-white focus:outline-none focus:border-amber-400 font-medium text-xs shadow-lg"
+                                        >
+                                            <option value="">-- Pilih Port Output Sumber (Tersedia) --</option>
+                                            {parentPortOptions.map((opt) => (
+                                                <option
+                                                    key={opt.value}
+                                                    value={opt.value}
+                                                    disabled={opt.disabled}
+                                                    className={opt.disabled ? 'text-slate-500 bg-slate-950' : 'text-emerald-300 bg-slate-900 font-semibold'}
+                                                >
+                                                    {opt.label}
+                                                </option>
+                                            ))}
+                                        </select>
+
+                                        <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
+                                            <span>
+                                                Status: {parentPortOptions.filter(o => !o.disabled).length} port tersedia dari total {parentPortOptions.length} jalur output.
+                                            </span>
+                                            <span className="text-slate-500 text-[10px]">
+                                                Port terpakai (🔴) dinonaktifkan otomatis
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -791,6 +992,7 @@ export default function SuperPanelPage() {
         device_type: 'odp',
         parent_type: 'pon',
         parent_id: '',
+        parent_port: '',
         rasio_spesial: 'none',
         rasio_distribusi: '1:8',
         total_ports: 8,
@@ -818,6 +1020,7 @@ export default function SuperPanelPage() {
         device_type: 'odp',
         parent_type: 'pon',
         parent_id: '',
+        parent_port: '',
         rasio_spesial: 'none',
         rasio_distribusi: '1:8',
         total_ports: 8,
@@ -1618,6 +1821,7 @@ export default function SuperPanelPage() {
                     device_type: found.device_type || 'odp',
                     parent_type: found.parent_type || 'pon',
                     parent_id: found.parent_id || '',
+                    parent_port: found.parent_port ? String(found.parent_port) : '',
                     rasio_spesial: found.rasio_spesial || 'none',
                     rasio_distribusi: distRatio,
                     total_ports: autoPorts,
@@ -1708,6 +1912,7 @@ export default function SuperPanelPage() {
             const payload = {
                 ...editOdpForm,
                 parent_id: editOdpForm.parent_id ? parseInt(editOdpForm.parent_id, 10) : null,
+                parent_port: editOdpForm.parent_type === 'odp' ? (editOdpForm.parent_port || null) : null,
                 total_ports: parseInt(editOdpForm.total_ports, 10) || (editOdpForm.device_type === 'odc' ? 24 : 8),
                 olt_id: editOdpForm.olt_id ? parseInt(editOdpForm.olt_id, 10) : null,
                 pon_port_id: editOdpForm.pon_port_id ? parseInt(editOdpForm.pon_port_id, 10) : null,
@@ -1740,6 +1945,7 @@ export default function SuperPanelPage() {
             const payload = {
                 ...createNodeForm,
                 parent_id: createNodeForm.parent_id ? parseInt(createNodeForm.parent_id, 10) : null,
+                parent_port: createNodeForm.parent_type === 'odp' ? (createNodeForm.parent_port || null) : null,
                 total_ports: parseInt(createNodeForm.total_ports, 10) || (createNodeForm.device_type === 'odc' ? 24 : 8),
                 olt_id: createNodeForm.olt_id ? parseInt(createNodeForm.olt_id, 10) : null,
                 pon_port_id: createNodeForm.pon_port_id ? parseInt(createNodeForm.pon_port_id, 10) : null,
@@ -2503,6 +2709,7 @@ export default function SuperPanelPage() {
                                                         device_type: odp.device_type || 'odp',
                                                         parent_type: odp.parent_type || 'pon',
                                                         parent_id: odp.parent_id || '',
+                                                        parent_port: odp.parent_port ? String(odp.parent_port) : '',
                                                         rasio_spesial: odp.rasio_spesial || 'none',
                                                         rasio_distribusi: distRatio,
                                                         total_ports: autoPorts,

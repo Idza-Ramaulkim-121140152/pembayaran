@@ -56,6 +56,7 @@ export default function OdpInternalSchematic({
     availableOdcs = [],
     availableOlts = [],
     customerList = [],
+    childOdps = [],
     totalPorts = 8,
     isOdc = false,
     onApplySummary,
@@ -721,11 +722,11 @@ export default function OdpInternalSchematic({
                                                     <select
                                                         value={mod.outputs?.thru?.target_type || 'next_hop'}
                                                         onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            handleUpdateOutput(mod.id, 'thru', {
-                                                                target_type: val,
-                                                                target_label: val === 'next_hop' ? 'Jalur ke ODP Hilir' : 'Splitter Internal',
-                                                            });
+                                                             const val = e.target.value;
+                                                             handleUpdateOutput(mod.id, 'thru', {
+                                                                 target_type: val,
+                                                                 target_label: val === 'next_hop' ? 'Jalur ke ODP Hilir' : 'Splitter Internal',
+                                                             });
                                                         }}
                                                         className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-slate-200"
                                                     >
@@ -733,6 +734,15 @@ export default function OdpInternalSchematic({
                                                         <option value="port">🔌 Masuk ke Port Pelanggan</option>
                                                     </select>
                                                 </div>
+                                                {(() => {
+                                                    const thruChild = childOdps.find(c => String(c.parent_port) === 'thru');
+                                                    return thruChild ? (
+                                                        <div className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] flex items-center gap-1 font-semibold truncate">
+                                                            <span>⚡ Estafet Thru:</span>
+                                                            <span className="truncate">📦 {thruChild.name}</span>
+                                                        </div>
+                                                    ) : null;
+                                                })()}
                                             </div>
 
                                             {/* Out 2: Tap (Rasio Kecil) */}
@@ -774,6 +784,7 @@ export default function OdpInternalSchematic({
                                                 const outPow = calculatedPowers[`${mod.id}:${key}`] ?? inPower;
                                                 const isGood = outPow >= -24 && outPow <= -12;
                                                 const assignedCustomer = customerList.find(c => Number(c.odp_port_number) === Number(out.target_id));
+                                                const assignedChildOdp = childOdps.find(c => String(c.parent_port) === String(out.target_id));
 
                                                 return (
                                                     <div
@@ -813,6 +824,11 @@ export default function OdpInternalSchematic({
                                                             ))}
                                                         </select>
 
+                                                        {assignedChildOdp && (
+                                                            <div className="text-[10px] text-amber-400 font-semibold truncate pt-0.5" title={`Estafet ke Downstream ODP: ${assignedChildOdp.name}`}>
+                                                                📦 ODP {assignedChildOdp.name}
+                                                            </div>
+                                                        )}
                                                         {assignedCustomer && (
                                                             <div className="text-[10px] text-emerald-400 font-medium truncate pt-0.5">
                                                                 👤 {assignedCustomer.name}
@@ -838,20 +854,25 @@ export default function OdpInternalSchematic({
                                 Tray Adaptor Port Dropcore ODP (Total {totalPorts || 8} Port)
                             </span>
                             <span className="text-[11px] text-slate-400">
-                                Port aktif: {customerList.length} / {totalPorts || 8}
+                                Port aktif: {customerList.length + childOdps.filter(c => c.parent_port && c.parent_port !== 'thru').length} / {totalPorts || 8}
                             </span>
                         </div>
 
                         <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 pt-1">
                             {Array.from({ length: totalPorts || 8 }, (_, i) => i + 1).map((portNum) => {
                                 const customer = customerList.find(c => Number(c.odp_port_number) === portNum);
-                                const isUsed = !!customer;
+                                const childOdp = childOdps.find(c => String(c.parent_port) === String(portNum));
+                                const isChildOdp = !!childOdp;
+                                const isCustomer = !!customer;
+                                const isUsed = isChildOdp || isCustomer;
 
                                 return (
                                     <div
                                         key={portNum}
                                         className={`p-2 rounded-xl text-center border transition ${
-                                            isUsed
+                                            isChildOdp
+                                                ? 'bg-amber-950/40 border-amber-500/60 text-amber-200 shadow-md shadow-amber-950/30'
+                                                : isCustomer
                                                 ? 'bg-blue-950/40 border-blue-500/50 text-blue-200'
                                                 : 'bg-slate-900/60 border-slate-800 text-slate-400'
                                         }`}
@@ -860,12 +881,19 @@ export default function OdpInternalSchematic({
                                         <div className="w-3 h-3 mx-auto my-1 rounded-full border flex items-center justify-center">
                                             <div
                                                 className={`w-1.5 h-1.5 rounded-full ${
-                                                    isUsed ? 'bg-emerald-400 shadow-[0_0_6px_#10B981]' : 'bg-slate-600'
+                                                    isChildOdp
+                                                        ? 'bg-amber-400 shadow-[0_0_6px_#F59E0B]'
+                                                        : isCustomer
+                                                        ? 'bg-emerald-400 shadow-[0_0_6px_#10B981]'
+                                                        : 'bg-slate-600'
                                                 }`}
                                             />
                                         </div>
-                                        <div className="text-[9px] truncate font-medium">
-                                            {isUsed ? customer.name : 'Kosong'}
+                                        <div
+                                            className="text-[9px] truncate font-medium"
+                                            title={isChildOdp ? `Estafet ke ODP: ${childOdp.name}` : (isCustomer ? customer.name : 'Kosong')}
+                                        >
+                                            {isChildOdp ? `📦 ${childOdp.name}` : (isCustomer ? customer.name : 'Kosong')}
                                         </div>
                                     </div>
                                 );

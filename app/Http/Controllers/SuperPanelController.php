@@ -216,6 +216,7 @@ class SuperPanelController extends Controller
             'device_type' => 'nullable|in:odp,odc',
             'parent_type' => 'nullable|in:pon,odc,odp',
             'parent_id' => 'nullable|integer',
+            'parent_port' => 'nullable|string|max:50',
             'rasio_spesial' => 'nullable|string|max:50',
             'rasio_distribusi' => 'nullable|string|max:50',
             'total_ports' => 'nullable|integer|min:1|max:256',
@@ -407,6 +408,7 @@ class SuperPanelController extends Controller
             'device_type' => 'required|in:odp,odc',
             'parent_type' => 'nullable|in:pon,odc,odp',
             'parent_id' => 'nullable|integer',
+            'parent_port' => 'nullable|string|max:50',
             'rasio_spesial' => 'nullable|string|max:50',
             'rasio_distribusi' => 'nullable|string|max:50',
             'total_ports' => 'nullable|integer|min:1|max:256',
@@ -518,7 +520,8 @@ class SuperPanelController extends Controller
         try {
             $olts = MasterOlt::query()->where('is_active', true)->with('ponPorts')->get();
             $nodes = Odp::query()
-                ->select('id', 'nama', 'device_type', 'parent_type', 'parent_id', 'rasio_spesial', 'rasio_distribusi', 'olt_id', 'pon_port_id', 'total_ports', 'latitude', 'longitude')
+                ->select('id', 'nama', 'device_type', 'parent_type', 'parent_id', 'parent_port', 'rasio_spesial', 'rasio_distribusi', 'olt_id', 'pon_port_id', 'total_ports', 'latitude', 'longitude')
+                ->with(['customers' => fn ($q) => $q->select('id', 'name', 'odp_id', 'odp_port_number')])
                 ->orderBy('nama')
                 ->get()
                 ->map(function ($o) {
@@ -529,6 +532,7 @@ class SuperPanelController extends Controller
                         'device_type' => $o->device_type ?: 'odp',
                         'parent_type' => $o->parent_type ?: 'pon',
                         'parent_id' => $o->parent_id,
+                        'parent_port' => $o->parent_port,
                         'rasio_spesial' => $o->rasio_spesial,
                         'rasio_distribusi' => $o->rasio_distribusi,
                         'olt_id' => $o->olt_id,
@@ -536,6 +540,11 @@ class SuperPanelController extends Controller
                         'total_ports' => $o->total_ports,
                         'latitude' => (float) $o->latitude,
                         'longitude' => (float) $o->longitude,
+                        'customers' => $o->customers->map(fn ($c) => [
+                            'id' => $c->id,
+                            'name' => $c->name,
+                            'odp_port_number' => $c->odp_port_number,
+                        ]),
                     ];
                 });
 
