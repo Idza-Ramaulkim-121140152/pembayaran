@@ -72,6 +72,20 @@ class AcsDevice extends Model
         'vendor_raw_summary' => 'array',
     ];
 
+    protected $attributes = [
+        'wifi_clients_count' => 0,
+        'wifi_enabled' => true,
+        'wifi_enabled_5g' => false,
+        'is_online' => true,
+        'pon_mode' => 'EPON',
+        'matched_via' => 'tr069',
+    ];
+
+    public function setWifiClientsCountAttribute($value): void
+    {
+        $this->attributes['wifi_clients_count'] = (int) ($value ?? 0);
+    }
+
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class, 'customer_id');

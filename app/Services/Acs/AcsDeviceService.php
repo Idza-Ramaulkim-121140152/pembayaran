@@ -86,17 +86,17 @@ class AcsDeviceService
 
         $device->wifi_ssid = $decoded['wifi_ssid'] ?: $device->wifi_ssid;
         $device->wifi_password = $decoded['wifi_password'] ?: $device->wifi_password;
-        $device->wifi_enabled = $decoded['wifi_enabled'] ?? $device->wifi_enabled;
+        $device->wifi_enabled = $decoded['wifi_enabled'] ?? ($device->wifi_enabled ?? true);
         $device->wifi_ssid_5g = $decoded['wifi_ssid_5g'] ?: $device->wifi_ssid_5g;
         $device->wifi_password_5g = $decoded['wifi_password_5g'] ?: $device->wifi_password_5g;
-        $device->wifi_enabled_5g = $decoded['wifi_enabled_5g'] ?? $device->wifi_enabled_5g;
+        $device->wifi_enabled_5g = $decoded['wifi_enabled_5g'] ?? ($device->wifi_enabled_5g ?? false);
         $activeHosts = array_filter($decoded['hosts'] ?? [], fn($h) => !empty($h['is_active']));
         $hasActiveStatus = count(array_filter($decoded['hosts'] ?? [], fn($h) => array_key_exists('is_active', $h) && $h['is_active'] !== null)) > 0;
         $activeHostsCount = $hasActiveStatus ? count($activeHosts) : count($decoded['hosts'] ?? []);
 
-        $device->wifi_clients_count = $activeHostsCount > 0 
+        $device->wifi_clients_count = (int) ($activeHostsCount > 0 
             ? $activeHostsCount 
-            : (($decoded['wifi_clients_count'] ?? 0) > 0 ? $decoded['wifi_clients_count'] : $device->wifi_clients_count);
+            : (($decoded['wifi_clients_count'] ?? 0) > 0 ? $decoded['wifi_clients_count'] : ($device->wifi_clients_count ?? 0)));
 
         $device->connection_request_url = $decoded['connection_request_url'] ?: $device->connection_request_url;
         $device->connection_request_user = $decoded['connection_request_user'] ?: $device->connection_request_user;

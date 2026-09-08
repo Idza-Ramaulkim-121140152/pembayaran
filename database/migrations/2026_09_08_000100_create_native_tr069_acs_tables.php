@@ -48,7 +48,7 @@ return new class extends Migration {
                 $table->string('wifi_ssid_5g')->nullable();
                 $table->string('wifi_password_5g')->nullable();
                 $table->boolean('wifi_enabled_5g')->default(false);
-                $table->integer('wifi_clients_count')->default(0);
+                $table->integer('wifi_clients_count')->nullable()->default(0);
 
                 // Connection Request (Wake Up / Summon)
                 $table->string('connection_request_url')->nullable();
