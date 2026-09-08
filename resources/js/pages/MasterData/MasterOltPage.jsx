@@ -186,16 +186,6 @@ function MasterOltPage() {
         }
     };
 
-    const handleToggleSimulation = async (olt) => {
-        try {
-            const res = await masterOltService.toggleSimulation(olt.id);
-            setSuccess(res.data?.message || 'Mode simulasi OLT berhasil diubah.');
-            await fetchOlts();
-        } catch (err) {
-            setError(err.response?.data?.message || 'Gagal mengubah mode simulasi.');
-        }
-    };
-
     const handleTestSnmp = async (olt) => {
         try {
             setTestingSnmpId(olt.id);
@@ -349,7 +339,6 @@ function MasterOltPage() {
             ) : (
                 <div className="space-y-4">
                     {olts.map((olt) => {
-                        const isSim = olt.simulation_mode;
                         return (
                             <div
                                 key={olt.id}
@@ -370,15 +359,9 @@ function MasterOltPage() {
                                                         <CheckCircle2 size={12} /> OLT Utama
                                                     </span>
                                                 )}
-                                                {isSim ? (
-                                                    <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 rounded-full text-xs font-bold flex items-center gap-1">
-                                                        <Radio size={12} /> Smart Simulation
-                                                    </span>
-                                                ) : (
-                                                    <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold flex items-center gap-1">
-                                                        <Zap size={12} /> Real SNMP Live
-                                                    </span>
-                                                )}
+                                                <span className="px-2.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold flex items-center gap-1">
+                                                    <Zap size={12} className="text-emerald-600" /> Real-Time Live
+                                                </span>
                                                 <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded-md text-xs font-mono font-bold uppercase">
                                                     {olt.brand} {olt.model}
                                                 </span>
@@ -420,23 +403,11 @@ function MasterOltPage() {
                                         </button>
                                         <button
                                             type="button"
-                                            onClick={() => handleToggleSimulation(olt)}
-                                            className={`px-3 py-1.5 text-xs font-bold rounded-xl transition flex items-center gap-1.5 ${
-                                                isSim
-                                                    ? 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
-                                                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-                                            }`}
-                                        >
-                                            <Activity size={14} />
-                                            {isSim ? 'Mode Simulasi' : 'Real SNMP Live'}
-                                        </button>
-                                        <button
-                                            type="button"
                                             onClick={() => handleOpenPonModal(olt)}
                                             className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5"
                                         >
                                             <Layers size={14} />
-                                            Port PON ({olt.total_pon_ports})
+                                            🏷️ Tandai Port PON ({olt.total_pon_ports})
                                         </button>
                                         <button
                                             type="button"
@@ -797,7 +768,7 @@ function MasterOltPage() {
                 </div>
             )}
 
-            {/* MODAL: KELOLA PORT PON OLT */}
+            {/* MODAL: KELOLA & TANDAI PORT PON OLT */}
             {selectedOltForPorts && (
                 <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-4xl w-full p-6 sm:p-8 space-y-6 shadow-2xl my-8">
@@ -805,10 +776,10 @@ function MasterOltPage() {
                             <div>
                                 <h3 className="font-black text-xl text-gray-900 flex items-center gap-2">
                                     <Layers className="text-orange-500" />
-                                    Pengaturan Port PON - {selectedOltForPorts.name}
+                                    🏷️ Tandai / Beri Label Port PON - {selectedOltForPorts.name}
                                 </h3>
                                 <p className="text-xs text-gray-500">
-                                    Kelola identifier, status operasional, daya optik TX SFP, dan kapasitas ONU per port PON.
+                                    Port PON dideteksi otomatis dari OLT fisik ({selectedOltForPorts.brand} {selectedOltForPorts.model}). Beri label penanda rute dan keterangan jalur untuk mempermudah identifikasi lapangan.
                                 </p>
                             </div>
                             <button
@@ -822,66 +793,62 @@ function MasterOltPage() {
 
                         {/* Edit single port form */}
                         {editingPort && (
-                            <form onSubmit={handleSavePort} className="p-4 rounded-2xl bg-orange-50/70 border border-orange-200 space-y-3 text-xs">
-                                <h4 className="font-bold text-orange-900 text-sm">
-                                    Edit Port PON {editingPort.pon_index}
-                                </h4>
+                            <form onSubmit={handleSavePort} className="p-5 rounded-2xl bg-orange-50/70 border border-orange-200 space-y-4 text-xs">
+                                <div className="flex items-center justify-between pb-2 border-b border-orange-200/60">
+                                    <h4 className="font-bold text-orange-950 text-sm flex items-center gap-1.5">
+                                        🏷️ Tandai Port PON {editingPort.pon_index}
+                                    </h4>
+                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                                        🟢 Terdeteksi dari Perangkat OLT
+                                    </span>
+                                </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                    <div>
-                                        <label className="block font-bold text-gray-700 mb-1">Nama Port</label>
+                                    <div className="sm:col-span-2">
+                                        <label className="block font-bold text-gray-700 mb-1">
+                                            Nama / Label Penanda Port <span className="text-rose-500">*</span>
+                                        </label>
                                         <input
                                             type="text"
                                             required
                                             value={editingPort.name}
                                             onChange={(e) => setEditingPort({ ...editingPort, name: e.target.value })}
-                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs"
+                                            placeholder="Contoh: PON 1 (Jalur Utama Sentral - Kalianda)"
+                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs focus:ring-orange-500 font-semibold"
                                         />
+                                        <p className="text-[10px] text-gray-500 mt-1">
+                                            Label ini akan tampil di Super Panel, Customer Tracer, dan WebGIS.
+                                        </p>
                                     </div>
                                     <div>
-                                        <label className="block font-bold text-gray-700 mb-1">Identifier OLT</label>
+                                        <label className="block font-bold text-gray-700 mb-1">Identifier Fisik OLT</label>
                                         <input
                                             type="text"
+                                            readOnly
+                                            disabled
                                             value={editingPort.pon_identifier}
-                                            onChange={(e) => setEditingPort({ ...editingPort, pon_identifier: e.target.value })}
-                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs font-mono"
+                                            className="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-100 text-slate-700 text-xs font-mono font-bold cursor-not-allowed"
                                         />
+                                        <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                            Port Fisik Hardware ({editingPort.pon_identifier})
+                                        </p>
                                     </div>
-                                    <div>
-                                        <label className="block font-bold text-gray-700 mb-1">Status Operasional</label>
-                                        <select
-                                            value={editingPort.oper_status}
-                                            onChange={(e) => setEditingPort({ ...editingPort, oper_status: e.target.value })}
+                                    <div className="sm:col-span-2">
+                                        <label className="block font-bold text-gray-700 mb-1">Keterangan / Rute Kabel Feeder</label>
+                                        <input
+                                            type="text"
+                                            value={editingPort.description || ''}
+                                            onChange={(e) => setEditingPort({ ...editingPort, description: e.target.value })}
+                                            placeholder="Contoh: Kabel Feeder 24 Core, Tube Biru, Arah ODP Sukarame"
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs"
-                                        >
-                                            <option value="up">UP (Aktif)</option>
-                                            <option value="down">DOWN (Mati/Nonaktif)</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="block font-bold text-gray-700 mb-1">TX Optical Power (dBm)</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={editingPort.tx_power_dbm}
-                                            onChange={(e) => setEditingPort({ ...editingPort, tx_power_dbm: e.target.value })}
-                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs font-mono"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block font-bold text-gray-700 mb-1">Suhu SFP (C)</label>
-                                        <input
-                                            type="number"
-                                            step="0.1"
-                                            value={editingPort.temperature}
-                                            onChange={(e) => setEditingPort({ ...editingPort, temperature: e.target.value })}
-                                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="block font-bold text-gray-700 mb-1">Kapasitas Maksimal ONU</label>
                                         <input
                                             type="number"
-                                            value={editingPort.max_onu_capacity}
+                                            min="1"
+                                            max="256"
+                                            value={editingPort.max_onu_capacity || 64}
                                             onChange={(e) => setEditingPort({ ...editingPort, max_onu_capacity: e.target.value })}
                                             className="w-full px-3 py-2 rounded-lg border border-gray-300 text-xs"
                                         />
@@ -894,15 +861,15 @@ function MasterOltPage() {
                                         onClick={() => setEditingPort(null)}
                                         disabled={savingPort}
                                     >
-                                        Batal Edit
+                                        Batal
                                     </Button>
                                     <Button
                                         type="submit"
                                         variant="primary"
                                         disabled={savingPort}
-                                        className="bg-orange-600 hover:bg-orange-700 text-white"
+                                        className="bg-orange-600 hover:bg-orange-700 text-white font-bold"
                                     >
-                                        {savingPort ? 'Menyimpan...' : 'Simpan Port'}
+                                        {savingPort ? 'Menyimpan...' : 'Simpan Penanda Port'}
                                     </Button>
                                 </div>
                             </form>
@@ -913,13 +880,13 @@ function MasterOltPage() {
                             <table className="w-full text-xs text-left">
                                 <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200">
                                     <tr>
-                                        <th className="px-4 py-3">Slot</th>
-                                        <th className="px-4 py-3">Nama Port</th>
+                                        <th className="px-4 py-3">Slot Hardware</th>
+                                        <th className="px-4 py-3">Label / Penanda Jalur</th>
                                         <th className="px-4 py-3">Identifier</th>
-                                        <th className="px-4 py-3">Status</th>
+                                        <th className="px-4 py-3">Status Fisik</th>
                                         <th className="px-4 py-3">TX Power</th>
                                         <th className="px-4 py-3">Suhu</th>
-                                        <th className="px-4 py-3">Terdaftar</th>
+                                        <th className="px-4 py-3">ONU Terhubung</th>
                                         <th className="px-4 py-3 text-right">Aksi</th>
                                     </tr>
                                 </thead>
@@ -928,28 +895,35 @@ function MasterOltPage() {
                                         const isUp = p.oper_status === 'up';
                                         return (
                                             <tr key={p.id} className="hover:bg-gray-50/70">
-                                                <td className="px-4 py-3 font-mono font-bold">PON {p.pon_index}</td>
-                                                <td className="px-4 py-3 font-semibold text-gray-900">{p.name}</td>
-                                                <td className="px-4 py-3 font-mono text-gray-600">{p.pon_identifier}</td>
+                                                <td className="px-4 py-3 font-mono font-bold text-gray-900">
+                                                    Port {p.pon_index}
+                                                </td>
+                                                <td className="px-4 py-3">
+                                                    <p className="font-bold text-gray-900">{p.name}</p>
+                                                    {p.description && (
+                                                        <p className="text-[11px] text-gray-500 mt-0.5">{p.description}</p>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-3 font-mono text-gray-600 font-bold">{p.pon_identifier}</td>
                                                 <td className="px-4 py-3">
                                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                                         isUp ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                                                     }`}>
-                                                        {isUp ? 'UP (Aktif)' : 'DOWN'}
+                                                        {isUp ? 'UP (Online)' : 'DOWN'}
                                                     </span>
                                                 </td>
-                                                <td className="px-4 py-3 font-mono">{p.tx_power_dbm} dBm</td>
-                                                <td className="px-4 py-3 font-mono">{p.temperature} &deg;C</td>
+                                                <td className="px-4 py-3 font-mono">{p.tx_power_dbm ? `${p.tx_power_dbm} dBm` : '-'}</td>
+                                                <td className="px-4 py-3 font-mono">{p.temperature ? `${p.temperature} °C` : '-'}</td>
                                                 <td className="px-4 py-3 font-bold text-indigo-700">
-                                                    {p.total_registered_onu || 0} / {p.max_onu_capacity || 64}
+                                                    {p.total_registered_onu || 0} / {p.max_onu_capacity || 64} Unit
                                                 </td>
                                                 <td className="px-4 py-3 text-right">
                                                     <button
                                                         type="button"
                                                         onClick={() => setEditingPort(p)}
-                                                        className="px-2.5 py-1 bg-gray-100 hover:bg-orange-50 hover:text-orange-600 rounded-lg font-bold transition"
+                                                        className="px-3 py-1 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 rounded-lg font-bold transition"
                                                     >
-                                                        Edit
+                                                        🏷️ Tandai Port
                                                     </button>
                                                 </td>
                                             </tr>

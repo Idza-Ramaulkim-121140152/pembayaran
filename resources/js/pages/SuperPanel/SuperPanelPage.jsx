@@ -610,20 +610,6 @@ export default function SuperPanelPage() {
         }
     };
 
-    // Toggle OLT Simulation Mode
-    const handleToggleOltSimulation = async (oltId) => {
-        try {
-            const res = await apiClient.post(`/master-olts/${oltId}/toggle-simulation`);
-            if (res.data?.success) {
-                showToast(res.data.message || 'Mode simulasi OLT berhasil diubah.');
-                fetchOltData(oltId);
-                fetchOverviewStats();
-            }
-        } catch (err) {
-            showToast('Gagal mengubah mode simulasi OLT: ' + (err?.response?.data?.message || err.message), 'error');
-        }
-    };
-
     // Test OLT SNMP Probe
     const [testingOltSnmp, setTestingOltSnmp] = useState(false);
     const [snmpTestResult, setSnmpTestResult] = useState(null);
@@ -1277,7 +1263,7 @@ export default function SuperPanelPage() {
                             <div className="flex items-center justify-between">
                                 <span className="font-bold text-cyan-300 flex items-center gap-1.5">
                                     <Radio className="w-4 h-4 text-cyan-400" />
-                                    Hasil Probe SNMP Live: {snmpTestResult.host}:{snmpTestResult.port || snmpTestResult.snmp_port || 161} ({snmpTestResult.simulation_mode ? 'SMART SIMULATION' : 'REAL SNMP'})
+                                    Hasil Probe SNMP Live: {snmpTestResult.host}:{snmpTestResult.port || snmpTestResult.snmp_port || 161}
                                 </span>
                                 <button
                                     onClick={() => setSnmpTestResult(null)}
@@ -1346,15 +1332,10 @@ export default function SuperPanelPage() {
                                                         <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono text-xs border border-blue-500/30 font-bold">
                                                             {olt.brand} {olt.model}
                                                         </span>
-                                                        {olt.simulation_mode ? (
-                                                            <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-xs border border-purple-500/30">
-                                                                Smart Simulation Mode
-                                                            </span>
-                                                        ) : (
-                                                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 font-semibold">
-                                                                Real SNMP Live
-                                                            </span>
-                                                        )}
+                                                        <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 font-semibold flex items-center gap-1">
+                                                            <Zap className="w-3 h-3 text-emerald-400" />
+                                                            Real-Time Live
+                                                        </span>
                                                     </div>
                                                     <p className="text-xs text-slate-400 mt-1">
                                                         IP/Host: <code className="text-slate-200 font-semibold">{olt.host}</code> &bull; SNMP v{olt.snmp_version} (Port {olt.snmp_port || 161}) &bull; Telnet: {olt.telnet_port || 23} &bull; HTTP: {olt.http_port || 80} &bull; Lokasi: {olt.location_address || 'Sentral NOC Kalianda'}
@@ -1363,19 +1344,6 @@ export default function SuperPanelPage() {
                                             </div>
 
                                             <div className="flex flex-wrap items-center gap-2.5">
-                                                <button
-                                                    onClick={() => handleToggleOltSimulation(olt.id)}
-                                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
-                                                        olt.simulation_mode
-                                                            ? 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border-purple-500/40'
-                                                            : 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-500/40'
-                                                    }`}
-                                                    title="Ubah mode antara Real SNMP dan Smart Simulation"
-                                                >
-                                                    <Zap className="w-3.5 h-3.5" />
-                                                    {olt.simulation_mode ? 'Ganti ke Real SNMP' : 'Ganti ke Simulasi'}
-                                                </button>
-
                                                 <button
                                                     onClick={() => handleTestOltSnmp(olt.id)}
                                                     disabled={testingOltSnmp}

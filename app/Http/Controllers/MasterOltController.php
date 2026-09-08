@@ -111,7 +111,6 @@ class MasterOltController extends Controller
             'model' => 'nullable|string|max:100',
             'total_pon_ports' => 'nullable|integer|min:1|max:64',
             'is_active' => 'nullable|boolean',
-            'simulation_mode' => 'nullable|boolean',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'location_address' => 'nullable|string|max:255',
@@ -141,9 +140,9 @@ class MasterOltController extends Controller
             'http_port' => $validated['http_port'] ?? 80,
             'snmp_community' => $validated['snmp_community'] ?? 'public',
             'snmp_version' => $validated['snmp_version'] ?? '2c',
-            'total_pon_ports' => $validated['total_pon_ports'] ?? 4,
+            'total_pon_ports' => $validated['total_pon_ports'] ?? 2,
             'is_active' => $isActive,
-            'simulation_mode' => $validated['simulation_mode'] ?? false,
+            'simulation_mode' => false,
             'latitude' => $validated['latitude'] ?? -5.63272765,
             'longitude' => $validated['longitude'] ?? 105.54801464,
             'location_address' => $validated['location_address'] ?? 'Sentral NOC Server Room, Kalianda',
@@ -224,7 +223,6 @@ class MasterOltController extends Controller
             'model' => 'nullable|string|max:100',
             'total_pon_ports' => 'nullable|integer|min:1|max:64',
             'is_active' => 'nullable|boolean',
-            'simulation_mode' => 'nullable|boolean',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'location_address' => 'nullable|string|max:255',
@@ -252,7 +250,7 @@ class MasterOltController extends Controller
             'snmp_version' => $validated['snmp_version'] ?? $olt->snmp_version,
             'total_pon_ports' => $validated['total_pon_ports'] ?? $olt->total_pon_ports,
             'is_active' => $isActive,
-            'simulation_mode' => $validated['simulation_mode'] ?? $olt->simulation_mode,
+            'simulation_mode' => false,
             'latitude' => $validated['latitude'] ?? $olt->latitude,
             'longitude' => $validated['longitude'] ?? $olt->longitude,
             'location_address' => $validated['location_address'] ?? $olt->location_address,
@@ -344,25 +342,6 @@ class MasterOltController extends Controller
     }
 
     /**
-     * POST /api/master-olts/{olt}/toggle-simulation
-     * Toggle Smart Simulation Mode
-     */
-    public function toggleSimulation(MasterOlt $olt)
-    {
-        $olt->simulation_mode = !$olt->simulation_mode;
-        $olt->save();
-
-        return response()->json([
-            'success' => true,
-            'message' => $olt->simulation_mode
-                ? "Mode Simulasi cerdas DIAKTIFKAN untuk {$olt->name}."
-                : "Mode Simulasi DINONAKTIFKAN. Sistem sekarang menggunakan data SNMP Real dari {$olt->host}.",
-            'simulation_mode' => (bool) $olt->simulation_mode,
-            'data' => $olt,
-        ]);
-    }
-
-    /**
      * POST /api/master-olts/{olt}/test-snmp
      * Test SNMP connection & ping to OLT host
      */
@@ -379,33 +358,13 @@ class MasterOltController extends Controller
             'host' => $host,
             'port' => $port,
             'community' => $community,
-            'simulation_mode' => (bool) $olt->simulation_mode,
             'is_reachable' => false,
             'response_time_ms' => 0,
             'details' => [],
             'error' => null,
         ];
 
-        if ($olt->simulation_mode) {
-            $duration = round((microtime(true) - $startTime) * 1000, 2);
-            $result['is_reachable'] = true;
-            $result['response_time_ms'] = $duration + 12.5;
-            $result['details'] = [
-                'sys_descr' => "{$olt->brand} Integrated Optical Access Platform Software ({$olt->model})",
-                'sys_uptime' => '42 days, 14 hours, 18 minutes',
-                'chassis_temp' => '41.5 C',
-                'fan_status' => 'NORMAL',
-                'note' => 'Perangkat terdeteksi via Smart Simulation Engine.',
-            ];
-
-            return response()->json([
-                'success' => true,
-                'message' => "Uji koneksi SNMP ke {$olt->name} BERHASIL (Simulasi Cerdas Aktif).",
-                'data' => $result,
-            ]);
-        }
-
-        // Real SNMP Probe
+        // Real SNMP Probe to Physical Hardware
         try {
             $snmpService = app(OltSnmpService::class);
             $sysDescrOid = OltSnmpService::OID_MAP[$olt->brand]['sysDescr'] ?? OltSnmpService::OID_MAP['Generic']['sysDescr'];

@@ -57,7 +57,7 @@ class OltTelnetService
         $this->write($password);
 
         // Read until command prompt or login failure
-        $afterLogin = $this->readUntilRegex('/([>#\$%]|Login incorrect|Authentication failed)/i', $timeout);
+        $afterLogin = $this->readUntilRegex('/([>#\$%]|(?:HA7302|HA73|EPON|Switch|OLT)[>#]|Login incorrect|Authentication failed)/i', $timeout);
 
         if (stripos($afterLogin, 'incorrect') !== false || stripos($afterLogin, 'failed') !== false) {
             Log::warning("OltTelnetService: Login gagal (kredensial salah) untuk user '{$username}'.");
@@ -67,18 +67,18 @@ class OltTelnetService
         // If in unprivileged mode (prompt ends in '>'), try entering enable mode
         if (preg_match('/>\s*$/', trim($afterLogin))) {
             $this->write('enable');
-            $enableResp = $this->readUntilRegex('/(Password:|#)/i', 2);
+            $enableResp = $this->readUntilRegex('/(Password:|#)/i', 1.5);
             if (stripos($enableResp, 'Password:') !== false) {
                 $this->write($password);
-                $this->readUntilRegex('/#/i', 2);
+                $this->readUntilRegex('/#/i', 1.5);
             }
         }
 
         // Disable pagination so long outputs don't pause with --More--
         $this->write('terminal length 0');
-        $this->readUntilRegex('/#/i', 1);
+        $this->readUntilRegex('/#/i', 0.8);
         $this->write('terminal page-break disable');
-        $this->readUntilRegex('/#/i', 1);
+        $this->readUntilRegex('/#/i', 0.8);
 
         return true;
     }
@@ -86,14 +86,14 @@ class OltTelnetService
     /**
      * Execute a command and return output
      */
-    public function exec(string $command, float $timeout = 3.0): string
+    public function exec(string $command, float $timeout = 1.5): string
     {
         if (!$this->socket) {
             return '';
         }
 
         $this->write($command);
-        return $this->readUntilRegex('/[>#]\s*$/', $timeout);
+        return $this->readUntilRegex('/(?:[>#\$%]|(?:HA7302|HA73|EPON|Switch|OLT)[>#])\s*$/i', $timeout);
     }
 
     /**
@@ -146,7 +146,10 @@ class OltTelnetService
             $result['reachable'] = true;
 
             // 1. Show version / system info
-            $versionOutput = $this->exec('show version');
+            $versionOutput = $this->exec('show system info');
+            if (empty(trim($versionOutput)) || str_contains($versionOutput, 'Unknown')) {
+                $versionOutput = $this->exec('show version');
+            }
             if (empty(trim($versionOutput)) || str_contains($versionOutput, 'Unknown')) {
                 $versionOutput = $this->exec('show system');
             }
@@ -172,24 +175,18 @@ class OltTelnetService
             if (empty(trim($powerOutput)) || str_contains($powerOutput, 'Unknown')) {
                 $powerOutput = $this->exec('show pon transceiver');
             }
-            if (empty(trim($powerOutput)) || str_contains($powerOutput, 'Unknown')) {
-                $powerOutput = $this->exec('show interface gpon optical');
-            }
             $result['raw_logs']['show_power'] = $powerOutput;
 
             // Parse discovered ports
             $result['ports'] = $this->parsePonPorts($ifOutput, $powerOutput);
 
             // 4. Show registered ONUs
-            $onuOutput = $this->exec('show epon onu status');
+            $onuOutput = $this->exec('show onu status all');
+            if (empty(trim($onuOutput)) || str_contains($onuOutput, 'Unknown')) {
+                $onuOutput = $this->exec('show epon onu status');
+            }
             if (empty(trim($onuOutput)) || str_contains($onuOutput, 'Unknown')) {
                 $onuOutput = $this->exec('show gpon onu status');
-            }
-            if (empty(trim($onuOutput)) || str_contains($onuOutput, 'Unknown')) {
-                $onuOutput = $this->exec('show onu status');
-            }
-            if (empty(trim($onuOutput)) || str_contains($onuOutput, 'Unknown')) {
-                $onuOutput = $this->exec('show gpon onu state');
             }
             $result['raw_logs']['show_onu'] = $onuOutput;
 
@@ -216,7 +213,16 @@ class OltTelnetService
         $uptime = null;
         $mac = null;
 
-        if (stripos($output, 'VSOL') !== false || stripos($output, 'V1600') !== false) {
+        if (stripos($output, 'HIOSO') !== false || stripos($output, 'HA73') !== false || stripos($output, 'armv5tejl') !== false) {
+            $brand = 'HIOSO';
+            if (stripos($output, 'HA7304') !== false) {
+                $model = 'HA7304CST';
+            } elseif (stripos($output, 'HA7308') !== false) {
+                $model = 'HA7308CST';
+            } else {
+                $model = 'HA7302CST';
+            }
+        } elseif (stripos($output, 'VSOL') !== false || stripos($output, 'V1600') !== false) {
             $brand = 'VSOL';
         } elseif (stripos($output, 'ZTE') !== false || stripos($output, 'ZXA10') !== false) {
             $brand = 'ZTE';
@@ -229,13 +235,13 @@ class OltTelnetService
         }
 
         // Model
-        if (preg_match('/(?:Product|Device|Hardware|Board|Chassis|Model)\s*(?:Name|Type)?\s*[:=]?\s*([A-Za-z0-9_\-\.\s]+)/i', $output, $m)) {
+        if (!$model && preg_match('/(?:Product|Device|Hardware|Board|Chassis|Model)\s*(?:Name|Type)?\s*[:=]?\s*([A-Za-z0-9_\-\.\s]+)/i', $output, $m)) {
             $cand = trim($m[1]);
             if (strlen($cand) > 3 && !str_contains(strtolower($cand), 'version')) {
                 $model = $cand;
             }
         }
-        if (!$model && preg_match('/\b(V1600[A-Za-z0-9_\-]+|C320|C300|MA5608T|MA5800)\b/i', $output, $m)) {
+        if (!$model && preg_match('/\b(HA7302CST|HA7304CST|HA7308CST|V1600[A-Za-z0-9_\-]+|C320|C300|MA5608T|MA5800)\b/i', $output, $m)) {
             $model = ($brand !== 'Generic' ? $brand . ' ' : '') . strtoupper($m[1]);
         }
 
@@ -270,40 +276,60 @@ class OltTelnetService
     {
         $ports = [];
 
-        // Look for patterns like: epon0/1, gpon0/1, gpon-olt_1/1/1, pon 1, etc.
-        preg_match_all('/(?:interface\s+)?\b(epon|gpon|pon)[\s_\-]*([0-9]+)\/([0-9]+)\b\s+([a-zA-Z]+)/i', $ifOutput, $matches, PREG_SET_ORDER);
-
-        if (empty($matches)) {
-            preg_match_all('/\b(epon|gpon)0\/([0-9]+)\b/i', $ifOutput . "\n" . $powerOutput, $matches2, PREG_SET_ORDER);
-            $seenIdx = [];
-            foreach ($matches2 as $m2) {
-                $idx = (int) $m2[2];
-                if (!isset($seenIdx[$idx])) {
-                    $seenIdx[$idx] = true;
-                    $ports[$idx] = [
-                        'index' => $idx,
-                        'identifier' => strtolower($m2[1]) . '0/' . $idx,
-                        'name' => 'PON ' . $idx . ' (' . strtoupper($m2[1]) . '0/' . $idx . ')',
-                        'oper_status' => 'up',
-                        'tx_power_dbm' => 4.80,
-                        'temperature' => 41.5,
-                    ];
-                }
-            }
-        } else {
-            foreach ($matches as $row) {
-                $ponType = strtolower($row[1]);
-                $portNum = (int) $row[3];
-                $status = strtolower($row[4]) === 'up' ? 'up' : 'down';
-
-                $ports[$portNum] = [
-                    'index' => $portNum,
-                    'identifier' => $ponType . '0/' . $portNum,
-                    'name' => 'PON ' . $portNum . ' (' . strtoupper($ponType) . '0/' . $portNum . ')',
+        // 1. Support 3-part identifier (e.g. 0/1/1, 0/1/2, epon0/1/1, etc. as used by HIOSO and others)
+        preg_match_all('/(?:interface\s+)?\b(?:epon|gpon|pon)?[\s_\-]*([0-9]+)\/([0-9]+)\/([0-9]+)\b(?:\s+([a-zA-Z]+))?/i', $ifOutput, $matches3, PREG_SET_ORDER);
+        if (!empty($matches3)) {
+            foreach ($matches3 as $row) {
+                $pIdx = (int) $row[3];
+                $ident = "{$row[1]}/{$row[2]}/{$row[3]}";
+                $status = isset($row[4]) && strtolower($row[4]) === 'down' ? 'down' : 'up';
+                $ports[$pIdx] = [
+                    'index' => $pIdx,
+                    'identifier' => $ident,
+                    'name' => 'PON ' . $pIdx . ' (' . $ident . ')',
                     'oper_status' => $status,
                     'tx_power_dbm' => 4.80,
                     'temperature' => 41.5,
                 ];
+            }
+        }
+
+        // 2. Look for 2-part patterns like: epon0/1, gpon0/1, etc.
+        if (empty($ports)) {
+            preg_match_all('/(?:interface\s+)?\b(epon|gpon|pon)[\s_\-]*([0-9]+)\/([0-9]+)\b\s+([a-zA-Z]+)/i', $ifOutput, $matches, PREG_SET_ORDER);
+
+            if (empty($matches)) {
+                preg_match_all('/\b(epon|gpon)0\/([0-9]+)\b/i', $ifOutput . "\n" . $powerOutput, $matches2, PREG_SET_ORDER);
+                $seenIdx = [];
+                foreach ($matches2 as $m2) {
+                    $idx = (int) $m2[2];
+                    if (!isset($seenIdx[$idx])) {
+                        $seenIdx[$idx] = true;
+                        $ports[$idx] = [
+                            'index' => $idx,
+                            'identifier' => strtolower($m2[1]) . '0/' . $idx,
+                            'name' => 'PON ' . $idx . ' (' . strtoupper($m2[1]) . '0/' . $idx . ')',
+                            'oper_status' => 'up',
+                            'tx_power_dbm' => 4.80,
+                            'temperature' => 41.5,
+                        ];
+                    }
+                }
+            } else {
+                foreach ($matches as $row) {
+                    $ponType = strtolower($row[1]);
+                    $portNum = (int) $row[3];
+                    $status = strtolower($row[4]) === 'up' ? 'up' : 'down';
+
+                    $ports[$portNum] = [
+                        'index' => $portNum,
+                        'identifier' => $ponType . '0/' . $portNum,
+                        'name' => 'PON ' . $portNum . ' (' . strtoupper($ponType) . '0/' . $portNum . ')',
+                        'oper_status' => $status,
+                        'tx_power_dbm' => 4.80,
+                        'temperature' => 41.5,
+                    ];
+                }
             }
         }
 
