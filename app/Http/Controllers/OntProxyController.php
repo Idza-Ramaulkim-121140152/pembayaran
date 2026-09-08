@@ -110,6 +110,37 @@ class OntProxyController extends Controller
     }
 
     /**
+     * Fallback Proxy for ONT Assets / Endpoints requested at the root path
+     */
+    public function fallbackProxy(Request $request, ?string $path = null): Response
+    {
+        $ontIp = null;
+
+        // 1. Extract from Referer header
+        $referer = (string) $request->header('referer', '');
+        if (preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
+            $ontIp = $matches[1];
+        }
+
+        // 2. Fallback to active session
+        if (!$ontIp) {
+            $ontIp = session('active_ont_ip');
+        }
+
+        // 3. Fallback to active cookie
+        if (!$ontIp) {
+            $ontIp = $request->cookie('active_ont_gateway_ip');
+        }
+
+        if (!$ontIp || !filter_var($ontIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            abort(404, 'ONT Gateway context not found');
+        }
+
+        $fullPath = $path ?? $request->path();
+        return $this->proxy($request, $ontIp, $fullPath);
+    }
+
+    /**
      * Reverse Proxy Handler for ONT Web Interface
      */
     public function proxy(Request $request, string $ip, ?string $path = null): Response
@@ -123,6 +154,9 @@ class OntProxyController extends Controller
         if ($port <= 0 || $port > 65535) {
             $port = 80;
         }
+
+        // Save active ONT session context
+        session()->put('active_ont_ip', $ip);
         session()->put("ont_port_{$ip}", $port);
 
         $path = $path ? ltrim($path, '/') : '';
@@ -146,7 +180,7 @@ class OntProxyController extends Controller
         curl_setopt($ch, CURLOPT_HEADER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 25);
 
         // Forward headers
         $forwardHeaders = [];
@@ -194,37 +228,74 @@ class OntProxyController extends Controller
 
         // 1. Rewrite 301 / 302 Redirect Location
         if (isset($responseHeaders['location'])) {
-            $loc = $responseHeaders['location'];
+            $loc = is_array($responseHeaders['location']) ? end($responseHeaders['location']) : $responseHeaders['location'];
+            $loc = trim($loc);
             if (str_starts_with($loc, '/')) {
                 $responseHeaders['location'] = "{$gatewayBase}{$loc}";
-            } elseif (str_starts_with($loc, "http://{$ip}")) {
+            } elseif (str_starts_with($loc, "http://{$ip}") || str_starts_with($loc, "https://{$ip}")) {
                 $parsedLoc = parse_url($loc);
                 $newPath = ($parsedLoc['path'] ?? '/') . (isset($parsedLoc['query']) ? '?' . $parsedLoc['query'] : '');
                 $responseHeaders['location'] = "{$gatewayBase}{$newPath}";
+            } elseif (!str_starts_with($loc, 'http://') && !str_starts_with($loc, 'https://')) {
+                $responseHeaders['location'] = "{$gatewayBase}/{$loc}";
             }
         }
 
-        // 2. Rewrite Set-Cookie Path
+        // 2. Rewrite Set-Cookie Path to root Path=/ so all ONT requests (gateway & fallback) send cookies
         if (isset($responseHeaders['set-cookie'])) {
             $cookies = is_array($responseHeaders['set-cookie']) ? $responseHeaders['set-cookie'] : [$responseHeaders['set-cookie']];
             $rewrittenCookies = [];
             foreach ($cookies as $c) {
-                $rewrittenCookies[] = preg_replace('/Path=[^;]+/i', "Path=/ont-gateway/{$ip}", $c);
+                if (preg_match('/Path=[^;]+/i', $c)) {
+                    $rewrittenCookies[] = preg_replace('/Path=[^;]+/i', 'Path=/', $c);
+                } else {
+                    $rewrittenCookies[] = $c . '; Path=/';
+                }
             }
             $responseHeaders['set-cookie'] = $rewrittenCookies;
         }
 
-        // 3. Process Body based on Content-Type
-        if (str_contains($contentType, 'text/html') || empty($contentType)) {
+        // 3. Detect Content-Type & File Extension to route properly
+        $pathOnly = parse_url($path, PHP_URL_PATH) ?? '';
+        $extension = strtolower(pathinfo($pathOnly, PATHINFO_EXTENSION));
+
+        $isJs = in_array($extension, ['js', 'mjs']) || str_contains($contentType, 'javascript') || str_contains($contentType, 'ecmascript');
+        $isCss = $extension === 'css' || str_contains($contentType, 'text/css');
+        $isBinary = in_array($extension, ['png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'woff', 'woff2', 'ttf', 'eot', 'otf', 'bin']);
+        
+        $isHtml = !$isJs && !$isCss && !$isBinary && (
+            in_array($extension, ['html', 'htm', 'asp', 'gch', 'php', 'cgi', '']) ||
+            $path === '' ||
+            str_contains($contentType, 'text/html') ||
+            (empty($contentType) && (stripos($body, '<!DOCTYPE') !== false || stripos($body, '<html') !== false || stripos($body, '<head') !== false || stripos($body, '<body') !== false))
+        );
+
+        if ($isHtml) {
+            $responseHeaders['content-type'] = 'text/html; charset=utf-8';
             $body = $this->rewriteHtml($body, $gatewayBase, $ip);
-        } elseif (str_contains($contentType, 'text/css')) {
+        } elseif ($isJs) {
+            $responseHeaders['content-type'] = 'application/javascript; charset=utf-8';
+            $body = $this->rewriteJs($body, $gatewayBase);
+        } elseif ($isCss) {
+            $responseHeaders['content-type'] = 'text/css; charset=utf-8';
             $body = $this->rewriteCss($body, $gatewayBase);
+        } elseif ($extension === 'ico' && empty($contentType)) {
+            $responseHeaders['content-type'] = 'image/x-icon';
+        } elseif ($extension === 'png' && empty($contentType)) {
+            $responseHeaders['content-type'] = 'image/png';
+        } elseif (in_array($extension, ['jpg', 'jpeg']) && empty($contentType)) {
+            $responseHeaders['content-type'] = 'image/jpeg';
+        } elseif ($extension === 'svg' && empty($contentType)) {
+            $responseHeaders['content-type'] = 'image/svg+xml';
         }
 
         unset($responseHeaders['transfer-encoding'], $responseHeaders['content-length']);
         $responseHeaders['content-length'] = strlen($body);
 
-        return response($body, $httpCode ?: 200, $responseHeaders);
+        $response = response($body, $httpCode ?: 200, $responseHeaders);
+        $response->withCookie(cookie('active_ont_gateway_ip', $ip, 60, '/', null, false, false));
+
+        return $response;
     }
 
     private function rewriteHtml(string $html, string $gatewayBase, string $ip): string
@@ -233,27 +304,103 @@ class OntProxyController extends Controller
 <script>
 (function() {
     var gatewayPrefix = '{$gatewayBase}';
+    window.__webpack_public_path__ = gatewayPrefix + '/';
+
+    function prefixUrl(url) {
+        if (!url || typeof url !== 'string') return url;
+        if (url.indexOf('data:') === 0 || url.indexOf('javascript:') === 0 || url.indexOf('#') === 0) {
+            return url;
+        }
+        if (url.indexOf('http://') === 0 || url.indexOf('https://') === 0 || url.indexOf('//') === 0) {
+            return url;
+        }
+        if (url.charAt(0) === '/' && url.indexOf(gatewayPrefix) !== 0) {
+            return gatewayPrefix + url;
+        }
+        return url;
+    }
+
+    // 1. Intercept XMLHttpRequest
     var origOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
-        if (typeof url === 'string' && url.charAt(0) === '/' && url.indexOf(gatewayPrefix) !== 0) {
-            url = gatewayPrefix + url;
-        }
         var args = Array.prototype.slice.call(arguments);
-        args[1] = url;
+        args[1] = prefixUrl(url);
         return origOpen.apply(this, args);
     };
 
+    // 2. Intercept fetch
     if (window.fetch) {
         var origFetch = window.fetch;
         window.fetch = function(input, init) {
-            if (typeof input === 'string' && input.charAt(0) === '/' && input.indexOf(gatewayPrefix) !== 0) {
-                input = gatewayPrefix + input;
-            } else if (input && typeof input.url === 'string' && input.url.charAt(0) === '/' && input.url.indexOf(gatewayPrefix) !== 0) {
-                input = new Request(gatewayPrefix + input.url, input);
+            if (typeof input === 'string') {
+                input = prefixUrl(input);
+            } else if (input && typeof input.url === 'string') {
+                var newUrl = prefixUrl(input.url);
+                if (newUrl !== input.url) {
+                    input = new Request(newUrl, input);
+                }
             }
             return origFetch.call(this, input, init);
         };
     }
+
+    // 3. Intercept HTMLScriptElement.src (catches Webpack dynamic chunk script loading)
+    var scriptSrcDesc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+    if (scriptSrcDesc && scriptSrcDesc.set) {
+        Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+            set: function(val) {
+                return scriptSrcDesc.set.call(this, prefixUrl(val));
+            },
+            get: function() {
+                return scriptSrcDesc.get.call(this);
+            }
+        });
+    }
+
+    // 4. Intercept HTMLLinkElement.href (catches dynamic CSS loading)
+    var linkHrefDesc = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, 'href');
+    if (linkHrefDesc && linkHrefDesc.set) {
+        Object.defineProperty(HTMLLinkElement.prototype, 'href', {
+            set: function(val) {
+                return linkHrefDesc.set.call(this, prefixUrl(val));
+            },
+            get: function() {
+                return linkHrefDesc.get.call(this);
+            }
+        });
+    }
+
+    // 5. Intercept HTMLImageElement.src
+    var imgDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (imgDesc && imgDesc.set) {
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+            set: function(val) {
+                return imgDesc.set.call(this, prefixUrl(val));
+            },
+            get: function() {
+                return imgDesc.get.call(this);
+            }
+        });
+    }
+
+    // 6. Intercept Element.setAttribute (catches script/link/form attributes)
+    var origSetAttr = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function(name, val) {
+        if ((name === 'src' || name === 'href' || name === 'action') && typeof val === 'string') {
+            val = prefixUrl(val);
+        }
+        return origSetAttr.call(this, name, val);
+    };
+
+    // 7. Intercept History API (catches SPA hash & history navigation)
+    var origPush = history.pushState;
+    history.pushState = function(state, title, url) {
+        return origPush.call(this, state, title, prefixUrl(url));
+    };
+    var origReplace = history.replaceState;
+    history.replaceState = function(state, title, url) {
+        return origReplace.call(this, state, title, prefixUrl(url));
+    };
 })();
 </script>
 <base href="{$gatewayBase}/">
@@ -261,6 +408,8 @@ HTML;
 
         if (stripos($html, '<head>') !== false) {
             $html = preg_replace('/<head>/i', "<head>\n{$interceptor}", $html, 1);
+        } elseif (stripos($html, '<head ') !== false) {
+            $html = preg_replace('/(<head[^>]*>)/i', "$1\n{$interceptor}", $html, 1);
         } else {
             $html = $interceptor . "\n" . $html;
         }
@@ -278,6 +427,17 @@ HTML;
         }, $html);
 
         return $html;
+    }
+
+    private function rewriteJs(string $js, string $gatewayBase): string
+    {
+        // 1. Rewrite Webpack publicPath assignments, e.g. __webpack_require__.p = "/" or a.p = "/" or n.p = "/"
+        $js = preg_replace('/([\w\$]\.p\s*=\s*)["\']\/["\']/', '$1"' . $gatewayBase . '/"', $js);
+
+        // 2. Rewrite common root relative chunk paths if hardcoded in JS
+        $js = preg_replace('/(["\'])\/(js|css|img|images|fonts|boaform|cgi-bin)\//', '$1' . $gatewayBase . '/$2/', $js);
+
+        return $js;
     }
 
     private function rewriteCss(string $css, string $gatewayBase): string

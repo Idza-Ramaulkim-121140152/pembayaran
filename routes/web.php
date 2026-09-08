@@ -816,8 +816,20 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         ->where('path', '.*')
         ->name('remote-ont.proxy');
 
+    // ONT Gateway Fallback Route for Root-Relative Assets & Endpoints (js, css, img, fonts, boaform, cgi-bin, etc.)
+    Route::any('/{any}', [OntProxyController::class, 'fallbackProxy'])
+        ->where('any', '^(js|css|img|images|fonts|static|boaform|cgi-bin|web_login|favicon\.ico).*$')
+        ->name('remote-ont.fallback');
+
     // Serve React app untuk semua routes yang tidak dimulai dengan /api
-    Route::get('{any}', function () {
+    Route::get('{any}', function (\Illuminate\Http\Request $request) {
+        // If request originated from an ONT gateway session via Referer, proxy it instead of showing blank/React HTML!
+        $referer = (string) $request->header('referer', '');
+        if (preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
+            $ontIp = $matches[1];
+            return app(OntProxyController::class)->proxy($request, $ontIp, $request->path());
+        }
+
         return view('app');
     })->where('any', '^(?!api).*$')->name('react.app');
 });
