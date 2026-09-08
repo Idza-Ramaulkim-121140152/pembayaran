@@ -18,6 +18,7 @@ import {
     Link as LinkIcon,
     Loader,
     Lock,
+    Unlock,
     MapPin,
     Network,
     Power,
@@ -571,7 +572,21 @@ export default function SuperPanelPage() {
         showDropLines: false,
         oltFilter: 'all',
     });
-    const [isDragMode, setIsDragMode] = useState(true);
+    // Default: Mode Lihat Saja (Terkunci) agar tidak sengaja tergeser saat dibuka
+    const [isDragMode, setIsDragMode] = useState(false);
+
+    // Toggle Handler dengan Feedback Meyakinkan
+    const handleToggleDragMode = () => {
+        setIsDragMode((prev) => {
+            const next = !prev;
+            if (next) {
+                showToast('🔓 Mode Geser Titik Diaktifkan! Semua marker (OLT, ODC, ODP, & Pelanggan) sekarang bisa digeser langsung di peta. Posisi baru otomatis tersimpan.', 'warning');
+            } else {
+                showToast('🔒 Mode Lihat Saja: Posisi semua titik di peta telah dikunci dengan aman.', 'success');
+            }
+            return next;
+        });
+    };
 
     // OLT Edit State (from GIS Map)
     const [selectedOltForEdit, setSelectedOltForEdit] = useState(null);
@@ -971,6 +986,9 @@ export default function SuperPanelPage() {
                             border: 2px solid #FFFFFF;
                             color: white; font-weight: bold; font-size: 16px;
                             cursor: ${isDragMode ? 'grab' : 'pointer'};
+                            outline: ${isDragMode ? '3px dashed #F59E0B' : 'none'};
+                            outline-offset: 3px;
+                            transition: outline 0.2s ease;
                         ">
                             ⚡
                         </div>
@@ -1015,7 +1033,7 @@ export default function SuperPanelPage() {
                 }
 
                 marker.bindPopup(`
-                    <div style="font-family: sans-serif; font-size: 13px; min-width: 240px; line-height: 1.5;">
+                    <div style="font-family: sans-serif; font-size: 13px; min-width: 250px; line-height: 1.5;">
                         <div style="background: #1E40AF; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px; display: flex; justify-content: space-between; align-items: center;">
                             <strong>⚡ ${olt.name}</strong>
                             <span style="background: #3B82F6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold;">
@@ -1028,13 +1046,24 @@ export default function SuperPanelPage() {
                         <b>Status:</b> <span style="color: ${olt.status === 'online' ? '#10B981' : '#EF4444'}; font-weight: bold;">● ${olt.status.toUpperCase()}</span><br/>
                         <b>Suhu:</b> ${olt.telemetry?.temperature_celsius || 41.5} °C | <b>CPU:</b> ${olt.telemetry?.cpu_usage_percent || 18}%<br/>
                         ${olt.location_address ? `<b>Lokasi:</b> ${olt.location_address}<br/>` : ''}
-                        <div style="margin-top: 10px; display: flex; gap: 6px;">
-                            <button onclick="window.superPanelOpenEditOlt('${olt.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
-                                ✏️ Edit Posisi / Info OLT
-                            </button>
-                            <button onclick="window.superPanelTraceOlt('${olt.id}')" style="flex: 1; background: #475569; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
-                                Detail Telemetri &rarr;
-                            </button>
+                        <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="window.superPanelOpenEditOlt('${olt.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                    ✏️ Edit Posisi / Info OLT
+                                </button>
+                                <button onclick="window.superPanelTraceOlt('${olt.id}')" style="flex: 1; background: #475569; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
+                                    Detail Telemetri &rarr;
+                                </button>
+                            </div>
+                            ${!isDragMode ? `
+                                <button onclick="window.superPanelEnableDragMode()" style="background: #D97706; color: white; border: none; border-radius: 5px; padding: 5px 8px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                    🔓 Buka Kunci (Mode Geser di Peta)
+                                </button>
+                            ` : `
+                                <div style="background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: bold; text-align: center; padding: 3px 6px; border-radius: 4px; border: 1px dashed #F59E0B;">
+                                    ⚡ Siap Digeser: Klik & tahan pin OLT ini untuk memindahkan
+                                </div>
+                            `}
                         </div>
                     </div>
                 `);
@@ -1056,6 +1085,9 @@ export default function SuperPanelPage() {
                             border: 2px solid #FFFFFF;
                             color: white; font-weight: bold; font-size: 10px;
                             cursor: ${isDragMode ? 'grab' : 'pointer'};
+                            outline: ${isDragMode ? '3px dashed #F59E0B' : 'none'};
+                            outline-offset: 3px;
+                            transition: outline 0.2s ease;
                         ">
                             <span style="font-size: 14px; line-height: 1;">🗄️</span>
                             <span style="font-size: 9px; margin-top: -2px;">ODC</span>
@@ -1138,10 +1170,19 @@ export default function SuperPanelPage() {
                         <b>Total Kapasitas:</b> ${odc.total_ports || 24} Port<br/>
                         <b>Pelanggan Terhubung:</b> ${odc.connected_customers_count || 0} Pelanggan<br/>
                         <b>Alamat:</b> ${odc.location_address || '-'}<br/>
-                        <div style="margin-top: 10px; display: flex; gap: 6px;">
-                            <button onclick="window.superPanelOpenEditNode('${odc.id}')" style="flex: 1; background: #7C3AED; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                        <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                            <button onclick="window.superPanelOpenEditNode('${odc.id}')" style="background: #7C3AED; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
                                 ✏️ Edit Titik & Jalur
                             </button>
+                            ${!isDragMode ? `
+                                <button onclick="window.superPanelEnableDragMode()" style="background: #D97706; color: white; border: none; border-radius: 5px; padding: 5px 8px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                    🔓 Buka Kunci (Mode Geser di Peta)
+                                </button>
+                            ` : `
+                                <div style="background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: bold; text-align: center; padding: 3px 6px; border-radius: 4px; border: 1px dashed #F59E0B;">
+                                    ⚡ Siap Digeser: Klik & tahan pin ODC ini untuk memindahkan
+                                </div>
+                            `}
                         </div>
                     </div>
                 `);
@@ -1164,6 +1205,9 @@ export default function SuperPanelPage() {
                             border: 2px solid #FFFFFF;
                             color: white; font-weight: bold; font-size: 10px;
                             cursor: ${isDragMode ? 'grab' : 'pointer'};
+                            outline: ${isDragMode ? '3px dashed #F59E0B' : 'none'};
+                            outline-offset: 3px;
+                            transition: outline 0.2s ease;
                         ">
                             <span>${odp.used_ports}/${odp.total_ports}</span>
                         </div>
@@ -1251,13 +1295,24 @@ export default function SuperPanelPage() {
                         ` : ''}
                         <b>Stok Port Sisa:</b> <strong style="color: ${odp.free_ports > 0 ? '#10B981' : '#EF4444'}">${odp.free_ports} Port Kosong</strong><br/>
                         <b>Alamat:</b> ${odp.location_address || '-'}<br/>
-                        <div style="margin-top: 10px; display: flex; gap: 6px;">
-                            <button onclick="window.superPanelOpenEditNode('${odp.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
-                                ✏️ Edit Titik & Jalur
-                            </button>
-                            <button onclick="window.superPanelShowOdpStock('${odp.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
-                                📦 Slot Port &rarr;
-                            </button>
+                        <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="window.superPanelOpenEditNode('${odp.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                    ✏️ Edit Titik & Jalur
+                                </button>
+                                <button onclick="window.superPanelShowOdpStock('${odp.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                    📦 Slot Port &rarr;
+                                </button>
+                            </div>
+                            ${!isDragMode ? `
+                                <button onclick="window.superPanelEnableDragMode()" style="background: #D97706; color: white; border: none; border-radius: 5px; padding: 5px 8px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                    🔓 Buka Kunci (Mode Geser di Peta)
+                                </button>
+                            ` : `
+                                <div style="background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: bold; text-align: center; padding: 3px 6px; border-radius: 4px; border: 1px dashed #F59E0B;">
+                                    ⚡ Siap Digeser: Klik & tahan bulatan ODP ini untuk memindahkan
+                                </div>
+                            `}
                         </div>
                     </div>
                 `);
@@ -1282,6 +1337,9 @@ export default function SuperPanelPage() {
                                 border: 2px solid #FFFFFF;
                                 box-shadow: 0 0 6px ${cust.is_active ? '#3B82F6' : '#EF4444'}cc;
                                 pointer-events: none;
+                                outline: ${isDragMode ? '2px dashed #F59E0B' : 'none'};
+                                outline-offset: 2px;
+                                transition: outline 0.2s ease;
                             "></div>
                         </div>
                     `,
@@ -1331,13 +1389,24 @@ export default function SuperPanelPage() {
                         <b>ODP:</b> ${cust.odp_name || '-'} (Port ${cust.odp_port_number || 1})<br/>
                         <b>Sinyal RX:</b> <span style="font-weight: bold; color: ${cust.rx_power < -25 ? '#EF4444' : '#10B981'}">${cust.rx_power} dBm</span><br/>
                         <b>Status Layanan:</b> ${cust.is_active ? '<span style="color: #10B981; font-weight: bold;">AKTIF</span>' : '<span style="color: #EF4444; font-weight: bold;">NONAKTIF/ISOLIR</span>'}<br/>
-                        <div style="margin-top: 10px; display: flex; gap: 6px;">
-                            <button onclick="window.superPanelOpenEditCustomer('${cust.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
-                                ✏️ Pindah / Edit Pelanggan
-                            </button>
-                            <button onclick="window.superPanelTraceCustomer('${cust.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
-                                Lacak 360 &rarr;
-                            </button>
+                        <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="window.superPanelOpenEditCustomer('${cust.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                    ✏️ Pindah / Edit Pelanggan
+                                </button>
+                                <button onclick="window.superPanelTraceCustomer('${cust.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
+                                    Lacak 360 &rarr;
+                                </button>
+                            </div>
+                            ${!isDragMode ? `
+                                <button onclick="window.superPanelEnableDragMode()" style="background: #D97706; color: white; border: none; border-radius: 5px; padding: 5px 8px; font-size: 11px; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                    🔓 Buka Kunci (Mode Geser di Peta)
+                                </button>
+                            ` : `
+                                <div style="background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: bold; text-align: center; padding: 3px 6px; border-radius: 4px; border: 1px dashed #F59E0B;">
+                                    ⚡ Siap Digeser: Klik & tahan titik pelanggan ini untuk memindahkan
+                                </div>
+                            `}
                         </div>
                     </div>
                 `);
@@ -1356,6 +1425,10 @@ export default function SuperPanelPage() {
         window.superPanelTraceOlt = (oltId) => {
             setSelectedOltId(parseInt(oltId, 10));
             setActiveTab('olt_snmp');
+        };
+        window.superPanelEnableDragMode = () => {
+            setIsDragMode(true);
+            showToast('🔓 Mode Geser Titik Diaktifkan! Semua marker (OLT, ODC, ODP, & Pelanggan) sekarang bisa digeser langsung di peta. Posisi baru otomatis tersimpan.', 'warning');
         };
         window.superPanelOpenEditNode = (nodeId) => {
             const idInt = parseInt(nodeId, 10);
@@ -1424,6 +1497,7 @@ export default function SuperPanelPage() {
             delete window.superPanelTraceCustomer;
             delete window.superPanelShowOdpStock;
             delete window.superPanelTraceOlt;
+            delete window.superPanelEnableDragMode;
             delete window.superPanelOpenEditNode;
             delete window.superPanelOpenEditOlt;
             delete window.superPanelOpenEditCustomer;
@@ -2011,16 +2085,28 @@ export default function SuperPanelPage() {
                             {/* Drag & Drop Marker Mode Toggle */}
                             <button
                                 type="button"
-                                onClick={() => setIsDragMode(!isDragMode)}
-                                className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition text-xs shadow-md ${
+                                onClick={handleToggleDragMode}
+                                className={`px-3.5 py-2 rounded-xl font-bold flex items-center gap-2 transition text-xs shadow-md ${
                                     isDragMode
-                                        ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 animate-pulse'
-                                        : 'bg-slate-700 hover:bg-slate-600 text-amber-300 border border-amber-500/30'
+                                        ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 ring-4 ring-amber-300/60 animate-pulse font-black'
+                                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 hover:border-amber-400'
                                 }`}
-                                title="Aktifkan untuk menggeser semua marker (OLT, ODC, ODP, atau Pelanggan) langsung di peta"
+                                title={isDragMode ? 'Mode geser sedang AKTIF. Klik untuk mengunci posisi.' : 'Klik untuk mengaktifkan mode geser titik di peta (drag & drop)'}
                             >
-                                <Move className="w-3.5 h-3.5" />
-                                {isDragMode ? '📍 Kunci Posisi (Mode Geser Aktif)' : '✏️ Mode Geser Titik (Drag & Drop)'}
+                                {isDragMode ? (
+                                    <>
+                                        <Unlock className="w-4 h-4 text-slate-950 shrink-0" />
+                                        <span>🔓 MODE GESER AKTIF (KLIK UNTUK KUNCI)</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                                        <span>Mode Lihat Saja (Terkunci)</span>
+                                        <span className="hidden sm:inline-flex items-center text-[10px] font-bold bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">
+                                            Klik untuk Geser
+                                        </span>
+                                    </>
+                                )}
                             </button>
 
                             {/* Add New Node Button */}
@@ -2037,17 +2123,32 @@ export default function SuperPanelPage() {
 
                     {/* Interactive Leaflet Map Container */}
                     <div className="relative w-full h-[620px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-950">
-                        {/* Drag mode active notification banner */}
-                        {isDragMode && (
-                            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 border border-amber-300 text-xs">
-                                <Move className="w-4 h-4 animate-spin" />
-                                <span>Mode Geser Aktif: Klik & tahan marker mana saja (OLT, ODC, ODP, Pelanggan) untuk memindahkan posisi. Garis kabel otomatis mengikuti & koordinat tersimpan!</span>
+                        {/* Drag mode active vs view-only notification banners */}
+                        {isDragMode ? (
+                            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 border border-amber-300 text-xs max-w-[95%] sm:max-w-none">
+                                <Unlock className="w-4 h-4 animate-bounce shrink-0" />
+                                <span><strong>Mode Geser Aktif:</strong> Klik & tahan marker mana saja (OLT, ODC, ODP, Pelanggan) untuk memindahkan posisi. Garis & koordinat otomatis tersimpan!</span>
                                 <button
                                     type="button"
-                                    onClick={() => setIsDragMode(false)}
-                                    className="ml-2 px-2.5 py-1 bg-slate-950 text-amber-300 rounded-lg text-[11px] font-extrabold hover:bg-slate-900 border border-amber-400"
+                                    onClick={handleToggleDragMode}
+                                    className="ml-2 px-2.5 py-1 bg-slate-950 text-amber-300 rounded-lg text-[11px] font-extrabold hover:bg-slate-900 border border-amber-400 shrink-0 flex items-center gap-1 shadow"
                                 >
-                                    Selesai / Kunci
+                                    <Lock className="w-3 h-3" />
+                                    Kunci Posisi
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="absolute top-3 right-3 z-20 bg-slate-900/90 backdrop-blur border border-slate-700/80 text-xs text-slate-300 px-3 py-1.5 rounded-xl shadow flex items-center gap-2">
+                                <span className="flex items-center gap-1 text-slate-400 font-medium">
+                                    <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                    Posisi Terkunci (Mode Lihat)
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleToggleDragMode}
+                                    className="text-[11px] font-bold text-amber-400 hover:text-amber-300 underline underline-offset-2 ml-1"
+                                >
+                                    Aktifkan Geser
                                 </button>
                             </div>
                         )}
