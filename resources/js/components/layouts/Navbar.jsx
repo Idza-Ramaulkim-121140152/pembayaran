@@ -29,6 +29,7 @@ import {
 	Landmark,
 	Wifi,
     Server,
+    Router,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
