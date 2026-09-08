@@ -37,6 +37,8 @@ import {
     WifiOff,
     X,
     Settings2,
+    Settings,
+    GitBranch,
     Zap,
     Edit3,
     Shuffle,
@@ -50,6 +52,7 @@ import Modal from '../../components/common/Modal';
 import apiClient from '../../services/api';
 import masterOltService from '../../services/masterOltService';
 import { attachSatelliteLayerWithFallback } from '../../utils/leafletTileFallback';
+import OdpInternalSchematic from './components/OdpInternalSchematic';
 
 // Optical ratio calculation lookup helper for instant live preview in modals
 const calculateOpticalEstimate = (inputDbm, specialRatio, distRatio, isOdc) => {
@@ -143,7 +146,10 @@ function NodeFormFields({
     onSave,
     isSaving,
     excludeNodeId = null,
+    nodeObject = null,
 }) {
+    const [activeFormTab, setActiveFormTab] = useState('schematic'); // 'schematic' | 'general'
+
     // Determine estimated input power from selected parent
     const estInputPower = useMemo(() => {
         if (form.parent_type === 'pon') {
@@ -184,6 +190,81 @@ function NodeFormFields({
         return (formOptions?.odps || []).filter(o => !excludeNodeId || o.id !== excludeNodeId);
     }, [formOptions, excludeNodeId]);
 
+    const nodeCustomers = useMemo(() => {
+        if (nodeObject?.customers && Array.isArray(nodeObject.customers)) {
+            return nodeObject.customers;
+        }
+        if (nodeObject?.id && gisData?.customer_nodes) {
+            return gisData.customer_nodes.filter(c => c.odp_id === nodeObject.id);
+        }
+        return [];
+    }, [nodeObject, gisData]);
+
+    const currentSchematic = useMemo(() => {
+        if (form.schematic_data && typeof form.schematic_data === 'object' && Array.isArray(form.schematic_data.modules)) {
+            return form.schematic_data;
+        }
+        if (nodeObject?.schematic_data && typeof nodeObject.schematic_data === 'object' && Array.isArray(nodeObject.schematic_data.modules)) {
+            return nodeObject.schematic_data;
+        }
+        if (nodeObject?.resolved_schematic && typeof nodeObject.resolved_schematic === 'object' && Array.isArray(nodeObject.resolved_schematic.modules)) {
+            return nodeObject.resolved_schematic;
+        }
+
+        // Fallback initial modules
+        const mods = [];
+        if (form.rasio_spesial && form.rasio_spesial !== 'none') {
+            mods.push({
+                id: 'mod_1',
+                type: 'asymmetric',
+                name: `Rasio Spesial (${form.rasio_spesial})`,
+                ratio: form.rasio_spesial,
+                in_source: 'feeder_in',
+                out_thru: { type: 'odp_hop', target_name: 'ODP Hop Berikutnya' },
+                out_tap: { type: (form.rasio_distribusi && form.rasio_distribusi !== 'none') ? 'module_in' : 'port', target_module_id: 'mod_2', target_port: 1 }
+            });
+        }
+        if (form.rasio_distribusi && form.rasio_distribusi !== 'none') {
+            mods.push({
+                id: (form.rasio_spesial && form.rasio_spesial !== 'none') ? 'mod_2' : 'mod_1',
+                type: 'plc',
+                name: `Splitter Distribusi (${form.rasio_distribusi})`,
+                ratio: form.rasio_distribusi,
+                in_source: (form.rasio_spesial && form.rasio_spesial !== 'none') ? 'mod_1:tap' : 'feeder_in',
+                out_ports: {
+                    1: { type: 'customer', port_number: 1 },
+                    2: { type: 'customer', port_number: 2 },
+                    3: { type: 'customer', port_number: 3 },
+                    4: { type: 'customer', port_number: 4 },
+                }
+            });
+        } else if (mods.length === 0) {
+            mods.push({
+                id: 'mod_1',
+                type: 'plc',
+                name: 'PLC Splitter (1:4)',
+                ratio: '1:4',
+                in_source: 'feeder_in',
+                out_ports: {
+                    1: { type: 'customer', port_number: 1 },
+                    2: { type: 'customer', port_number: 2 },
+                    3: { type: 'customer', port_number: 3 },
+                    4: { type: 'customer', port_number: 4 },
+                }
+            });
+        }
+
+        return {
+            modules: mods,
+            input_source: {
+                type: form.parent_type || 'pon',
+                id: form.parent_id || form.olt_id || '',
+                label: form.parent_type === 'odp' ? 'Estafet ODP' : (form.parent_type === 'odc' ? 'Dari ODC' : 'Port PON OLT')
+            },
+            notes: ''
+        };
+    }, [form.schematic_data, form.rasio_spesial, form.rasio_distribusi, form.parent_type, form.parent_id, form.olt_id, nodeObject]);
+
     return (
         <div className="space-y-4 text-xs text-slate-300">
             {/* Identity & Device Type Toggle */}
@@ -193,7 +274,7 @@ function NodeFormFields({
                     <input
                         type="text"
                         value={form.nama}
-                        onChange={(e) => setForm({ ...form, nama: e.target.value })}
+                        onChange={(e) => setForm(prev => ({ ...prev, nama: e.target.value }))}
                         placeholder={form.device_type === 'odc' ? 'Contoh: ODC-SENTRAL-01' : 'Contoh: KAL-TAM-KBS-001'}
                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
                     />
@@ -203,12 +284,12 @@ function NodeFormFields({
                     <div className="grid grid-cols-2 gap-2">
                         <button
                             type="button"
-                            onClick={() => setForm({ 
-                                ...form, 
+                            onClick={() => setForm(prev => ({ 
+                                ...prev, 
                                 device_type: 'odp',
-                                total_ports: form.total_ports === 24 ? 8 : form.total_ports,
-                                rasio_distribusi: form.rasio_distribusi === 'none' ? '1:8' : form.rasio_distribusi,
-                            })}
+                                total_ports: prev.total_ports === 24 ? 8 : prev.total_ports,
+                                rasio_distribusi: prev.rasio_distribusi === 'none' ? '1:8' : prev.rasio_distribusi,
+                            }))}
                             className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
                                 form.device_type === 'odp'
                                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
@@ -219,12 +300,12 @@ function NodeFormFields({
                         </button>
                         <button
                             type="button"
-                            onClick={() => setForm({ 
-                                ...form, 
+                            onClick={() => setForm(prev => ({ 
+                                ...prev, 
                                 device_type: 'odc',
-                                total_ports: form.total_ports === 8 ? 24 : form.total_ports,
+                                total_ports: prev.total_ports === 8 ? 24 : prev.total_ports,
                                 rasio_distribusi: 'none',
-                            })}
+                            }))}
                             className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
                                 form.device_type === 'odc'
                                     ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
@@ -237,287 +318,353 @@ function NodeFormFields({
                 </div>
             </div>
 
-            {/* Parent Connection & Topology */}
-            <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
-                <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-200 flex items-center gap-1.5">
-                        <Network className="w-3.5 h-3.5 text-cyan-400" />
-                        Koneksi Hulu / Jalur Masuk (Parent Node)
+            {/* Sub-Tab Navigation */}
+            <div className="flex items-center gap-2 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+                <button
+                    type="button"
+                    onClick={() => setActiveFormTab('schematic')}
+                    className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition ${
+                        activeFormTab === 'schematic'
+                            ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                >
+                    <GitBranch className="w-4 h-4 text-cyan-300" />
+                    <span>Pemetaan Gambar Skematik ({form.device_type === 'odc' ? 'ODC' : 'ODP'})</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-900/60 text-cyan-200 font-mono">
+                        {currentSchematic?.modules?.length || 0} Modul
                     </span>
-                    <span className="text-[11px] text-slate-400">Pilih asal feeder serat optik</span>
-                </div>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveFormTab('general')}
+                    className={`py-2 px-4 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition ${
+                        activeFormTab === 'general'
+                            ? 'bg-slate-700 text-white shadow'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                >
+                    <Settings className="w-3.5 h-3.5 text-slate-300" />
+                    <span>Detail Info, Tiang & Alamat</span>
+                </button>
+            </div>
 
-                <div className="grid grid-cols-3 gap-2">
-                    <button
-                        type="button"
-                        onClick={() => setForm({ ...form, parent_type: 'pon', parent_id: '' })}
-                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
-                            form.parent_type === 'pon'
-                                ? 'bg-blue-600 text-white font-bold'
-                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                        }`}
-                    >
-                        ⚡ Port PON OLT
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setForm({ ...form, parent_type: 'odc', parent_id: availableOdcs[0]?.id || '' })}
-                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
-                            form.parent_type === 'odc'
-                                ? 'bg-purple-600 text-white font-bold'
-                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                        }`}
-                    >
-                        🗄️ Dari ODC
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setForm({ ...form, parent_type: 'odp', parent_id: availableOdps[0]?.id || '' })}
-                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
-                            form.parent_type === 'odp'
-                                ? 'bg-amber-600 text-white font-bold'
-                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                        }`}
-                    >
-                        📦 Estafet Antar ODP
-                    </button>
+            {/* TAB 1: VISUAL SCHEMATIC DIAGRAM (DEFAULT) */}
+            {activeFormTab === 'schematic' && (
+                <div className="pt-1">
+                    <OdpInternalSchematic
+                        schematic={currentSchematic}
+                        onChange={(updatedSchematic) => {
+                            setForm(prev => ({
+                                ...prev,
+                                schematic_data: updatedSchematic
+                            }));
+                        }}
+                        inputPower={estInputPower}
+                        availableOdps={availableOdps}
+                        availableOdcs={availableOdcs}
+                        availableOlts={formOptions?.olts || []}
+                        customerList={nodeCustomers}
+                        totalPorts={form.total_ports || 8}
+                        isOdc={form.device_type === 'odc'}
+                        onApplySummary={({ rasio_spesial, rasio_distribusi, total_ports }) => {
+                            setForm(prev => ({
+                                ...prev,
+                                ...(rasio_spesial !== undefined ? { rasio_spesial } : {}),
+                                ...(rasio_distribusi !== undefined ? { rasio_distribusi } : {}),
+                                ...(total_ports !== undefined ? { total_ports } : {})
+                            }));
+                        }}
+                    />
                 </div>
+            )}
 
-                {form.parent_type === 'pon' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <div>
-                            <label className="block text-slate-400 mb-1">Pilih Master OLT</label>
-                            <select
-                                value={form.olt_id || ''}
-                                onChange={(e) => {
-                                    const newOltId = e.target.value;
-                                    const olt = formOptions?.olts?.find(o => o.id === parseInt(newOltId, 10));
-                                    const firstPon = olt?.pon_ports?.[0]?.id || '';
-                                    setForm({ ...form, olt_id: newOltId, pon_port_id: firstPon });
-                                }}
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+            {/* TAB 2: GENERAL ATTRIBUTES & LOCATION */}
+            {activeFormTab === 'general' && (
+                <div className="space-y-4 pt-1">
+                    {/* Parent Connection & Topology */}
+                    <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                                <Network className="w-3.5 h-3.5 text-cyan-400" />
+                                Koneksi Hulu / Jalur Masuk (Parent Node)
+                            </span>
+                            <span className="text-[11px] text-slate-400">Pilih asal feeder serat optik</span>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'pon', parent_id: '' }))}
+                                className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                                    form.parent_type === 'pon'
+                                        ? 'bg-blue-600 text-white font-bold'
+                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
                             >
-                                <option value="">-- Pilih OLT --</option>
-                                {formOptions?.olts?.map((olt) => (
-                                    <option key={olt.id} value={olt.id}>
-                                        {olt.name} ({olt.brand} {olt.model})
+                                ⚡ Port PON OLT
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odc', parent_id: availableOdcs[0]?.id || '' }))}
+                                className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                                    form.parent_type === 'odc'
+                                        ? 'bg-purple-600 text-white font-bold'
+                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
+                            >
+                                🗄️ Dari ODC
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setForm(prev => ({ ...prev, parent_type: 'odp', parent_id: availableOdps[0]?.id || '' }))}
+                                className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                                    form.parent_type === 'odp'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
+                            >
+                                📦 Estafet Antar ODP
+                            </button>
+                        </div>
+
+                        {form.parent_type === 'pon' && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                                <div>
+                                    <label className="block text-slate-400 mb-1">Pilih Master OLT</label>
+                                    <select
+                                        value={form.olt_id || ''}
+                                        onChange={(e) => {
+                                            const newOltId = e.target.value;
+                                            const olt = formOptions?.olts?.find(o => o.id === parseInt(newOltId, 10));
+                                            const firstPon = olt?.pon_ports?.[0]?.id || '';
+                                            setForm(prev => ({ ...prev, olt_id: newOltId, pon_port_id: firstPon }));
+                                        }}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                    >
+                                        <option value="">-- Pilih OLT --</option>
+                                        {formOptions?.olts?.map((olt) => (
+                                            <option key={olt.id} value={olt.id}>
+                                                {olt.name} ({olt.brand} {olt.model})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-slate-400 mb-1">Pilih Port PON OLT</label>
+                                    <select
+                                        value={form.pon_port_id || ''}
+                                        onChange={(e) => setForm(prev => ({ ...prev, pon_port_id: e.target.value }))}
+                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                    >
+                                        <option value="">-- Pilih Port PON --</option>
+                                        {availablePonPorts.map((pon) => (
+                                            <option key={pon.id} value={pon.id}>
+                                                {pon.name} (TX: {pon.tx_power_dbm || 10.0} dBm)
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+
+                        {form.parent_type === 'odc' && (
+                            <div className="pt-1">
+                                <label className="block text-slate-400 mb-1">Pilih ODC Cabinet Sumber</label>
+                                <select
+                                    value={form.parent_id || ''}
+                                    onChange={(e) => setForm(prev => ({ ...prev, parent_id: e.target.value }))}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500"
+                                >
+                                    <option value="">-- Pilih ODC Sumber --</option>
+                                    {availableOdcs.map((odc) => (
+                                        <option key={odc.id} value={odc.id}>
+                                            🗄️ {odc.name || odc.nama} {odc.rasio_spesial ? `(Rasio: ${odc.rasio_spesial})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {form.parent_type === 'odp' && (
+                            <div className="pt-1">
+                                <label className="block text-slate-400 mb-1">Pilih ODP Sumber (Estafet Hop Sebelumnya)</label>
+                                <select
+                                    value={form.parent_id || ''}
+                                    onChange={(e) => setForm(prev => ({ ...prev, parent_id: e.target.value }))}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500"
+                                >
+                                    <option value="">-- Pilih ODP Sumber --</option>
+                                    {availableOdps.map((odp) => (
+                                        <option key={odp.id} value={odp.id}>
+                                            📦 {odp.name || odp.nama} {odp.rasio_spesial ? `(Rasio: ${odp.rasio_spesial})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Special Ratio & Distribution Splitter */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">
+                                ⚡ Rasio Spesial / Estafet (Coupler Tap Asimetris)
+                            </label>
+                            <select
+                                value={form.rasio_spesial || 'none'}
+                                onChange={(e) => setForm(prev => ({ ...prev, rasio_spesial: e.target.value }))}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500 font-semibold"
+                            >
+                                {SPECIAL_RATIO_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
                                     </option>
                                 ))}
                             </select>
+                            <span className="text-[11px] text-slate-500 mt-1 block">
+                                Gunakan 1:99, 2:98, 70:30 dll untuk estafet serial rasio.
+                            </span>
                         </div>
+
                         <div>
-                            <label className="block text-slate-400 mb-1">Pilih Port PON OLT</label>
+                            <label className="block text-slate-400 mb-1 font-medium">
+                                🔌 Rasio Distribusi (Splitter PLC Pelanggan)
+                            </label>
                             <select
-                                value={form.pon_port_id || ''}
-                                onChange={(e) => setForm({ ...form, pon_port_id: e.target.value })}
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                value={form.rasio_distribusi || (form.device_type === 'odc' ? 'none' : '1:8')}
+                                onChange={(e) => setForm(prev => ({ ...prev, rasio_distribusi: e.target.value }))}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-semibold"
                             >
-                                <option value="">-- Pilih Port PON --</option>
-                                {availablePonPorts.map((pon) => (
-                                    <option key={pon.id} value={pon.id}>
-                                        {pon.name} (TX: {pon.tx_power_dbm || 10.0} dBm)
+                                {DIST_RATIO_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
                                     </option>
                                 ))}
                             </select>
+                            <span className="text-[11px] text-slate-500 mt-1 block">
+                                Splitter genap di dalam box menuju port dropcore.
+                            </span>
                         </div>
                     </div>
-                )}
 
-                {form.parent_type === 'odc' && (
-                    <div className="pt-1">
-                        <label className="block text-slate-400 mb-1">Pilih ODC Cabinet Sumber</label>
-                        <select
-                            value={form.parent_id || ''}
-                            onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500"
-                        >
-                            <option value="">-- Pilih ODC Sumber --</option>
-                            {availableOdcs.map((odc) => (
-                                <option key={odc.id} value={odc.id}>
-                                    🗄️ {odc.name || odc.nama} {odc.rasio_spesial ? `(Rasio: ${odc.rasio_spesial})` : ''}
-                                </option>
-                            ))}
-                        </select>
+                    {/* Real-time Optical Simulation Card */}
+                    <div className="p-3.5 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950/40 border border-blue-800/40 rounded-xl space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <span className="font-bold text-blue-300 text-xs flex items-center gap-1.5">
+                                <Zap className="w-4 h-4 text-amber-400" />
+                                Simulasi Daya Optik Real-Time
+                            </span>
+                            <span
+                                className="px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-sm"
+                                style={{ backgroundColor: opticalSim.statusColor }}
+                            >
+                                {opticalSim.statusLabel}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1 border-t border-slate-800">
+                            <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <div className="text-slate-400">Input dari Hulu</div>
+                                <div className="font-bold text-white text-xs mt-0.5">{estInputPower.toFixed(2)} dBm</div>
+                            </div>
+                            <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <div className="text-slate-400">Redaman Tap Rasio</div>
+                                <div className="font-bold text-amber-400 text-xs mt-0.5">
+                                    {opticalSim.tapLoss > 0 ? `-${opticalSim.tapLoss.toFixed(1)} dB` : '0 dB (Direct)'}
+                                </div>
+                            </div>
+                            <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <div className="text-slate-400">Redaman Splitter</div>
+                                <div className="font-bold text-indigo-400 text-xs mt-0.5">
+                                    {opticalSim.splitLoss > 0 ? `-${opticalSim.splitLoss.toFixed(1)} dB` : '0 dB'}
+                                </div>
+                            </div>
+                            <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                                <div className="text-slate-400">Daya Port Pelanggan</div>
+                                <div className="font-bold text-xs mt-0.5" style={{ color: opticalSim.statusColor }}>
+                                    {opticalSim.dropPower !== null ? `${opticalSim.dropPower.toFixed(2)} dBm` : 'Bypass / ODC Transit'}
+                                </div>
+                            </div>
+                        </div>
+                        {opticalSim.thruLoss > 0 && (
+                            <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 bg-indigo-950/40 rounded-lg border border-indigo-900/30 text-indigo-300">
+                                <span>⚡ Daya Lolos ke Hop Berikutnya (Thru Pass):</span>
+                                <strong className="text-emerald-400 font-bold">{opticalSim.thruPower.toFixed(2)} dBm (-{opticalSim.thruLoss.toFixed(2)} dB)</strong>
+                            </div>
+                        )}
                     </div>
-                )}
 
-                {form.parent_type === 'odp' && (
-                    <div className="pt-1">
-                        <label className="block text-slate-400 mb-1">Pilih ODP Sumber (Estafet Hop Sebelumnya)</label>
-                        <select
-                            value={form.parent_id || ''}
-                            onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
-                            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500"
-                        >
-                            <option value="">-- Pilih ODP Sumber --</option>
-                            {availableOdps.map((odp) => (
-                                <option key={odp.id} value={odp.id}>
-                                    📦 {odp.name || odp.nama} {odp.rasio_spesial ? `(Rasio: ${odp.rasio_spesial})` : ''}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                )}
-            </div>
-
-            {/* Special Ratio & Distribution Splitter */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">
-                        ⚡ Rasio Spesial / Estafet (Coupler Tap Asimetris)
-                    </label>
-                    <select
-                        value={form.rasio_spesial || 'none'}
-                        onChange={(e) => setForm({ ...form, rasio_spesial: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500 font-semibold"
-                    >
-                        {SPECIAL_RATIO_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </select>
-                    <span className="text-[11px] text-slate-500 mt-1 block">
-                        Gunakan 1:99, 2:98, 70:30 dll untuk estafet serial rasio.
-                    </span>
-                </div>
-
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">
-                        🔌 Rasio Distribusi (Splitter PLC Pelanggan)
-                    </label>
-                    <select
-                        value={form.rasio_distribusi || (form.device_type === 'odc' ? 'none' : '1:8')}
-                        onChange={(e) => setForm({ ...form, rasio_distribusi: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-semibold"
-                    >
-                        {DIST_RATIO_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                            </option>
-                        ))}
-                    </select>
-                    <span className="text-[11px] text-slate-500 mt-1 block">
-                        Splitter genap di dalam box menuju port dropcore.
-                    </span>
-                </div>
-            </div>
-
-            {/* Real-time Optical Simulation Card */}
-            <div className="p-3.5 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950/40 border border-blue-800/40 rounded-xl space-y-2.5">
-                <div className="flex items-center justify-between">
-                    <span className="font-bold text-blue-300 text-xs flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 text-amber-400" />
-                        Simulasi Daya Optik Real-Time
-                    </span>
-                    <span
-                        className="px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-sm"
-                        style={{ backgroundColor: opticalSim.statusColor }}
-                    >
-                        {opticalSim.statusLabel}
-                    </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1 border-t border-slate-800">
-                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
-                        <div className="text-slate-400">Input dari Hulu</div>
-                        <div className="font-bold text-white text-xs mt-0.5">{estInputPower.toFixed(2)} dBm</div>
-                    </div>
-                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
-                        <div className="text-slate-400">Redaman Tap Rasio</div>
-                        <div className="font-bold text-amber-400 text-xs mt-0.5">
-                            {opticalSim.tapLoss > 0 ? `-${opticalSim.tapLoss.toFixed(1)} dB` : '0 dB (Direct)'}
+                    {/* Total Ports & Coordinates */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Total Kapasitas Port</label>
+                            <input
+                                type="number"
+                                min="1"
+                                max="128"
+                                value={form.total_ports}
+                                onChange={(e) => setForm(prev => ({ ...prev, total_ports: parseInt(e.target.value, 10) || 8 }))}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Latitude (Lintang)</label>
+                            <input
+                                type="text"
+                                value={form.latitude || ''}
+                                onChange={(e) => setForm(prev => ({ ...prev, latitude: e.target.value }))}
+                                placeholder="-5.631249"
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Longitude (Bujur)</label>
+                            <input
+                                type="text"
+                                value={form.longitude || ''}
+                                onChange={(e) => setForm(prev => ({ ...prev, longitude: e.target.value }))}
+                                placeholder="105.549012"
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            />
                         </div>
                     </div>
-                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
-                        <div className="text-slate-400">Redaman Splitter</div>
-                        <div className="font-bold text-indigo-400 text-xs mt-0.5">
-                            {opticalSim.splitLoss > 0 ? `-${opticalSim.splitLoss.toFixed(1)} dB` : '0 dB'}
+
+                    {/* Additional Info */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Nama Jalur Distribusi</label>
+                            <input
+                                type="text"
+                                value={form.distribution_line || ''}
+                                onChange={(e) => setForm(prev => ({ ...prev, distribution_line: e.target.value }))}
+                                placeholder="Contoh: PON 1 (Jalur Sentral - Kalianda)"
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Info Tube & Core Feeder</label>
+                            <input
+                                type="text"
+                                value={form.feeder_cable_info || ''}
+                                onChange={(e) => setForm(prev => ({ ...prev, feeder_cable_info: e.target.value }))}
+                                placeholder="Contoh: Core 1 / Tube Biru"
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            />
                         </div>
                     </div>
-                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
-                        <div className="text-slate-400">Daya Port Pelanggan</div>
-                        <div className="font-bold text-xs mt-0.5" style={{ color: opticalSim.statusColor }}>
-                            {opticalSim.dropPower !== null ? `${opticalSim.dropPower.toFixed(2)} dBm` : 'Bypass / ODC Transit'}
-                        </div>
+
+                    <div>
+                        <label className="block text-slate-400 mb-1 font-medium">Alamat / Lokasi Tiang</label>
+                        <textarea
+                            value={form.location_address || ''}
+                            onChange={(e) => setForm(prev => ({ ...prev, location_address: e.target.value }))}
+                            rows="2"
+                            placeholder="Contoh: Depan Masjid Nurul Huda, Tiang No. 12"
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                        />
                     </div>
                 </div>
-                {opticalSim.thruLoss > 0 && (
-                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 bg-indigo-950/40 rounded-lg border border-indigo-900/30 text-indigo-300">
-                        <span>⚡ Daya Lolos ke Hop Berikutnya (Thru Pass):</span>
-                        <strong className="text-emerald-400 font-bold">{opticalSim.thruPower.toFixed(2)} dBm (-{opticalSim.thruLoss.toFixed(2)} dB)</strong>
-                    </div>
-                )}
-            </div>
-
-            {/* Total Ports & Coordinates */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">Total Kapasitas Port</label>
-                    <input
-                        type="number"
-                        min="1"
-                        max="128"
-                        value={form.total_ports}
-                        onChange={(e) => setForm({ ...form, total_ports: parseInt(e.target.value, 10) || 8 })}
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
-                    />
-                </div>
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">Latitude (Lintang)</label>
-                    <input
-                        type="text"
-                        value={form.latitude || ''}
-                        onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-                        placeholder="-5.631249"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                    />
-                </div>
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">Longitude (Bujur)</label>
-                    <input
-                        type="text"
-                        value={form.longitude || ''}
-                        onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-                        placeholder="105.549012"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                    />
-                </div>
-            </div>
-
-            {/* Additional Info */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">Nama Jalur Distribusi</label>
-                    <input
-                        type="text"
-                        value={form.distribution_line || ''}
-                        onChange={(e) => setForm({ ...form, distribution_line: e.target.value })}
-                        placeholder="Contoh: PON 1 (Jalur Sentral - Kalianda)"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                    />
-                </div>
-                <div>
-                    <label className="block text-slate-400 mb-1 font-medium">Info Tube & Core Feeder</label>
-                    <input
-                        type="text"
-                        value={form.feeder_cable_info || ''}
-                        onChange={(e) => setForm({ ...form, feeder_cable_info: e.target.value })}
-                        placeholder="Contoh: Core 1 / Tube Biru"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                    />
-                </div>
-            </div>
-
-            <div>
-                <label className="block text-slate-400 mb-1 font-medium">Alamat / Lokasi Tiang</label>
-                <textarea
-                    value={form.location_address || ''}
-                    onChange={(e) => setForm({ ...form, location_address: e.target.value })}
-                    rows="2"
-                    placeholder="Contoh: Depan Masjid Nurul Huda, Tiang No. 12"
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                />
-            </div>
+            )}
 
             {/* Modal Actions */}
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
@@ -634,6 +781,7 @@ export default function SuperPanelPage() {
         distribution_line: '',
         feeder_cable_info: '',
         location_address: '',
+        schematic_data: null,
     });
     const [creatingNode, setCreatingNode] = useState(false);
 
@@ -1458,6 +1606,7 @@ export default function SuperPanelPage() {
                     distribution_line: found.distribution_line || '',
                     feeder_cable_info: found.feeder_cable_info || '',
                     location_address: found.location_address || '',
+                    schematic_data: found.schematic_data || found.resolved_schematic || null,
                 });
             }
         };
@@ -2326,10 +2475,21 @@ export default function SuperPanelPage() {
                                                 onClick={() => {
                                                     setSelectedOdpForEdit(odp);
                                                     setEditOdpForm({
-                                                        total_ports: odp.total_ports,
+                                                        nama: odp.name || odp.nama || '',
+                                                        device_type: odp.device_type || 'odp',
+                                                        parent_type: odp.parent_type || 'pon',
+                                                        parent_id: odp.parent_id || '',
+                                                        rasio_spesial: odp.rasio_spesial || 'none',
+                                                        rasio_distribusi: odp.rasio_distribusi || (odp.device_type === 'odc' ? 'none' : '1:8'),
+                                                        total_ports: odp.total_ports || (odp.device_type === 'odc' ? 24 : 8),
+                                                        olt_id: odp.olt_id || '',
+                                                        pon_port_id: odp.pon_port_id || '',
+                                                        latitude: odp.latitude || '',
+                                                        longitude: odp.longitude || '',
                                                         distribution_line: odp.distribution_line || '',
                                                         feeder_cable_info: odp.feeder_cable_info || '',
                                                         location_address: odp.location_address || '',
+                                                        schematic_data: odp.schematic_data || odp.resolved_schematic || null,
                                                     });
                                                 }}
                                                 className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition"
@@ -3582,7 +3742,7 @@ export default function SuperPanelPage() {
                     isOpen={!!selectedOdpForEdit}
                     onClose={() => setSelectedOdpForEdit(null)}
                     title={`Konfigurasi Titik: ${selectedOdpForEdit.name || selectedOdpForEdit.nama} (${selectedOdpForEdit.device_type === 'odc' ? 'ODC Cabinet' : 'ODP Box'})`}
-                    size="xl"
+                    size="4xl"
                 >
                     <NodeFormFields
                         form={editOdpForm}
@@ -3594,6 +3754,7 @@ export default function SuperPanelPage() {
                         onSave={handleSaveOdpConfig}
                         isSaving={savingOdpConfig}
                         excludeNodeId={selectedOdpForEdit.id}
+                        nodeObject={selectedOdpForEdit}
                     />
                 </Modal>
             )}
@@ -3606,7 +3767,7 @@ export default function SuperPanelPage() {
                     isOpen={showCreateNodeModal}
                     onClose={() => setShowCreateNodeModal(false)}
                     title="Tambah Titik Baru (ODP / ODC)"
-                    size="xl"
+                    size="4xl"
                 >
                     <NodeFormFields
                         form={createNodeForm}
@@ -3617,6 +3778,7 @@ export default function SuperPanelPage() {
                         onCancel={() => setShowCreateNodeModal(false)}
                         onSave={handleCreateNode}
                         isSaving={creatingNode}
+                        nodeObject={null}
                     />
                 </Modal>
             )}

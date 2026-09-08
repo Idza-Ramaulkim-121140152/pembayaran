@@ -226,6 +226,7 @@ class SuperPanelController extends Controller
             'location_address' => 'nullable|string',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
+            'schematic_data' => 'nullable',
         ]);
 
         try {
@@ -416,6 +417,7 @@ class SuperPanelController extends Controller
             'location_address' => 'nullable|string',
             'feeder_cable_info' => 'nullable|string|max:255',
             'distribution_line' => 'nullable|string|max:255',
+            'schematic_data' => 'nullable',
         ]);
 
         try {

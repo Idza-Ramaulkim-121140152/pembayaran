@@ -28,6 +28,14 @@ class Odp extends Model
         'desa_id',
         'dusun_id',
         'alamat_detail',
+        'schematic_data',
+    ];
+
+    protected $appends = [
+        'name',
+        'location_address',
+        'is_odc',
+        'resolved_schematic',
     ];
 
     protected $casts = [
@@ -40,6 +48,7 @@ class Odp extends Model
         'kecamatan_id' => 'integer',
         'desa_id' => 'integer',
         'dusun_id' => 'integer',
+        'schematic_data' => 'array',
     ];
 
     public function parent(): BelongsTo
@@ -132,5 +141,80 @@ class Odp extends Model
             '1:2' => 2,
             default => 8, // '1:8'
         };
+    }
+
+    /**
+     * Resolve schematic diagram data (stored or inferred from ratios)
+     */
+    public function getResolvedSchematicAttribute(): array
+    {
+        if (!empty($this->schematic_data) && is_array($this->schematic_data) && !empty($this->schematic_data['modules'])) {
+            return $this->schematic_data;
+        }
+
+        $modules = [];
+        $isAsymmetric = !empty($this->rasio_spesial) && $this->rasio_spesial !== 'none';
+        $distRatio = $this->rasio_distribusi ?: (($this->device_type ?? 'odp') === 'odc' ? 'none' : '1:8');
+
+        if ($isAsymmetric) {
+            $modules[] = [
+                'id' => 'mod_tap_1',
+                'name' => 'Coupler Tap ' . $this->rasio_spesial,
+                'type' => 'asymmetric',
+                'ratio' => $this->rasio_spesial,
+                'in_source' => 'feeder_in',
+                'outputs' => [
+                    'thru' => [
+                        'label' => 'Thru (Rasio Besar)',
+                        'target_type' => 'next_hop',
+                        'target_id' => null,
+                        'target_label' => 'Lanjut ke ODP/ODC Hilir',
+                    ],
+                    'tap' => [
+                        'label' => 'Tap (Rasio Kecil)',
+                        'target_type' => $distRatio !== 'none' ? 'module' : 'port',
+                        'target_id' => $distRatio !== 'none' ? 'mod_plc_1' : 1,
+                        'target_label' => $distRatio !== 'none' ? 'Masuk ke Splitter Distribusi' : 'Port Pelanggan 1',
+                    ],
+                ],
+            ];
+        }
+
+        if ($distRatio !== 'none') {
+            $portCount = match ($distRatio) {
+                '1:16' => 16,
+                '1:4' => 4,
+                '1:2' => 2,
+                default => 8,
+            };
+
+            $plcOutputs = [];
+            for ($i = 1; $i <= $portCount; $i++) {
+                $plcOutputs['out_' . $i] = [
+                    'label' => 'Out ' . $i,
+                    'target_type' => 'port',
+                    'target_id' => $i,
+                    'target_label' => 'Port Pelanggan ' . $i,
+                ];
+            }
+
+            $modules[] = [
+                'id' => 'mod_plc_1',
+                'name' => 'Splitter PLC ' . $distRatio,
+                'type' => 'plc',
+                'ratio' => $distRatio,
+                'in_source' => $isAsymmetric ? 'mod_tap_1:tap' : 'feeder_in',
+                'outputs' => $plcOutputs,
+            ];
+        }
+
+        return [
+            'input_source' => [
+                'type' => $this->parent_type ?: 'pon',
+                'id' => $this->parent_id ?: $this->pon_port_id,
+                'label' => $this->parent_type === 'pon' ? 'Port PON OLT' : 'ODP/ODC Hulu',
+            ],
+            'modules' => $modules,
+        ];
     }
 }

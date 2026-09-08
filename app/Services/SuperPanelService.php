@@ -326,6 +326,8 @@ class SuperPanelService
                 'parent_name' => $computed['parent_label'] ?? 'PON OLT',
                 'rasio_spesial' => $odp->rasio_spesial,
                 'rasio_distribusi' => $odp->rasio_distribusi,
+                'schematic_data' => $odp->schematic_data,
+                'resolved_schematic' => $odp->resolved_schematic,
                 'optical_calc' => $optCalc,
                 'olt_id' => $odp->olt_id,
                 'olt_name' => $odp->olt?->name ?? 'OLT Utama NOC',
@@ -1310,6 +1312,50 @@ class SuperPanelService
             $odp->alamat_detail = $data['location_address'] ?? $data['alamat_detail'];
         }
 
+        if (array_key_exists('schematic_data', $data)) {
+            $schematic = is_string($data['schematic_data']) ? json_decode($data['schematic_data'], true) : $data['schematic_data'];
+            if (is_array($schematic)) {
+                $odp->schematic_data = $schematic;
+
+                // Sync summary fields automatically for backward compatibility
+                if (!empty($schematic['input_source'])) {
+                    if (!empty($schematic['input_source']['type'])) {
+                        $odp->parent_type = $schematic['input_source']['type'];
+                    }
+                    if (array_key_exists('id', $schematic['input_source'])) {
+                        $odp->parent_id = !empty($schematic['input_source']['id']) ? (int)$schematic['input_source']['id'] : null;
+                    }
+                }
+
+                $firstAsym = null;
+                $firstPlc = null;
+                $maxPort = 0;
+                foreach ($schematic['modules'] ?? [] as $mod) {
+                    if (($mod['type'] ?? '') === 'asymmetric' && !$firstAsym) {
+                        $firstAsym = $mod['ratio'] ?? null;
+                    }
+                    if (($mod['type'] ?? '') === 'plc' && !$firstPlc) {
+                        $firstPlc = $mod['ratio'] ?? null;
+                    }
+                    foreach ($mod['outputs'] ?? [] as $out) {
+                        if (($out['target_type'] ?? '') === 'port' && !empty($out['target_id'])) {
+                            $maxPort = max($maxPort, (int)$out['target_id']);
+                        }
+                    }
+                }
+
+                if ($firstAsym) {
+                    $odp->rasio_spesial = $firstAsym;
+                }
+                if ($firstPlc) {
+                    $odp->rasio_distribusi = $firstPlc;
+                }
+                if ($maxPort > 0) {
+                    $odp->total_ports = max($maxPort, (int)($data['total_ports'] ?? $odp->total_ports ?: 8));
+                }
+            }
+        }
+
         $odp->save();
 
         return $odp->fresh(['olt', 'ponPort', 'customers', 'parent']);
@@ -1380,6 +1426,11 @@ class SuperPanelService
             }
         }
 
+        $schematicData = null;
+        if (!empty($data['schematic_data'])) {
+            $schematicData = is_string($data['schematic_data']) ? json_decode($data['schematic_data'], true) : $data['schematic_data'];
+        }
+
         $node = Odp::create([
             'nama' => $data['nama'] ?? ($deviceType === 'odc' ? 'ODC-BARU' : 'ODP-BARU'),
             'device_type' => $deviceType,
@@ -1394,7 +1445,8 @@ class SuperPanelService
             'longitude' => $data['longitude'] ?? 105.550,
             'feeder_cable_info' => $data['feeder_cable_info'] ?? null,
             'distribution_line' => $data['distribution_line'] ?? null,
-            'alamat_detail' => $data['location_address'] ?? '-',
+            'alamat_detail' => $data['location_address'] ?? $data['alamat_detail'] ?? '-',
+            'schematic_data' => $schematicData,
             'kecamatan_id' => 1,
             'desa_id' => 1,
             'dusun_id' => 1,
