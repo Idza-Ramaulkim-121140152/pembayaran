@@ -118,13 +118,22 @@ const SPECIAL_RATIO_OPTIONS = [
     { value: '70:30', label: '70:30 (Drop 70% [-1.75 dB] | Lolos 30% [-5.50 dB])' },
 ];
 
+export const PLC_PORT_MAP = {
+    '1:2': 2,
+    '1:4': 4,
+    '1:8': 8,
+    '1:16': 16,
+    '1:32': 32,
+    '1:64': 64,
+};
+
 const DIST_RATIO_OPTIONS = [
     { value: 'none', label: 'Tanpa Splitter (Bypass / Transit Hub)' },
-    { value: '1:2', label: 'Splitter PLC 1:2 (Redaman ~3.6 dB)' },
-    { value: '1:4', label: 'Splitter PLC 1:4 (Redaman ~7.2 dB)' },
-    { value: '1:8', label: 'Splitter PLC 1:8 (Redaman ~10.5 dB)' },
-    { value: '1:16', label: 'Splitter PLC 1:16 (Redaman ~13.8 dB)' },
-    { value: '1:32', label: 'Splitter PLC 1:32 (Redaman ~17.0 dB)' },
+    { value: '1:2', label: 'Splitter PLC 1:2 (2 Port | Redaman ~3.6 dB)' },
+    { value: '1:4', label: 'Splitter PLC 1:4 (4 Port | Redaman ~7.2 dB)' },
+    { value: '1:8', label: 'Splitter PLC 1:8 (8 Port | Redaman ~10.5 dB)' },
+    { value: '1:16', label: 'Splitter PLC 1:16 (16 Port | Redaman ~13.8 dB)' },
+    { value: '1:32', label: 'Splitter PLC 1:32 (32 Port | Redaman ~17.0 dB)' },
 ];
 
 function formatRupiah(amount) {
@@ -284,12 +293,15 @@ function NodeFormFields({
                     <div className="grid grid-cols-2 gap-2">
                         <button
                             type="button"
-                            onClick={() => setForm(prev => ({ 
-                                ...prev, 
-                                device_type: 'odp',
-                                total_ports: prev.total_ports === 24 ? 8 : prev.total_ports,
-                                rasio_distribusi: prev.rasio_distribusi === 'none' ? '1:8' : prev.rasio_distribusi,
-                            }))}
+                            onClick={() => setForm(prev => {
+                                const defaultDist = prev.rasio_distribusi === 'none' ? '1:8' : prev.rasio_distribusi;
+                                return { 
+                                    ...prev, 
+                                    device_type: 'odp',
+                                    total_ports: PLC_PORT_MAP[defaultDist] || 8,
+                                    rasio_distribusi: defaultDist,
+                                };
+                            })}
                             className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
                                 form.device_type === 'odp'
                                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
@@ -533,7 +545,15 @@ function NodeFormFields({
                             </label>
                             <select
                                 value={form.rasio_distribusi || (form.device_type === 'odc' ? 'none' : '1:8')}
-                                onChange={(e) => setForm(prev => ({ ...prev, rasio_distribusi: e.target.value }))}
+                                onChange={(e) => {
+                                    const newDist = e.target.value;
+                                    const autoPorts = PLC_PORT_MAP[newDist];
+                                    setForm(prev => ({
+                                        ...prev,
+                                        rasio_distribusi: newDist,
+                                        ...(autoPorts && prev.device_type !== 'odc' ? { total_ports: autoPorts } : {})
+                                    }));
+                                }}
                                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-semibold"
                             >
                                 {DIST_RATIO_OPTIONS.map((opt) => (
@@ -543,7 +563,7 @@ function NodeFormFields({
                                 ))}
                             </select>
                             <span className="text-[11px] text-slate-500 mt-1 block">
-                                Splitter genap di dalam box menuju port dropcore.
+                                Splitter genap di dalam box (Kapasitas port otomatis mengikuti rasio).
                             </span>
                         </div>
                     </div>
@@ -1591,14 +1611,16 @@ export default function SuperPanelPage() {
                           (currentGis?.odc_nodes || []).find(n => n.id === idInt);
             if (found) {
                 setSelectedOdpForEdit(found);
+                const distRatio = found.rasio_distribusi || (found.device_type === 'odc' ? 'none' : '1:8');
+                const autoPorts = found.device_type === 'odc' ? (found.total_ports || 24) : (PLC_PORT_MAP[distRatio] || found.total_ports || 8);
                 setEditOdpForm({
                     nama: found.name || found.nama || '',
                     device_type: found.device_type || 'odp',
                     parent_type: found.parent_type || 'pon',
                     parent_id: found.parent_id || '',
                     rasio_spesial: found.rasio_spesial || 'none',
-                    rasio_distribusi: found.rasio_distribusi || (found.device_type === 'odc' ? 'none' : '1:8'),
-                    total_ports: found.total_ports || (found.device_type === 'odc' ? 24 : 8),
+                    rasio_distribusi: distRatio,
+                    total_ports: autoPorts,
                     olt_id: found.olt_id || '',
                     pon_port_id: found.pon_port_id || '',
                     latitude: found.latitude || '',
@@ -2474,14 +2496,16 @@ export default function SuperPanelPage() {
                                             <button
                                                 onClick={() => {
                                                     setSelectedOdpForEdit(odp);
+                                                    const distRatio = odp.rasio_distribusi || (odp.device_type === 'odc' ? 'none' : '1:8');
+                                                    const autoPorts = odp.device_type === 'odc' ? (odp.total_ports || 24) : (PLC_PORT_MAP[distRatio] || odp.total_ports || 8);
                                                     setEditOdpForm({
                                                         nama: odp.name || odp.nama || '',
                                                         device_type: odp.device_type || 'odp',
                                                         parent_type: odp.parent_type || 'pon',
                                                         parent_id: odp.parent_id || '',
                                                         rasio_spesial: odp.rasio_spesial || 'none',
-                                                        rasio_distribusi: odp.rasio_distribusi || (odp.device_type === 'odc' ? 'none' : '1:8'),
-                                                        total_ports: odp.total_ports || (odp.device_type === 'odc' ? 24 : 8),
+                                                        rasio_distribusi: distRatio,
+                                                        total_ports: autoPorts,
                                                         olt_id: odp.olt_id || '',
                                                         pon_port_id: odp.pon_port_id || '',
                                                         latitude: odp.latitude || '',

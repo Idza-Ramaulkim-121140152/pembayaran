@@ -137,10 +137,48 @@ export default function OdpInternalSchematic({
         let newDist = '1:8';
         let newCapacity = totalPorts;
 
-        if (presetKey === 'estafet_10_90_1_4') {
+        if (presetKey === 'estafet_10_90_1_2') {
+            newSpecial = '10:90';
+            newDist = '1:2';
+            newCapacity = 2;
+            newModules = [
+                {
+                    id: 'mod_tap_1',
+                    name: 'Coupler Tap 10:90',
+                    type: 'asymmetric',
+                    ratio: '10:90',
+                    in_source: 'feeder_in',
+                    outputs: {
+                        thru: {
+                            label: 'Thru (90%)',
+                            target_type: 'next_hop',
+                            target_id: null,
+                            target_label: 'Jalur ke ODP Hilir',
+                        },
+                        tap: {
+                            label: 'Tap (10%)',
+                            target_type: 'module',
+                            target_id: 'mod_plc_1',
+                            target_label: 'Masuk ke Splitter 1:2',
+                        },
+                    },
+                },
+                {
+                    id: 'mod_plc_1',
+                    name: 'Splitter PLC 1:2',
+                    type: 'plc',
+                    ratio: '1:2',
+                    in_source: 'mod_tap_1:tap',
+                    outputs: {
+                        out_1: { label: 'Out 1', target_type: 'port', target_id: 1, target_label: 'Port Pelanggan 1' },
+                        out_2: { label: 'Out 2', target_type: 'port', target_id: 2, target_label: 'Port Pelanggan 2' },
+                    },
+                },
+            ];
+        } else if (presetKey === 'estafet_10_90_1_4') {
             newSpecial = '10:90';
             newDist = '1:4';
-            newCapacity = 8;
+            newCapacity = 4;
             newModules = [
                 {
                     id: 'mod_tap_1',
@@ -217,6 +255,42 @@ export default function OdpInternalSchematic({
                     })).reduce((acc, curr, idx) => ({ ...acc, [`out_${idx + 1}`]: curr }), {}),
                 },
             ];
+        } else if (presetKey === 'direct_1_2') {
+            newSpecial = 'none';
+            newDist = '1:2';
+            newCapacity = 2;
+            newModules = [
+                {
+                    id: 'mod_plc_1',
+                    name: 'Splitter PLC 1:2 Langsung',
+                    type: 'plc',
+                    ratio: '1:2',
+                    in_source: 'feeder_in',
+                    outputs: {
+                        out_1: { label: 'Out 1', target_type: 'port', target_id: 1, target_label: 'Port Pelanggan 1' },
+                        out_2: { label: 'Out 2', target_type: 'port', target_id: 2, target_label: 'Port Pelanggan 2' },
+                    },
+                },
+            ];
+        } else if (presetKey === 'direct_1_4') {
+            newSpecial = 'none';
+            newDist = '1:4';
+            newCapacity = 4;
+            newModules = [
+                {
+                    id: 'mod_plc_1',
+                    name: 'Splitter PLC 1:4 Langsung',
+                    type: 'plc',
+                    ratio: '1:4',
+                    in_source: 'feeder_in',
+                    outputs: {
+                        out_1: { label: 'Out 1', target_type: 'port', target_id: 1, target_label: 'Port Pelanggan 1' },
+                        out_2: { label: 'Out 2', target_type: 'port', target_id: 2, target_label: 'Port Pelanggan 2' },
+                        out_3: { label: 'Out 3', target_type: 'port', target_id: 3, target_label: 'Port Pelanggan 3' },
+                        out_4: { label: 'Out 4', target_type: 'port', target_id: 4, target_label: 'Port Pelanggan 4' },
+                    },
+                },
+            ];
         } else if (presetKey === 'direct_1_8') {
             newSpecial = 'none';
             newDist = '1:8';
@@ -239,7 +313,7 @@ export default function OdpInternalSchematic({
         } else if (presetKey === 'odc_transit_1_2') {
             newSpecial = 'none';
             newDist = 'none';
-            newCapacity = 24;
+            newCapacity = isOdc ? 24 : 2;
             newModules = [
                 {
                     id: 'mod_plc_1',
@@ -322,6 +396,15 @@ export default function OdpInternalSchematic({
             modules: [...modules, newMod],
         };
         onChange(updated);
+
+        if (addForm.type === 'plc' && !isOdc) {
+            const spec = PLC_RATIO_TABLE[addForm.ratio] || { ports: 4 };
+            onApplySummary?.({
+                rasio_distribusi: addForm.ratio,
+                total_ports: spec.ports,
+            });
+        }
+
         setShowAddModal(false);
     };
 
@@ -344,16 +427,41 @@ export default function OdpInternalSchematic({
 
     // Update single module property
     const handleUpdateModule = (modId, patch) => {
+        let newRatioApplied = null;
         const updatedModules = modules.map((m) => {
             if (m.id === modId) {
-                return { ...m, ...patch };
+                const updatedMod = { ...m, ...patch };
+                if (patch.ratio && m.type === 'plc' && PLC_RATIO_TABLE[patch.ratio]) {
+                    const spec = PLC_RATIO_TABLE[patch.ratio];
+                    const count = spec.ports;
+                    const newOutputs = {};
+                    for (let i = 1; i <= count; i++) {
+                        newOutputs[`out_${i}`] = m.outputs?.[`out_${i}`] || {
+                            label: `Out ${i}`,
+                            target_type: 'port',
+                            target_id: i,
+                            target_label: `Port Pelanggan ${i}`,
+                        };
+                    }
+                    updatedMod.outputs = newOutputs;
+                    newRatioApplied = { ratio: patch.ratio, ports: count };
+                }
+                return updatedMod;
             }
             return m;
         });
+
         onChange({
             ...schematic,
             modules: updatedModules,
         });
+
+        if (newRatioApplied && !isOdc) {
+            onApplySummary?.({
+                rasio_distribusi: newRatioApplied.ratio,
+                total_ports: newRatioApplied.ports,
+            });
+        }
     };
 
     // Update single output target
@@ -390,27 +498,51 @@ export default function OdpInternalSchematic({
                 <div className="flex flex-wrap items-center gap-1.5 text-xs">
                     <button
                         type="button"
+                        onClick={() => handleApplyPreset('estafet_10_90_1_2')}
+                        className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg transition font-medium"
+                        title="1 Coupler 10:90 (Thru ke ODP hilir, Tap ke Splitter 1:2 / 2 Port)"
+                    >
+                        ⚡ Estafet 10:90 + 1:2 (2 Port)
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => handleApplyPreset('estafet_10_90_1_4')}
                         className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg transition font-medium"
-                        title="1 Coupler 10:90 (Thru ke ODP hilir, Tap ke Splitter 1:4)"
+                        title="1 Coupler 10:90 (Thru ke ODP hilir, Tap ke Splitter 1:4 / 4 Port)"
                     >
-                        ⚡ Estafet 10:90 + 1:4
+                        ⚡ Estafet 10:90 + 1:4 (4 Port)
                     </button>
                     <button
                         type="button"
                         onClick={() => handleApplyPreset('estafet_10_90_1_8')}
                         className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg transition font-medium"
-                        title="1 Coupler 10:90 (Thru ke ODP hilir, Tap ke Splitter 1:8)"
+                        title="1 Coupler 10:90 (Thru ke ODP hilir, Tap ke Splitter 1:8 / 8 Port)"
                     >
-                        ⚡ Estafet 10:90 + 1:8
+                        ⚡ Estafet 10:90 + 1:8 (8 Port)
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleApplyPreset('direct_1_2')}
+                        className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-lg transition font-medium"
+                        title="Langsung Splitter 1:2 dari feeder (2 Port)"
+                    >
+                        🔌 Direct 1:2 (2 Port)
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleApplyPreset('direct_1_4')}
+                        className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-lg transition font-medium"
+                        title="Langsung Splitter 1:4 dari feeder (4 Port)"
+                    >
+                        🔌 Direct 1:4 (4 Port)
                     </button>
                     <button
                         type="button"
                         onClick={() => handleApplyPreset('direct_1_8')}
                         className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-lg transition font-medium"
-                        title="Langsung Splitter 1:8 dari feeder"
+                        title="Langsung Splitter 1:8 dari feeder (8 Port)"
                     >
-                        🔌 Direct 1:8 (Bintang)
+                        🔌 Direct 1:8 (8 Port)
                     </button>
                     <button
                         type="button"

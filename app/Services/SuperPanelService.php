@@ -1283,12 +1283,23 @@ class SuperPanelService
             $odp->rasio_spesial = !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null;
         }
 
+        $ratioPortMap = [
+            '1:2' => 2,
+            '1:4' => 4,
+            '1:8' => 8,
+            '1:16' => 16,
+            '1:32' => 32,
+            '1:64' => 64,
+        ];
+
         if (array_key_exists('rasio_distribusi', $data)) {
             $odp->rasio_distribusi = !empty($data['rasio_distribusi']) && $data['rasio_distribusi'] !== 'none' ? $data['rasio_distribusi'] : null;
         }
 
         if (isset($data['total_ports'])) {
             $odp->total_ports = (int) $data['total_ports'];
+        } elseif ($odp->device_type === 'odp' && !empty($odp->rasio_distribusi) && isset($ratioPortMap[$odp->rasio_distribusi])) {
+            $odp->total_ports = $ratioPortMap[$odp->rasio_distribusi];
         }
         if (isset($data['olt_id'])) {
             $odp->olt_id = $data['olt_id'];
@@ -1349,9 +1360,12 @@ class SuperPanelService
                 }
                 if ($firstPlc) {
                     $odp->rasio_distribusi = $firstPlc;
+                    if ($odp->device_type === 'odp' && isset($ratioPortMap[$firstPlc])) {
+                        $odp->total_ports = $ratioPortMap[$firstPlc];
+                    }
                 }
                 if ($maxPort > 0) {
-                    $odp->total_ports = max($maxPort, (int)($data['total_ports'] ?? $odp->total_ports ?: 8));
+                    $odp->total_ports = max($maxPort, $odp->total_ports ?: 8);
                 }
             }
         }
@@ -1431,14 +1445,31 @@ class SuperPanelService
             $schematicData = is_string($data['schematic_data']) ? json_decode($data['schematic_data'], true) : $data['schematic_data'];
         }
 
+        $distRatio = !empty($data['rasio_distribusi']) && $data['rasio_distribusi'] !== 'none' ? $data['rasio_distribusi'] : ($deviceType === 'odc' ? null : '1:8');
+        $ratioPortMap = [
+            '1:2' => 2,
+            '1:4' => 4,
+            '1:8' => 8,
+            '1:16' => 16,
+            '1:32' => 32,
+            '1:64' => 64,
+        ];
+        $defaultPorts = $deviceType === 'odc' ? 24 : ($distRatio && isset($ratioPortMap[$distRatio]) ? $ratioPortMap[$distRatio] : 8);
+        $totalPorts = (int) ($data['total_ports'] ?? $defaultPorts);
+        if ($deviceType === 'odp' && $distRatio && isset($ratioPortMap[$distRatio])) {
+            if (!isset($data['total_ports']) || ((int)$data['total_ports'] === 8 && in_array($distRatio, ['1:2', '1:4']))) {
+                $totalPorts = $ratioPortMap[$distRatio];
+            }
+        }
+
         $node = Odp::create([
             'nama' => $data['nama'] ?? ($deviceType === 'odc' ? 'ODC-BARU' : 'ODP-BARU'),
             'device_type' => $deviceType,
             'parent_type' => $parentType,
             'parent_id' => $parentId,
             'rasio_spesial' => !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null,
-            'rasio_distribusi' => !empty($data['rasio_distribusi']) && $data['rasio_distribusi'] !== 'none' ? $data['rasio_distribusi'] : ($deviceType === 'odc' ? null : '1:8'),
-            'total_ports' => (int) ($data['total_ports'] ?? ($deviceType === 'odc' ? 24 : 8)),
+            'rasio_distribusi' => $distRatio,
+            'total_ports' => $totalPorts,
             'olt_id' => $oltId,
             'pon_port_id' => $ponPortId,
             'latitude' => $data['latitude'] ?? -5.635,
