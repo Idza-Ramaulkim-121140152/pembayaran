@@ -15,10 +15,6 @@
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                     <span>Monitoring</span>
                 </a>
-                <a href="/remote-ont" class="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition {{ request()->is('remote-ont*') ? 'text-blue-600 font-semibold' : '' }}">
-                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM9 9h6M9 13h6"/></svg>
-                    <span>Remote ONT</span>
-                </a>
                 <a href="/dashboard" class="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition {{ request()->is('dashboard') ? 'text-blue-600 font-semibold' : '' }}">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-3m0 0l7-4 7 4M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9m-9 4l4 2m-2-2l-4-2"/></svg>
                     <span>Dashboard</span>
@@ -74,10 +70,6 @@
             <a href="/monitoring" class="flex items-center gap-3 px-3 py-2 rounded text-gray-700 hover:bg-gray-50">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                 <span>Monitoring</span>
-            </a>
-            <a href="/remote-ont" class="flex items-center gap-3 px-3 py-2 rounded text-gray-700 hover:bg-gray-50 {{ request()->is('remote-ont*') ? 'text-blue-600 font-semibold bg-blue-50' : '' }}">
-                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2zM9 9h6M9 13h6"/></svg>
-                <span>Remote ONT</span>
             </a>
             <a href="/dashboard" class="flex items-center gap-3 px-3 py-2 rounded text-gray-700 hover:bg-gray-50">
                 <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-3m0 0l7-4 7 4M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9m-9 4l4 2m-2-2l-4-2"/></svg>

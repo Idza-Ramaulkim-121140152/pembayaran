@@ -40,7 +40,11 @@ class OntProxyController extends Controller
     public function apiList(Request $request): JsonResponse
     {
         $forceFresh = $request->has('refresh');
-        $devices = $this->getMergedDevices($forceFresh);
+        $allDevices = $this->getMergedDevices($forceFresh);
+        $totalOnline = count(array_filter($allDevices, fn($d) => $d['is_online']));
+        $totalDevices = count($allDevices);
+
+        $devices = $allDevices;
 
         $search = strtolower(trim((string) $request->input('search', '')));
         if ($search !== '') {
@@ -62,6 +66,8 @@ class OntProxyController extends Controller
             'success' => true,
             'data' => $devices,
             'count' => count($devices),
+            'total_online' => $totalOnline,
+            'total_devices' => $totalDevices,
         ]);
     }
 

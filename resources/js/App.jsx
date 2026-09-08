@@ -58,6 +58,7 @@ const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
 const Monitoring = lazy(() => import('./pages/Monitoring'));
 const SuperPanelPage = lazy(() => import('./pages/SuperPanel/SuperPanelPage'));
 const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
+const RemoteOntPage = lazy(() => import('./pages/RemoteOnt/RemoteOntPage'));
 const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
 const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
@@ -443,6 +444,7 @@ function App() {
                     <Route path="/monitoring" element={<GuardedRoute permissionKey="monitoring.view" element={<Monitoring />} />} />
                     <Route path="/monitoring-maps" element={<GuardedRoute permissionKey="monitoring.maps.view" element={<MonitoringMaps />} />} />
                     <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringGenieAcsPage />} />} />
+                    <Route path="/remote-ont" element={<GuardedRoute permissionKey="monitoring.view" element={<RemoteOntPage />} />} />
                     
                     {/* Isolir */}
                     <Route path="/isolir" element={<GuardedRoute permissionKey="isolir.view" element={<IsolirPage />} />} />

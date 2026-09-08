@@ -238,6 +238,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
     Route::get('/monitoring-genieacs', fn() => view('app'))->name('monitoring.genieacs');
+    Route::get('/remote-ont', fn() => view('app'))->name('remote-ont');
     Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
     Route::get('/settings/expense-categories', fn() => view('app'))->name('settings.expense-categories');
     Route::get('/settings/customer-package-management', fn() => view('app'))->name('settings.customer-package-management');
@@ -809,7 +810,6 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     });
 
     // Remote ONT Web Gateway (MikroTik PPPoE & In-App Reverse Proxy)
-    Route::get('/remote-ont', [OntProxyController::class, 'index'])->name('remote-ont.index');
     Route::get('/api/remote-ont/list', [OntProxyController::class, 'apiList'])->name('remote-ont.api.list');
     Route::post('/api/remote-ont/check-ping', [OntProxyController::class, 'checkPing'])->name('remote-ont.api.check-ping');
     Route::any('/ont-gateway/{ip}/{path?}', [OntProxyController::class, 'proxy'])
