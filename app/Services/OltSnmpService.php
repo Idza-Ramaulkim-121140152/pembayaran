@@ -123,153 +123,14 @@ class OltSnmpService
             return $this->syncRealHiosoHardware($olt, $hiosoData);
         }
 
-        $ponPorts = $olt->ponPorts()->orderBy('pon_index')->get();
-        if ($ponPorts->isEmpty()) {
-            return ['mapped_odps' => 0, 'mapped_customers' => 0, 'matched_genieacs' => 0];
-        }
-
-        // 1. Fetch live GenieACS summary
-        $genieDevices = [];
-        try {
-            $summary = $this->genieAcsService->getAllDevicesSummary(true);
-            $genieDevices = $summary['devices'] ?? [];
-        } catch (\Throwable $e) {
-            Log::warning('OltSnmpService: GenieACS fetch during sync error: ' . $e->getMessage());
-        }
-
-        $genieByPppoe = [];
-        $genieByCustId = [];
-        foreach ($genieDevices as $dev) {
-            if (!empty($dev['pppoe_username'])) {
-                $genieByPppoe[strtolower(trim($dev['pppoe_username']))] = $dev;
-            }
-            if (!empty($dev['customer']['id'])) {
-                $genieByCustId[$dev['customer']['id']] = $dev;
-            }
-        }
-
-        // 2. Map ODPs across actual physical PON ports
-        $odps = Odp::all();
-        $portCount = max(1, $ponPorts->count());
-        foreach ($odps as $index => $odp) {
-            $assignedPon = $ponPorts[$index % $portCount] ?? $ponPorts->first();
-            $odp->update([
-                'olt_id' => $olt->id,
-                'pon_port_id' => $assignedPon->id,
-                'distribution_line' => $assignedPon->name,
-                'feeder_cable_info' => 'Feeder Core ' . (($index % 12) + 1) . ' / Tube ' . ($index % 2 == 0 ? 'Biru' : 'Oranye'),
-                'total_ports' => 8,
-            ]);
-        }
-
-        // 3. Match each Customer with GenieACS and assign to OLT PON & ODP
-        $customers = Customer::all();
-        $matchedCount = 0;
-        $criticalCount = 0;
-        $warningCount = 0;
-
-        // Clear and rebuild clean ONUs for this OLT
-        OltOnu::where('olt_id', $olt->id)->delete();
-
-        $onuInserts = [];
-        $ponIndexTracker = [];
-
-        foreach ($customers as $idx => $cust) {
-            $pppoe = strtolower(trim((string) $cust->pppoe_username));
-            $genieDev = $genieByPppoe[$pppoe] ?? ($genieByCustId[$cust->id] ?? null);
-
-            // Determine ODP & PON
-            $odp = null;
-            if ($cust->odp_id) {
-                $odp = $odps->firstWhere('id', $cust->odp_id);
-            }
-            if (!$odp && $odps->isNotEmpty()) {
-                $odp = $odps[$idx % $odps->count()];
-            }
-
-            $ponPort = $odp && $odp->pon_port_id 
-                ? $ponPorts->firstWhere('id', $odp->pon_port_id) 
-                : ($ponPorts[$idx % $portCount] ?? $ponPorts->first());
-
-            if (!isset($ponIndexTracker[$ponPort->id])) {
-                $ponIndexTracker[$ponPort->id] = 1;
-            }
-            $onuIdx = $ponIndexTracker[$ponPort->id]++;
-
-            // Default values
-            $rxPower = -19.50;
-            $serial = 'VSOL' . strtoupper(substr(md5((string) $cust->id . $pppoe), 0, 8));
-            $model = 'FD511GW (VSOL GPON ONT)';
-            $mac = 'C4:CD:50:' . strtoupper(substr(md5((string) $cust->id), 0, 2)) . ':' . strtoupper(substr(md5((string) ($cust->id + 1)), 0, 2)) . ':' . strtoupper(substr(md5((string) ($cust->id + 2)), 0, 2));
-            $status = $cust->is_active ? 'online' : 'offline';
-
-            if ($genieDev) {
-                $matchedCount++;
-                if (!empty($genieDev['serial_number'])) {
-                    $serial = $genieDev['serial_number'];
-                }
-                if (!empty($genieDev['product_class'])) {
-                    $model = $genieDev['product_class'] . ' GPON/EPON ONT';
-                }
-                if (!empty($genieDev['rx_power']) && is_numeric($genieDev['rx_power'])) {
-                    $rxPower = (float) $genieDev['rx_power'];
-                }
-                if (!empty($genieDev['mac_address'])) {
-                    $mac = $genieDev['mac_address'];
-                }
-                if (isset($genieDev['is_online'])) {
-                    $status = $genieDev['is_online'] ? 'online' : 'offline';
-                }
-            }
-
-            if ($rxPower < -27.0) {
-                $criticalCount++;
-            } elseif ($rxPower < -24.0) {
-                $warningCount++;
-            }
-
-            $onuInserts[] = [
-                'olt_id' => $olt->id,
-                'pon_port_id' => $ponPort->id,
-                'onu_index' => $onuIdx,
-                'customer_id' => $cust->id,
-                'serial_number' => $serial,
-                'mac_address' => $mac,
-                'model' => $model,
-                'optical_rx_dbm' => $rxPower,
-                'optical_tx_dbm' => 2.15 + (($idx % 5) * 0.1),
-                'distance_meter' => 450 + (($idx * 37) % 2200),
-                'status' => $status,
-                'last_online_at' => $status === 'online' ? now() : now()->subDays(1),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-
-            // Update customer record
-            $cust->update([
-                'olt_id' => $olt->id,
-                'pon_port_id' => $ponPort->id,
-                'odp_id' => $odp ? $odp->id : $cust->odp_id,
-                'odp_port_number' => ($idx % 8) + 1,
-                'dropcore_cable_length_meters' => 65 + (($idx * 17) % 150),
-            ]);
-        }
-
-        // Chunk insert
-        foreach (array_chunk($onuInserts, 50) as $chunk) {
-            OltOnu::insert($chunk);
-        }
-
-        // Recalculate PON port counts
-        $this->updatePonPortCounts($olt);
-
+        // If physical OLT is not reachable, do NOT invent fake data or force unmapped customers
         return [
-            'mapped_odps' => $odps->count(),
-            'mapped_customers' => count($customers),
-            'matched_genieacs' => $matchedCount,
-            'critical_signals' => $criticalCount,
-            'warning_signals' => $warningCount,
-            'total_onus' => count($onuInserts),
+            'success' => false,
+            'message' => "OLT fisik pada {$olt->host} tidak dapat dijangkau. Sinkronisasi dibatalkan agar tidak memaksakan data dummy.",
+            'mapped_odps' => 0,
+            'mapped_customers' => 0,
+            'matched_genieacs' => 0,
+            'total_onus' => $olt->onus()->count(),
         ];
     }
 
@@ -836,6 +697,13 @@ class OltSnmpService
             $savedPorts[$pIdx] = $port;
         }
 
+        // Reset all customers previously assigned to this OLT so unmapped customers are NOT falsely attached
+        \Illuminate\Support\Facades\DB::table('customers')->where('olt_id', $olt->id)->update([
+            'olt_id' => null,
+            'pon_port_id' => null,
+            'olt_onu_id' => null,
+        ]);
+
         // 3. Fast Cross-Match with GenieACS and Customers
         $parsedGenie = $this->fetchGenieAcsLookupDevices();
 
@@ -897,7 +765,7 @@ class OltSnmpService
                 ]);
 
                 if ($matchedCustomer) {
-                    $matchedCustomer->update([
+                    \Illuminate\Support\Facades\DB::table('customers')->where('id', $matchedCustomer->id)->update([
                         'olt_id' => $olt->id,
                         'pon_port_id' => $portModel->id,
                         'olt_onu_id' => $onu->id,
@@ -928,6 +796,7 @@ class OltSnmpService
         $genieUrl = config('services.genieacs.url', env('GENIEACS_URL', 'http://10.1.0.5:7557'));
         $projections = [
             '_id',
+            '_deviceId',
             'DeviceID.SerialNumber',
             'DeviceID.ProductClass',
             'DeviceID.Manufacturer',
@@ -983,16 +852,27 @@ class OltSnmpService
 
                     $sn = trim(
                         $d['VirtualParameters']['getSerialNumber']['_value'] ??
+                        $d['_deviceId']['_SerialNumber'] ??
                         $d['DeviceID']['SerialNumber']['_value'] ??
+                        $d['DeviceID']['SerialNumber'] ??
                         $d['InternetGatewayDevice']['DeviceInfo']['SerialNumber']['_value'] ??
                         ''
                     );
 
                     $prod = trim(
+                        $d['_deviceId']['_ProductClass'] ??
                         $d['DeviceID']['ProductClass']['_value'] ??
+                        $d['DeviceID']['ProductClass'] ??
                         $d['InternetGatewayDevice']['DeviceInfo']['ProductClass']['_value'] ??
                         ''
                     );
+
+                    if (empty($prod) && !empty($devId)) {
+                        $parts = explode('-', $devId);
+                        if (count($parts) >= 3) {
+                            $prod = urldecode($parts[1]);
+                        }
+                    }
 
                     $allMacs = array_values(array_unique(array_filter([$ponMac, $pppoeMac, $wan1Mac, $wan2Mac, $lanMac, $lanHostMac, $idMac])));
 
@@ -1014,42 +894,35 @@ class OltSnmpService
     }
 
     /**
-     * Match an OLT ONU's MAC address against the parsed GenieACS devices array using 3-tier matching.
+     * Strictly match an OLT ONU's MAC address against the parsed GenieACS devices array.
+     * Uses only exact MAC matching or exact 12-char MAC substring in Serial/DeviceID.
+     * Never uses loose prefix matching to prevent attaching wrong customer data.
      */
     public function matchGenieAcsDevice(string $rawOnuMac, array $parsedGenie): ?array
     {
         $onuMac = strtoupper(str_replace([':', '-', '.', ' '], '', trim($rawOnuMac)));
         if (empty($onuMac)) return null;
 
-        // Tier 1: Exact MAC match across all extracted MACs (PonMac, pppoeMac, WAN, LAN)
+        // Tier 1: Exact MAC match across all extracted MACs (PonMac, pppoeMac, WAN, LAN, DeviceID MAC)
         foreach ($parsedGenie as $g) {
             if (in_array($onuMac, $g['all_macs'], true)) {
                 return $g;
             }
         }
 
-        // Tier 2: Substring in Serial Number or Device ID (e.g. 123454C46D1435CF0 contains 4C46D1435CF0)
-        foreach ($parsedGenie as $g) {
-            if (!empty($g['sn']) && str_contains(strtoupper($g['sn']), $onuMac)) {
-                return $g;
-            }
-            if (!empty($g['device_id']) && str_contains(strtoupper($g['device_id']), $onuMac)) {
-                return $g;
-            }
-        }
-
-        // Tier 3: Prefix match (first 10 hex characters match, offset on last interface byte e.g. F0 vs F6)
+        // Tier 2: Exact 12-char MAC substring in Serial Number or Device ID (e.g. 123454C46D1435CF0 contains 4C46D1435CF0)
         if (strlen($onuMac) === 12) {
-            $prefix10 = substr($onuMac, 0, 10);
             foreach ($parsedGenie as $g) {
-                foreach ($g['all_macs'] as $m) {
-                    if (strlen($m) === 12 && substr($m, 0, 10) === $prefix10) {
-                        return $g;
-                    }
+                if (!empty($g['sn']) && str_contains(strtoupper($g['sn']), $onuMac)) {
+                    return $g;
+                }
+                if (!empty($g['device_id']) && str_contains(strtoupper($g['device_id']), $onuMac)) {
+                    return $g;
                 }
             }
         }
 
+        // Tier 3 prefix matching is intentionally omitted to avoid false positives on unmapped devices.
         return null;
     }
 
@@ -1058,6 +931,12 @@ class OltSnmpService
      */
     public function syncOltWithGenieAcs(MasterOlt $olt): array
     {
+        // 1. Try fetching 100% real live hardware data first if HiOSO
+        $hiosoData = $this->fetchLiveHiosoData($olt);
+        if ($hiosoData['reachable']) {
+            return $this->syncRealHiosoHardware($olt, $hiosoData);
+        }
+
         $parsedGenie = $this->fetchGenieAcsLookupDevices();
 
         $customers = Customer::all();
