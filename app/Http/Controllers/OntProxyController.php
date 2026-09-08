@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\AcsDevice;
 use App\Models\Customer;
 use App\Services\MikroTikService;
 use Exception;
@@ -598,29 +597,30 @@ HTML;
         // If MikroTik returned no devices (e.g. MikroTik API unreachable or in local development)
         if (empty($devices)) {
             try {
-                $acsDevices = AcsDevice::with('customer')->get();
-                foreach ($acsDevices as $acs) {
-                    $ip = $acs->ip_address ?: $acs->pppoe_ip;
+                $customers = Customer::whereNotNull('home_router_host')
+                    ->orWhereNotNull('pppoe_username')
+                    ->get();
+                foreach ($customers as $c) {
+                    $ip = $c->home_router_host;
                     if (empty($ip) || $ip === '0.0.0.0') {
                         continue;
                     }
-                    $u = $acs->pppoe_username ?: ($acs->customer?->username ?: $acs->device_id);
                     $devices[] = [
-                        'username' => $u,
-                        'customer_name' => $acs->customer?->name ?: $u,
-                        'customer_id' => $acs->customer_id,
-                        'customer_phone' => $acs->customer?->phone,
-                        'customer_address' => $acs->customer?->address,
+                        'username' => $c->pppoe_username ?: $c->name,
+                        'customer_name' => $c->name,
+                        'customer_id' => $c->id,
+                        'customer_phone' => $c->phone,
+                        'customer_address' => $c->address,
                         'remote_ip' => $ip,
-                        'caller_id' => $acs->wan_mac ?: ($acs->serial_number ?: ''),
-                        'profile' => 'TR-069 ACS',
-                        'uptime' => $acs->device_uptime ?: '-',
-                        'is_online' => (bool) $acs->is_online,
-                        'service' => 'tr069/pppoe',
+                        'caller_id' => '',
+                        'profile' => 'Pelanggan DB',
+                        'uptime' => '-',
+                        'is_online' => (bool) $c->is_active,
+                        'service' => 'pppoe',
                     ];
                 }
             } catch (Exception $e) {
-                Log::warning('OntProxyController: Failed fallback to AcsDevice: ' . $e->getMessage());
+                Log::warning('OntProxyController: Failed fallback to customers: ' . $e->getMessage());
             }
         }
 

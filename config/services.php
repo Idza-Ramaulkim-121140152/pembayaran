@@ -36,11 +36,12 @@ return [
     ],
 
     'genieacs' => [
-        'api_url' => env('GENIEACS_API_URL', 'http://103.37.124.76:7557'),
-        'ui_url' => env('GENIEACS_UI_URL', 'http://103.37.124.76:3000'),
+        'api_url' => env('GENIEACS_API_URL', 'http://10.1.0.5:7557'),
+        'cwmp_url' => env('GENIEACS_CWMP_URL', 'http://10.1.0.5:7547'),
+        'ui_url' => env('GENIEACS_UI_URL', 'http://10.1.0.5:3000'),
         'username' => env('GENIEACS_USERNAME'),
         'password' => env('GENIEACS_PASSWORD'),
-        'timeout' => (int) env('GENIEACS_TIMEOUT', 20),
+        'timeout' => (int) env('GENIEACS_TIMEOUT', 25),
     ],
 
     'openai' => [

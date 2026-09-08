@@ -411,10 +411,10 @@ export default function MonitoringGenieAcsPage() {
                 <div>
                     <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
                         <Router className="h-8 w-8 text-emerald-600" />
-                        Monitoring Perangkat & Pelanggan (TR-069 ACS Native)
+                        Monitoring Perangkat & Pelanggan (GenieACS)
                     </h1>
                     <p className="mt-1 text-sm text-gray-500">
-                        Pantau perangkat ONT/Router pelanggan via Server TR-069 ACS Native Laravel, total klien terhubung, kepatuhan batas paket, redaman optik, dan remote setting WiFi.
+                        Pantau perangkat ONT/Router pelanggan via Server GenieACS, total klien terhubung, kepatuhan batas paket, redaman optik, dan remote setting WiFi.
                     </p>
                 </div>
 
@@ -827,12 +827,6 @@ export default function MonitoringGenieAcsPage() {
                                                             <span className="text-[10px] font-semibold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
                                                                 {row.manufacturer || 'ONT'}
                                                             </span>
-                                                            {row.engine === 'native_laravel_acs' && (
-                                                                <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded flex items-center gap-0.5" title="Terkoneksi langsung ke Server ACS Laravel Native">
-                                                                    <Sparkles size={9} className="text-emerald-600" />
-                                                                    Native ACS
-                                                                </span>
-                                                            )}
                                                             {row.pon_mode && (
                                                                 <span className="text-[9px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
                                                                     {row.pon_mode}

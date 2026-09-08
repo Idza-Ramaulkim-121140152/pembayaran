@@ -202,20 +202,18 @@ class GenieAcsService
         }
 
         $rawDevices = [];
-        // Optional external GenieACS fetch (if enabled/reachable), with short timeout and silent catch
-        if (config('services.genieacs.enabled', true)) {
-            try {
-                $response = Http::timeout(2)->acceptJson()->get($this->url('/devices'), [
-                    'projection' => implode(',', self::FAST_DEVICE_PROJECTION),
-                ]);
+        try {
+            $response = $this->client()->get($this->url('/devices'), [
+                'projection' => implode(',', self::FAST_DEVICE_PROJECTION),
+            ]);
 
-                if ($response->successful()) {
-                    $rawDevices = $response->json() ?? [];
-                }
-            } catch (\Throwable $e) {
-                // External GenieACS is stopped or offline; proceed seamlessly with Native TR-069 ACS
-                Log::info('GenieAcsService: External GenieACS unreachable, using Native Laravel ACS: ' . $e->getMessage());
+            if ($response->successful()) {
+                $rawDevices = $response->json() ?? [];
+            } else {
+                Log::warning('GenieAcsService: GenieACS returned status ' . $response->status());
             }
+        } catch (\Throwable $e) {
+            Log::error('GenieAcsService: Failed connecting to GenieACS at ' . $this->url('/devices') . ': ' . $e->getMessage());
         }
 
         // Fetch MikroTik Active & Secret mappings for double-checking PPPoE & IP
@@ -373,90 +371,6 @@ class GenieAcsService
                 $cleanMac = strtolower(str_replace([':', '-', '.'], '', trim($macAddress)));
                 $devicesByMac[$cleanMac] = $devData;
             }
-        }
-
-        // Incorporate Native Laravel TR-069 ACS Devices (Local MySQL)
-        try {
-            $nativeDevices = \App\Models\AcsDevice::query()->get();
-            foreach ($nativeDevices as $nd) {
-                $isOnline = $nd->last_inform_at && $nd->last_inform_at->greaterThanOrEqualTo(now()->subMinutes(15));
-
-                $rxPower = $nd->optical_rx_power;
-                $txPower = $nd->optical_tx_power;
-                if ($rxPower === null) {
-                    $oltOnu = null;
-                    if ($nd->customer_id) {
-                        $oltOnu = \App\Models\OltOnu::where('customer_id', $nd->customer_id)->first();
-                    }
-                    if (!$oltOnu && $nd->serial_number) {
-                        $oltOnu = \App\Models\OltOnu::where('serial_number', $nd->serial_number)->first();
-                    }
-                    if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
-                        $rxPower = (float) $oltOnu->optical_rx_dbm;
-                        $txPower = (float) $oltOnu->optical_tx_dbm;
-                        $nd->update([
-                            'optical_rx_power' => $rxPower,
-                            'optical_tx_power' => $txPower,
-                        ]);
-                    }
-                }
-
-                $nativeDevData = [
-                    'device_id' => $nd->device_id,
-                    'engine' => 'native_laravel_acs',
-                    'is_online' => $isOnline,
-                    'last_inform_at' => $nd->last_inform_at?->toIso8601String(),
-                    'registered_at' => $nd->registered_at?->toIso8601String(),
-                    'manufacturer' => $nd->manufacturer,
-                    'product_class' => $nd->product_class,
-                    'serial_number' => $nd->serial_number,
-                    'pon_mode' => $nd->pon_mode,
-                    'optical_rx_power' => $rxPower,
-                    'optical_tx_power' => $txPower,
-                    'temperature' => $nd->temperature,
-                    'device_uptime' => $nd->device_uptime,
-                    'ppp_uptime' => $nd->ppp_uptime,
-                    'pppoe_username' => $nd->pppoe_username,
-                    'ip_address' => $nd->wan_ip ?: $nd->ip_address,
-                    'wan_mac' => $nd->wan_mac,
-                    'lan_mac' => $nd->lan_mac,
-                    'matched_via' => $nd->matched_via,
-                    'ssid' => $nd->wifi_ssid,
-                    'wifi_password' => $nd->wifi_password,
-                    'wifi_clients_count' => (int) $nd->wifi_clients_count,
-                    'rx_power' => $rxPower,
-                    'rx_status' => $nd->rx_quality,
-                ];
-
-                if (!isset($parsedAcsDevices[$nd->device_id])) {
-                    if ($isOnline) $onlineCount++;
-                    else $offlineCount++;
-
-                    if ($rxPower !== null) {
-                        if ($rxPower < -27.0) $criticalRxCount++;
-                        elseif ($rxPower <= -24.0) $warningRxCount++;
-                    }
-                }
-
-                // Native ACS overrides / takes priority
-                $parsedAcsDevices[$nd->device_id] = $nativeDevData;
-
-                if ($nd->pppoe_username) {
-                    $devicesByPppoe[strtolower(trim($nd->pppoe_username))] = $nativeDevData;
-                }
-                if ($nd->wan_ip) {
-                    $devicesByIp[trim($nd->wan_ip)] = $nativeDevData;
-                }
-                if ($nd->ip_address) {
-                    $devicesByIp[trim($nd->ip_address)] = $nativeDevData;
-                }
-                if ($nd->lan_mac) {
-                    $cleanMac = strtolower(str_replace([':', '-', '.'], '', trim($nd->lan_mac)));
-                    $devicesByMac[$cleanMac] = $nativeDevData;
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::warning('GenieAcsService: Native ACS device merge error: ' . $e->getMessage());
         }
 
         $unifiedList = [];
@@ -788,193 +702,8 @@ class GenieAcsService
      */
     public function getDeviceDetails(string $deviceId): array
     {
-        // 1. Check Native Laravel TR-069 ACS Database first
         try {
-            $nativeDevice = \App\Models\AcsDevice::with(['customer.package', 'connectedHosts'])->where('device_id', $deviceId)->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)->first();
-            if ($nativeDevice) {
-                $isOnline = $nativeDevice->last_inform_at && $nativeDevice->last_inform_at->greaterThanOrEqualTo(now()->subMinutes(15));
-                $custModel = $nativeDevice->customer;
-
-                // If customer not directly linked, try matching via PPPoE or MikroTik
-                if (!$custModel && $nativeDevice->pppoe_username) {
-                    $custModel = Customer::whereRaw('LOWER(pppoe_username) = ?', [strtolower(trim($nativeDevice->pppoe_username))])->with('package')->first();
-                }
-
-                $customerData = null;
-                if ($custModel) {
-                    $customerData = [
-                        'id' => $custModel->id,
-                        'name' => $custModel->name,
-                        'phone' => $custModel->phone,
-                        'address' => $custModel->address,
-                        'pppoe_username' => $custModel->pppoe_username,
-                        'package_name' => $custModel->package?->name ?? ($custModel->package_type ?: '-'),
-                        'is_active' => (bool) $custModel->is_active,
-                        'matched_via' => $nativeDevice->matched_via ?: 'native_acs',
-                    ];
-                }
-
-                // Filter only active hosts for connected devices list
-                $activeConnectedHosts = $nativeDevice->connectedHosts->filter(fn($h) => (bool) $h->is_active);
-                $hasActiveProperty = $nativeDevice->connectedHosts->contains(fn($h) => $h->is_active !== null && $h->is_active !== false);
-                $targetHosts = $hasActiveProperty ? $activeConnectedHosts : $nativeDevice->connectedHosts;
-
-                $lanHosts = $targetHosts->map(fn($h) => [
-                    'name' => $h->hostname ?: 'Perangkat Klien',
-                    'ip_address' => $h->ip_address,
-                    'mac_address' => $h->mac_address,
-                    'type' => $h->interface_type ?: 'WiFi',
-                    'is_active' => (bool) $h->is_active,
-                    'last_seen' => $h->last_seen_at?->toIso8601String(),
-                    'signal_strength' => $h->rssi,
-                ])->values()->all();
-
-                // Resolve optical RX / TX power if null
-                $rxPower = $nativeDevice->optical_rx_power;
-                $txPower = $nativeDevice->optical_tx_power;
-                if ($rxPower === null) {
-                    $oltOnu = null;
-                    if ($nativeDevice->customer_id) {
-                        $oltOnu = \App\Models\OltOnu::where('customer_id', $nativeDevice->customer_id)->first();
-                    }
-                    if (!$oltOnu && $nativeDevice->serial_number) {
-                        $oltOnu = \App\Models\OltOnu::where('serial_number', $nativeDevice->serial_number)->first();
-                    }
-                    if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
-                        $rxPower = (float) $oltOnu->optical_rx_dbm;
-                        $txPower = (float) $oltOnu->optical_tx_dbm;
-                        $nativeDevice->update([
-                            'optical_rx_power' => $rxPower,
-                            'optical_tx_power' => $txPower,
-                        ]);
-                    }
-                }
-
-                $detectedSsids = $nativeDevice->vendor_raw_summary['ssids'] ?? [];
-                $ssidsList = [];
-                if (!empty($detectedSsids)) {
-                    foreach ($detectedSsids as $s) {
-                        $idx = $s['index'] ?? 1;
-                        $ssidsList[] = [
-                            'ssid' => $s['ssid'],
-                            'name' => $s['ssid'],
-                            'path' => $s['path'] ?? "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$idx}",
-                            'password_path' => $s['password_path'] ?? "InternetGatewayDevice.LANDevice.1.WLANConfiguration.{$idx}.KeyPassphrase",
-                            'current_password' => $s['password'] ?? null,
-                            'enabled' => $s['enabled'] ?? true,
-                            'band' => $idx == 1 ? '2.4GHz (Utama)' : "SSID {$idx}",
-                            'channel' => $idx == 1 ? '2.4 GHz' : "SSID {$idx}",
-                        ];
-                    }
-                } else {
-                    $ssidsList[] = [
-                        'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                        'name' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                        'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
-                        'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-                        'current_password' => $nativeDevice->wifi_password,
-                        'band' => '2.4GHz',
-                        'channel' => '2.4 GHz',
-                    ];
-                    if (!empty($nativeDevice->wifi_ssid_5g)) {
-                        $ssidsList[] = [
-                            'ssid' => $nativeDevice->wifi_ssid_5g,
-                            'name' => $nativeDevice->wifi_ssid_5g,
-                            'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2',
-                            'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.KeyPassphrase',
-                            'current_password' => $nativeDevice->wifi_password_5g,
-                            'band' => 'SSID 2 / 5GHz',
-                            'channel' => 'SSID 2',
-                        ];
-                    }
-                }
-
-                $summary = [
-                    'device_id' => $nativeDevice->device_id,
-                    'serial_number' => $nativeDevice->serial_number,
-                    'product_class' => $nativeDevice->product_class,
-                    'manufacturer' => $nativeDevice->manufacturer,
-                    'pon_mode' => $nativeDevice->pon_mode,
-                    'software_version' => $nativeDevice->software_version,
-                    'hardware_version' => $nativeDevice->hardware_version,
-                    'optical_rx_power' => $rxPower,
-                    'optical_tx_power' => $txPower,
-                    'temperature' => $nativeDevice->temperature,
-                    'device_uptime' => $nativeDevice->device_uptime,
-                    'ppp_uptime' => $nativeDevice->ppp_uptime,
-                    'pppoe_username' => $nativeDevice->pppoe_username,
-                    'ip_address' => $nativeDevice->wan_ip ?: $nativeDevice->ip_address,
-                    'wan_mac' => $nativeDevice->wan_mac,
-                    'lan_mac' => $nativeDevice->lan_mac,
-                    'is_online' => $isOnline,
-                    'last_inform_at' => $nativeDevice->last_inform_at?->toIso8601String(),
-                    'registered_at' => $nativeDevice->registered_at?->toIso8601String(),
-                    'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                    'ssids' => $ssidsList,
-                ];
-
-                $telemetry = [
-                    'device_id' => $nativeDevice->device_id,
-                    'online' => $isOnline,
-                    'last_inform_at' => $nativeDevice->last_inform_at?->toIso8601String(),
-                    'registered_at' => $nativeDevice->registered_at?->toIso8601String(),
-                    'optical_rx_power' => $rxPower,
-                    'optical_tx_power' => $txPower,
-                    'temperature' => $nativeDevice->temperature,
-                    'device_uptime' => $nativeDevice->device_uptime,
-                    'ppp_uptime' => $nativeDevice->ppp_uptime,
-                    'pppoe_username' => $nativeDevice->pppoe_username,
-                    'wan' => [
-                        'connected' => $isOnline,
-                        'status' => $isOnline ? 'Connected' : 'Disconnected',
-                        'uptime' => $nativeDevice->ppp_uptime,
-                        'ip_address' => $nativeDevice->wan_ip ?: $nativeDevice->ip_address,
-                        'download_bytes' => null,
-                        'upload_bytes' => null,
-                        'total_bytes' => null,
-                        'source' => 'native_laravel_acs',
-                        'source_label' => 'Native TR-069 ACS',
-                    ],
-                    'host' => [
-                        'count' => count($lanHosts) ?: (int) $nativeDevice->wifi_clients_count,
-                        'source' => 'native_acs_hosts',
-                        'source_label' => 'Host Aktif Native ACS',
-                    ],
-                    'connected_devices' => [
-                        'count' => count($lanHosts) ?: (int) $nativeDevice->wifi_clients_count,
-                        'source' => 'native_acs_activedevices',
-                        'source_label' => 'Perangkat Terhubung',
-                    ],
-                    'wifi_clients' => [],
-                    'device_summary' => $summary,
-                ];
-
-                $rawWritableWifiTargets = array_map(fn($s) => [
-                    'ssid' => $s['ssid'],
-                    'path' => $s['path'],
-                    'password_path' => $s['password_path'],
-                    'current_password' => $s['current_password'],
-                ], $ssidsList);
-
-                return [
-                    'device_id' => $nativeDevice->device_id,
-                    'engine' => 'native_laravel_acs',
-                    'summary' => $summary,
-                    'telemetry' => $telemetry,
-                    'ssid' => $nativeDevice->wifi_ssid ?: 'WiFi',
-                    'wifi_password' => $nativeDevice->wifi_password,
-                    'lan_hosts' => $lanHosts,
-                    'customer' => $customerData,
-                    'raw_writable_wifi_targets' => $rawWritableWifiTargets,
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('getDeviceDetails: Native ACS lookup error: ' . $e->getMessage());
-        }
-
-        // 2. Fallback to external GenieACS if configured
-        try {
-            $response = Http::timeout(2)->acceptJson()->get($this->url('/devices'), [
+            $response = $this->client()->get($this->url('/devices'), [
                 'query' => json_encode(['_id' => $deviceId]),
             ]);
 
@@ -1081,40 +810,7 @@ class GenieAcsService
             throw new GenieAcsException('Harap isi Nama SSID atau Password baru yang ingin diubah.', 422);
         }
 
-        // 1. Check Native Laravel TR-069 ACS first
-        try {
-            $nativeDevice = \App\Models\AcsDevice::where('device_id', $deviceId)->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)->first();
-            if ($nativeDevice) {
-                $taskService = app(\App\Services\Acs\AcsTaskService::class);
-                $ssid = $newSsid ?: $nativeDevice->wifi_ssid ?: 'WiFi';
-                $password = $newPassword ?: $nativeDevice->wifi_password ?: '12345678';
-                $task = $taskService->queueChangeWifi($nativeDevice, $ssid, $password);
-
-                if ($newPassword !== null && $newPassword !== '') {
-                    Cache::forever("genieacs_wifi_pw:{$deviceId}", $newPassword);
-                    if ($nativeDevice->pppoe_username) {
-                        Cache::forever("genieacs_wifi_pw:" . strtolower(trim($nativeDevice->pppoe_username)), $newPassword);
-                    }
-                }
-
-                Cache::forget(self::SUMMARY_CACHE_KEY);
-
-                return [
-                    'device_id' => $deviceId,
-                    'task_id' => $task->id,
-                    'updated_parameters' => 4,
-                    'ssid' => $ssid,
-                    'password' => $password,
-                    'wait_time' => '1 - 2 Menit',
-                    'message' => 'Kata sandi WiFi baru berhasil dikirim ke antrean TR-069 ACS router!',
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('updateDeviceWifi: Native ACS task queue error: ' . $e->getMessage());
-        }
-
-        // 2. Fallback to external GenieACS
-        $response = Http::timeout(2)->acceptJson()->get($this->url('/devices'), [
+        $response = $this->client()->get($this->url('/devices'), [
             'query' => json_encode(['_id' => $deviceId]),
         ]);
 
@@ -1238,24 +934,6 @@ class GenieAcsService
      */
     public function rebootDevice(string $deviceId): array
     {
-        // 1. Check Native Laravel TR-069 ACS first
-        try {
-            $nativeDevice = \App\Models\AcsDevice::where('device_id', $deviceId)->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)->first();
-            if ($nativeDevice) {
-                $taskService = app(\App\Services\Acs\AcsTaskService::class);
-                $task = $taskService->queueReboot($nativeDevice);
-                Cache::forget(self::SUMMARY_CACHE_KEY);
-
-                return [
-                    'device_id' => $deviceId,
-                    'task_id' => $task->id,
-                    'message' => 'Perintah reboot router berhasil dikirim ke antrean TR-069 ACS.',
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('rebootDevice: Native ACS reboot error: ' . $e->getMessage());
-        }
-
         $this->postTask($deviceId, [
             'name' => 'reboot',
         ]);
@@ -1264,7 +942,7 @@ class GenieAcsService
 
         return [
             'device_id' => $deviceId,
-            'message' => 'Perintah reboot router berhasil dikirim ke antrean ACS.',
+            'message' => 'Perintah reboot router berhasil dikirim ke antrean GenieACS.',
         ];
     }
 
@@ -1273,25 +951,6 @@ class GenieAcsService
      */
     public function refreshDevice(string $deviceId): array
     {
-        // 1. Check Native Laravel TR-069 ACS first
-        try {
-            $nativeDevice = \App\Models\AcsDevice::where('device_id', $deviceId)->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)->first();
-            if ($nativeDevice) {
-                $taskService = app(\App\Services\Acs\AcsTaskService::class);
-                $task = $taskService->queueGetParameters($nativeDevice);
-                Cache::forget(self::SUMMARY_CACHE_KEY);
-
-                return [
-                    'device_id' => $deviceId,
-                    'task_id' => $task->id,
-                    'message' => 'Perintah sinkronisasi parameter berhasil dikirim ke router via TR-069 ACS.',
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('refreshDevice: Native ACS refresh error: ' . $e->getMessage());
-        }
-
-        // 2. Fallback to external GenieACS
         $this->postTask($deviceId, [
             'name' => 'getParameterValues',
             'parameterNames' => [
@@ -1327,106 +986,6 @@ class GenieAcsService
             return null;
         }
 
-        // 1. Check Native Laravel TR-069 ACS Database first
-        try {
-            $nativeDev = \App\Models\AcsDevice::query()
-                ->whereRaw('LOWER(pppoe_username) = ?', [strtolower($target)])
-                ->first();
-
-            // 1.1 If not found directly by PPPoE, check if customer has a known router IP or MAC in MikroTik
-            if (!$nativeDev) {
-                $mikrotikLookup = $this->getMikrotikPppoeLookupMaps();
-                $lowerTarget = strtolower($target);
-                $mtkEntry = $mikrotikLookup['by_pppoe'][$lowerTarget] ?? null;
-                $targetIp = $mtkEntry['ip_address'] ?? null;
-                $targetMac = $mtkEntry['mac_address'] ?? null;
-
-                if (!$targetIp) {
-                    $cust = Customer::query()->whereRaw('LOWER(pppoe_username) = ?', [$lowerTarget])->first();
-                    if ($cust && !empty($cust->home_router_host)) {
-                        $targetIp = trim($cust->home_router_host);
-                    }
-                }
-
-                if ($targetIp) {
-                    $nativeDev = \App\Models\AcsDevice::query()
-                        ->where('wan_ip', $targetIp)
-                        ->orWhere('ip_address', $targetIp)
-                        ->first();
-                }
-
-                if (!$nativeDev && $targetMac) {
-                    $cleanMac = strtolower(str_replace([':', '-', '.'], '', $targetMac));
-                    $nativeDev = \App\Models\AcsDevice::query()
-                        ->whereRaw("REPLACE(REPLACE(REPLACE(LOWER(lan_mac), ':', ''), '-', ''), '.', '') = ?", [$cleanMac])
-                        ->orWhereRaw("REPLACE(REPLACE(REPLACE(LOWER(wan_mac), ':', ''), '-', ''), '.', '') = ?", [$cleanMac])
-                        ->first();
-                }
-            }
-
-            if ($nativeDev) {
-                return [
-                    '_id' => $nativeDev->device_id,
-                    'is_native_acs' => true,
-                    'native_device_id' => $nativeDev->id,
-                    '_registered' => $nativeDev->registered_at?->toIso8601String(),
-                    '_lastInform' => $nativeDev->last_inform_at?->toIso8601String(),
-                    '_ip' => $nativeDev->ip_address,
-                    'DeviceID' => [
-                        'Manufacturer' => ['_value' => $nativeDev->manufacturer],
-                        'ProductClass' => ['_value' => $nativeDev->product_class],
-                        'SerialNumber' => ['_value' => $nativeDev->serial_number],
-                    ],
-                    'DeviceID.Manufacturer' => $nativeDev->manufacturer,
-                    'DeviceID.ProductClass' => $nativeDev->product_class,
-                    'DeviceID.SerialNumber' => $nativeDev->serial_number,
-                    'VirtualParameters' => [
-                        'pppoeUsername' => ['_value' => $nativeDev->pppoe_username],
-                        'pppoeIP' => ['_value' => $nativeDev->wan_ip ?: $nativeDev->ip_address],
-                        'RXPower' => ['_value' => (string) $nativeDev->optical_rx_power],
-                        'TXPower' => ['_value' => (string) $nativeDev->optical_tx_power],
-                        'gettemp' => ['_value' => (string) $nativeDev->temperature],
-                        'activedevices' => ['_value' => $nativeDev->wifi_clients_count],
-                        'WlanPassword' => ['_value' => $nativeDev->wifi_password],
-                        'WlanSSID' => ['_value' => $nativeDev->wifi_ssid],
-                        'getSerialNumber' => ['_value' => $nativeDev->serial_number],
-                    ],
-                    'VirtualParameters.pppoeUsername' => $nativeDev->pppoe_username,
-                    'VirtualParameters.pppoeIP' => $nativeDev->wan_ip ?: $nativeDev->ip_address,
-                    'VirtualParameters.RXPower' => (string) $nativeDev->optical_rx_power,
-                    'VirtualParameters.TXPower' => (string) $nativeDev->optical_tx_power,
-                    'VirtualParameters.gettemp' => (string) $nativeDev->temperature,
-                    'VirtualParameters.activedevices' => $nativeDev->wifi_clients_count,
-                    'InternetGatewayDevice' => [
-                        'DeviceInfo' => [
-                            'Manufacturer' => ['_value' => $nativeDev->manufacturer],
-                            'ProductClass' => ['_value' => $nativeDev->product_class],
-                            'SerialNumber' => ['_value' => $nativeDev->serial_number],
-                        ],
-                        'LANDevice' => [
-                            '1' => [
-                                'WLANConfiguration' => [
-                                    '1' => [
-                                        'SSID' => ['_value' => $nativeDev->wifi_ssid],
-                                        'KeyPassphrase' => ['_value' => $nativeDev->wifi_password],
-                                    ],
-                                ],
-                            ],
-                        ],
-                    ],
-                    'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID' => $nativeDev->wifi_ssid,
-                    'VirtualParameters.WlanPassword' => $nativeDev->wifi_password,
-                    'wifi_password' => $nativeDev->wifi_password,
-                    'wifi_ssid' => $nativeDev->wifi_ssid,
-                    'device_uptime' => $nativeDev->device_uptime,
-                    'ppp_uptime' => $nativeDev->ppp_uptime,
-                ];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('findDeviceByPppoe: Native ACS lookup error: ' . $e->getMessage());
-        }
-
-        // 2. Safe Fallback to external GenieACS
         $regexQuery = ['$regex' => '^' . preg_quote($target) . '$', '$options' => 'i'];
 
         $fieldsToTry = [
@@ -1439,7 +998,7 @@ class GenieAcsService
 
         foreach ($fieldsToTry as $field) {
             try {
-                $response = Http::timeout(2)->acceptJson()->get($this->url('/devices'), [
+                $response = $this->client()->get($this->url('/devices'), [
                     'query' => json_encode([$field => $regexQuery]),
                 ]);
 
@@ -1504,22 +1063,6 @@ class GenieAcsService
                 return $this->verificationResult('failed', 0, $targets, 'Device TR-069 ACS tidak ditemukan saat verifikasi.');
             }
 
-            if (!empty($device['is_native_acs'])) {
-                $nativePw = $device['wifi_password'] ?? $device['VirtualParameters.WlanPassword'] ?? null;
-                $isMatch = $nativePw && hash_equals((string)$nativePw, $password);
-                $rows = collect($targets)->map(fn($t) => [
-                    'ssid' => $t['ssid'] ?? $device['wifi_ssid'] ?? 'WiFi',
-                    'path' => $t['path'] ?? 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
-                    'verified' => $isMatch,
-                    'available' => true,
-                ])->values()->all();
-
-                if ($isMatch) {
-                    return $this->verificationResult('verified', count($rows), $rows, 'Password WiFi sudah berhasil terverifikasi di TR-069 ACS.');
-                }
-                return $this->verificationResult('pending', 0, $rows, 'Task ganti WiFi sedang diproses oleh router...');
-            }
-
             $currentTargets = collect($this->summarizeDevice($device)['ssids'] ?? [])
                 ->keyBy('password_path');
 
@@ -1562,22 +1105,6 @@ class GenieAcsService
 
     public function summarizeDevice(array $device): array
     {
-        if (!empty($device['is_native_acs'])) {
-            return [
-                'device_id' => (string) ($device['_id'] ?? ''),
-                'serial_number' => $device['DeviceID.SerialNumber'] ?? '',
-                'product_class' => $device['DeviceID.ProductClass'] ?? 'ONT Router',
-                'ssids' => [
-                    [
-                        'ssid' => $device['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'] ?? $device['wifi_ssid'] ?? 'WiFi',
-                        'path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
-                        'password_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-                        'current_password' => $device['VirtualParameters.WlanPassword'] ?? $device['wifi_password'] ?? null,
-                    ]
-                ],
-            ];
-        }
-
         return [
             'device_id' => (string) ($device['_id'] ?? ''),
             'serial_number' => $this->parameterValue($device, 'DeviceID.SerialNumber')
@@ -1606,44 +1133,6 @@ class GenieAcsService
         $deviceSummary = $this->summarizeDevice($device);
         $lastInformAt = $this->resolveLastInformAt($device);
         $lastInformRecent = $this->isLastInformRecent($lastInformAt);
-
-        if (!empty($device['is_native_acs'])) {
-            return [
-                'device_id' => $deviceSummary['device_id'],
-                'serial_number' => $deviceSummary['serial_number'],
-                'product_class' => $deviceSummary['product_class'],
-                'last_inform_at' => $lastInformAt,
-                'last_inform_recent' => $lastInformRecent,
-                'wan_connected' => $lastInformRecent,
-                'wan_status' => $lastInformRecent ? 'Connected' : 'Disconnected',
-                'uptime' => $device['ppp_uptime'] ?? null,
-                'ip_address' => $device['VirtualParameters.pppoeIP'] ?? $device['_ip'] ?? null,
-                'traffic' => [
-                    'available' => false,
-                    'source' => 'native_laravel_acs',
-                    'source_label' => 'Native TR-069 ACS',
-                    'download_bytes' => null,
-                    'upload_bytes' => null,
-                    'total_bytes' => null,
-                ],
-                'hosts' => [
-                    'available' => true,
-                    'count' => (int) ($device['VirtualParameters.activedevices'] ?? 0),
-                    'source' => 'native_acs_hosts',
-                    'source_label' => 'Host Aktif ACS',
-                ],
-                'connected_devices' => [
-                    'available' => true,
-                    'count' => (int) ($device['VirtualParameters.activedevices'] ?? 0),
-                    'source' => 'native_acs_activedevices',
-                    'source_label' => 'Perangkat Terhubung',
-                ],
-                'wifi_clients' => [
-                    'available' => false,
-                    'ssids' => [],
-                ],
-            ];
-        }
 
         $wanTelemetry = $this->resolvePortalWanTelemetry($device);
         $hostTelemetry = $this->resolvePortalHostTelemetry($device);
@@ -1691,7 +1180,7 @@ class GenieAcsService
 
     private function client(): PendingRequest
     {
-        $client = Http::timeout(2)
+        $client = Http::timeout((int) config('services.genieacs.timeout', 25))
             ->acceptJson();
 
         $username = config('services.genieacs.username');
@@ -1706,68 +1195,32 @@ class GenieAcsService
 
     private function url(string $path): string
     {
-        return rtrim((string) config('services.genieacs.api_url'), '/') . '/' . ltrim($path, '/');
+        $base = config('services.genieacs.api_url', 'http://10.1.0.5:7557');
+        // If CWMP port 7547 is passed, automatically convert to NBI REST API port 7557
+        if (str_contains($base, ':7547')) {
+            $base = str_replace(':7547', ':7557', $base);
+        }
+        return rtrim((string) $base, '/') . '/' . ltrim($path, '/');
     }
 
     private function postTask(string $deviceId, array $payload, bool $required = true, bool $connectionRequest = true, int $timeout = 25000): array
     {
-        // 1. Check Native ACS device
-        try {
-            $nativeDev = \App\Models\AcsDevice::where('device_id', $deviceId)->orWhere('id', is_numeric($deviceId) ? (int)$deviceId : 0)->first();
-            if ($nativeDev) {
-                $taskService = app(\App\Services\Acs\AcsTaskService::class);
-                $taskName = $payload['name'] ?? 'customTask';
-                if ($taskName === 'setParameterValues' && isset($payload['parameterValues'])) {
-                    $mappedParams = [];
-                    foreach ($payload['parameterValues'] as $item) {
-                        $mappedParams[$item[0]] = ['value' => $item[1], 'type' => $item[2] ?? 'xsd:string'];
-                    }
-                    $task = $taskService->queueSetParameterValues($nativeDev, $mappedParams, $connectionRequest);
-                } elseif ($taskName === 'reboot') {
-                    $task = $taskService->queueReboot($nativeDev, $connectionRequest);
-                } elseif ($taskName === 'refreshObject' || $taskName === 'getParameterValues') {
-                    $task = $taskService->queueGetParameters($nativeDev, [], $connectionRequest);
-                } else {
-                    $task = \App\Models\AcsTask::create([
-                        'acs_device_id' => $nativeDev->id,
-                        'name' => $taskName,
-                        'payload' => $payload,
-                        'status' => 'pending',
-                    ]);
-                    if ($connectionRequest) {
-                        $taskService->triggerConnectionRequest($nativeDev);
-                    }
-                }
-                return ['_id' => (string) $task->id, 'name' => $taskName, 'status' => 'pending'];
-            }
-        } catch (\Throwable $e) {
-            Log::warning('postTask: Native ACS task queue error: ' . $e->getMessage());
-        }
-
         $query = [
-            'timeout' => min($timeout, 2000),
+            'timeout' => $timeout,
         ];
         if ($connectionRequest) {
             $query['connection_request'] = 'true';
         }
 
-        try {
-            $url = $this->url('/devices/' . rawurlencode($deviceId) . '/tasks?' . http_build_query($query));
-            $response = Http::timeout(2)->acceptJson()->post($url, $payload);
+        $url = $this->url('/devices/' . rawurlencode($deviceId) . '/tasks?' . http_build_query($query));
+        $response = $this->client()->post($url, $payload);
 
-            if ($required && !$response->successful()) {
-                $msg = $response->json()['message'] ?? ($response->body() ?: 'Perangkat tidak merespons perintah.');
-                throw new GenieAcsException("GenieACS gagal mengeksekusi task ({$payload['name']}): {$msg}", 502);
-            }
-
-            return $response->json() ?? [];
-        } catch (\Throwable $e) {
-            if ($e instanceof GenieAcsException) throw $e;
-            if ($required) {
-                throw new GenieAcsException("Koneksi task ke GenieACS gagal: " . $e->getMessage(), 504);
-            }
-            return [];
+        if ($required && !$response->successful()) {
+            $msg = $response->json()['message'] ?? ($response->body() ?: 'Perangkat tidak merespons perintah.');
+            throw new GenieAcsException("GenieACS gagal mengeksekusi task ({$payload['name']}): {$msg}", 502);
         }
+
+        return $response->json() ?? [];
     }
 
     private function deviceHasPppoeUsername(array $device, string $target): bool
@@ -2085,10 +1538,6 @@ class GenieAcsService
 
     public function resolveWifiPassword(array $device): ?string
     {
-        if (!empty($device['is_native_acs'])) {
-            return $device['wifi_password'] ?? $device['VirtualParameters.WlanPassword'] ?? null;
-        }
-
         $candidates = [
             'VirtualParameters.WlanPassword',
             'VirtualParameters.wlanPassword',
@@ -2182,24 +1631,6 @@ class GenieAcsService
 
     public function resolveAllConnectedHosts(array $device): array
     {
-        if (!empty($device['is_native_acs']) || isset($device['native_device_id'])) {
-            $nativeDev = \App\Models\AcsDevice::with('connectedHosts')
-                ->where('device_id', $device['_id'] ?? '')
-                ->orWhere('id', $device['native_device_id'] ?? 0)
-                ->first();
-            if ($nativeDev) {
-                return $nativeDev->connectedHosts->map(fn($h) => [
-                    'name' => $h->host_name ?: 'Perangkat Klien',
-                    'ip_address' => $h->ip_address,
-                    'mac_address' => $h->mac_address,
-                    'type' => $h->interface_type ?: 'WiFi',
-                    'is_active' => (bool) $h->is_active,
-                    'last_seen' => $h->last_seen_at?->toIso8601String(),
-                    'signal_strength' => $h->signal_strength,
-                ])->values()->all();
-            }
-        }
-
         $hostsByMac = [];
         $activeAssocMacs = [];
 
