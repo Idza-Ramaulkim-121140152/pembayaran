@@ -60,12 +60,17 @@ class GenieAcsService
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.X_CMS_KeyPassphrase',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+        'VirtualParameters.WlanSSID',
+        'VirtualParameters.wlanSSID',
+        'VirtualParameters.ssid',
+        'VirtualParameters.SSID',
         'VirtualParameters.WlanPassword',
         'VirtualParameters.wlanPassword',
         'VirtualParameters.wifiPassword',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.Enable',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID',
         'InternetGatewayDevice.LANDevice.1.Hosts.Host',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDevice',
         'Device.WiFi.SSID.1.SSID',
@@ -313,10 +318,8 @@ class GenieAcsService
                 }
             }
 
-            // Extract SSID & Connected WiFi Clients
-            $ssid1 = $this->parameterValue($d, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID')
-                ?: $this->parameterValue($d, 'Device.WiFi.SSID.1.SSID')
-                ?: '';
+            // Extract SSID & Connected WiFi Clients comprehensively
+            $ssid1 = $this->resolveWifiSsid($d) ?: '';
 
             $wifiClients = $this->integerParameter($d, 'VirtualParameters.activedevices')
                 ?? $this->integerParameter($d, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations')
@@ -1573,6 +1576,103 @@ class GenieAcsService
         }
         if ($pppoe !== '' && Cache::has("genieacs_wifi_pw:" . strtolower(trim($pppoe)))) {
             return (string) Cache::get("genieacs_wifi_pw:" . strtolower(trim($pppoe)));
+        }
+
+        return null;
+    }
+
+    public function resolveWifiSsid(array $device): ?string
+    {
+        $candidates = [
+            'VirtualParameters.WlanSSID',
+            'VirtualParameters.wlanSSID',
+            'VirtualParameters.WlanSsid',
+            'VirtualParameters.ssid',
+            'VirtualParameters.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.6.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.2.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.3.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.4.SSID',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+            'InternetGatewayDevice.LANDevice.2.WLANConfiguration.1.SSID',
+            'Device.WiFi.SSID.1.SSID',
+            'Device.WiFi.SSID.2.SSID',
+        ];
+
+        $deviceId = $device['_id'] ?? null;
+        $pppoe = $this->parameterValue($device, 'VirtualParameters.pppoeUsername')
+            ?: $this->parameterValue($device, 'VirtualParameters.pppoeUsername2')
+            ?: $this->parameterValue($device, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username')
+            ?: '';
+
+        foreach ($candidates as $cand) {
+            $val = $this->parameterValue($device, $cand);
+            if ($val !== null && trim((string) $val) !== '' && !is_array($val)) {
+                $trimmed = trim((string) $val);
+                if (!str_starts_with($trimmed, '{') && strlen($trimmed) >= 1) {
+                    if ($deviceId) {
+                        Cache::forever("genieacs_wifi_ssid:{$deviceId}", $trimmed);
+                    }
+                    if ($pppoe !== '') {
+                        Cache::forever("genieacs_wifi_ssid:" . strtolower(trim($pppoe)), $trimmed);
+                    }
+                    return $trimmed;
+                }
+            }
+        }
+
+        // Deep search across LANDevice.*.WLANConfiguration.*
+        $lanDevices = data_get($device, 'InternetGatewayDevice.LANDevice', []);
+        if (is_array($lanDevices)) {
+            foreach ($lanDevices as $lan) {
+                if (!is_array($lan)) continue;
+                foreach (($lan['WLANConfiguration'] ?? []) as $wlan) {
+                    if (!is_array($wlan)) continue;
+                    $val = $this->nodeValue($wlan['SSID'] ?? null);
+                    if ($val && !is_array($val) && !str_starts_with(trim((string)$val), '{')) {
+                        $trimmed = trim((string)$val);
+                        if ($trimmed !== '') {
+                            if ($deviceId) {
+                                Cache::forever("genieacs_wifi_ssid:{$deviceId}", $trimmed);
+                            }
+                            if ($pppoe !== '') {
+                                Cache::forever("genieacs_wifi_ssid:" . strtolower(trim($pppoe)), $trimmed);
+                            }
+                            return $trimmed;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deep search across Device.WiFi.SSID.*
+        $deviceSsids = data_get($device, 'Device.WiFi.SSID', []);
+        if (is_array($deviceSsids)) {
+            foreach ($deviceSsids as $dssid) {
+                if (!is_array($dssid)) continue;
+                $val = $this->nodeValue($dssid['SSID'] ?? null);
+                if ($val && !is_array($val) && !str_starts_with(trim((string)$val), '{')) {
+                    $trimmed = trim((string)$val);
+                    if ($trimmed !== '') {
+                        if ($deviceId) {
+                            Cache::forever("genieacs_wifi_ssid:{$deviceId}", $trimmed);
+                        }
+                        if ($pppoe !== '') {
+                            Cache::forever("genieacs_wifi_ssid:" . strtolower(trim($pppoe)), $trimmed);
+                        }
+                        return $trimmed;
+                    }
+                }
+            }
+        }
+
+        // Fallback to persistent cache / remembered SSID
+        if ($deviceId && Cache::has("genieacs_wifi_ssid:{$deviceId}")) {
+            return (string) Cache::get("genieacs_wifi_ssid:{$deviceId}");
+        }
+        if ($pppoe !== '' && Cache::has("genieacs_wifi_ssid:" . strtolower(trim($pppoe)))) {
+            return (string) Cache::get("genieacs_wifi_ssid:" . strtolower(trim($pppoe)));
         }
 
         return null;

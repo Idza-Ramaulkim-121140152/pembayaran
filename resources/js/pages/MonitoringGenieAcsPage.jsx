@@ -959,7 +959,11 @@ export default function MonitoringGenieAcsPage() {
                                                     <div>
                                                         <p className="font-bold text-gray-900 flex items-center gap-1">
                                                             <Wifi size={13} className="text-emerald-600" />
-                                                            {row.ssid || 'SSID Default'}
+                                                            {row.ssid ? (
+                                                                <span>{row.ssid}</span>
+                                                            ) : (
+                                                                <span className="text-gray-400 font-normal italic text-[11px]">(Belum terbaca)</span>
+                                                            )}
                                                         </p>
                                                         
                                                         {/* Status Kapasitas Perangkat Terhubung */}
@@ -1303,7 +1307,7 @@ export default function MonitoringGenieAcsPage() {
                                     <div>
                                         <p className="text-[11px] text-gray-600 font-semibold flex items-center gap-1">
                                             <Wifi size={13} className="text-emerald-600" />
-                                            Nama SSID: <span className="font-bold text-gray-900">{deviceDetailData?.ssid || detailModalDevice.ssid || 'SSID Default'}</span>
+                                            Nama SSID: <span className="font-bold text-gray-900">{deviceDetailData?.ssid || detailModalDevice.ssid || <span className="text-gray-400 font-normal italic">(Belum terbaca)</span>}</span>
                                         </p>
                                         <div className="flex items-center gap-2 mt-1">
                                             <span className="text-[11px] text-gray-600 font-semibold flex items-center gap-1">
