@@ -179,35 +179,75 @@ class OntProxyController extends Controller
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HEADER, true);
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 6);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+        curl_setopt($ch, CURLOPT_TCP_NODELAY, true);
 
-        // Forward headers
+        // Forward headers with embedded device compatibility
         $forwardHeaders = [];
         $incomingHeaders = $request->header();
 
+        $hostHeader = ($port === 80) ? $ip : "{$ip}:{$port}";
+        $originUrl = "http://{$ip}" . ($port === 80 ? '' : ":{$port}");
+
         foreach ($incomingHeaders as $name => $values) {
             $lowerName = strtolower($name);
-            if (in_array($lowerName, ['host', 'accept-encoding', 'content-length'])) {
+            
+            // Skip headers that break embedded ONT servers or leak external domain
+            if (in_array($lowerName, [
+                'host', 'accept-encoding', 'content-length', 'origin', 'referer',
+                'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform',
+                'sec-fetch-dest', 'sec-fetch-mode', 'sec-fetch-site', 'sec-fetch-user',
+            ])) {
                 continue;
             }
+
+            // Filter out Laravel cookies so we don't overflow the ONT embedded buffer (Boa MAX_HEADER_LENGTH)
+            if ($lowerName === 'cookie') {
+                $ontCookies = [];
+                foreach ($values as $cookieStr) {
+                    $parts = explode(';', $cookieStr);
+                    foreach ($parts as $part) {
+                        $part = trim($part);
+                        if (empty($part)) continue;
+                        [$cName] = explode('=', $part, 2);
+                        $cName = trim($cName);
+                        if (!in_array($cName, ['XSRF-TOKEN', 'ada-loker-lampung-session', 'laravel_session', 'active_ont_gateway_ip'])) {
+                            $ontCookies[] = $part;
+                        }
+                    }
+                }
+                if (!empty($ontCookies)) {
+                    $forwardHeaders[] = 'Cookie: ' . implode('; ', $ontCookies);
+                }
+                continue;
+            }
+
             foreach ($values as $val) {
                 $forwardHeaders[] = "{$name}: {$val}";
             }
         }
 
-        $forwardHeaders[] = "Host: {$ip}:{$port}";
+        $forwardHeaders[] = "Host: {$hostHeader}";
+        $forwardHeaders[] = "Origin: {$originUrl}";
+        $forwardHeaders[] = "Referer: {$originUrl}/index.html";
         $forwardHeaders[] = "Accept-Encoding: identity";
+        $forwardHeaders[] = "Expect:"; // Suppress Expect: 100-continue which causes 502 on embedded web servers
 
         curl_setopt($ch, CURLOPT_HTTPHEADER, $forwardHeaders);
 
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'])) {
             $body = $request->getContent();
+            if (empty($body) && !empty($request->all())) {
+                $body = http_build_query($request->all());
+            }
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
         }
 
         $rawResponse = curl_exec($ch);
         $curlError = curl_error($ch);
+        $curlErrno = curl_errno($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
         $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
@@ -215,7 +255,8 @@ class OntProxyController extends Controller
         curl_close($ch);
 
         if ($rawResponse === false) {
-            return response("<h3>Gagal Menghubungi ONT ({$ip}:{$port})</h3><p>Penyebab: {$curlError}</p><p>Pastikan ONT dalam keadaan menyala dan terhubung ke jaringan.</p>", 502, [
+            Log::error("OntProxyController: cURL failed for {$method} {$targetUrl} - error: {$curlError} (errno: {$curlErrno})");
+            return response("<h3>Gagal Menghubungi ONT ({$ip}:{$port})</h3><p>Penyebab: {$curlError} (errno: {$curlErrno})</p><p>Endpoint: {$method} {$targetUrl}</p>", 502, [
                 'Content-Type' => 'text/html; charset=utf-8',
             ]);
         }
