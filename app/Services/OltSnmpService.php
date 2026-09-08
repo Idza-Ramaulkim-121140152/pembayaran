@@ -837,41 +837,7 @@ class OltSnmpService
         }
 
         // 3. Fast Cross-Match with GenieACS and Customers
-        $genieUrl = config('services.genieacs.url', env('GENIEACS_URL', 'http://10.1.0.5:7557'));
-        $genieByMac = [];
-        try {
-            $res = \Illuminate\Support\Facades\Http::timeout(3)->get($genieUrl . '/devices', [
-                'projection' => '_id,InternetGatewayDevice.DeviceInfo.SerialNumber,InternetGatewayDevice.DeviceInfo.ProductClass,InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username,InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.MACAddress,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress'
-            ]);
-            if ($res->successful()) {
-                foreach ($res->json() ?? [] as $dev) {
-                    $devId = $dev['_id'] ?? '';
-                    $wanMac = $dev['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['1']['WANPPPConnection']['1']['MACAddress']['_value'] ?? null;
-                    $lanMac = $dev['InternetGatewayDevice']['LANDevice']['1']['LANEthernetInterfaceConfig']['1']['MACAddress']['_value'] ?? null;
-                    $pppoe = $dev['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['1']['WANPPPConnection']['1']['Username']['_value'] ?? null;
-                    $sn = $dev['InternetGatewayDevice']['DeviceInfo']['SerialNumber']['_value'] ?? null;
-                    $prod = $dev['InternetGatewayDevice']['DeviceInfo']['ProductClass']['_value'] ?? null;
-
-                    $devMac = null;
-                    if (preg_match('/([0-9A-F]{2}[:-][0-9A-F]{2}[:-][0-9A-F]{2}[:-][0-9A-F]{2}[:-][0-9A-F]{2}[:-][0-9A-F]{2})/i', $devId, $m)) {
-                        $devMac = $m[1];
-                    }
-
-                    $macList = array_filter([$wanMac, $lanMac, $devMac]);
-                    foreach ($macList as $m) {
-                        $clean = strtoupper(str_replace([':', '-', '.'], '', $m));
-                        $genieByMac[$clean] = [
-                            'device_id' => $devId,
-                            'serial_number' => $sn,
-                            'product_class' => $prod,
-                            'pppoe_username' => $pppoe,
-                        ];
-                    }
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::info('Genie fast fetch during OLT sync notice: ' . $e->getMessage());
-        }
+        $parsedGenie = $this->fetchGenieAcsLookupDevices();
 
         $customers = Customer::all();
         $custByPppoe = [];
@@ -883,7 +849,7 @@ class OltSnmpService
 
         // Delete old ONUs and insert real ones in a single fast transaction
         $matchedCount = 0;
-        \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $genieByMac, $custByPppoe, &$matchedCount) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $custByPppoe, &$matchedCount) {
             OltOnu::where('olt_id', $olt->id)->delete();
 
             foreach ($parsedOnus as $onuData) {
@@ -898,16 +864,16 @@ class OltSnmpService
                 $serial = 'ONU-' . $cleanMac;
                 $model = 'HiOSO EPON ONU';
 
-                if (isset($genieByMac[$cleanMac])) {
-                    $gDev = $genieByMac[$cleanMac];
-                    if (!empty($gDev['serial_number'])) {
-                        $serial = $gDev['serial_number'];
+                $foundGenie = $this->matchGenieAcsDevice($rawMac, $parsedGenie);
+                if ($foundGenie) {
+                    if (!empty($foundGenie['sn'])) {
+                        $serial = $foundGenie['sn'];
                     }
-                    if (!empty($gDev['product_class'])) {
-                        $model = $gDev['product_class'] . ' ONT';
+                    if (!empty($foundGenie['model'])) {
+                        $model = $foundGenie['model'] . ' ONT';
                     }
-                    if (!empty($gDev['pppoe_username'])) {
-                        $matchedCustomer = $custByPppoe[strtolower(trim($gDev['pppoe_username']))] ?? null;
+                    if (!empty($foundGenie['pppoe'])) {
+                        $matchedCustomer = $custByPppoe[strtolower(trim($foundGenie['pppoe']))] ?? null;
                     }
                 }
 
@@ -951,6 +917,198 @@ class OltSnmpService
             'port_2_onus' => $savedPorts[2]->fresh()->total_registered_onu,
             'port_1_tx' => $savedPorts[1]->fresh()->tx_power_dbm,
             'port_2_tx' => $savedPorts[2]->fresh()->tx_power_dbm,
+        ];
+    }
+
+    /**
+     * Fetch and parse all devices from GenieACS with multi-parameter MAC, Serial, and PPPoE extraction.
+     */
+    public function fetchGenieAcsLookupDevices(): array
+    {
+        $genieUrl = config('services.genieacs.url', env('GENIEACS_URL', 'http://10.1.0.5:7557'));
+        $projections = [
+            '_id',
+            'DeviceID.SerialNumber',
+            'DeviceID.ProductClass',
+            'DeviceID.Manufacturer',
+            'VirtualParameters.PonMac',
+            'VirtualParameters.pppoeMac',
+            'VirtualParameters.pppoeUsername',
+            'VirtualParameters.pppoeUsername2',
+            'VirtualParameters.getSerialNumber',
+            'VirtualParameters.RXPower',
+            'VirtualParameters.WlanSSID',
+            'VirtualParameters.wlanSSID',
+            'VirtualParameters.ssid',
+            'InternetGatewayDevice.DeviceInfo.SerialNumber',
+            'InternetGatewayDevice.DeviceInfo.ProductClass',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.MACAddress',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.Username',
+            'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.2.WANPPPConnection.1.MACAddress',
+            'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
+            'InternetGatewayDevice.LANDevice.1.LANHostConfigManagement.MACAddress',
+            'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+        ];
+
+        $parsedGenie = [];
+        try {
+            $res = \Illuminate\Support\Facades\Http::timeout(10)->get($genieUrl . '/devices', [
+                'projection' => implode(',', $projections),
+            ]);
+            if ($res->successful()) {
+                $cleanMac = fn($m) => strtoupper(str_replace([':', '-', '.', ' '], '', trim((string)$m)));
+
+                foreach ($res->json() ?? [] as $d) {
+                    $devId = $d['_id'] ?? '';
+                    $ponMac = $cleanMac($d['VirtualParameters']['PonMac']['_value'] ?? '');
+                    $pppoeMac = $cleanMac($d['VirtualParameters']['pppoeMac']['_value'] ?? '');
+                    $wan1Mac = $cleanMac($d['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['1']['WANPPPConnection']['1']['MACAddress']['_value'] ?? '');
+                    $wan2Mac = $cleanMac($d['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['2']['WANPPPConnection']['1']['MACAddress']['_value'] ?? '');
+                    $lanMac = $cleanMac($d['InternetGatewayDevice']['LANDevice']['1']['LANEthernetInterfaceConfig']['1']['MACAddress']['_value'] ?? '');
+                    $lanHostMac = $cleanMac($d['InternetGatewayDevice']['LANDevice']['1']['LANHostConfigManagement']['MACAddress']['_value'] ?? '');
+
+                    $idMac = '';
+                    if (preg_match('/([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})/', $devId, $m)) {
+                        $idMac = $cleanMac($m[1]);
+                    }
+
+                    $pppoe = trim(
+                        $d['VirtualParameters']['pppoeUsername']['_value'] ??
+                        $d['VirtualParameters']['pppoeUsername2']['_value'] ??
+                        $d['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['1']['WANPPPConnection']['1']['Username']['_value'] ??
+                        $d['InternetGatewayDevice']['WANDevice']['1']['WANConnectionDevice']['2']['WANPPPConnection']['1']['Username']['_value'] ??
+                        ''
+                    );
+
+                    $sn = trim(
+                        $d['VirtualParameters']['getSerialNumber']['_value'] ??
+                        $d['DeviceID']['SerialNumber']['_value'] ??
+                        $d['InternetGatewayDevice']['DeviceInfo']['SerialNumber']['_value'] ??
+                        ''
+                    );
+
+                    $prod = trim(
+                        $d['DeviceID']['ProductClass']['_value'] ??
+                        $d['InternetGatewayDevice']['DeviceInfo']['ProductClass']['_value'] ??
+                        ''
+                    );
+
+                    $allMacs = array_values(array_unique(array_filter([$ponMac, $pppoeMac, $wan1Mac, $wan2Mac, $lanMac, $lanHostMac, $idMac])));
+
+                    $parsedGenie[] = [
+                        'device_id' => $devId,
+                        'all_macs' => $allMacs,
+                        'pon_mac' => $ponMac,
+                        'pppoe' => $pppoe,
+                        'sn' => $sn,
+                        'model' => $prod,
+                    ];
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('fetchGenieAcsLookupDevices failed: ' . $e->getMessage());
+        }
+
+        return $parsedGenie;
+    }
+
+    /**
+     * Match an OLT ONU's MAC address against the parsed GenieACS devices array using 3-tier matching.
+     */
+    public function matchGenieAcsDevice(string $rawOnuMac, array $parsedGenie): ?array
+    {
+        $onuMac = strtoupper(str_replace([':', '-', '.', ' '], '', trim($rawOnuMac)));
+        if (empty($onuMac)) return null;
+
+        // Tier 1: Exact MAC match across all extracted MACs (PonMac, pppoeMac, WAN, LAN)
+        foreach ($parsedGenie as $g) {
+            if (in_array($onuMac, $g['all_macs'], true)) {
+                return $g;
+            }
+        }
+
+        // Tier 2: Substring in Serial Number or Device ID (e.g. 123454C46D1435CF0 contains 4C46D1435CF0)
+        foreach ($parsedGenie as $g) {
+            if (!empty($g['sn']) && str_contains(strtoupper($g['sn']), $onuMac)) {
+                return $g;
+            }
+            if (!empty($g['device_id']) && str_contains(strtoupper($g['device_id']), $onuMac)) {
+                return $g;
+            }
+        }
+
+        // Tier 3: Prefix match (first 10 hex characters match, offset on last interface byte e.g. F0 vs F6)
+        if (strlen($onuMac) === 12) {
+            $prefix10 = substr($onuMac, 0, 10);
+            foreach ($parsedGenie as $g) {
+                foreach ($g['all_macs'] as $m) {
+                    if (strlen($m) === 12 && substr($m, 0, 10) === $prefix10) {
+                        return $g;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Full reconciliation of OLT ONUs with GenieACS devices and billing customers.
+     */
+    public function syncOltWithGenieAcs(MasterOlt $olt): array
+    {
+        $parsedGenie = $this->fetchGenieAcsLookupDevices();
+
+        $customers = Customer::all();
+        $custByPppoe = [];
+        foreach ($customers as $c) {
+            if (!empty($c->pppoe_username)) {
+                $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
+            }
+        }
+
+        $onus = OltOnu::where('olt_id', $olt->id)->get();
+        $matchedOnusCount = 0;
+        $matchedCustomersCount = 0;
+
+        foreach ($onus as $onu) {
+            $foundGenie = $this->matchGenieAcsDevice($onu->mac_address, $parsedGenie);
+
+            if ($foundGenie) {
+                $matchedOnusCount++;
+                $matchedCust = !empty($foundGenie['pppoe']) ? ($custByPppoe[strtolower($foundGenie['pppoe'])] ?? null) : null;
+
+                $updates = [];
+                if (!empty($foundGenie['sn'])) {
+                    $updates['serial_number'] = $foundGenie['sn'];
+                }
+                if (!empty($foundGenie['model'])) {
+                    $updates['model'] = $foundGenie['model'] . ' ONT';
+                }
+                if ($matchedCust) {
+                    $updates['customer_id'] = $matchedCust->id;
+                    $matchedCustomersCount++;
+
+                    $matchedCust->update([
+                        'olt_id' => $olt->id,
+                        'pon_port_id' => $onu->pon_port_id,
+                        'olt_onu_id' => $onu->id,
+                    ]);
+                }
+
+                if (!empty($updates)) {
+                    $onu->update($updates);
+                }
+            }
+        }
+
+        return [
+            'success' => true,
+            'total_onus' => $onus->count(),
+            'genie_devices_count' => count($parsedGenie),
+            'matched_onus' => $matchedOnusCount,
+            'matched_customers' => $matchedCustomersCount,
         ];
     }
 

@@ -677,6 +677,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/master-olts/{olt}/pon-ports/{ponPort}', [MasterOltController::class, 'getPonPortDetails'])->name('api.master-olts.pon-port-details');
         Route::post('/api/master-olts/{olt}/auto-discover', [MasterOltController::class, 'autoDiscover'])->name('api.master-olts.auto-discover');
         Route::post('/api/master-olts/{olt}/sync-topology', [MasterOltController::class, 'syncTopology'])->name('api.master-olts.sync-topology');
+        Route::post('/api/master-olts/{olt}/sync-genieacs', [MasterOltController::class, 'syncGenieAcs'])->name('api.master-olts.sync-genieacs');
 
         // Packages API
         Route::get('/api/packages', [PackageController::class, 'index'])->name('api.packages.index');

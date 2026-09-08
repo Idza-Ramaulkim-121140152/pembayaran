@@ -89,9 +89,30 @@ function MasterOltPage() {
     const [onuSearch, setOnuSearch] = useState('');
     const [onuStatusFilter, setOnuStatusFilter] = useState('all'); // 'all' | 'online' | 'offline'
     const [onuPage, setOnuPage] = useState(1);
+    const [syncingGenieId, setSyncingGenieId] = useState(null);
     const ONUS_PER_PAGE = 15;
 
     const isEdit = useMemo(() => !!form.id, [form.id]);
+
+    const handleSyncGenieAcs = async (oltId) => {
+        try {
+            setSyncingGenieId(oltId);
+            setError(null);
+            setSuccess(null);
+            const res = await masterOltService.syncGenieAcs(oltId);
+            if (res.data?.success) {
+                setSuccess(res.data.message || 'Sinkronisasi GenieACS dan PPPoE pelanggan berhasil.');
+                await fetchOlts();
+                if (selectedPort?.oltId === oltId) {
+                    await handleRefreshPortDetails();
+                }
+            }
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menyinkronkan dengan GenieACS.');
+        } finally {
+            setSyncingGenieId(null);
+        }
+    };
 
     const handleTogglePort = async (olt, port) => {
         if (selectedPort?.oltId === olt.id && selectedPort?.port?.id === port.id) {
@@ -504,6 +525,16 @@ function MasterOltPage() {
                                         </button>
                                         <button
                                             type="button"
+                                            onClick={() => handleSyncGenieAcs(olt.id)}
+                                            disabled={syncingGenieId === olt.id}
+                                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 disabled:opacity-50"
+                                            title="Cocokkan data ONT dari OLT dengan perangkat GenieACS dan username PPPoE pelanggan"
+                                        >
+                                            <RefreshCw size={14} className={syncingGenieId === olt.id ? 'animate-spin text-indigo-600' : 'text-indigo-600'} />
+                                            {syncingGenieId === olt.id ? 'Sinkronisasi GenieACS...' : '⚡ Sinkronkan GenieACS'}
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => handleOpenEdit(olt)}
                                             className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition"
                                             title="Edit OLT"
@@ -632,6 +663,16 @@ function MasterOltPage() {
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-2 self-end sm:self-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSyncGenieAcs(olt.id)}
+                                                            disabled={syncingGenieId === olt.id}
+                                                            className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold flex items-center gap-1.5 transition disabled:opacity-50"
+                                                            title="Cocokkan data ONT dengan akun PPPoE di GenieACS"
+                                                        >
+                                                            <RefreshCw size={13} className={syncingGenieId === olt.id ? 'animate-spin text-indigo-600' : 'text-indigo-600'} />
+                                                            {syncingGenieId === olt.id ? 'Sinkronisasi...' : '⚡ Sinkronkan GenieACS'}
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             onClick={() => handleEditPortFromDetail(olt, currentPort)}

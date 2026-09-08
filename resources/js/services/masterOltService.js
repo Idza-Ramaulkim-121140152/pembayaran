@@ -12,7 +12,7 @@ const masterOltService = {
     getPonPortDetails: (oltId, portId) => apiClient.get(`/master-olts/${oltId}/pon-ports/${portId}`),
     autoDiscover: (id) => apiClient.post(`/master-olts/${id}/auto-discover`),
     syncTopology: (id) => apiClient.post(`/master-olts/${id}/sync-topology`),
-    syncGenieAcs: (oltId = null) => apiClient.post('/super-panel/sync-genieacs', { olt_id: oltId }),
+    syncGenieAcs: (oltId) => apiClient.post(`/master-olts/${oltId}/sync-genieacs`),
     reassignOnu: (payload) => apiClient.post('/super-panel/reassign-onu', payload),
 };
 

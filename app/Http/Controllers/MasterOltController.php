@@ -518,4 +518,19 @@ class MasterOltController extends Controller
             'data' => $result,
         ]);
     }
+
+    /**
+     * POST /api/master-olts/{olt}/sync-genieacs
+     * Cross-match and synchronize OLT ONUs with GenieACS devices and Customer PPPoE accounts
+     */
+    public function syncGenieAcs(MasterOlt $olt)
+    {
+        $result = $this->oltSnmpService->syncOltWithGenieAcs($olt);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Berhasil mencocokkan {$result['matched_customers']} ONT dengan akun PPPoE pelanggan dan data GenieACS.",
+            'data' => $result,
+        ]);
+    }
 }
