@@ -39,6 +39,12 @@ class Tr069AcsController extends Controller
             ]);
         }
 
+        // Support HTTP Basic Authentication gracefully if sent by CPE
+        $authHeader = $request->header('Authorization');
+        if ($authHeader) {
+            Log::info("Tr069AcsController: Inbound {$request->method()} from IP {$clientIp} with Authorization header: " . substr($authHeader, 0, 15) . "...");
+        }
+
         Log::info("Tr069AcsController: Inbound {$request->method()} from IP {$clientIp}, length=" . strlen($rawXml));
 
         // 1. Parse inbound XML
@@ -66,6 +72,7 @@ class Tr069AcsController extends Controller
 
             case 'SetParameterValuesResponse':
             case 'GetParameterValuesResponse':
+            case 'GetParameterNamesResponse':
             case 'RebootResponse':
             case 'FactoryResetResponse':
             case 'DownloadResponse':
@@ -73,14 +80,14 @@ class Tr069AcsController extends Controller
 
             case 'GetRPCMethods':
                 $xml = $this->soapEngine->buildGetRpcMethodsResponse($cwmpId);
-                return response($xml, 200, ['Content-Type' => 'text/xml; charset=utf-8']);
+                return $this->xmlResponse($xml, 200);
 
             case 'Fault':
                 return $this->handleFault($session, $parsed, $rawXml, $clientIp, $cwmpId);
 
             default:
                 Log::info("Tr069AcsController: Unhandled CWMP type '{$type}' from IP {$clientIp}");
-                return response('', 204);
+                return $this->emptyResponse();
         }
     }
 
@@ -110,13 +117,11 @@ class Tr069AcsController extends Controller
             $responseXml = $this->soapEngine->buildInformResponse($cwmpId, $parsed['max_envelopes'] ?? 1);
             $this->logMessage($device->id, 'out', 'InformResponse', $responseXml, $clientIp);
 
-            return response($responseXml, 200, [
-                'Content-Type' => 'text/xml; charset=utf-8',
-            ])->cookie(self::SESSION_COOKIE, $sessionId, 5, '/', null, false, false);
+            return $this->xmlResponse($responseXml, 200, $sessionId);
         } catch (\Throwable $e) {
             Log::error('Tr069AcsController: Error handling Inform: ' . $e->getMessage());
             $faultXml = $this->soapEngine->buildFault(9002, 'Internal server error: ' . $e->getMessage(), $cwmpId);
-            return response($faultXml, 500, ['Content-Type' => 'text/xml; charset=utf-8']);
+            return $this->xmlResponse($faultXml, 500);
         }
     }
 
@@ -143,13 +148,13 @@ class Tr069AcsController extends Controller
                     'expires_at' => now()->addMinutes(5),
                 ]);
             } else {
-                return response('', 204);
+                return $this->emptyResponse();
             }
         }
 
         $device = $session->device;
         if (!$device) {
-            return response('', 204);
+            return $this->emptyResponse();
         }
 
         // Check for pending tasks for this device
@@ -197,7 +202,7 @@ class Tr069AcsController extends Controller
 
         // No pending tasks, end session
         $session->update(['state' => 'closed']);
-        return response('', 204);
+        return $this->emptyResponse();
     }
 
     /**
@@ -295,14 +300,12 @@ class Tr069AcsController extends Controller
 
             default:
                 Log::warning("Tr069AcsController: Unknown task name '{$task->name}' for task #{$task->id}");
-                return response('', 204);
+                return $this->emptyResponse();
         }
 
         $this->logMessage($session->acs_device_id, 'out', $task->name, $commandXml, $clientIp);
 
-        return response($commandXml, 200, [
-            'Content-Type' => 'text/xml; charset=utf-8',
-        ])->cookie(self::SESSION_COOKIE, $session->session_id, 5, '/', null, false, false);
+        return $this->xmlResponse($commandXml, 200, $session->session_id);
     }
 
     /**
@@ -359,7 +362,7 @@ class Tr069AcsController extends Controller
             $session->update(['state' => 'closed']);
         }
 
-        return response('', 204);
+        return $this->emptyResponse();
     }
 
     /**
@@ -396,7 +399,38 @@ class Tr069AcsController extends Controller
             $session->update(['state' => 'closed']);
         }
 
-        return response('', 204);
+        return $this->emptyResponse();
+    }
+
+    /**
+     * Standard TR-069 empty response when ACS has no further requests.
+     * TR-069 CPEs (including gSOAP 2.7 / Realtek) require 200 OK with Content-Length: 0.
+     * Firmwares often report "Report process interrupted" when receiving HTTP 204 No Content.
+     */
+    private function emptyResponse(): Response
+    {
+        return response('', 200, [
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'Content-Length' => '0',
+            'Connection' => 'close',
+        ]);
+    }
+
+    /**
+     * Standard SOAP XML Response with explicit Content-Length to avoid chunked transfer issues.
+     */
+    private function xmlResponse(string $xml, int $status = 200, ?string $sessionId = null): Response
+    {
+        $response = response($xml, $status, [
+            'Content-Type' => 'text/xml; charset=utf-8',
+            'Content-Length' => (string) strlen($xml),
+        ]);
+
+        if ($sessionId) {
+            $response->cookie(self::SESSION_COOKIE, $sessionId, 5, '/', null, false, false);
+        }
+
+        return $response;
     }
 
     private function logMessage(?int $deviceId, string $direction, string $eventType, ?string $content, string $ip): void
