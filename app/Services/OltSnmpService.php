@@ -425,13 +425,14 @@ class OltSnmpService
         $telemetry = [];
 
         // 1. Try real SNMP connection if host is not simulation-only
-        if (!$olt->simulation_mode && !empty($olt->host) && function_exists('snmp2_get')) {
+        if (!$olt->simulation_mode && !empty($olt->host)) {
             try {
-                $session = @snmp2_get($olt->host . ':' . $olt->snmp_port, $olt->snmp_community, self::OID_MAP['Generic']['sysDescr'], 1000000, 1);
-                if ($session !== false) {
+                $session = $this->rawSnmpGet($olt->host, (int) $olt->snmp_port, $olt->snmp_community, self::OID_MAP['Generic']['sysDescr'], 1000000, 1);
+                if ($session !== false && $session !== '') {
                     $isReachable = true;
                     $telemetry['sys_descr'] = $session;
-                    $telemetry['uptime'] = @snmp2_get($olt->host . ':' . $olt->snmp_port, $olt->snmp_community, self::OID_MAP['Generic']['sysUpTime']);
+                    $uptimeRes = $this->rawSnmpGet($olt->host, (int) $olt->snmp_port, $olt->snmp_community, self::OID_MAP['Generic']['sysUpTime'], 1000000, 1);
+                    $telemetry['uptime'] = $uptimeRes !== false ? $uptimeRes : '-';
                 }
             } catch (\Throwable $e) {
                 Log::warning("SNMP query to OLT {$olt->name} ({$olt->host}) failed: " . $e->getMessage());
@@ -475,5 +476,45 @@ class OltSnmpService
         Cache::put($cacheKey, $telemetry, 20); // 20 seconds TTL
 
         return $telemetry;
+    }
+
+    /**
+     * Perform an SNMP GET probe supporting PHP extension (snmp2_get, snmpget) and CLI (snmpget binary) fallback
+     */
+    public function rawSnmpGet(string $host, int $port, string $community, string $oid, int $timeoutMicros = 1500000, int $retries = 2): string|false
+    {
+        if (function_exists('snmp2_get')) {
+            $res = @snmp2_get("{$host}:{$port}", $community, $oid, $timeoutMicros, $retries);
+            if ($res !== false) {
+                return (string) $res;
+            }
+        }
+
+        if (function_exists('snmpget')) {
+            $res = @snmpget("{$host}:{$port}", $community, $oid, $timeoutMicros, $retries);
+            if ($res !== false) {
+                return (string) $res;
+            }
+        }
+
+        // CLI fallback if snmpget binary is installed on system
+        $binary = trim((string) @shell_exec('which snmpget 2>/dev/null'));
+        if (!empty($binary) && is_executable($binary)) {
+            $timeoutSec = max(1, (int) ceil($timeoutMicros / 1000000));
+            $cmd = escapeshellcmd($binary) . ' -v 2c -c ' . escapeshellarg($community) . ' -t ' . $timeoutSec . ' -r ' . $retries . ' ' . escapeshellarg("{$host}:{$port}") . ' ' . escapeshellarg($oid) . ' 2>/dev/null';
+            $output = @shell_exec($cmd);
+            if ($output && !str_contains($output, 'Timeout') && !str_contains($output, 'No Response') && !str_contains($output, 'Unknown')) {
+                if (preg_match('/=\s*(?:[A-Za-z0-9_-]+:\s*)?(.+)$/s', trim($output), $m)) {
+                    return trim($m[1], " \t\n\r\0\x0B\"");
+                }
+                return trim($output);
+            }
+        }
+
+        if (!function_exists('snmp2_get') && !function_exists('snmpget') && empty($binary)) {
+            throw new Exception('Ekstensi PHP SNMP belum terinstal atau aktif di server PHP ini. Silakan jalankan di terminal server: sudo apt update && sudo apt install -y php-snmp snmp && sudo systemctl restart php*-fpm');
+        }
+
+        return false;
     }
 }

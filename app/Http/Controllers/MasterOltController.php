@@ -392,22 +392,20 @@ class MasterOltController extends Controller
 
         // Real SNMP Probe
         try {
-            if (!function_exists('snmp2_get') && !function_exists('snmpget')) {
-                throw new Exception('Ekstensi PHP SNMP belum terinstal atau aktif di server PHP ini.');
-            }
-
-            // Test SNMP get
+            $snmpService = app(OltSnmpService::class);
             $sysDescrOid = OltSnmpService::OID_MAP[$olt->brand]['sysDescr'] ?? OltSnmpService::OID_MAP['Generic']['sysDescr'];
-            $snmpResponse = @snmp2_get("{$host}:{$port}", $community, $sysDescrOid, 1500000, 2);
+            $snmpResponse = $snmpService->rawSnmpGet($host, (int) $port, $community, $sysDescrOid, 1500000, 2);
 
             $duration = round((microtime(true) - $startTime) * 1000, 2);
             $result['response_time_ms'] = $duration;
 
-            if ($snmpResponse !== false) {
+            if ($snmpResponse !== false && $snmpResponse !== '') {
                 $result['is_reachable'] = true;
+                $uptimeOid = OltSnmpService::OID_MAP[$olt->brand]['sysUpTime'] ?? OltSnmpService::OID_MAP['Generic']['sysUpTime'];
+                $uptimeResponse = $snmpService->rawSnmpGet($host, (int) $port, $community, $uptimeOid, 1000000, 1);
                 $result['details'] = [
                     'sys_descr' => (string) $snmpResponse,
-                    'sys_uptime' => (string) @snmp2_get("{$host}:{$port}", $community, OltSnmpService::OID_MAP['Generic']['sysUpTime'], 1000000, 1),
+                    'sys_uptime' => (string) ($uptimeResponse !== false && $uptimeResponse !== '' ? $uptimeResponse : '-'),
                 ];
 
                 $olt->last_status = 'online';
