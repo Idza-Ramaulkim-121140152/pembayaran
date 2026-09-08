@@ -203,12 +203,18 @@ class SuperPanelController extends Controller
     }
 
     /**
-     * Update ODP Configuration (Capacity, Distribution Line, Feeder)
+     * Update ODP / ODC Configuration (Capacity, Parent, Ratio, Feeder, Position)
      */
     public function updateOdpConfig(Request $request, int $odpId): JsonResponse
     {
         $validated = $request->validate([
-            'total_ports' => 'nullable|integer|min:1|max:128',
+            'nama' => 'nullable|string|max:255',
+            'device_type' => 'nullable|in:odp,odc',
+            'parent_type' => 'nullable|in:pon,odc,odp',
+            'parent_id' => 'nullable|integer',
+            'rasio_spesial' => 'nullable|string|max:50',
+            'rasio_distribusi' => 'nullable|string|max:50',
+            'total_ports' => 'nullable|integer|min:1|max:256',
             'olt_id' => 'nullable|integer|exists:master_olts,id',
             'pon_port_id' => 'nullable|integer|exists:olt_pon_ports,id',
             'distribution_line' => 'nullable|string|max:255',
@@ -224,20 +230,147 @@ class SuperPanelController extends Controller
             $this->auditLogService->log(
                 $request->user(),
                 'UPDATE_SUPER_PANEL_ODP_CONFIG',
-                "Memperbarui konfigurasi ODP {$odp->name} (Kapasitas: {$odp->total_ports} Port)",
+                "Memperbarui konfigurasi " . strtoupper($odp->device_type ?: 'ODP') . " {$odp->nama} (Rasio: " . ($odp->rasio_spesial ?: 'Standard') . ")",
                 ['odp_id' => $odpId, 'config' => $validated]
             );
 
             return response()->json([
                 'success' => true,
-                'message' => 'Konfigurasi ODP berhasil diperbarui.',
+                'message' => 'Konfigurasi ' . strtoupper($odp->device_type ?: 'ODP') . ' berhasil diperbarui.',
                 'data' => $odp,
             ]);
         } catch (\Throwable $e) {
             Log::error('SuperPanelController: updateOdpConfig error', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal memperbarui ODP: ' . $e->getMessage(),
+                'message' => 'Gagal memperbarui node: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/super-panel/node-position
+     * Quick Update Node (ODP/ODC) Position from Map Drag-and-Drop
+     */
+    public function quickUpdateNodePosition(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:odps,id',
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+        ]);
+
+        try {
+            $node = $this->superPanelService->quickUpdateNodeCoordinates(
+                (int) $validated['id'],
+                (float) $validated['latitude'],
+                (float) $validated['longitude']
+            );
+
+            $this->auditLogService->log(
+                $request->user(),
+                'UPDATE_SUPER_PANEL_NODE_COORDINATES',
+                "Memperbarui posisi titik " . strtoupper($node->device_type ?: 'ODP') . " {$node->nama} ke ({$node->latitude}, {$node->longitude})",
+                ['id' => $node->id, 'lat' => $node->latitude, 'lng' => $node->longitude]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Posisi ' . strtoupper($node->device_type ?: 'ODP') . " {$node->nama} berhasil disimpan.",
+                'data' => $node,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: quickUpdateNodePosition error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memperbarui posisi: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/super-panel/customer-position
+     * Quick Update Customer Marker Position from Map Drag-and-Drop
+     */
+    public function quickUpdateCustomerPosition(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:customers,id',
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+        ]);
+
+        try {
+            $customer = $this->superPanelService->quickUpdateCustomerCoordinates(
+                (int) $validated['id'],
+                (float) $validated['latitude'],
+                (float) $validated['longitude']
+            );
+
+            $this->auditLogService->log(
+                $request->user(),
+                'UPDATE_SUPER_PANEL_CUSTOMER_COORDINATES',
+                "Memperbarui posisi titik pelanggan {$customer->name} ke ({$customer->latitude}, {$customer->longitude})",
+                ['customer_id' => $customer->id, 'lat' => $customer->latitude, 'lng' => $customer->longitude]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => "Posisi pelanggan {$customer->name} berhasil disimpan.",
+                'data' => $customer,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: quickUpdateCustomerPosition error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memperbarui posisi pelanggan: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * POST /api/super-panel/node-create
+     * Create a new ODP or ODC node directly from map
+     */
+    public function createNode(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'nama' => 'required|string|max:255',
+            'device_type' => 'required|in:odp,odc',
+            'parent_type' => 'nullable|in:pon,odc,odp',
+            'parent_id' => 'nullable|integer',
+            'rasio_spesial' => 'nullable|string|max:50',
+            'rasio_distribusi' => 'nullable|string|max:50',
+            'total_ports' => 'nullable|integer|min:1|max:256',
+            'olt_id' => 'nullable|integer|exists:master_olts,id',
+            'pon_port_id' => 'nullable|integer|exists:olt_pon_ports,id',
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+            'location_address' => 'nullable|string',
+            'feeder_cable_info' => 'nullable|string|max:255',
+            'distribution_line' => 'nullable|string|max:255',
+        ]);
+
+        try {
+            $node = $this->superPanelService->createNode($validated);
+
+            $this->auditLogService->log(
+                $request->user(),
+                'CREATE_SUPER_PANEL_NODE',
+                "Menambahkan titik baru " . strtoupper($node->device_type) . " {$node->nama}",
+                $validated
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Titik ' . strtoupper($node->device_type) . " {$node->nama} berhasil dibuat.",
+                'data' => $node,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: createNode error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat titik baru: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -312,14 +445,39 @@ class SuperPanelController extends Controller
     {
         try {
             $olts = MasterOlt::query()->where('is_active', true)->with('ponPorts')->get();
-            $odps = Odp::query()->select('id', 'name', 'code', 'olt_id', 'pon_port_id', 'total_ports', 'port_capacity')->get();
-            $customers = Customer::query()->select('id', 'customer_id', 'name', 'pppoe_username', 'odp_id', 'odp_port_number', 'olt_id', 'pon_port_id')->get();
+            $nodes = Odp::query()
+                ->select('id', 'nama', 'device_type', 'parent_type', 'parent_id', 'rasio_spesial', 'rasio_distribusi', 'olt_id', 'pon_port_id', 'total_ports', 'latitude', 'longitude')
+                ->orderBy('nama')
+                ->get()
+                ->map(function ($o) {
+                    return [
+                        'id' => $o->id,
+                        'name' => $o->nama,
+                        'nama' => $o->nama,
+                        'device_type' => $o->device_type ?: 'odp',
+                        'parent_type' => $o->parent_type ?: 'pon',
+                        'parent_id' => $o->parent_id,
+                        'rasio_spesial' => $o->rasio_spesial,
+                        'rasio_distribusi' => $o->rasio_distribusi,
+                        'olt_id' => $o->olt_id,
+                        'pon_port_id' => $o->pon_port_id,
+                        'total_ports' => $o->total_ports,
+                        'latitude' => (float) $o->latitude,
+                        'longitude' => (float) $o->longitude,
+                    ];
+                });
+
+            $odps = $nodes->where('device_type', 'odp')->values();
+            $odcs = $nodes->where('device_type', 'odc')->values();
+            $customers = Customer::query()->select('id', 'name', 'pppoe_username', 'odp_id', 'odp_port_number', 'olt_id', 'pon_port_id', 'latitude', 'longitude')->get();
 
             return response()->json([
                 'success' => true,
                 'data' => [
                     'olts' => $olts,
                     'odps' => $odps,
+                    'odcs' => $odcs,
+                    'nodes' => $nodes,
                     'customers' => $customers,
                 ],
             ]);

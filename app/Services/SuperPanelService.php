@@ -218,39 +218,115 @@ class SuperPanelService
             ];
         });
 
-        // 2. ODP Nodes with Port Stock Matrix
-        $odps = Odp::query()
-            ->with(['olt', 'ponPort', 'customers' => fn ($q) => $q->with('package')])
+        // 2. ODP & ODC Nodes with Optical Budget Calculation
+        $allOdps = Odp::query()
+            ->with(['olt', 'ponPort', 'parent', 'customers' => fn ($q) => $q->with('package')])
             ->get();
 
-        $odpNodes = $odps->map(function (Odp $odp) {
-            $capacity = $odp->total_ports ?: $odp->port_capacity;
+        $nodesById = $allOdps->keyBy('id');
+        $oltById = $olts->keyBy('id');
+        $ponPortsById = collect();
+        foreach ($olts as $o) {
+            foreach ($o->ponPorts as $pp) {
+                $ponPortsById->put($pp->id, $pp);
+            }
+        }
+
+        // Trace and calculate optical budget for each node
+        $computedNodeData = [];
+        foreach ($allOdps as $node) {
+            $isOdc = ($node->device_type ?? 'odp') === 'odc';
+            $parentType = $node->parent_type ?: 'pon';
+            $parentId = $node->parent_id;
+
+            $parentNode = null;
+            $fromCoords = null;
+            $inputPower = 10.0; // default SFP TX power
+            $parentLabel = 'PON 1';
+
+            if (($parentType === 'odc' || $parentType === 'odp') && $parentId && isset($nodesById[$parentId])) {
+                $parentNode = $nodesById[$parentId];
+                $fromCoords = [(float)$parentNode->latitude, (float)$parentNode->longitude];
+                $parentLabel = ($parentNode->device_type === 'odc' ? 'ODC ' : 'ODP ') . ($parentNode->nama ?: $parentNode->name);
+                
+                if (isset($computedNodeData[$parentId]['optical_calc']['thru_output_power_dbm'])) {
+                    $inputPower = $computedNodeData[$parentId]['optical_calc']['thru_output_power_dbm'];
+                }
+            } else {
+                $oltNode = $node->olt_id && isset($oltById[$node->olt_id]) ? $oltById[$node->olt_id] : $olts->first();
+                $ponPort = $node->pon_port_id && isset($ponPortsById[$node->pon_port_id]) ? $ponPortsById[$node->pon_port_id] : ($oltNode?->ponPorts?->first());
+                $inputPower = (float) ($ponPort?->tx_power_dbm ?: ($oltNode?->ponPorts?->first()?->tx_power_dbm ?: 10.0));
+                $fromCoords = $oltNode ? [(float)$oltNode->latitude, (float)$oltNode->longitude] : [-5.63272765, 105.54801464];
+                $parentLabel = ($oltNode?->name ?: 'OLT') . ' - ' . ($ponPort?->name ?: 'PON 1');
+            }
+
+            $distMeters = 0.0;
+            if ($fromCoords && $node->latitude && $node->longitude) {
+                $distMeters = OpticalRatioCalculator::computeDistanceMeters($fromCoords[0], $fromCoords[1], (float)$node->latitude, (float)$node->longitude);
+            }
+
+            $opticalCalc = OpticalRatioCalculator::calculateHop(
+                $inputPower,
+                $node->rasio_spesial ?: 'none',
+                $node->rasio_distribusi ?: '1:8',
+                $distMeters,
+                $isOdc
+            );
+
+            $computedNodeData[$node->id] = [
+                'parent_node' => $parentNode,
+                'parent_label' => $parentLabel,
+                'from_coords' => $fromCoords,
+                'distance_meters' => $distMeters,
+                'optical_calc' => $opticalCalc,
+            ];
+        }
+
+        $odpNodes = [];
+        $odcNodes = [];
+        $feederLines = [];
+
+        foreach ($allOdps as $odp) {
+            $isOdc = ($odp->device_type ?? 'odp') === 'odc';
+            $computed = $computedNodeData[$odp->id] ?? null;
+            $optCalc = $computed['optical_calc'] ?? null;
+
+            $capacity = (int) ($odp->total_ports ?: ($isOdc ? 24 : 8));
             $used = $odp->customers->count();
             $free = max(0, $capacity - $used);
             $occupancyPercent = $capacity > 0 ? round(($used / $capacity) * 100, 1) : 0;
 
-            // Color coding based on stock: Green (available <70%), Yellow (warning 70-90%), Red (full >90% or overcapacity)
-            $color = '#10B981'; // green
-            $stockStatus = 'available';
-            if ($used > $capacity) {
-                $color = '#EF4444'; // red (overcapacity)
+            $color = $isOdc ? '#8B5CF6' : '#10B981'; // violet for ODC, green for ODP available
+            $stockStatus = $isOdc ? 'odc_hub' : 'available';
+            if ($isOdc) {
+                // ODC is distribution hub
+                $color = '#8B5CF6';
+            } elseif ($used > $capacity) {
+                $color = '#EF4444';
                 $stockStatus = 'overcapacity';
             } elseif ($occupancyPercent >= 90) {
-                $color = '#EF4444'; // red (full)
+                $color = '#EF4444';
                 $stockStatus = 'full';
             } elseif ($occupancyPercent >= 70) {
-                $color = '#F59E0B'; // yellow
+                $color = '#F59E0B';
                 $stockStatus = 'warning';
             }
 
-            return [
+            $nodeItem = [
                 'id' => $odp->id,
-                'type' => 'odp',
-                'name' => $odp->name,
+                'type' => $isOdc ? 'odc' : 'odp',
+                'device_type' => $isOdc ? 'odc' : 'odp',
+                'name' => $odp->nama ?: $odp->name,
                 'code' => $odp->code,
                 'latitude' => (float) ($odp->latitude ?: -5.635),
                 'longitude' => (float) ($odp->longitude ?: 105.550),
-                'location_address' => $odp->location_address,
+                'location_address' => $odp->alamat_detail ?: $odp->location_address,
+                'parent_type' => $odp->parent_type ?: 'pon',
+                'parent_id' => $odp->parent_id,
+                'parent_name' => $computed['parent_label'] ?? 'PON OLT',
+                'rasio_spesial' => $odp->rasio_spesial,
+                'rasio_distribusi' => $odp->rasio_distribusi,
+                'optical_calc' => $optCalc,
                 'olt_id' => $odp->olt_id,
                 'olt_name' => $odp->olt?->name ?? 'OLT Utama NOC',
                 'pon_port_id' => $odp->pon_port_id,
@@ -274,14 +350,45 @@ class SuperPanelService
                     'package_name' => $c->package?->name ?? 'Paket Reguler',
                 ]),
             ];
-        });
+
+            if ($isOdc) {
+                $odcNodes[] = $nodeItem;
+            } else {
+                $odpNodes[] = $nodeItem;
+            }
+
+            // Build Feeder / Estafet Line
+            if (!empty($computed['from_coords']) && $odp->latitude && $odp->longitude) {
+                $parentName = $computed['parent_label'] ?? 'Hulu';
+                $lineLabel = $odp->rasio_spesial 
+                    ? "⚡ Estafet {$parentName} ──({$odp->rasio_spesial})──► " . ($odp->nama ?: $odp->name)
+                    : "⚡ Jalur {$parentName} ──► " . ($odp->nama ?: $odp->name);
+
+                $feederLines[] = [
+                    'id' => 'link_' . ($odp->parent_id ? 'hop_' . $odp->parent_id : 'pon_' . $odp->pon_port_id) . '_' . $odp->id,
+                    'from_type' => $odp->parent_type ?: 'pon',
+                    'to_type' => $isOdc ? 'odc' : 'odp',
+                    'from_id' => $odp->parent_id ?: $odp->pon_port_id,
+                    'to_id' => $odp->id,
+                    'from_name' => $parentName,
+                    'to_name' => $odp->nama ?: $odp->name,
+                    'rasio_spesial' => $odp->rasio_spesial,
+                    'distance_meters' => $computed['distance_meters'] ?? 0,
+                    'optical_calc' => $optCalc,
+                    'coordinates' => [
+                        $computed['from_coords'],
+                        [(float)$odp->latitude, (float)$odp->longitude],
+                    ],
+                ];
+            }
+        }
 
         // 3. Customer Nodes & Drop Points
         $customers = Customer::query()
             ->with(['odpBox', 'olt', 'ponPort', 'onu', 'package'])
             ->get();
 
-        $customerNodes = $customers->map(function (Customer $customer) {
+        $customerNodes = $customers->map(function (Customer $customer) use ($nodesById) {
             $lat = $customer->latitude ? (float) $customer->latitude : null;
             $long = $customer->longitude ? (float) $customer->longitude : null;
 
@@ -308,7 +415,7 @@ class SuperPanelService
                 'longitude' => $long ?: 105.550,
                 'is_active' => (bool) $customer->is_active,
                 'odp_id' => $customer->odp_id,
-                'odp_name' => $customer->odpBox?->name,
+                'odp_name' => $customer->odpBox?->nama ?: $customer->odpBox?->name,
                 'odp_port_number' => $customer->odp_port_number,
                 'olt_id' => $customer->olt_id,
                 'olt_name' => $customer->olt?->name,
@@ -321,33 +428,12 @@ class SuperPanelService
             ];
         });
 
-        // 4. Feeder Lines: OLT -> ODP
-        $feederLines = [];
-        foreach ($odpNodes as $odpNode) {
-            $oltNode = $oltNodes->firstWhere('id', $odpNode['olt_id']) ?: $oltNodes->first();
-            if ($oltNode) {
-                $feederLines[] = [
-                    'id' => 'feeder_' . $oltNode['id'] . '_' . $odpNode['id'],
-                    'from_olt_id' => $oltNode['id'],
-                    'to_odp_id' => $odpNode['id'],
-                    'from_name' => $oltNode['name'],
-                    'to_name' => $odpNode['name'],
-                    'pon_name' => $odpNode['pon_port_name'],
-                    'distribution_line' => $odpNode['distribution_line'],
-                    'feeder_cable_info' => $odpNode['feeder_cable_info'],
-                    'coordinates' => [
-                        [$oltNode['latitude'], $oltNode['longitude']],
-                        [$odpNode['latitude'], $odpNode['longitude']],
-                    ],
-                ];
-            }
-        }
-
-        // 5. Dropcore Lines: ODP -> Customer
+        // 4. Dropcore Lines: ODP -> Customer
         $dropLines = [];
+        $odpLookupById = collect($odpNodes)->keyBy('id');
         foreach ($customerNodes as $custNode) {
             if ($custNode['odp_id']) {
-                $odpNode = $odpNodes->firstWhere('id', $custNode['odp_id']);
+                $odpNode = $odpLookupById->get($custNode['odp_id']);
                 if ($odpNode) {
                     $dropLines[] = [
                         'id' => 'drop_' . $odpNode['id'] . '_' . $custNode['id'],
@@ -374,7 +460,8 @@ class SuperPanelService
                 'zoom' => 14,
             ],
             'olt_nodes' => $oltNodes->values(),
-            'odp_nodes' => $odpNodes->values(),
+            'odc_nodes' => array_values($odcNodes),
+            'odp_nodes' => array_values($odpNodes),
             'customer_nodes' => $customerNodes->values(),
             'feeder_lines' => $feederLines,
             'drop_lines' => $dropLines,
@@ -1154,11 +1241,49 @@ class SuperPanelService
     }
 
     /**
-     * Update ODP Configuration (Capacity, Distribution Line, Feeder)
+     * Update ODP / ODC Configuration (Capacity, Parent, Ratio, Feeder, Position)
      */
     public function updateOdpConfiguration(int $odpId, array $data): Odp
     {
         $odp = Odp::query()->findOrFail($odpId);
+
+        if (isset($data['nama'])) {
+            $odp->nama = $data['nama'];
+        } elseif (isset($data['name'])) {
+            $odp->nama = $data['name'];
+        }
+
+        if (isset($data['device_type']) && in_array($data['device_type'], ['odp', 'odc'])) {
+            $odp->device_type = $data['device_type'];
+        }
+
+        if (isset($data['parent_type']) && in_array($data['parent_type'], ['pon', 'odc', 'odp'])) {
+            $odp->parent_type = $data['parent_type'];
+        }
+
+        if (array_key_exists('parent_id', $data)) {
+            $odp->parent_id = !empty($data['parent_id']) ? (int) $data['parent_id'] : null;
+            // If connected to a parent node and olt/pon are not explicitly provided, inherit
+            if ($odp->parent_id) {
+                $parentNode = Odp::find($odp->parent_id);
+                if ($parentNode) {
+                    if (empty($data['olt_id']) && $parentNode->olt_id) {
+                        $odp->olt_id = $parentNode->olt_id;
+                    }
+                    if (empty($data['pon_port_id']) && $parentNode->pon_port_id) {
+                        $odp->pon_port_id = $parentNode->pon_port_id;
+                    }
+                }
+            }
+        }
+
+        if (array_key_exists('rasio_spesial', $data)) {
+            $odp->rasio_spesial = !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null;
+        }
+
+        if (array_key_exists('rasio_distribusi', $data)) {
+            $odp->rasio_distribusi = !empty($data['rasio_distribusi']) && $data['rasio_distribusi'] !== 'none' ? $data['rasio_distribusi'] : null;
+        }
 
         if (isset($data['total_ports'])) {
             $odp->total_ports = (int) $data['total_ports'];
@@ -1183,10 +1308,80 @@ class SuperPanelService
         }
         if (isset($data['location_address'])) {
             $odp->location_address = $data['location_address'];
+            $odp->alamat_detail = $data['location_address'];
         }
 
         $odp->save();
 
-        return $odp->fresh(['olt', 'ponPort', 'customers']);
+        return $odp->fresh(['olt', 'ponPort', 'customers', 'parent']);
+    }
+
+    /**
+     * Quick update node position from drag-and-drop on WebGIS map
+     */
+    public function quickUpdateNodeCoordinates(int $nodeId, float $lat, float $lng): Odp
+    {
+        $node = Odp::query()->findOrFail($nodeId);
+        $node->latitude = $lat;
+        $node->longitude = $lng;
+        $node->save();
+
+        return $node->fresh(['olt', 'ponPort', 'parent']);
+    }
+
+    /**
+     * Quick update customer position from drag-and-drop on WebGIS map
+     */
+    public function quickUpdateCustomerCoordinates(int $customerId, float $lat, float $lng): Customer
+    {
+        $customer = Customer::query()->findOrFail($customerId);
+        $customer->latitude = $lat;
+        $customer->longitude = $lng;
+        $customer->save();
+
+        return $customer->fresh(['odp', 'olt', 'ponPort']);
+    }
+
+    /**
+     * Create a new ODP or ODC node
+     */
+    public function createNode(array $data): Odp
+    {
+        $deviceType = in_array($data['device_type'] ?? 'odp', ['odp', 'odc']) ? $data['device_type'] : 'odp';
+        $parentType = in_array($data['parent_type'] ?? 'pon', ['pon', 'odc', 'odp']) ? $data['parent_type'] : 'pon';
+        $parentId = !empty($data['parent_id']) ? (int) $data['parent_id'] : null;
+
+        $oltId = $data['olt_id'] ?? null;
+        $ponPortId = $data['pon_port_id'] ?? null;
+
+        if ($parentId && (!$oltId || !$ponPortId)) {
+            $parentNode = Odp::find($parentId);
+            if ($parentNode) {
+                $oltId = $oltId ?: $parentNode->olt_id;
+                $ponPortId = $ponPortId ?: $parentNode->pon_port_id;
+            }
+        }
+
+        $node = Odp::create([
+            'nama' => $data['nama'] ?? ($deviceType === 'odc' ? 'ODC-BARU' : 'ODP-BARU'),
+            'device_type' => $deviceType,
+            'parent_type' => $parentType,
+            'parent_id' => $parentId,
+            'rasio_spesial' => !empty($data['rasio_spesial']) && $data['rasio_spesial'] !== 'none' ? $data['rasio_spesial'] : null,
+            'rasio_distribusi' => !empty($data['rasio_distribusi']) && $data['rasio_distribusi'] !== 'none' ? $data['rasio_distribusi'] : ($deviceType === 'odc' ? null : '1:8'),
+            'total_ports' => (int) ($data['total_ports'] ?? ($deviceType === 'odc' ? 24 : 8)),
+            'olt_id' => $oltId,
+            'pon_port_id' => $ponPortId,
+            'latitude' => $data['latitude'] ?? -5.635,
+            'longitude' => $data['longitude'] ?? 105.550,
+            'feeder_cable_info' => $data['feeder_cable_info'] ?? null,
+            'distribution_line' => $data['distribution_line'] ?? null,
+            'alamat_detail' => $data['location_address'] ?? '-',
+            'kecamatan_id' => 1,
+            'desa_id' => 1,
+            'dusun_id' => 1,
+        ]);
+
+        return $node->fresh(['olt', 'ponPort', 'parent']);
     }
 }

@@ -39,6 +39,9 @@ import {
     Zap,
     Edit3,
     Shuffle,
+    Move,
+    Plus,
+    Sliders,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Alert from '../../components/common/Alert';
@@ -47,12 +50,495 @@ import apiClient from '../../services/api';
 import masterOltService from '../../services/masterOltService';
 import { attachSatelliteLayerWithFallback } from '../../utils/leafletTileFallback';
 
+// Optical ratio calculation lookup helper for instant live preview in modals
+const calculateOpticalEstimate = (inputDbm, specialRatio, distRatio, isOdc) => {
+    const specialTapLoss = {
+        '1:99': 20.5, '2:98': 17.5, '3:97': 15.8, '5:95': 13.5,
+        '10:90': 10.5, '15:85': 8.6, '20:80': 7.3, '25:75': 6.3,
+        '30:70': 5.5, '40:60': 4.2, '50:50': 3.2, '70:30': 1.75,
+    };
+    const specialThruLoss = {
+        '1:99': 0.15, '2:98': 0.20, '3:97': 0.25, '5:95': 0.35,
+        '10:90': 0.60, '15:85': 0.85, '20:80': 1.15, '25:75': 1.45,
+        '30:70': 1.75, '40:60': 2.45, '50:50': 3.20, '70:30': 5.50,
+    };
+    const distSplitterLoss = {
+        '1:2': 3.6, '1:4': 7.2, '1:8': 10.5, '1:16': 13.8, '1:32': 17.0,
+    };
+
+    const tapLoss = specialTapLoss[specialRatio] || 0.0;
+    const thruLoss = specialThruLoss[specialRatio] || (specialRatio && specialRatio !== 'none' ? 0.5 : 0.0);
+    const splitLoss = distSplitterLoss[distRatio] || 0.0;
+
+    const baseInput = typeof inputDbm === 'number' && !isNaN(inputDbm) ? inputDbm : 10.0;
+    const thruPower = Math.round((baseInput - thruLoss) * 100) / 100;
+    const dropPower = !isOdc && (tapLoss > 0 || splitLoss > 0)
+        ? Math.round((baseInput - tapLoss - splitLoss) * 100) / 100
+        : null;
+
+    let status = 'ideal';
+    let statusColor = '#10B981';
+    let statusLabel = 'Ideal / Bagus (-15 s/d -24 dBm)';
+    if (dropPower !== null) {
+        if (dropPower < -27) {
+            status = 'critical';
+            statusColor = '#EF4444';
+            statusLabel = 'Kritis / Terlalu Redam (< -27 dBm)';
+        } else if (dropPower < -24) {
+            status = 'warning';
+            statusColor = '#F59E0B';
+            statusLabel = 'Waspada / Perhatian (-24 s/d -27 dBm)';
+        } else if (dropPower > -10) {
+            status = 'hot';
+            statusColor = '#EC4899';
+            statusLabel = 'Sinyal Terlalu Kuat (> -10 dBm)';
+        }
+    }
+
+    return { tapLoss, thruLoss, splitLoss, thruPower, dropPower, status, statusColor, statusLabel };
+};
+
+const SPECIAL_RATIO_OPTIONS = [
+    { value: 'none', label: 'Tanpa Rasio Asimetris (Direct / Bypass)' },
+    { value: '1:99', label: '1:99 (Drop 1% [-20.5 dB] | Lolos 99% [-0.15 dB])' },
+    { value: '2:98', label: '2:98 (Drop 2% [-17.5 dB] | Lolos 98% [-0.20 dB])' },
+    { value: '3:97', label: '3:97 (Drop 3% [-15.8 dB] | Lolos 97% [-0.25 dB])' },
+    { value: '5:95', label: '5:95 (Drop 5% [-13.5 dB] | Lolos 95% [-0.35 dB])' },
+    { value: '10:90', label: '10:90 (Drop 10% [-10.5 dB] | Lolos 90% [-0.60 dB])' },
+    { value: '15:85', label: '15:85 (Drop 15% [-8.6 dB] | Lolos 85% [-0.85 dB])' },
+    { value: '20:80', label: '20:80 (Drop 20% [-7.3 dB] | Lolos 80% [-1.15 dB])' },
+    { value: '25:75', label: '25:75 (Drop 25% [-6.3 dB] | Lolos 75% [-1.45 dB])' },
+    { value: '30:70', label: '30:70 (Drop 30% [-5.5 dB] | Lolos 70% [-1.75 dB])' },
+    { value: '40:60', label: '40:60 (Drop 40% [-4.2 dB] | Lolos 60% [-2.45 dB])' },
+    { value: '50:50', label: '50:50 (Drop 50% [-3.2 dB] | Lolos 50% [-3.20 dB])' },
+    { value: '70:30', label: '70:30 (Drop 70% [-1.75 dB] | Lolos 30% [-5.50 dB])' },
+];
+
+const DIST_RATIO_OPTIONS = [
+    { value: 'none', label: 'Tanpa Splitter (Bypass / Transit Hub)' },
+    { value: '1:2', label: 'Splitter PLC 1:2 (Redaman ~3.6 dB)' },
+    { value: '1:4', label: 'Splitter PLC 1:4 (Redaman ~7.2 dB)' },
+    { value: '1:8', label: 'Splitter PLC 1:8 (Redaman ~10.5 dB)' },
+    { value: '1:16', label: 'Splitter PLC 1:16 (Redaman ~13.8 dB)' },
+    { value: '1:32', label: 'Splitter PLC 1:32 (Redaman ~17.0 dB)' },
+];
+
 function formatRupiah(amount) {
     return new Intl.NumberFormat('id-ID', {
         style: 'currency',
         currency: 'IDR',
         minimumFractionDigits: 0,
     }).format(amount || 0);
+}
+
+// Reusable Node (ODP / ODC) Configuration Form Component
+function NodeFormFields({
+    form,
+    setForm,
+    isEdit = false,
+    formOptions,
+    gisData,
+    onCancel,
+    onSave,
+    isSaving,
+    excludeNodeId = null,
+}) {
+    // Determine estimated input power from selected parent
+    const estInputPower = useMemo(() => {
+        if (form.parent_type === 'pon') {
+            const olt = formOptions?.olts?.find(o => o.id === parseInt(form.olt_id, 10));
+            const pon = olt?.pon_ports?.find(p => p.id === parseInt(form.pon_port_id, 10));
+            return pon?.tx_power_dbm ? parseFloat(pon.tx_power_dbm) : 10.0;
+        }
+        if ((form.parent_type === 'odc' || form.parent_type === 'odp') && form.parent_id) {
+            const pid = parseInt(form.parent_id, 10);
+            const parentInGis = (gisData?.odp_nodes || []).find(n => n.id === pid) ||
+                                (gisData?.odc_nodes || []).find(n => n.id === pid);
+            if (parentInGis?.optical_calc?.thru_output_power_dbm !== undefined) {
+                return parseFloat(parentInGis.optical_calc.thru_output_power_dbm);
+            }
+        }
+        return 10.0;
+    }, [form.parent_type, form.parent_id, form.olt_id, form.pon_port_id, formOptions, gisData]);
+
+    const opticalSim = useMemo(() => {
+        return calculateOpticalEstimate(
+            estInputPower,
+            form.rasio_spesial,
+            form.rasio_distribusi,
+            form.device_type === 'odc'
+        );
+    }, [estInputPower, form.rasio_spesial, form.rasio_distribusi, form.device_type]);
+
+    const availablePonPorts = useMemo(() => {
+        const olt = formOptions?.olts?.find(o => o.id === parseInt(form.olt_id, 10));
+        return olt?.pon_ports || [];
+    }, [form.olt_id, formOptions]);
+
+    const availableOdcs = useMemo(() => {
+        return (formOptions?.odcs || []).filter(o => !excludeNodeId || o.id !== excludeNodeId);
+    }, [formOptions, excludeNodeId]);
+
+    const availableOdps = useMemo(() => {
+        return (formOptions?.odps || []).filter(o => !excludeNodeId || o.id !== excludeNodeId);
+    }, [formOptions, excludeNodeId]);
+
+    return (
+        <div className="space-y-4 text-xs text-slate-300">
+            {/* Identity & Device Type Toggle */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Nama / Kode Titik</label>
+                    <input
+                        type="text"
+                        value={form.nama}
+                        onChange={(e) => setForm({ ...form, nama: e.target.value })}
+                        placeholder={form.device_type === 'odc' ? 'Contoh: ODC-SENTRAL-01' : 'Contoh: KAL-TAM-KBS-001'}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
+                    />
+                </div>
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Tipe Titik Perangkat</label>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setForm({ 
+                                ...form, 
+                                device_type: 'odp',
+                                total_ports: form.total_ports === 24 ? 8 : form.total_ports,
+                                rasio_distribusi: form.rasio_distribusi === 'none' ? '1:8' : form.rasio_distribusi,
+                            })}
+                            className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
+                                form.device_type === 'odp'
+                                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                            }`}
+                        >
+                            📦 ODP (Pelanggan)
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setForm({ 
+                                ...form, 
+                                device_type: 'odc',
+                                total_ports: form.total_ports === 8 ? 24 : form.total_ports,
+                                rasio_distribusi: 'none',
+                            })}
+                            className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition ${
+                                form.device_type === 'odc'
+                                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                            }`}
+                        >
+                            🗄️ ODC (Cabinet Hub)
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Parent Connection & Topology */}
+            <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <Network className="w-3.5 h-3.5 text-cyan-400" />
+                        Koneksi Hulu / Jalur Masuk (Parent Node)
+                    </span>
+                    <span className="text-[11px] text-slate-400">Pilih asal feeder serat optik</span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setForm({ ...form, parent_type: 'pon', parent_id: '' })}
+                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                            form.parent_type === 'pon'
+                                ? 'bg-blue-600 text-white font-bold'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                    >
+                        ⚡ Port PON OLT
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setForm({ ...form, parent_type: 'odc', parent_id: availableOdcs[0]?.id || '' })}
+                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                            form.parent_type === 'odc'
+                                ? 'bg-purple-600 text-white font-bold'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                    >
+                        🗄️ Dari ODC
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setForm({ ...form, parent_type: 'odp', parent_id: availableOdps[0]?.id || '' })}
+                        className={`py-1.5 px-2 rounded-lg font-medium text-center transition ${
+                            form.parent_type === 'odp'
+                                ? 'bg-amber-600 text-white font-bold'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                    >
+                        📦 Estafet Antar ODP
+                    </button>
+                </div>
+
+                {form.parent_type === 'pon' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                            <label className="block text-slate-400 mb-1">Pilih Master OLT</label>
+                            <select
+                                value={form.olt_id || ''}
+                                onChange={(e) => {
+                                    const newOltId = e.target.value;
+                                    const olt = formOptions?.olts?.find(o => o.id === parseInt(newOltId, 10));
+                                    const firstPon = olt?.pon_ports?.[0]?.id || '';
+                                    setForm({ ...form, olt_id: newOltId, pon_port_id: firstPon });
+                                }}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Pilih OLT --</option>
+                                {formOptions?.olts?.map((olt) => (
+                                    <option key={olt.id} value={olt.id}>
+                                        {olt.name} ({olt.brand} {olt.model})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-slate-400 mb-1">Pilih Port PON OLT</label>
+                            <select
+                                value={form.pon_port_id || ''}
+                                onChange={(e) => setForm({ ...form, pon_port_id: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Pilih Port PON --</option>
+                                {availablePonPorts.map((pon) => (
+                                    <option key={pon.id} value={pon.id}>
+                                        {pon.name} (TX: {pon.tx_power_dbm || 10.0} dBm)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
+
+                {form.parent_type === 'odc' && (
+                    <div className="pt-1">
+                        <label className="block text-slate-400 mb-1">Pilih ODC Cabinet Sumber</label>
+                        <select
+                            value={form.parent_id || ''}
+                            onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-purple-500"
+                        >
+                            <option value="">-- Pilih ODC Sumber --</option>
+                            {availableOdcs.map((odc) => (
+                                <option key={odc.id} value={odc.id}>
+                                    🗄️ {odc.name || odc.nama} {odc.rasio_spesial ? `(Rasio: ${odc.rasio_spesial})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
+                {form.parent_type === 'odp' && (
+                    <div className="pt-1">
+                        <label className="block text-slate-400 mb-1">Pilih ODP Sumber (Estafet Hop Sebelumnya)</label>
+                        <select
+                            value={form.parent_id || ''}
+                            onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500"
+                        >
+                            <option value="">-- Pilih ODP Sumber --</option>
+                            {availableOdps.map((odp) => (
+                                <option key={odp.id} value={odp.id}>
+                                    📦 {odp.name || odp.nama} {odp.rasio_spesial ? `(Rasio: ${odp.rasio_spesial})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+            </div>
+
+            {/* Special Ratio & Distribution Splitter */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">
+                        ⚡ Rasio Spesial / Estafet (Coupler Tap Asimetris)
+                    </label>
+                    <select
+                        value={form.rasio_spesial || 'none'}
+                        onChange={(e) => setForm({ ...form, rasio_spesial: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-amber-500 font-semibold"
+                    >
+                        {SPECIAL_RATIO_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                            </option>
+                        ))}
+                    </select>
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                        Gunakan 1:99, 2:98, 70:30 dll untuk estafet serial rasio.
+                    </span>
+                </div>
+
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">
+                        🔌 Rasio Distribusi (Splitter PLC Pelanggan)
+                    </label>
+                    <select
+                        value={form.rasio_distribusi || (form.device_type === 'odc' ? 'none' : '1:8')}
+                        onChange={(e) => setForm({ ...form, rasio_distribusi: e.target.value })}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-semibold"
+                    >
+                        {DIST_RATIO_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                            </option>
+                        ))}
+                    </select>
+                    <span className="text-[11px] text-slate-500 mt-1 block">
+                        Splitter genap di dalam box menuju port dropcore.
+                    </span>
+                </div>
+            </div>
+
+            {/* Real-time Optical Simulation Card */}
+            <div className="p-3.5 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950/40 border border-blue-800/40 rounded-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-300 text-xs flex items-center gap-1.5">
+                        <Zap className="w-4 h-4 text-amber-400" />
+                        Simulasi Daya Optik Real-Time
+                    </span>
+                    <span
+                        className="px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-sm"
+                        style={{ backgroundColor: opticalSim.statusColor }}
+                    >
+                        {opticalSim.statusLabel}
+                    </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1 border-t border-slate-800">
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Input dari Hulu</div>
+                        <div className="font-bold text-white text-xs mt-0.5">{estInputPower.toFixed(2)} dBm</div>
+                    </div>
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Redaman Tap Rasio</div>
+                        <div className="font-bold text-amber-400 text-xs mt-0.5">
+                            {opticalSim.tapLoss > 0 ? `-${opticalSim.tapLoss.toFixed(1)} dB` : '0 dB (Direct)'}
+                        </div>
+                    </div>
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Redaman Splitter</div>
+                        <div className="font-bold text-indigo-400 text-xs mt-0.5">
+                            {opticalSim.splitLoss > 0 ? `-${opticalSim.splitLoss.toFixed(1)} dB` : '0 dB'}
+                        </div>
+                    </div>
+                    <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                        <div className="text-slate-400">Daya Port Pelanggan</div>
+                        <div className="font-bold text-xs mt-0.5" style={{ color: opticalSim.statusColor }}>
+                            {opticalSim.dropPower !== null ? `${opticalSim.dropPower.toFixed(2)} dBm` : 'Bypass / ODC Transit'}
+                        </div>
+                    </div>
+                </div>
+                {opticalSim.thruLoss > 0 && (
+                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 bg-indigo-950/40 rounded-lg border border-indigo-900/30 text-indigo-300">
+                        <span>⚡ Daya Lolos ke Hop Berikutnya (Thru Pass):</span>
+                        <strong className="text-emerald-400 font-bold">{opticalSim.thruPower.toFixed(2)} dBm (-{opticalSim.thruLoss.toFixed(2)} dB)</strong>
+                    </div>
+                )}
+            </div>
+
+            {/* Total Ports & Coordinates */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Total Kapasitas Port</label>
+                    <input
+                        type="number"
+                        min="1"
+                        max="128"
+                        value={form.total_ports}
+                        onChange={(e) => setForm({ ...form, total_ports: parseInt(e.target.value, 10) || 8 })}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
+                    />
+                </div>
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Latitude (Lintang)</label>
+                    <input
+                        type="text"
+                        value={form.latitude || ''}
+                        onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                        placeholder="-5.631249"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Longitude (Bujur)</label>
+                    <input
+                        type="text"
+                        value={form.longitude || ''}
+                        onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                        placeholder="105.549012"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+            </div>
+
+            {/* Additional Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Nama Jalur Distribusi</label>
+                    <input
+                        type="text"
+                        value={form.distribution_line || ''}
+                        onChange={(e) => setForm({ ...form, distribution_line: e.target.value })}
+                        placeholder="Contoh: PON 1 (Jalur Sentral - Kalianda)"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+                <div>
+                    <label className="block text-slate-400 mb-1 font-medium">Info Tube & Core Feeder</label>
+                    <input
+                        type="text"
+                        value={form.feeder_cable_info || ''}
+                        onChange={(e) => setForm({ ...form, feeder_cable_info: e.target.value })}
+                        placeholder="Contoh: Core 1 / Tube Biru"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                    />
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-slate-400 mb-1 font-medium">Alamat / Lokasi Tiang</label>
+                <textarea
+                    value={form.location_address || ''}
+                    onChange={(e) => setForm({ ...form, location_address: e.target.value })}
+                    rows="2"
+                    placeholder="Contoh: Depan Masjid Nurul Huda, Tiang No. 12"
+                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                />
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
+                <button
+                    type="button"
+                    onClick={onCancel}
+                    className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 font-semibold"
+                >
+                    Batal
+                </button>
+                <button
+                    type="button"
+                    onClick={onSave}
+                    disabled={isSaving}
+                    className="px-5 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold flex items-center gap-1.5 shadow-lg shadow-blue-600/30 disabled:opacity-50"
+                >
+                    {isSaving && <Loader className="w-3.5 h-3.5 animate-spin" />}
+                    {isEdit ? 'Simpan Konfigurasi' : 'Buat Titik Baru'}
+                </button>
+            </div>
+        </div>
+    );
 }
 
 export default function SuperPanelPage() {
@@ -73,16 +559,39 @@ export default function SuperPanelPage() {
     const mapInstanceRef = useRef(null);
     const markersLayerGroupRef = useRef(null);
     const linesLayerGroupRef = useRef(null);
+    const gisDataRef = useRef(null);
     const [gisData, setGisData] = useState(null);
     const [loadingGis, setLoadingGis] = useState(false);
     const [gisFilters, setGisFilters] = useState({
         showOlt: true,
+        showOdc: true,
         showOdp: true,
         showCustomers: true,
         showFeederLines: true,
         showDropLines: false,
         oltFilter: 'all',
     });
+    const [isDragMode, setIsDragMode] = useState(false);
+
+    // Node Creation State (ODP / ODC)
+    const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
+    const [createNodeForm, setCreateNodeForm] = useState({
+        nama: '',
+        device_type: 'odp',
+        parent_type: 'pon',
+        parent_id: '',
+        rasio_spesial: 'none',
+        rasio_distribusi: '1:8',
+        total_ports: 8,
+        olt_id: '',
+        pon_port_id: '',
+        latitude: -5.63125,
+        longitude: 105.54901,
+        distribution_line: '',
+        feeder_cable_info: '',
+        location_address: '',
+    });
+    const [creatingNode, setCreatingNode] = useState(false);
 
     // ==========================================
     // TAB 2: ODP PORT STOCK MATRIX STATE
@@ -93,7 +602,17 @@ export default function SuperPanelPage() {
     const [odpOccupancyFilter, setOdpOccupancyFilter] = useState('all'); // 'all' | 'available' | 'full' | 'overcapacity'
     const [selectedOdpForEdit, setSelectedOdpForEdit] = useState(null);
     const [editOdpForm, setEditOdpForm] = useState({
+        nama: '',
+        device_type: 'odp',
+        parent_type: 'pon',
+        parent_id: '',
+        rasio_spesial: 'none',
+        rasio_distribusi: '1:8',
         total_ports: 8,
+        olt_id: '',
+        pon_port_id: '',
+        latitude: '',
+        longitude: '',
         distribution_line: '',
         feeder_cable_info: '',
         location_address: '',
@@ -145,7 +664,7 @@ export default function SuperPanelPage() {
         dropcore_cable_length_meters: 85,
     });
     const [savingMapping, setSavingMapping] = useState(false);
-    const [formOptions, setFormOptions] = useState({ olts: [], odps: [], customers: [] });
+    const [formOptions, setFormOptions] = useState({ olts: [], odps: [], odcs: [], nodes: [], customers: [] });
 
     // Toast helper
     const showToast = (message, type = 'success') => {
@@ -305,6 +824,12 @@ export default function SuperPanelPage() {
     // LEAFLET MAP INITIALIZATION & RENDERING
     // ==========================================
     useEffect(() => {
+        if (gisData) {
+            gisDataRef.current = gisData;
+        }
+    }, [gisData]);
+
+    useEffect(() => {
         if (activeTab !== 'gis' || !mapContainerRef.current) return;
 
         if (!mapInstanceRef.current) {
@@ -319,6 +844,16 @@ export default function SuperPanelPage() {
 
             L.control.zoom({ position: 'bottomright' }).addTo(map);
             attachSatelliteLayerWithFallback(L, map);
+
+            // Right-click anywhere on the map to place a new ODP/ODC point
+            map.on('contextmenu', (e) => {
+                setCreateNodeForm(prev => ({
+                    ...prev,
+                    latitude: parseFloat(e.latlng.lat.toFixed(8)),
+                    longitude: parseFloat(e.latlng.lng.toFixed(8)),
+                }));
+                setShowCreateNodeModal(true);
+            });
 
             const linesGroup = L.layerGroup().addTo(map);
             const markersGroup = L.layerGroup().addTo(map);
@@ -337,29 +872,34 @@ export default function SuperPanelPage() {
         linesGroup.clearLayers();
         markersGroup.clearLayers();
 
-        // Render Feeder Lines: OLT -> ODP
+        // 1. Render Feeder / Estafet Lines (OLT -> ODP/ODC, ODC -> ODP, ODP -> ODP)
         if (gisFilters.showFeederLines && gisData.feeder_lines) {
             gisData.feeder_lines.forEach((line) => {
+                const isSpecial = !!line.rasio_spesial;
+                const lineColor = isSpecial ? '#F59E0B' : (line.to_type === 'odc' ? '#A855F7' : '#3B82F6');
                 const polyline = L.polyline(line.coordinates, {
-                    color: '#3B82F6',
-                    weight: 3.5,
+                    color: lineColor,
+                    weight: isSpecial ? 4 : 3,
                     opacity: 0.85,
-                    dashArray: '6, 6',
+                    dashArray: isSpecial ? undefined : '6, 6',
                 }).addTo(linesGroup);
 
                 polyline.bindPopup(`
-                    <div style="font-family: sans-serif; font-size: 13px; line-height: 1.4;">
-                        <strong style="color: #1E40AF; font-size: 14px;">⚡ Jalur Feeder Distribusi</strong><br/>
-                        <b>Dari OLT:</b> ${line.from_name}<br/>
-                        <b>Ke ODP:</b> ${line.to_name}<br/>
-                        <b>Port PON:</b> ${line.pon_name || '-'}<br/>
-                        <b>Kabel Core:</b> ${line.feeder_cable_info || '-'}<br/>
+                    <div style="font-family: sans-serif; font-size: 13px; line-height: 1.5; min-width: 230px;">
+                        <div style="background: ${isSpecial ? '#78350F' : '#1E40AF'}; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px;">
+                            <strong>${isSpecial ? '⚡ Jalur Estafet Rasio' : '⚡ Jalur Feeder Distribusi'}</strong>
+                        </div>
+                        <b>Dari (Hulu):</b> ${line.from_name}<br/>
+                        <b>Ke (Hilir):</b> ${line.to_name}<br/>
+                        <b>Estimasi Jarak:</b> ${line.distance_meters ? (line.distance_meters >= 1000 ? (line.distance_meters / 1000).toFixed(2) + ' km' : Math.round(line.distance_meters) + ' m') : '-'}<br/>
+                        ${isSpecial ? `<b>Rasio Tap Asimetris:</b> <span style="background: #FEF3C7; color: #92400E; padding: 1px 6px; border-radius: 4px; font-weight: bold;">${line.rasio_spesial}</span><br/>` : ''}
+                        ${line.optical_calc?.thru_output_power_dbm !== undefined ? `<b>Daya Lolos (Thru):</b> <strong style="color: #10B981">${line.optical_calc.thru_output_power_dbm} dBm</strong><br/>` : ''}
                     </div>
                 `);
             });
         }
 
-        // Render Dropcore Lines: ODP -> Customer
+        // 2. Render Dropcore Lines: ODP -> Customer
         if (gisFilters.showDropLines && gisData.drop_lines) {
             gisData.drop_lines.forEach((drop) => {
                 const polyline = L.polyline(drop.coordinates, {
@@ -379,7 +919,7 @@ export default function SuperPanelPage() {
             });
         }
 
-        // Render OLT Nodes
+        // 3. Render OLT Nodes
         if (gisFilters.showOlt && gisData.olt_nodes) {
             gisData.olt_nodes.forEach((olt) => {
                 const oltIcon = L.divIcon({
@@ -422,7 +962,86 @@ export default function SuperPanelPage() {
             });
         }
 
-        // Render ODP Nodes
+        // 4. Render ODC Nodes (Optical Distribution Cabinet)
+        if (gisFilters.showOdc && gisData.odc_nodes) {
+            gisData.odc_nodes.forEach((odc) => {
+                const odcIcon = L.divIcon({
+                    className: 'custom-odc-marker',
+                    html: `
+                        <div style="
+                            background: linear-gradient(135deg, #7C3AED, #9333EA);
+                            width: 36px; height: 36px;
+                            border-radius: 8px;
+                            display: flex; flex-direction: column; align-items: center; justify-content: center;
+                            box-shadow: 0 0 12px rgba(147, 51, 234, 0.75);
+                            border: 2px solid #FFFFFF;
+                            color: white; font-weight: bold; font-size: 10px;
+                            cursor: ${isDragMode ? 'grab' : 'pointer'};
+                        ">
+                            <span style="font-size: 14px; line-height: 1;">🗄️</span>
+                            <span style="font-size: 9px; margin-top: -2px;">ODC</span>
+                        </div>
+                    `,
+                    iconSize: [36, 36],
+                    iconAnchor: [18, 18],
+                });
+
+                const marker = L.marker([odc.latitude, odc.longitude], { 
+                    icon: odcIcon,
+                    draggable: isDragMode,
+                }).addTo(markersGroup);
+
+                if (isDragMode) {
+                    marker.on('dragend', async (e) => {
+                        const { lat, lng } = e.target.getLatLng();
+                        try {
+                            await apiClient.post('/super-panel/node-position', {
+                                id: odc.id,
+                                latitude: lat,
+                                longitude: lng,
+                            });
+                            showToast(`Posisi ODC ${odc.name} berhasil disimpan! (${lat.toFixed(6)}, ${lng.toFixed(6)})`, 'success');
+                            fetchGisMapData();
+                        } catch (err) {
+                            showToast('Gagal memindahkan ODC: ' + (err?.response?.data?.message || err.message), 'error');
+                        }
+                    });
+                }
+
+                const opt = odc.optical_calc;
+                marker.bindPopup(`
+                    <div style="font-family: sans-serif; font-size: 13px; min-width: 250px; line-height: 1.5;">
+                        <div style="background: #581C87; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px; display: flex; justify-content: space-between; align-items: center;">
+                            <strong>🗄️ ODC: ${odc.name}</strong>
+                            <span style="background: #9333EA; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold;">
+                                CABINET DISTRIBUSI
+                            </span>
+                        </div>
+                        <b>Hulu / Parent:</b> ${odc.parent_name || '-'}<br/>
+                        <b>Rasio Estafet:</b> <span style="background: #F3E8FF; color: #6B21A8; font-weight: bold; padding: 1px 5px; border-radius: 3px;">${odc.rasio_spesial || 'Direct / Bypass'}</span><br/>
+                        ${opt ? `
+                        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 8px; margin: 6px 0; font-size: 11px;">
+                            <div style="font-weight: bold; color: #475569; margin-bottom: 2px;">⚡ PERHITUNGAN DAYA OPTIK:</div>
+                            <div>• Input Power Masuk: <b>${opt.input_power_dbm} dBm</b></div>
+                            <div>• Redaman Kabel: <b>-${opt.fiber_loss_db} dB</b> (${opt.fiber_distance_meters} m)</div>
+                            <div>• Redaman Thru: <b>-${opt.thru_loss_db} dB</b></div>
+                            <div style="color: #7C3AED; font-weight: bold; margin-top: 2px;">• Daya Lolos (Thru): ${opt.thru_output_power_dbm} dBm</div>
+                        </div>
+                        ` : ''}
+                        <b>Total Kapasitas:</b> ${odc.total_ports || 24} Port<br/>
+                        <b>Pelanggan Terhubung:</b> ${odc.connected_customers_count || 0} Pelanggan<br/>
+                        <b>Alamat:</b> ${odc.location_address || '-'}<br/>
+                        <div style="margin-top: 10px; display: flex; gap: 6px;">
+                            <button onclick="window.superPanelOpenEditNode('${odc.id}')" style="flex: 1; background: #7C3AED; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                ✏️ Edit Titik & Jalur
+                            </button>
+                        </div>
+                    </div>
+                `);
+            });
+        }
+
+        // 5. Render ODP Nodes
         if (gisFilters.showOdp && gisData.odp_nodes) {
             gisData.odp_nodes.forEach((odp) => {
                 const badgeColor = odp.status_color || '#10B981';
@@ -437,6 +1056,7 @@ export default function SuperPanelPage() {
                             box-shadow: 0 0 10px ${badgeColor}aa;
                             border: 2px solid #FFFFFF;
                             color: white; font-weight: bold; font-size: 10px;
+                            cursor: ${isDragMode ? 'grab' : 'pointer'};
                         ">
                             <span>${odp.used_ports}/${odp.total_ports}</span>
                         </div>
@@ -445,24 +1065,63 @@ export default function SuperPanelPage() {
                     iconAnchor: [16, 16],
                 });
 
-                const marker = L.marker([odp.latitude, odp.longitude], { icon: odpIcon }).addTo(markersGroup);
+                const marker = L.marker([odp.latitude, odp.longitude], { 
+                    icon: odpIcon,
+                    draggable: isDragMode,
+                }).addTo(markersGroup);
+
+                if (isDragMode) {
+                    marker.on('dragend', async (e) => {
+                        const { lat, lng } = e.target.getLatLng();
+                        try {
+                            await apiClient.post('/super-panel/node-position', {
+                                id: odp.id,
+                                latitude: lat,
+                                longitude: lng,
+                            });
+                            showToast(`Posisi ODP ${odp.name} berhasil disimpan! (${lat.toFixed(6)}, ${lng.toFixed(6)})`, 'success');
+                            fetchGisMapData();
+                        } catch (err) {
+                            showToast('Gagal memindahkan ODP: ' + (err?.response?.data?.message || err.message), 'error');
+                        }
+                    });
+                }
+
+                const opt = odp.optical_calc;
                 marker.bindPopup(`
-                    <div style="font-family: sans-serif; font-size: 13px; min-width: 240px; line-height: 1.5;">
+                    <div style="font-family: sans-serif; font-size: 13px; min-width: 250px; line-height: 1.5;">
                         <div style="background: #0F172A; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px; display: flex; justify-content: space-between; align-items: center;">
                             <strong>📦 ${odp.name}</strong>
                             <span style="background: ${badgeColor}; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px;">
                                 ${odp.used_ports}/${odp.total_ports} Port
                             </span>
                         </div>
-                        <b>Kode ODP:</b> ${odp.code || '-'}<br/>
-                        <b>Alamat:</b> ${odp.location_address || '-'}<br/>
-                        <b>Terhubung OLT:</b> ${odp.olt_name} (${odp.pon_port_name})<br/>
-                        <b>Jalur Feeder:</b> ${odp.distribution_line || '-'}<br/>
+                        <b>Hulu / Parent:</b> ${odp.parent_name || '-'}<br/>
+                        <b>Rasio Estafet:</b> <span style="background: #FEF3C7; color: #92400E; font-weight: bold; padding: 1px 5px; border-radius: 3px;">${odp.rasio_spesial || 'Direct'}</span> | <b>Splitter:</b> <b>${odp.rasio_distribusi || '1:8'}</b><br/>
+                        ${opt ? `
+                        <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 6px 8px; margin: 6px 0; font-size: 11px;">
+                            <div style="font-weight: bold; color: #475569; margin-bottom: 2px;">⚡ PERHITUNGAN DAYA OPTIK:</div>
+                            <div>• Input Daya Masuk: <b>${opt.input_power_dbm} dBm</b></div>
+                            <div>• Redaman Kabel (${opt.fiber_distance_meters} m): <b>-${opt.fiber_loss_db} dB</b></div>
+                            ${opt.special_ratio ? `<div>• Redaman Tap Drop: <b>-${opt.tap_loss_db} dB</b> (${opt.special_ratio})</div>` : ''}
+                            <div>• Redaman Splitter: <b>-${opt.dist_loss_db} dB</b> (${opt.dist_ratio || '1:8'})</div>
+                            <div style="margin-top: 3px; font-weight: bold; color: ${opt.status_color || '#10B981'};">
+                                • Output Port Pelanggan: ${opt.customer_port_power_dbm !== null ? opt.customer_port_power_dbm + ' dBm' : '-'}
+                            </div>
+                            ${opt.special_ratio ? `
+                            <div style="color: #6366F1; font-weight: bold; margin-top: 2px;">
+                                • Lanjut ke Hop Berikutnya: ${opt.thru_output_power_dbm} dBm (-${opt.thru_loss_db} dB)
+                            </div>` : ''}
+                        </div>
+                        ` : ''}
                         <b>Stok Port Sisa:</b> <strong style="color: ${odp.free_ports > 0 ? '#10B981' : '#EF4444'}">${odp.free_ports} Port Kosong</strong><br/>
-                        <b>Okupansi:</b> ${odp.occupancy_percent}%<br/>
-                        <div style="margin-top: 8px; display: flex; gap: 6px;">
-                            <button onclick="window.superPanelShowOdpStock('${odp.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 4px; padding: 4px 6px; font-size: 11px; cursor: pointer;">
-                                Lihat Slot Port &rarr;
+                        <b>Alamat:</b> ${odp.location_address || '-'}<br/>
+                        <div style="margin-top: 10px; display: flex; gap: 6px;">
+                            <button onclick="window.superPanelOpenEditNode('${odp.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                ✏️ Edit Titik & Jalur
+                            </button>
+                            <button onclick="window.superPanelShowOdpStock('${odp.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                📦 Slot Port &rarr;
                             </button>
                         </div>
                     </div>
@@ -470,7 +1129,7 @@ export default function SuperPanelPage() {
             });
         }
 
-        // Render Customer Drop Nodes
+        // 6. Render Customer Drop Nodes
         if (gisFilters.showCustomers && gisData.customer_nodes) {
             gisData.customer_nodes.forEach((cust) => {
                 const custIcon = L.divIcon({
@@ -482,13 +1141,35 @@ export default function SuperPanelPage() {
                             border-radius: 50%;
                             border: 2px solid #FFFFFF;
                             box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+                            cursor: ${isDragMode ? 'grab' : 'pointer'};
                         "></div>
                     `,
                     iconSize: [14, 14],
                     iconAnchor: [7, 7],
                 });
 
-                const marker = L.marker([cust.latitude, cust.longitude], { icon: custIcon }).addTo(markersGroup);
+                const marker = L.marker([cust.latitude, cust.longitude], { 
+                    icon: custIcon,
+                    draggable: isDragMode,
+                }).addTo(markersGroup);
+
+                if (isDragMode) {
+                    marker.on('dragend', async (e) => {
+                        const { lat, lng } = e.target.getLatLng();
+                        try {
+                            await apiClient.post('/super-panel/customer-position', {
+                                id: cust.id,
+                                latitude: lat,
+                                longitude: lng,
+                            });
+                            showToast(`Posisi pelanggan ${cust.name} berhasil disimpan! (${lat.toFixed(6)}, ${lng.toFixed(6)})`, 'success');
+                            fetchGisMapData();
+                        } catch (err) {
+                            showToast('Gagal memindahkan pelanggan: ' + (err?.response?.data?.message || err.message), 'error');
+                        }
+                    });
+                }
+
                 marker.bindPopup(`
                     <div style="font-family: sans-serif; font-size: 12px; min-width: 220px; line-height: 1.4;">
                         <strong style="color: #1E3A8A; font-size: 13px;">👤 ${cust.name}</strong><br/>
@@ -505,7 +1186,7 @@ export default function SuperPanelPage() {
                 `);
             });
         }
-    }, [activeTab, gisData, gisFilters]);
+    }, [activeTab, gisData, gisFilters, isDragMode]);
 
     // Window handlers for popup actions
     useEffect(() => {
@@ -519,11 +1200,37 @@ export default function SuperPanelPage() {
             setSelectedOltId(parseInt(oltId, 10));
             setActiveTab('olt_snmp');
         };
+        window.superPanelOpenEditNode = (nodeId) => {
+            const idInt = parseInt(nodeId, 10);
+            const currentGis = gisDataRef.current;
+            const found = (currentGis?.odp_nodes || []).find(n => n.id === idInt) ||
+                          (currentGis?.odc_nodes || []).find(n => n.id === idInt);
+            if (found) {
+                setSelectedOdpForEdit(found);
+                setEditOdpForm({
+                    nama: found.name || found.nama || '',
+                    device_type: found.device_type || 'odp',
+                    parent_type: found.parent_type || 'pon',
+                    parent_id: found.parent_id || '',
+                    rasio_spesial: found.rasio_spesial || 'none',
+                    rasio_distribusi: found.rasio_distribusi || (found.device_type === 'odc' ? 'none' : '1:8'),
+                    total_ports: found.total_ports || (found.device_type === 'odc' ? 24 : 8),
+                    olt_id: found.olt_id || '',
+                    pon_port_id: found.pon_port_id || '',
+                    latitude: found.latitude || '',
+                    longitude: found.longitude || '',
+                    distribution_line: found.distribution_line || '',
+                    feeder_cable_info: found.feeder_cable_info || '',
+                    location_address: found.location_address || '',
+                });
+            }
+        };
 
         return () => {
             delete window.superPanelTraceCustomer;
             delete window.superPanelShowOdpStock;
             delete window.superPanelTraceOlt;
+            delete window.superPanelOpenEditNode;
         };
     }, []);
 
@@ -544,21 +1251,63 @@ export default function SuperPanelPage() {
         }
     };
 
-    // Save ODP Configuration
+    // Save Node (ODP/ODC) Configuration
     const handleSaveOdpConfig = async () => {
         if (!selectedOdpForEdit) return;
         try {
             setSavingOdpConfig(true);
-            const res = await apiClient.post(`/super-panel/odp-config/${selectedOdpForEdit.id}`, editOdpForm);
+            const payload = {
+                ...editOdpForm,
+                parent_id: editOdpForm.parent_id ? parseInt(editOdpForm.parent_id, 10) : null,
+                total_ports: parseInt(editOdpForm.total_ports, 10) || (editOdpForm.device_type === 'odc' ? 24 : 8),
+                olt_id: editOdpForm.olt_id ? parseInt(editOdpForm.olt_id, 10) : null,
+                pon_port_id: editOdpForm.pon_port_id ? parseInt(editOdpForm.pon_port_id, 10) : null,
+                latitude: editOdpForm.latitude ? parseFloat(editOdpForm.latitude) : null,
+                longitude: editOdpForm.longitude ? parseFloat(editOdpForm.longitude) : null,
+            };
+            const res = await apiClient.post(`/super-panel/odp-config/${selectedOdpForEdit.id}`, payload);
             if (res.data?.success) {
-                showToast('Konfigurasi ODP berhasil disimpan!');
+                showToast(res.data.message || 'Konfigurasi titik berhasil disimpan!');
                 setSelectedOdpForEdit(null);
-                fetchOdpStockData();
+                fetchGisMapData();
+                fetchFormOptions();
+                if (activeTab === 'odp_stock') fetchOdpStockData();
             }
         } catch (err) {
-            showToast('Gagal menyimpan ODP: ' + (err?.response?.data?.message || err.message), 'error');
+            showToast('Gagal menyimpan konfigurasi: ' + (err?.response?.data?.message || err.message), 'error');
         } finally {
             setSavingOdpConfig(false);
+        }
+    };
+
+    // Create New Node (ODP / ODC)
+    const handleCreateNode = async () => {
+        if (!createNodeForm.nama) {
+            showToast('Nama titik wajib diisi!', 'warning');
+            return;
+        }
+        try {
+            setCreatingNode(true);
+            const payload = {
+                ...createNodeForm,
+                parent_id: createNodeForm.parent_id ? parseInt(createNodeForm.parent_id, 10) : null,
+                total_ports: parseInt(createNodeForm.total_ports, 10) || (createNodeForm.device_type === 'odc' ? 24 : 8),
+                olt_id: createNodeForm.olt_id ? parseInt(createNodeForm.olt_id, 10) : null,
+                pon_port_id: createNodeForm.pon_port_id ? parseInt(createNodeForm.pon_port_id, 10) : null,
+                latitude: parseFloat(createNodeForm.latitude) || -5.63125,
+                longitude: parseFloat(createNodeForm.longitude) || 105.54901,
+            };
+            const res = await apiClient.post('/super-panel/node-create', payload);
+            if (res.data?.success) {
+                showToast(res.data.message || 'Titik baru berhasil dibuat!', 'success');
+                setShowCreateNodeModal(false);
+                fetchGisMapData();
+                fetchFormOptions();
+            }
+        } catch (err) {
+            showToast('Gagal membuat titik baru: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setCreatingNode(false);
         }
     };
 
@@ -945,9 +1694,9 @@ export default function SuperPanelPage() {
             {/* ========================================================================= */}
             {activeTab === 'gis' && (
                 <div className="space-y-4">
-                    {/* Filter Controls Bar */}
+                    {/* Filter & Action Controls Bar */}
                     <div className="bg-slate-800/90 border border-slate-700/80 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-                        <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-3.5">
                             <span className="font-semibold text-slate-300 flex items-center gap-1.5">
                                 <Filter className="w-3.5 h-3.5 text-blue-400" /> Layer Map:
                             </span>
@@ -958,7 +1707,16 @@ export default function SuperPanelPage() {
                                     onChange={(e) => setGisFilters({ ...gisFilters, showOlt: e.target.checked })}
                                     className="rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-0"
                                 />
-                                OLT Sentral
+                                ⚡ OLT Sentral
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
+                                <input
+                                    type="checkbox"
+                                    checked={gisFilters.showOdc}
+                                    onChange={(e) => setGisFilters({ ...gisFilters, showOdc: e.target.checked })}
+                                    className="rounded border-slate-600 bg-slate-700 text-purple-600 focus:ring-0"
+                                />
+                                <span className="text-purple-400 font-medium">🗄️ ODC Cabinet</span>
                             </label>
                             <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
                                 <input
@@ -967,7 +1725,7 @@ export default function SuperPanelPage() {
                                     onChange={(e) => setGisFilters({ ...gisFilters, showOdp: e.target.checked })}
                                     className="rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-0"
                                 />
-                                Box ODP & Stok
+                                📦 Box ODP & Stok
                             </label>
                             <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
                                 <input
@@ -976,7 +1734,7 @@ export default function SuperPanelPage() {
                                     onChange={(e) => setGisFilters({ ...gisFilters, showCustomers: e.target.checked })}
                                     className="rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-0"
                                 />
-                                Titik Pelanggan
+                                👤 Titik Pelanggan
                             </label>
                             <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
                                 <input
@@ -985,7 +1743,7 @@ export default function SuperPanelPage() {
                                     onChange={(e) => setGisFilters({ ...gisFilters, showFeederLines: e.target.checked })}
                                     className="rounded border-slate-600 bg-slate-700 text-blue-600 focus:ring-0"
                                 />
-                                Kabel Feeder
+                                ⚡ Feeder & Estafet
                             </label>
                             <label className="flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white">
                                 <input
@@ -998,22 +1756,57 @@ export default function SuperPanelPage() {
                             </label>
                         </div>
 
-                        {/* Map Legends */}
-                        <div className="flex flex-wrap items-center gap-3 text-slate-400">
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> ODP Tersedia (&lt;70%)
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> ODP Siaga (70-90%)
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                                <span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> ODP Penuh / Over
-                            </span>
+                        {/* Action Buttons & Legends */}
+                        <div className="flex flex-wrap items-center gap-2.5">
+                            {/* Drag & Drop Marker Mode Toggle */}
+                            <button
+                                type="button"
+                                onClick={() => setIsDragMode(!isDragMode)}
+                                className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition text-xs shadow-md ${
+                                    isDragMode
+                                        ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 animate-pulse'
+                                        : 'bg-slate-700 hover:bg-slate-600 text-amber-300 border border-amber-500/30'
+                                }`}
+                                title="Aktifkan untuk menggeser marker ODP, ODC, atau Pelanggan langsung di peta"
+                            >
+                                <Move className="w-3.5 h-3.5" />
+                                {isDragMode ? '📍 Kunci Posisi (Mode Geser Aktif)' : '✏️ Mode Geser Titik (Drag & Drop)'}
+                            </button>
+
+                            {/* Add New Node Button */}
+                            <button
+                                type="button"
+                                onClick={() => setShowCreateNodeModal(true)}
+                                className="px-3 py-1.5 rounded-xl font-bold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 transition text-xs shadow-lg shadow-blue-600/30"
+                            >
+                                <Plus className="w-3.5 h-3.5" />
+                                + Tambah Titik (ODP/ODC)
+                            </button>
                         </div>
                     </div>
 
                     {/* Interactive Leaflet Map Container */}
                     <div className="relative w-full h-[620px] rounded-2xl overflow-hidden border border-slate-700/80 shadow-2xl bg-slate-950">
+                        {/* Drag mode active notification banner */}
+                        {isDragMode && (
+                            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 border border-amber-300 text-xs">
+                                <Move className="w-4 h-4 animate-spin" />
+                                <span>Mode Geser Aktif: Klik & tahan marker ODP, ODC, atau Pelanggan untuk memindahkan ke posisi baru. Koordinat tersimpan otomatis!</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsDragMode(false)}
+                                    className="ml-2 px-2.5 py-1 bg-slate-950 text-amber-300 rounded-lg text-[11px] font-extrabold hover:bg-slate-900 border border-amber-400"
+                                >
+                                    Selesai / Kunci
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Hint for Right-Click Add Node */}
+                        <div className="absolute bottom-3 left-3 z-20 bg-slate-900/85 backdrop-blur border border-slate-700/70 text-[11px] text-slate-300 px-3 py-1.5 rounded-lg shadow pointer-events-none hidden sm:flex items-center gap-1.5">
+                            <span className="text-amber-400 font-bold">💡 Tips:</span> Klik kanan di mana saja pada peta satelit untuk menambah titik ODP/ODC di titik tersebut.
+                        </div>
+
                         {loadingGis && (
                             <div className="absolute inset-0 bg-slate-900/70 backdrop-blur-sm z-30 flex flex-col items-center justify-center">
                                 <Loader className="w-8 h-8 text-blue-400 animate-spin" />
@@ -2340,78 +3133,47 @@ export default function SuperPanelPage() {
             )}
 
             {/* ========================================================================= */}
-            {/* MODAL 1: EDIT ODP CONFIGURATION */}
+            {/* MODAL 1: EDIT NODE (ODP / ODC) CONFIGURATION */}
             {/* ========================================================================= */}
             {selectedOdpForEdit && (
                 <Modal
                     isOpen={!!selectedOdpForEdit}
                     onClose={() => setSelectedOdpForEdit(null)}
-                    title={`Konfigurasi Box ODP: ${selectedOdpForEdit.name}`}
+                    title={`Konfigurasi Titik: ${selectedOdpForEdit.name || selectedOdpForEdit.nama} (${selectedOdpForEdit.device_type === 'odc' ? 'ODC Cabinet' : 'ODP Box'})`}
                 >
-                    <div className="space-y-4 text-xs text-slate-300">
-                        <div>
-                            <label className="block text-slate-400 mb-1 font-medium">Kapasitas Total Port ODP (8 / 16 / 24 Port)</label>
-                            <input
-                                type="number"
-                                min="1"
-                                max="64"
-                                value={editOdpForm.total_ports}
-                                onChange={(e) => setEditOdpForm({ ...editOdpForm, total_ports: parseInt(e.target.value, 10) || 8 })}
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
+                    <NodeFormFields
+                        form={editOdpForm}
+                        setForm={setEditOdpForm}
+                        isEdit={true}
+                        formOptions={formOptions}
+                        gisData={gisData}
+                        onCancel={() => setSelectedOdpForEdit(null)}
+                        onSave={handleSaveOdpConfig}
+                        isSaving={savingOdpConfig}
+                        excludeNodeId={selectedOdpForEdit.id}
+                    />
+                </Modal>
+            )}
 
-                        <div>
-                            <label className="block text-slate-400 mb-1 font-medium">Nama Jalur Distribusi</label>
-                            <input
-                                type="text"
-                                value={editOdpForm.distribution_line}
-                                onChange={(e) => setEditOdpForm({ ...editOdpForm, distribution_line: e.target.value })}
-                                placeholder="Contoh: PON 1 (Jalur Utama Sentral - Kalianda)"
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-slate-400 mb-1 font-medium">Informasi Tube & Core Kabel Feeder</label>
-                            <input
-                                type="text"
-                                value={editOdpForm.feeder_cable_info}
-                                onChange={(e) => setEditOdpForm({ ...editOdpForm, feeder_cable_info: e.target.value })}
-                                placeholder="Contoh: Core 2 / Tube Biru (Kabel ADSS 24 Core)"
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-slate-400 mb-1 font-medium">Alamat Lokasi ODP</label>
-                            <textarea
-                                value={editOdpForm.location_address}
-                                onChange={(e) => setEditOdpForm({ ...editOdpForm, location_address: e.target.value })}
-                                rows="2"
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
-
-                        <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
-                            <button
-                                type="button"
-                                onClick={() => setSelectedOdpForEdit(null)}
-                                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 font-semibold"
-                            >
-                                Batal
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleSaveOdpConfig}
-                                disabled={savingOdpConfig}
-                                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold flex items-center gap-1.5 shadow-lg shadow-blue-600/30 disabled:opacity-50"
-                            >
-                                {savingOdpConfig && <Loader className="w-3.5 h-3.5 animate-spin" />}
-                                Simpan Konfigurasi
-                            </button>
-                        </div>
-                    </div>
+            {/* ========================================================================= */}
+            {/* MODAL 1B: CREATE NEW NODE (ODP / ODC) */}
+            {/* ========================================================================= */}
+            {showCreateNodeModal && (
+                <Modal
+                    isOpen={showCreateNodeModal}
+                    onClose={() => setShowCreateNodeModal(false)}
+                    title="Tambah Titik Baru (ODP / ODC)"
+                >
+                    <NodeFormFields
+                        form={createNodeForm}
+                        setForm={setCreateNodeForm}
+                        isEdit={false}
+                        formOptions={formOptions}
+                        gisData={gisData}
+                        onCancel={() => setShowCreateNodeModal(false)}
+                        onSave={handleCreateNode}
+                        isSaving={creatingNode}
+                    />
                 </Modal>
             )}
 

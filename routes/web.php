@@ -449,6 +449,9 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/reassign-onu', [SuperPanelController::class, 'reassignOnu'])->name('api.super-panel.reassign-onu');
             Route::post('/cpe/{deviceId}/reboot', [SuperPanelController::class, 'rebootCpe'])->name('api.super-panel.cpe.reboot');
             Route::post('/cpe/{deviceId}/refresh', [SuperPanelController::class, 'refreshCpe'])->name('api.super-panel.cpe.refresh');
+            Route::post('/node-position', [SuperPanelController::class, 'quickUpdateNodePosition'])->name('api.super-panel.node-position');
+            Route::post('/customer-position', [SuperPanelController::class, 'quickUpdateCustomerPosition'])->name('api.super-panel.customer-position');
+            Route::post('/node-create', [SuperPanelController::class, 'createNode'])->name('api.super-panel.node-create');
             Route::get('/form-options', [SuperPanelController::class, 'formOptions'])->name('api.super-panel.form-options');
         });
     }); // end teknisi routes

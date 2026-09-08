@@ -11,6 +11,9 @@ class Odp extends Model
 {
     protected $fillable = [
         'nama',
+        'device_type',
+        'parent_type',
+        'parent_id',
         'rasio_spesial',
         'rasio_distribusi',
         'foto',
@@ -33,10 +36,36 @@ class Odp extends Model
         'total_ports' => 'integer',
         'olt_id' => 'integer',
         'pon_port_id' => 'integer',
+        'parent_id' => 'integer',
         'kecamatan_id' => 'integer',
         'desa_id' => 'integer',
         'dusun_id' => 'integer',
     ];
+
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(Odp::class, 'parent_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(Odp::class, 'parent_id');
+    }
+
+    public function getNameAttribute(): ?string
+    {
+        return $this->nama;
+    }
+
+    public function getLocationAddressAttribute(): ?string
+    {
+        return $this->alamat_detail;
+    }
+
+    public function getIsOdcAttribute(): bool
+    {
+        return ($this->device_type ?? 'odp') === 'odc';
+    }
 
     public function olt(): BelongsTo
     {
