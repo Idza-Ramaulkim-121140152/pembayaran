@@ -84,6 +84,23 @@ class AcsDashboardController extends Controller
             $maxDevs = $pkg && $pkg->device_count > 0 ? (int) $pkg->device_count : null;
             $clients = (int) $d->wifi_clients_count;
 
+            $rxPower = $d->optical_rx_power;
+            $txPower = $d->optical_tx_power;
+            if ($rxPower === null) {
+                $oltOnu = null;
+                if ($d->customer_id) {
+                    $oltOnu = \App\Models\OltOnu::where('customer_id', $d->customer_id)->first();
+                }
+                if (!$oltOnu && $d->serial_number) {
+                    $oltOnu = \App\Models\OltOnu::where('serial_number', $d->serial_number)->first();
+                }
+                if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
+                    $rxPower = (float) $oltOnu->optical_rx_dbm;
+                    $txPower = (float) $oltOnu->optical_tx_dbm;
+                    $d->update(['optical_rx_power' => $rxPower, 'optical_tx_power' => $txPower]);
+                }
+            }
+
             $capStatus = 'no_limit';
             $capLabel = 'Tanpa Batas';
             $capDiff = 0;
@@ -115,8 +132,8 @@ class AcsDashboardController extends Controller
                 'product_class' => $d->product_class,
                 'serial_number' => $d->serial_number,
                 'pon_mode' => $d->pon_mode,
-                'optical_rx_power' => $d->optical_rx_power,
-                'optical_tx_power' => $d->optical_tx_power,
+                'optical_rx_power' => $rxPower,
+                'optical_tx_power' => $txPower,
                 'rx_status' => $d->rx_quality,
                 'temperature' => $d->temperature,
                 'device_uptime' => $d->device_uptime,

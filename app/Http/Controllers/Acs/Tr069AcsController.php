@@ -269,6 +269,12 @@ class Tr069AcsController extends Controller
                 $commandXml = $this->soapEngine->buildGetParameterValues($paths, $cwmpId);
                 break;
 
+            case 'getParameterNames':
+                $path = $task->payload['parameter_path'] ?? 'InternetGatewayDevice.';
+                $nextLevel = (bool) ($task->payload['next_level'] ?? false);
+                $commandXml = $this->soapEngine->buildGetParameterNames($path, $nextLevel, $cwmpId);
+                break;
+
             case 'reboot':
                 $cmdKey = $task->payload['command_key'] ?? ('Reboot-' . $task->id);
                 $commandXml = $this->soapEngine->buildReboot($cmdKey, $cwmpId);
@@ -312,6 +318,20 @@ class Tr069AcsController extends Controller
                 if (!empty($params) && $session->device) {
                     $this->deviceService->processGetParameterValuesResponse($session->device, $params, $types);
                 }
+            }
+
+            // Process returned parameter names if GetParameterNamesResponse
+            if ($parsed['type'] === 'GetParameterNamesResponse') {
+                $names = $parsed['parameter_names'] ?? [];
+                if ($task) {
+                    $task->update([
+                        'result' => [
+                            'count' => count($names),
+                            'names' => array_keys($names),
+                        ],
+                    ]);
+                }
+                Log::info("Tr069AcsController: GetParameterNamesResponse received " . count($names) . " names for device #{$session->acs_device_id}");
             }
         }
 

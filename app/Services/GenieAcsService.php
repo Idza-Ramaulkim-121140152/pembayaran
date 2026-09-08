@@ -380,6 +380,27 @@ class GenieAcsService
             $nativeDevices = \App\Models\AcsDevice::query()->get();
             foreach ($nativeDevices as $nd) {
                 $isOnline = $nd->last_inform_at && $nd->last_inform_at->greaterThanOrEqualTo(now()->subMinutes(15));
+
+                $rxPower = $nd->optical_rx_power;
+                $txPower = $nd->optical_tx_power;
+                if ($rxPower === null) {
+                    $oltOnu = null;
+                    if ($nd->customer_id) {
+                        $oltOnu = \App\Models\OltOnu::where('customer_id', $nd->customer_id)->first();
+                    }
+                    if (!$oltOnu && $nd->serial_number) {
+                        $oltOnu = \App\Models\OltOnu::where('serial_number', $nd->serial_number)->first();
+                    }
+                    if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
+                        $rxPower = (float) $oltOnu->optical_rx_dbm;
+                        $txPower = (float) $oltOnu->optical_tx_dbm;
+                        $nd->update([
+                            'optical_rx_power' => $rxPower,
+                            'optical_tx_power' => $txPower,
+                        ]);
+                    }
+                }
+
                 $nativeDevData = [
                     'device_id' => $nd->device_id,
                     'engine' => 'native_laravel_acs',
@@ -390,8 +411,8 @@ class GenieAcsService
                     'product_class' => $nd->product_class,
                     'serial_number' => $nd->serial_number,
                     'pon_mode' => $nd->pon_mode,
-                    'optical_rx_power' => $nd->optical_rx_power,
-                    'optical_tx_power' => $nd->optical_tx_power,
+                    'optical_rx_power' => $rxPower,
+                    'optical_tx_power' => $txPower,
                     'temperature' => $nd->temperature,
                     'device_uptime' => $nd->device_uptime,
                     'ppp_uptime' => $nd->ppp_uptime,
@@ -403,7 +424,7 @@ class GenieAcsService
                     'ssid' => $nd->wifi_ssid,
                     'wifi_password' => $nd->wifi_password,
                     'wifi_clients_count' => (int) $nd->wifi_clients_count,
-                    'rx_power' => $nd->optical_rx_power,
+                    'rx_power' => $rxPower,
                     'rx_status' => $nd->rx_quality,
                 ];
 
@@ -411,9 +432,9 @@ class GenieAcsService
                     if ($isOnline) $onlineCount++;
                     else $offlineCount++;
 
-                    if ($nd->optical_rx_power !== null) {
-                        if ($nd->optical_rx_power < -27.0) $criticalRxCount++;
-                        elseif ($nd->optical_rx_power <= -24.0) $warningRxCount++;
+                    if ($rxPower !== null) {
+                        if ($rxPower < -27.0) $criticalRxCount++;
+                        elseif ($rxPower <= -24.0) $warningRxCount++;
                     }
                 }
 
@@ -793,7 +814,12 @@ class GenieAcsService
                     ];
                 }
 
-                $lanHosts = $nativeDevice->connectedHosts->map(fn($h) => [
+                // Filter only active hosts for connected devices list
+                $activeConnectedHosts = $nativeDevice->connectedHosts->filter(fn($h) => (bool) $h->is_active);
+                $hasActiveProperty = $nativeDevice->connectedHosts->contains(fn($h) => $h->is_active !== null && $h->is_active !== false);
+                $targetHosts = $hasActiveProperty ? $activeConnectedHosts : $nativeDevice->connectedHosts;
+
+                $lanHosts = $targetHosts->map(fn($h) => [
                     'name' => $h->hostname ?: 'Perangkat Klien',
                     'ip_address' => $h->ip_address,
                     'mac_address' => $h->mac_address,
@@ -802,6 +828,27 @@ class GenieAcsService
                     'last_seen' => $h->last_seen_at?->toIso8601String(),
                     'signal_strength' => $h->rssi,
                 ])->values()->all();
+
+                // Resolve optical RX / TX power if null
+                $rxPower = $nativeDevice->optical_rx_power;
+                $txPower = $nativeDevice->optical_tx_power;
+                if ($rxPower === null) {
+                    $oltOnu = null;
+                    if ($nativeDevice->customer_id) {
+                        $oltOnu = \App\Models\OltOnu::where('customer_id', $nativeDevice->customer_id)->first();
+                    }
+                    if (!$oltOnu && $nativeDevice->serial_number) {
+                        $oltOnu = \App\Models\OltOnu::where('serial_number', $nativeDevice->serial_number)->first();
+                    }
+                    if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
+                        $rxPower = (float) $oltOnu->optical_rx_dbm;
+                        $txPower = (float) $oltOnu->optical_tx_dbm;
+                        $nativeDevice->update([
+                            'optical_rx_power' => $rxPower,
+                            'optical_tx_power' => $txPower,
+                        ]);
+                    }
+                }
 
                 $detectedSsids = $nativeDevice->vendor_raw_summary['ssids'] ?? [];
                 $ssidsList = [];
@@ -850,8 +897,8 @@ class GenieAcsService
                     'pon_mode' => $nativeDevice->pon_mode,
                     'software_version' => $nativeDevice->software_version,
                     'hardware_version' => $nativeDevice->hardware_version,
-                    'optical_rx_power' => $nativeDevice->optical_rx_power,
-                    'optical_tx_power' => $nativeDevice->optical_tx_power,
+                    'optical_rx_power' => $rxPower,
+                    'optical_tx_power' => $txPower,
                     'temperature' => $nativeDevice->temperature,
                     'device_uptime' => $nativeDevice->device_uptime,
                     'ppp_uptime' => $nativeDevice->ppp_uptime,
@@ -871,8 +918,8 @@ class GenieAcsService
                     'online' => $isOnline,
                     'last_inform_at' => $nativeDevice->last_inform_at?->toIso8601String(),
                     'registered_at' => $nativeDevice->registered_at?->toIso8601String(),
-                    'optical_rx_power' => $nativeDevice->optical_rx_power,
-                    'optical_tx_power' => $nativeDevice->optical_tx_power,
+                    'optical_rx_power' => $rxPower,
+                    'optical_tx_power' => $txPower,
                     'temperature' => $nativeDevice->temperature,
                     'device_uptime' => $nativeDevice->device_uptime,
                     'ppp_uptime' => $nativeDevice->ppp_uptime,

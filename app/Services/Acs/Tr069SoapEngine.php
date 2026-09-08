@@ -91,6 +91,10 @@ class Tr069SoapEngine
                     $this->parseParameterList($xpath, $methodNode, $result);
                     break;
 
+                case 'GetParameterNamesResponse':
+                    $this->parseParameterNamesList($xpath, $methodNode, $result);
+                    break;
+
                 case 'RebootResponse':
                 case 'FactoryResetResponse':
                 case 'DownloadResponse':
@@ -190,6 +194,27 @@ class Tr069SoapEngine
 
                     $result['parameters'][$name] = $val;
                     $result['parameter_types'][$name] = $type;
+                }
+            }
+        }
+    }
+
+    /**
+     * Parse ParameterInfoStruct list from GetParameterNamesResponse
+     */
+    private function parseParameterNamesList(DOMXPath $xpath, DOMElement $methodNode, array &$result): void
+    {
+        $infoNodes = $xpath->query('.//ParameterList/ParameterInfoStruct | .//ParameterInfoStruct', $methodNode);
+        $result['parameter_names'] = [];
+        if ($infoNodes) {
+            foreach ($infoNodes as $p) {
+                $nameNode = $xpath->query('.//Name | .//name', $p)->item(0);
+                $writableNode = $xpath->query('.//Writable | .//writable', $p)->item(0);
+
+                if ($nameNode) {
+                    $name = trim($nameNode->textContent);
+                    $writable = $writableNode ? in_array(strtolower(trim($writableNode->textContent)), ['1', 'true'], true) : false;
+                    $result['parameter_names'][$name] = $writable;
                 }
             }
         }
@@ -305,6 +330,35 @@ XML;
 {$namesXml}
             </ParameterNames>
         </cwmp:GetParameterValues>
+    </soapenv:Body>
+</soapenv:Envelope>
+XML;
+    }
+
+    /**
+     * Build <cwmp:GetParameterNames>
+     */
+    public function buildGetParameterNames(string $parameterPath = 'InternetGatewayDevice.', bool $nextLevel = false, string $cwmpId = '1'): string
+    {
+        $escaped = htmlspecialchars($parameterPath, ENT_XML1, 'UTF-8');
+        $nextLevelStr = $nextLevel ? '1' : '0';
+
+        return <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope
+    xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:cwmp="urn:dslforum-org:cwmp-1-0">
+    <soapenv:Header>
+        <cwmp:ID soapenv:mustUnderstand="1">{$cwmpId}</cwmp:ID>
+    </soapenv:Header>
+    <soapenv:Body>
+        <cwmp:GetParameterNames>
+            <ParameterPath>{$escaped}</ParameterPath>
+            <NextLevel>{$nextLevelStr}</NextLevel>
+        </cwmp:GetParameterNames>
     </soapenv:Body>
 </soapenv:Envelope>
 XML;

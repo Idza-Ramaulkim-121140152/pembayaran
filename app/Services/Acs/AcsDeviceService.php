@@ -90,7 +90,13 @@ class AcsDeviceService
         $device->wifi_ssid_5g = $decoded['wifi_ssid_5g'] ?: $device->wifi_ssid_5g;
         $device->wifi_password_5g = $decoded['wifi_password_5g'] ?: $device->wifi_password_5g;
         $device->wifi_enabled_5g = $decoded['wifi_enabled_5g'] ?? $device->wifi_enabled_5g;
-        $device->wifi_clients_count = !empty($decoded['hosts']) ? count($decoded['hosts']) : ($decoded['wifi_clients_count'] ?: $device->wifi_clients_count);
+        $activeHosts = array_filter($decoded['hosts'] ?? [], fn($h) => !empty($h['is_active']));
+        $hasActiveStatus = count(array_filter($decoded['hosts'] ?? [], fn($h) => array_key_exists('is_active', $h) && $h['is_active'] !== null)) > 0;
+        $activeHostsCount = $hasActiveStatus ? count($activeHosts) : count($decoded['hosts'] ?? []);
+
+        $device->wifi_clients_count = $activeHostsCount > 0 
+            ? $activeHostsCount 
+            : (($decoded['wifi_clients_count'] ?? 0) > 0 ? $decoded['wifi_clients_count'] : $device->wifi_clients_count);
 
         $device->connection_request_url = $decoded['connection_request_url'] ?: $device->connection_request_url;
         $device->connection_request_user = $decoded['connection_request_user'] ?: $device->connection_request_user;
@@ -100,6 +106,10 @@ class AcsDeviceService
         $device->matched_via = $matched['matched_via'] ?: $device->matched_via;
         $device->is_online = true;
         $device->last_inform_at = now();
+
+        if ($device->optical_rx_power === null) {
+            $this->resolveOpticalFromOlt($device);
+        }
 
         $rawSummary = $device->vendor_raw_summary ?? [];
         $rawSummary['events'] = $informData['events'] ?? [];
@@ -296,6 +306,9 @@ class AcsDeviceService
         if ($decoded['optical_tx_power'] !== null) {
             $device->optical_tx_power = $decoded['optical_tx_power'];
         }
+        if ($device->optical_rx_power === null) {
+            $this->resolveOpticalFromOlt($device);
+        }
         if ($decoded['temperature'] !== null) {
             $device->temperature = $decoded['temperature'];
         }
@@ -336,8 +349,10 @@ class AcsDeviceService
         // 3. Sync Connected Hosts
         if (!empty($decoded['hosts'])) {
             $this->syncConnectedHosts($device, $decoded['hosts']);
-            $device->wifi_clients_count = count($decoded['hosts']);
-        } elseif ($decoded['wifi_clients_count'] > 0) {
+            $activeHosts = array_filter($decoded['hosts'], fn($h) => !empty($h['is_active']));
+            $hasActiveStatus = count(array_filter($decoded['hosts'], fn($h) => array_key_exists('is_active', $h) && $h['is_active'] !== null)) > 0;
+            $device->wifi_clients_count = $hasActiveStatus ? count($activeHosts) : count($decoded['hosts']);
+        } elseif (($decoded['wifi_clients_count'] ?? 0) > 0) {
             $device->wifi_clients_count = $decoded['wifi_clients_count'];
         }
 
@@ -346,5 +361,36 @@ class AcsDeviceService
 
         $device->save();
         Log::info("AcsDeviceService: Updated device #{$device->id} ({$device->device_id}) via GetParameterValuesResponse: SSID={$device->wifi_ssid}, Clients={$device->wifi_clients_count}, RX={$device->optical_rx_power}");
+    }
+
+    /**
+     * Resolve optical RX and TX power from OltOnu if available
+     */
+    public function resolveOpticalFromOlt(AcsDevice $device): void
+    {
+        try {
+            $oltOnu = null;
+            if ($device->customer_id) {
+                $oltOnu = \App\Models\OltOnu::where('customer_id', $device->customer_id)->first();
+            }
+            if (!$oltOnu && $device->serial_number) {
+                $oltOnu = \App\Models\OltOnu::where('serial_number', $device->serial_number)->first();
+            }
+            if (!$oltOnu && $device->wan_mac) {
+                $cleanMac = strtolower(str_replace([':', '-', '.'], '', $device->wan_mac));
+                $oltOnu = \App\Models\OltOnu::all()->first(function ($onu) use ($cleanMac) {
+                    return strtolower(str_replace([':', '-', '.'], '', (string) $onu->mac_address)) === $cleanMac;
+                });
+            }
+
+            if ($oltOnu && $oltOnu->optical_rx_dbm !== null) {
+                $device->optical_rx_power = (float) $oltOnu->optical_rx_dbm;
+                if ($device->optical_tx_power === null && $oltOnu->optical_tx_dbm !== null) {
+                    $device->optical_tx_power = (float) $oltOnu->optical_tx_dbm;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("AcsDeviceService: Could not resolve optical from OLT for device #{$device->id}: " . $e->getMessage());
+        }
     }
 }

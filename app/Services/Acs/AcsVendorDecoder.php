@@ -198,8 +198,13 @@ class AcsVendorDecoder
         // Connected Hosts Table
         $hosts = $this->extractConnectedHosts($params);
 
+        // Filter active hosts if is_active is reported
+        $activeHosts = array_filter($hosts, fn($h) => !empty($h['is_active']));
+        $hasActiveStatus = count(array_filter($hosts, fn($h) => array_key_exists('is_active', $h) && $h['is_active'] !== null)) > 0;
+        $activeHostsToCount = $hasActiveStatus ? count($activeHosts) : count($hosts);
+
         // Connected WiFi Clients count
-        $wifiClients = $this->extractWifiClientsCount($params, count($hosts));
+        $wifiClients = $this->extractWifiClientsCount($params, $activeHostsToCount);
 
         // Connection Request URL & Credentials
         $connReqUrl = $this->firstNonEmpty([
@@ -450,16 +455,27 @@ class AcsVendorDecoder
 
     private function extractWifiClientsCount(array $params, int $hostsFound = 0): int
     {
+        // 1. Prioritize active hosts from LAN Hosts table if Active property exists
+        $activeHostsFromTable = 0;
+        $hasActiveEntries = false;
+        foreach ($params as $k => $v) {
+            if (preg_match('/Hosts\.Host\.\d+\.Active$/i', $k)) {
+                $hasActiveEntries = true;
+                if ($this->toBool($v)) {
+                    $activeHostsFromTable++;
+                }
+            }
+        }
+        if ($hasActiveEntries) {
+            return $activeHostsFromTable;
+        }
+
         if ($hostsFound > 0) {
             return $hostsFound;
         }
 
         if (isset($params['VirtualParameters.activedevices']) && is_numeric($params['VirtualParameters.activedevices'])) {
             return (int) $params['VirtualParameters.activedevices'];
-        }
-
-        if (isset($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations']) && is_numeric($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations'])) {
-            return (int) $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations'];
         }
 
         // Count from AssociatedDevice table
@@ -471,15 +487,11 @@ class AcsVendorDecoder
         }
         if ($assocCount > 0) return $assocCount;
 
-        // Count active hosts from LAN Hosts table
-        $activeHosts = 0;
-        foreach ($params as $k => $v) {
-            if (preg_match('/Hosts\.Host\.\d+\.Active$/i', $k) && $this->toBool($v)) {
-                $activeHosts++;
-            }
+        if (isset($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations']) && is_numeric($params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations'])) {
+            return (int) $params['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations'];
         }
 
-        return $activeHosts;
+        return 0;
     }
 
     private function extractConnectedHosts(array $params): array
