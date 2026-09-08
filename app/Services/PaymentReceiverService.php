@@ -19,7 +19,8 @@ class PaymentReceiverService
             return [];
         }
 
-        if ($user->isSuperAdmin()) {
+        // Superadmin & Admin can select any staff user
+        if ($user->isAdmin()) {
             return User::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
         }
 
@@ -33,6 +34,11 @@ class PaymentReceiverService
                 ->all();
 
             $receiverIds = array_merge($receiverIds, $mapped);
+        }
+
+        // If user has permission to choose payment receiver and no specific mappings configured, allow all users
+        if ((bool) $user->can_choose_payment_receiver && count($receiverIds) <= 1) {
+            return User::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
         }
 
         return array_values(array_unique(array_filter($receiverIds)));
