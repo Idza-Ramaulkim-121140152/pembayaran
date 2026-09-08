@@ -182,10 +182,14 @@ class SuperPanelController extends Controller
             $customer = $this->superPanelService->updateCustomerMapping($customerId, $validated);
 
             $this->auditLogService->log(
-                $request->user(),
-                'UPDATE_SUPER_PANEL_CUSTOMER_MAPPING',
-                "Memperbarui mapping topologi untuk pelanggan {$customer->name} (ODP Port {$customer->odp_port_number})",
-                ['customer_id' => $customerId, 'mapping' => $validated]
+                'super_panel.customer_mapping_updated',
+                $customer,
+                [
+                    'customer_id' => $customerId,
+                    'mapping' => $validated,
+                    'description' => "Memperbarui mapping topologi untuk pelanggan {$customer->name} (ODP Port {$customer->odp_port_number})",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
@@ -228,10 +232,14 @@ class SuperPanelController extends Controller
             $odp = $this->superPanelService->updateOdpConfiguration($odpId, $validated);
 
             $this->auditLogService->log(
-                $request->user(),
-                'UPDATE_SUPER_PANEL_ODP_CONFIG',
-                "Memperbarui konfigurasi " . strtoupper($odp->device_type ?: 'ODP') . " {$odp->nama} (Rasio: " . ($odp->rasio_spesial ?: 'Standard') . ")",
-                ['odp_id' => $odpId, 'config' => $validated]
+                'super_panel.odp_config_updated',
+                $odp,
+                [
+                    'odp_id' => $odpId,
+                    'config' => $validated,
+                    'description' => "Memperbarui konfigurasi " . strtoupper($odp->device_type ?: 'ODP') . " {$odp->nama} (Rasio: " . ($odp->rasio_spesial ?: 'Standard') . ")",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
@@ -268,10 +276,15 @@ class SuperPanelController extends Controller
             );
 
             $this->auditLogService->log(
-                $request->user(),
-                'UPDATE_SUPER_PANEL_NODE_COORDINATES',
-                "Memperbarui posisi titik " . strtoupper($node->device_type ?: 'ODP') . " {$node->nama} ke ({$node->latitude}, {$node->longitude})",
-                ['id' => $node->id, 'lat' => $node->latitude, 'lng' => $node->longitude]
+                'super_panel.node_position_updated',
+                $node,
+                [
+                    'id' => $node->id,
+                    'lat' => $node->latitude,
+                    'lng' => $node->longitude,
+                    'description' => "Memperbarui posisi titik " . strtoupper($node->device_type ?: 'ODP') . " {$node->nama} ke ({$node->latitude}, {$node->longitude})",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
@@ -308,10 +321,15 @@ class SuperPanelController extends Controller
             );
 
             $this->auditLogService->log(
-                $request->user(),
-                'UPDATE_SUPER_PANEL_CUSTOMER_COORDINATES',
-                "Memperbarui posisi titik pelanggan {$customer->name} ke ({$customer->latitude}, {$customer->longitude})",
-                ['customer_id' => $customer->id, 'lat' => $customer->latitude, 'lng' => $customer->longitude]
+                'super_panel.customer_position_updated',
+                $customer,
+                [
+                    'customer_id' => $customer->id,
+                    'lat' => $customer->latitude,
+                    'lng' => $customer->longitude,
+                    'description' => "Memperbarui posisi titik pelanggan {$customer->name} ke ({$customer->latitude}, {$customer->longitude})",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
@@ -352,10 +370,15 @@ class SuperPanelController extends Controller
             );
 
             $this->auditLogService->log(
-                $request->user(),
-                'UPDATE_SUPER_PANEL_OLT_COORDINATES',
-                "Memperbarui posisi OLT {$olt->name} ke ({$olt->latitude}, {$olt->longitude})",
-                ['olt_id' => $olt->id, 'lat' => $olt->latitude, 'lng' => $olt->longitude]
+                'super_panel.olt_position_updated',
+                $olt,
+                [
+                    'olt_id' => $olt->id,
+                    'lat' => $olt->latitude,
+                    'lng' => $olt->longitude,
+                    'description' => "Memperbarui posisi OLT {$olt->name} ke ({$olt->latitude}, {$olt->longitude})",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
@@ -399,10 +422,13 @@ class SuperPanelController extends Controller
             $node = $this->superPanelService->createNode($validated);
 
             $this->auditLogService->log(
-                $request->user(),
-                'CREATE_SUPER_PANEL_NODE',
-                "Menambahkan titik baru " . strtoupper($node->device_type) . " {$node->nama}",
-                $validated
+                'super_panel.node_created',
+                $node,
+                [
+                    'data' => $validated,
+                    'description' => "Menambahkan titik baru " . strtoupper($node->device_type) . " {$node->nama}",
+                ],
+                $request->user()?->id
             );
 
             return response()->json([
