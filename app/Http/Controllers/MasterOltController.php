@@ -27,7 +27,14 @@ class MasterOltController extends Controller
     public function index()
     {
         // Ensure default setup exists
-        $this->oltSnmpService->ensureDefaultOltSetup();
+        $primaryOlt = $this->oltSnmpService->ensureDefaultOltSetup();
+
+        // Refresh live real hardware telemetry
+        if ($primaryOlt) {
+            try {
+                $this->oltSnmpService->pollOltTelemetry($primaryOlt, false);
+            } catch (\Throwable $e) {}
+        }
 
         $olts = MasterOlt::query()
             ->with(['ponPorts' => fn ($q) => $q->orderBy('pon_index')])
