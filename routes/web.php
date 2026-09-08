@@ -451,6 +451,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/cpe/{deviceId}/refresh', [SuperPanelController::class, 'refreshCpe'])->name('api.super-panel.cpe.refresh');
             Route::post('/node-position', [SuperPanelController::class, 'quickUpdateNodePosition'])->name('api.super-panel.node-position');
             Route::post('/customer-position', [SuperPanelController::class, 'quickUpdateCustomerPosition'])->name('api.super-panel.customer-position');
+            Route::post('/olt-position', [SuperPanelController::class, 'quickUpdateOltPosition'])->name('api.super-panel.olt-position');
             Route::post('/node-create', [SuperPanelController::class, 'createNode'])->name('api.super-panel.node-create');
             Route::get('/form-options', [SuperPanelController::class, 'formOptions'])->name('api.super-panel.form-options');
         });

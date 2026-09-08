@@ -369,6 +369,7 @@ class SuperPanelService
                     'from_type' => $odp->parent_type ?: 'pon',
                     'to_type' => $isOdc ? 'odc' : 'odp',
                     'from_id' => $odp->parent_id ?: $odp->pon_port_id,
+                    'olt_id' => $odp->olt_id ?: ($olts->first()?->id),
                     'to_id' => $odp->id,
                     'from_name' => $parentName,
                     'to_name' => $odp->nama ?: $odp->name,
@@ -1340,6 +1341,25 @@ class SuperPanelService
         $customer->save();
 
         return $customer->fresh(['odp', 'olt', 'ponPort']);
+    }
+
+    /**
+     * Quick update OLT position from drag-and-drop on WebGIS map
+     */
+    public function quickUpdateOltCoordinates(int $oltId, float $lat, float $lng, ?string $address = null, ?string $name = null): MasterOlt
+    {
+        $olt = MasterOlt::query()->findOrFail($oltId);
+        $olt->latitude = $lat;
+        $olt->longitude = $lng;
+        if ($address !== null) {
+            $olt->location_address = $address;
+        }
+        if ($name !== null && trim($name) !== '') {
+            $olt->name = trim($name);
+        }
+        $olt->save();
+
+        return $olt->fresh(['ponPorts']);
     }
 
     /**

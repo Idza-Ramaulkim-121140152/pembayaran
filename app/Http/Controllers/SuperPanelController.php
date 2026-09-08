@@ -329,6 +329,50 @@ class SuperPanelController extends Controller
     }
 
     /**
+     * POST /api/super-panel/olt-position
+     * Quick Update OLT Marker Position from Map Drag-and-Drop
+     */
+    public function quickUpdateOltPosition(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:master_olts,id',
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+            'name' => 'nullable|string|max:255',
+            'location_address' => 'nullable|string',
+        ]);
+
+        try {
+            $olt = $this->superPanelService->quickUpdateOltCoordinates(
+                (int) $validated['id'],
+                (float) $validated['latitude'],
+                (float) $validated['longitude'],
+                $validated['location_address'] ?? null,
+                $validated['name'] ?? null
+            );
+
+            $this->auditLogService->log(
+                $request->user(),
+                'UPDATE_SUPER_PANEL_OLT_COORDINATES',
+                "Memperbarui posisi OLT {$olt->name} ke ({$olt->latitude}, {$olt->longitude})",
+                ['olt_id' => $olt->id, 'lat' => $olt->latitude, 'lng' => $olt->longitude]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => "Posisi OLT {$olt->name} berhasil disimpan.",
+                'data' => $olt,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('SuperPanelController: quickUpdateOltPosition error', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memperbarui posisi OLT: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * POST /api/super-panel/node-create
      * Create a new ODP or ODC node directly from map
      */

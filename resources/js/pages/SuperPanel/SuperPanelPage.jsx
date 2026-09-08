@@ -571,7 +571,36 @@ export default function SuperPanelPage() {
         showDropLines: false,
         oltFilter: 'all',
     });
-    const [isDragMode, setIsDragMode] = useState(false);
+    const [isDragMode, setIsDragMode] = useState(true);
+
+    // OLT Edit State (from GIS Map)
+    const [selectedOltForEdit, setSelectedOltForEdit] = useState(null);
+    const [editOltForm, setEditOltForm] = useState({
+        id: '',
+        name: '',
+        latitude: '',
+        longitude: '',
+        location_address: '',
+    });
+    const [savingOltConfig, setSavingOltConfig] = useState(false);
+
+    // Customer Move & Edit State (from GIS Map)
+    const [selectedCustomerForEdit, setSelectedCustomerForEdit] = useState(null);
+    const [editCustomerForm, setEditCustomerForm] = useState({
+        id: '',
+        name: '',
+        customer_id: '',
+        pppoe_username: '',
+        is_active: true,
+        olt_id: '',
+        pon_port_id: '',
+        odp_id: '',
+        odp_port_number: 1,
+        dropcore_cable_length_meters: 85,
+        latitude: '',
+        longitude: '',
+    });
+    const [savingCustomerConfig, setSavingCustomerConfig] = useState(false);
 
     // Node Creation State (ODP / ODC)
     const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
@@ -872,6 +901,10 @@ export default function SuperPanelPage() {
         linesGroup.clearLayers();
         markersGroup.clearLayers();
 
+        // Arrays to store polylines for real-time rubberbanding during dragging
+        const feederPolylineList = [];
+        const dropPolylineList = [];
+
         // 1. Render Feeder / Estafet Lines (OLT -> ODP/ODC, ODC -> ODP, ODP -> ODP)
         if (gisFilters.showFeederLines && gisData.feeder_lines) {
             gisData.feeder_lines.forEach((line) => {
@@ -896,6 +929,8 @@ export default function SuperPanelPage() {
                         ${line.optical_calc?.thru_output_power_dbm !== undefined ? `<b>Daya Lolos (Thru):</b> <strong style="color: #10B981">${line.optical_calc.thru_output_power_dbm} dBm</strong><br/>` : ''}
                     </div>
                 `);
+
+                feederPolylineList.push({ line, polyline });
             });
         }
 
@@ -916,10 +951,12 @@ export default function SuperPanelPage() {
                         <b>Panjang Kabel:</b> ${drop.cable_length_meters || 85} m<br/>
                     </div>
                 `);
+
+                dropPolylineList.push({ drop, polyline });
             });
         }
 
-        // 3. Render OLT Nodes
+        // 3. Render OLT Nodes (Sentral OLT) - Movable & Draggable
         if (gisFilters.showOlt && gisData.olt_nodes) {
             gisData.olt_nodes.forEach((olt) => {
                 const oltIcon = L.divIcon({
@@ -932,7 +969,8 @@ export default function SuperPanelPage() {
                             display: flex; align-items: center; justify-content: center;
                             box-shadow: 0 0 15px rgba(59, 130, 246, 0.75);
                             border: 2px solid #FFFFFF;
-                            color: white; font-weight: bold;
+                            color: white; font-weight: bold; font-size: 16px;
+                            cursor: ${isDragMode ? 'grab' : 'pointer'};
                         ">
                             ⚡
                         </div>
@@ -941,20 +979,61 @@ export default function SuperPanelPage() {
                     iconAnchor: [19, 19],
                 });
 
-                const marker = L.marker([olt.latitude, olt.longitude], { icon: oltIcon }).addTo(markersGroup);
+                const marker = L.marker([olt.latitude, olt.longitude], { 
+                    icon: oltIcon,
+                    draggable: isDragMode,
+                }).addTo(markersGroup);
+
+                if (isDragMode) {
+                    marker.on('drag', (e) => {
+                        const newPos = e.target.getLatLng();
+                        // Real-time rubberband feeder lines starting from this OLT
+                        feederPolylineList.forEach(({ line, polyline }) => {
+                            if (line.from_type === 'pon' && (!line.olt_id || line.olt_id === olt.id)) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([newPos, latlngs[1]]);
+                                }
+                            }
+                        });
+                    });
+
+                    marker.on('dragend', async (e) => {
+                        const { lat, lng } = e.target.getLatLng();
+                        try {
+                            await apiClient.post('/super-panel/olt-position', {
+                                id: olt.id,
+                                latitude: lat,
+                                longitude: lng,
+                            });
+                            showToast(`Posisi OLT ${olt.name} berhasil disimpan! (${lat.toFixed(6)}, ${lng.toFixed(6)})`, 'success');
+                            fetchGisMapData();
+                        } catch (err) {
+                            showToast('Gagal memindahkan OLT: ' + (err?.response?.data?.message || err.message), 'error');
+                        }
+                    });
+                }
+
                 marker.bindPopup(`
-                    <div style="font-family: sans-serif; font-size: 13px; min-width: 220px; line-height: 1.5;">
-                        <div style="background: #1E40AF; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px;">
+                    <div style="font-family: sans-serif; font-size: 13px; min-width: 240px; line-height: 1.5;">
+                        <div style="background: #1E40AF; color: white; padding: 6px 10px; border-radius: 6px 6px 0 0; margin: -10px -10px 8px -10px; display: flex; justify-content: space-between; align-items: center;">
                             <strong>⚡ ${olt.name}</strong>
+                            <span style="background: #3B82F6; color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold;">
+                                MASTER OLT
+                            </span>
                         </div>
                         <b>Brand/Model:</b> ${olt.brand} ${olt.model}<br/>
                         <b>Host SNMP:</b> ${olt.host}<br/>
                         <b>Total PON:</b> ${olt.total_pon_ports} Port<br/>
                         <b>Status:</b> <span style="color: ${olt.status === 'online' ? '#10B981' : '#EF4444'}; font-weight: bold;">● ${olt.status.toUpperCase()}</span><br/>
                         <b>Suhu:</b> ${olt.telemetry?.temperature_celsius || 41.5} °C | <b>CPU:</b> ${olt.telemetry?.cpu_usage_percent || 18}%<br/>
-                        <div style="margin-top: 8px; text-align: right;">
-                            <button onclick="window.superPanelTraceOlt('${olt.id}')" style="background: #2563EB; color: white; border: none; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer;">
-                                Detail OLT Telemetri &rarr;
+                        ${olt.location_address ? `<b>Lokasi:</b> ${olt.location_address}<br/>` : ''}
+                        <div style="margin-top: 10px; display: flex; gap: 6px;">
+                            <button onclick="window.superPanelOpenEditOlt('${olt.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                ✏️ Edit Posisi / Info OLT
+                            </button>
+                            <button onclick="window.superPanelTraceOlt('${olt.id}')" style="flex: 1; background: #475569; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
+                                Detail Telemetri &rarr;
                             </button>
                         </div>
                     </div>
@@ -962,7 +1041,7 @@ export default function SuperPanelPage() {
             });
         }
 
-        // 4. Render ODC Nodes (Optical Distribution Cabinet)
+        // 4. Render ODC Nodes (Optical Distribution Cabinet) - Movable & Draggable
         if (gisFilters.showOdc && gisData.odc_nodes) {
             gisData.odc_nodes.forEach((odc) => {
                 const odcIcon = L.divIcon({
@@ -992,6 +1071,34 @@ export default function SuperPanelPage() {
                 }).addTo(markersGroup);
 
                 if (isDragMode) {
+                    marker.on('drag', (e) => {
+                        const newPos = e.target.getLatLng();
+                        // Real-time rubberband feeder lines
+                        feederPolylineList.forEach(({ line, polyline }) => {
+                            if (line.to_id === odc.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([latlngs[0], newPos]);
+                                }
+                            }
+                            if ((line.from_type === 'odc' || line.from_type === 'odp') && line.from_id === odc.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([newPos, latlngs[1]]);
+                                }
+                            }
+                        });
+                        // Rubberband customer drops if connected to ODC
+                        dropPolylineList.forEach(({ drop, polyline }) => {
+                            if (drop.from_odp_id === odc.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([newPos, latlngs[1]]);
+                                }
+                            }
+                        });
+                    });
+
                     marker.on('dragend', async (e) => {
                         const { lat, lng } = e.target.getLatLng();
                         try {
@@ -1041,7 +1148,7 @@ export default function SuperPanelPage() {
             });
         }
 
-        // 5. Render ODP Nodes
+        // 5. Render ODP Nodes - Movable & Draggable
         if (gisFilters.showOdp && gisData.odp_nodes) {
             gisData.odp_nodes.forEach((odp) => {
                 const badgeColor = odp.status_color || '#10B981';
@@ -1071,6 +1178,34 @@ export default function SuperPanelPage() {
                 }).addTo(markersGroup);
 
                 if (isDragMode) {
+                    marker.on('drag', (e) => {
+                        const newPos = e.target.getLatLng();
+                        // Real-time rubberband feeder lines
+                        feederPolylineList.forEach(({ line, polyline }) => {
+                            if (line.to_id === odp.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([latlngs[0], newPos]);
+                                }
+                            }
+                            if ((line.from_type === 'odp' || line.from_type === 'odc') && line.from_id === odp.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([newPos, latlngs[1]]);
+                                }
+                            }
+                        });
+                        // Real-time rubberband drop lines
+                        dropPolylineList.forEach(({ drop, polyline }) => {
+                            if (drop.from_odp_id === odp.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([newPos, latlngs[1]]);
+                                }
+                            }
+                        });
+                    });
+
                     marker.on('dragend', async (e) => {
                         const { lat, lng } = e.target.getLatLng();
                         try {
@@ -1129,23 +1264,29 @@ export default function SuperPanelPage() {
             });
         }
 
-        // 6. Render Customer Drop Nodes
+        // 6. Render Customer Drop Nodes - Movable & Draggable (Easily grabbable 24px container)
         if (gisFilters.showCustomers && gisData.customer_nodes) {
             gisData.customer_nodes.forEach((cust) => {
                 const custIcon = L.divIcon({
                     className: 'custom-customer-marker',
                     html: `
                         <div style="
-                            background: ${cust.is_active ? '#3B82F6' : '#EF4444'};
-                            width: 14px; height: 14px;
-                            border-radius: 50%;
-                            border: 2px solid #FFFFFF;
-                            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+                            width: 24px; height: 24px;
+                            display: flex; align-items: center; justify-content: center;
                             cursor: ${isDragMode ? 'grab' : 'pointer'};
-                        "></div>
+                        ">
+                            <div style="
+                                background: ${cust.is_active ? '#3B82F6' : '#EF4444'};
+                                width: 14px; height: 14px;
+                                border-radius: 50%;
+                                border: 2px solid #FFFFFF;
+                                box-shadow: 0 0 6px ${cust.is_active ? '#3B82F6' : '#EF4444'}cc;
+                                pointer-events: none;
+                            "></div>
+                        </div>
                     `,
-                    iconSize: [14, 14],
-                    iconAnchor: [7, 7],
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12],
                 });
 
                 const marker = L.marker([cust.latitude, cust.longitude], { 
@@ -1154,6 +1295,19 @@ export default function SuperPanelPage() {
                 }).addTo(markersGroup);
 
                 if (isDragMode) {
+                    marker.on('drag', (e) => {
+                        const newPos = e.target.getLatLng();
+                        // Real-time rubberband drop line connecting to this customer
+                        dropPolylineList.forEach(({ drop, polyline }) => {
+                            if (drop.to_customer_id === cust.id) {
+                                const latlngs = polyline.getLatLngs();
+                                if (latlngs.length >= 2) {
+                                    polyline.setLatLngs([latlngs[0], newPos]);
+                                }
+                            }
+                        });
+                    });
+
                     marker.on('dragend', async (e) => {
                         const { lat, lng } = e.target.getLatLng();
                         try {
@@ -1171,15 +1325,18 @@ export default function SuperPanelPage() {
                 }
 
                 marker.bindPopup(`
-                    <div style="font-family: sans-serif; font-size: 12px; min-width: 220px; line-height: 1.4;">
+                    <div style="font-family: sans-serif; font-size: 12px; min-width: 240px; line-height: 1.4;">
                         <strong style="color: #1E3A8A; font-size: 13px;">👤 ${cust.name}</strong><br/>
                         <b>ID:</b> ${cust.customer_id} | <b>PPPoE:</b> ${cust.pppoe_username || '-'}<br/>
                         <b>ODP:</b> ${cust.odp_name || '-'} (Port ${cust.odp_port_number || 1})<br/>
                         <b>Sinyal RX:</b> <span style="font-weight: bold; color: ${cust.rx_power < -25 ? '#EF4444' : '#10B981'}">${cust.rx_power} dBm</span><br/>
-                        <b>Status Layanan:</b> ${cust.is_active ? '<span style="color: #10B981">AKTIF</span>' : '<span style="color: #EF4444">NONAKTIF/ISOLIR</span>'}<br/>
-                        <div style="margin-top: 8px;">
-                            <button onclick="window.superPanelTraceCustomer('${cust.id}')" style="width: 100%; background: #2563EB; color: white; border: none; border-radius: 4px; padding: 4px 6px; font-size: 11px; cursor: pointer;">
-                                Lacak Jalur Topologi 360 &rarr;
+                        <b>Status Layanan:</b> ${cust.is_active ? '<span style="color: #10B981; font-weight: bold;">AKTIF</span>' : '<span style="color: #EF4444; font-weight: bold;">NONAKTIF/ISOLIR</span>'}<br/>
+                        <div style="margin-top: 10px; display: flex; gap: 6px;">
+                            <button onclick="window.superPanelOpenEditCustomer('${cust.id}')" style="flex: 1; background: #059669; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;">
+                                ✏️ Pindah / Edit Pelanggan
+                            </button>
+                            <button onclick="window.superPanelTraceCustomer('${cust.id}')" style="flex: 1; background: #2563EB; color: white; border: none; border-radius: 5px; padding: 6px 8px; font-size: 11px; cursor: pointer;">
+                                Lacak 360 &rarr;
                             </button>
                         </div>
                     </div>
@@ -1225,12 +1382,51 @@ export default function SuperPanelPage() {
                 });
             }
         };
+        window.superPanelOpenEditOlt = (oltId) => {
+            const idInt = parseInt(oltId, 10);
+            const currentGis = gisDataRef.current;
+            const found = (currentGis?.olt_nodes || []).find(o => o.id === idInt);
+            if (found) {
+                setSelectedOltForEdit(found);
+                setEditOltForm({
+                    id: found.id,
+                    name: found.name || '',
+                    latitude: found.latitude || '',
+                    longitude: found.longitude || '',
+                    location_address: found.location_address || found.address || '',
+                });
+            }
+        };
+        window.superPanelOpenEditCustomer = (customerId) => {
+            const idInt = parseInt(customerId, 10);
+            const currentGis = gisDataRef.current;
+            const found = (currentGis?.customer_nodes || []).find(c => c.id === idInt);
+            if (found) {
+                setSelectedCustomerForEdit(found);
+                setEditCustomerForm({
+                    id: found.id,
+                    name: found.name || '',
+                    customer_id: found.customer_id || '',
+                    pppoe_username: found.pppoe_username || '',
+                    is_active: found.is_active ?? true,
+                    olt_id: found.olt_id || '',
+                    pon_port_id: found.pon_port_id || '',
+                    odp_id: found.odp_id || '',
+                    odp_port_number: found.odp_port_number || 1,
+                    dropcore_cable_length_meters: found.dropcore_cable_length_meters || 85,
+                    latitude: found.latitude || '',
+                    longitude: found.longitude || '',
+                });
+            }
+        };
 
         return () => {
             delete window.superPanelTraceCustomer;
             delete window.superPanelShowOdpStock;
             delete window.superPanelTraceOlt;
             delete window.superPanelOpenEditNode;
+            delete window.superPanelOpenEditOlt;
+            delete window.superPanelOpenEditCustomer;
         };
     }, []);
 
@@ -1308,6 +1504,60 @@ export default function SuperPanelPage() {
             showToast('Gagal membuat titik baru: ' + (err?.response?.data?.message || err.message), 'error');
         } finally {
             setCreatingNode(false);
+        }
+    };
+
+    // Save OLT Configuration & Position (from GIS Map Modal)
+    const handleSaveOltConfig = async () => {
+        if (!selectedOltForEdit) return;
+        try {
+            setSavingOltConfig(true);
+            const payload = {
+                id: selectedOltForEdit.id,
+                name: editOltForm.name,
+                latitude: editOltForm.latitude ? parseFloat(editOltForm.latitude) : null,
+                longitude: editOltForm.longitude ? parseFloat(editOltForm.longitude) : null,
+                location_address: editOltForm.location_address || '',
+            };
+            const res = await apiClient.post('/super-panel/olt-position', payload);
+            if (res.data?.success) {
+                showToast(res.data.message || 'Posisi & Info OLT berhasil disimpan!', 'success');
+                setSelectedOltForEdit(null);
+                fetchGisMapData();
+                fetchFormOptions();
+            }
+        } catch (err) {
+            showToast('Gagal menyimpan konfigurasi OLT: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setSavingOltConfig(false);
+        }
+    };
+
+    // Save Customer Position & Mapping (from GIS Map Modal)
+    const handleSaveCustomerConfig = async () => {
+        if (!selectedCustomerForEdit) return;
+        try {
+            setSavingCustomerConfig(true);
+            const payload = {
+                olt_id: editCustomerForm.olt_id ? parseInt(editCustomerForm.olt_id, 10) : null,
+                pon_port_id: editCustomerForm.pon_port_id ? parseInt(editCustomerForm.pon_port_id, 10) : null,
+                odp_id: editCustomerForm.odp_id ? parseInt(editCustomerForm.odp_id, 10) : null,
+                odp_port_number: parseInt(editCustomerForm.odp_port_number, 10) || 1,
+                dropcore_cable_length_meters: parseInt(editCustomerForm.dropcore_cable_length_meters, 10) || 85,
+                latitude: editCustomerForm.latitude ? parseFloat(editCustomerForm.latitude) : null,
+                longitude: editCustomerForm.longitude ? parseFloat(editCustomerForm.longitude) : null,
+            };
+            const res = await apiClient.post(`/super-panel/customer-mapping/${selectedCustomerForEdit.id}`, payload);
+            if (res.data?.success) {
+                showToast('Informasi & Jalur Pelanggan berhasil disimpan!', 'success');
+                setSelectedCustomerForEdit(null);
+                fetchGisMapData();
+                fetchFormOptions();
+            }
+        } catch (err) {
+            showToast('Gagal menyimpan informasi pelanggan: ' + (err?.response?.data?.message || err.message), 'error');
+        } finally {
+            setSavingCustomerConfig(false);
         }
     };
 
@@ -1767,7 +2017,7 @@ export default function SuperPanelPage() {
                                         ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 animate-pulse'
                                         : 'bg-slate-700 hover:bg-slate-600 text-amber-300 border border-amber-500/30'
                                 }`}
-                                title="Aktifkan untuk menggeser marker ODP, ODC, atau Pelanggan langsung di peta"
+                                title="Aktifkan untuk menggeser semua marker (OLT, ODC, ODP, atau Pelanggan) langsung di peta"
                             >
                                 <Move className="w-3.5 h-3.5" />
                                 {isDragMode ? '📍 Kunci Posisi (Mode Geser Aktif)' : '✏️ Mode Geser Titik (Drag & Drop)'}
@@ -1791,7 +2041,7 @@ export default function SuperPanelPage() {
                         {isDragMode && (
                             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-amber-500 text-slate-950 font-bold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 border border-amber-300 text-xs">
                                 <Move className="w-4 h-4 animate-spin" />
-                                <span>Mode Geser Aktif: Klik & tahan marker ODP, ODC, atau Pelanggan untuk memindahkan ke posisi baru. Koordinat tersimpan otomatis!</span>
+                                <span>Mode Geser Aktif: Klik & tahan marker mana saja (OLT, ODC, ODP, Pelanggan) untuk memindahkan posisi. Garis kabel otomatis mengikuti & koordinat tersimpan!</span>
                                 <button
                                     type="button"
                                     onClick={() => setIsDragMode(false)}
@@ -3133,6 +3383,85 @@ export default function SuperPanelPage() {
             )}
 
             {/* ========================================================================= */}
+            {/* MODAL 0: EDIT OLT CONFIGURATION & POSITION */}
+            {/* ========================================================================= */}
+            {selectedOltForEdit && (
+                <Modal
+                    isOpen={!!selectedOltForEdit}
+                    onClose={() => setSelectedOltForEdit(null)}
+                    title={`⚡ Edit Master OLT: ${selectedOltForEdit.name}`}
+                >
+                    <div className="space-y-4 text-xs text-slate-300">
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Nama OLT Sentral</label>
+                            <input
+                                type="text"
+                                value={editOltForm.name}
+                                onChange={(e) => setEditOltForm({ ...editOltForm, name: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-semibold"
+                                placeholder="Contoh: OLT Sentral Kalianda NOC"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Latitude (Garis Lintang)</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={editOltForm.latitude}
+                                    onChange={(e) => setEditOltForm({ ...editOltForm, latitude: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
+                                    placeholder="-5.632727"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Longitude (Garis Bujur)</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={editOltForm.longitude}
+                                    onChange={(e) => setEditOltForm({ ...editOltForm, longitude: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
+                                    placeholder="105.548014"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Alamat / Lokasi Sentral OLT</label>
+                            <textarea
+                                rows={2}
+                                value={editOltForm.location_address}
+                                onChange={(e) => setEditOltForm({ ...editOltForm, location_address: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                placeholder="Alamat lengkap NOC atau tiang utama..."
+                            />
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
+                            <button
+                                type="button"
+                                onClick={() => setSelectedOltForEdit(null)}
+                                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 font-semibold"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveOltConfig}
+                                disabled={savingOltConfig}
+                                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-white font-bold flex items-center gap-1.5 shadow-lg shadow-blue-600/30 disabled:opacity-50"
+                            >
+                                {savingOltConfig && <Loader className="w-3.5 h-3.5 animate-spin" />}
+                                Simpan Posisi & Info OLT
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ========================================================================= */}
             {/* MODAL 1: EDIT NODE (ODP / ODC) CONFIGURATION */}
             {/* ========================================================================= */}
             {selectedOdpForEdit && (
@@ -3261,6 +3590,133 @@ export default function SuperPanelPage() {
                             >
                                 {savingMapping && <Loader className="w-3.5 h-3.5 animate-spin" />}
                                 Simpan Mapping
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* ========================================================================= */}
+            {/* MODAL 2B: PINDAH & EDIT TITIK PELANGGAN (GIS MAP) */}
+            {/* ========================================================================= */}
+            {selectedCustomerForEdit && (
+                <Modal
+                    isOpen={!!selectedCustomerForEdit}
+                    onClose={() => setSelectedCustomerForEdit(null)}
+                    title={`👤 Pindah / Edit Pelanggan: ${selectedCustomerForEdit.name}`}
+                >
+                    <div className="space-y-4 text-xs text-slate-300">
+                        <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-700/60 flex items-center justify-between">
+                            <div>
+                                <div className="text-white font-bold">{selectedCustomerForEdit.name}</div>
+                                <div className="text-[11px] text-slate-400 font-mono">
+                                    ID: {selectedCustomerForEdit.customer_id} | PPPoE: {selectedCustomerForEdit.pppoe_username || '-'}
+                                </div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${selectedCustomerForEdit.is_active ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'}`}>
+                                {selectedCustomerForEdit.is_active ? 'AKTIF' : 'NONAKTIF'}
+                            </span>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Pilih Master OLT</label>
+                            <select
+                                value={editCustomerForm.olt_id || ''}
+                                onChange={(e) => setEditCustomerForm({ ...editCustomerForm, olt_id: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Pilih OLT --</option>
+                                {formOptions.olts?.map((olt) => (
+                                    <option key={olt.id} value={olt.id}>
+                                        {olt.name} ({olt.brand} {olt.model})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-slate-400 mb-1 font-medium">Pilih ODP Box Distribusi</label>
+                            <select
+                                value={editCustomerForm.odp_id || ''}
+                                onChange={(e) => setEditCustomerForm({ ...editCustomerForm, odp_id: e.target.value })}
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                            >
+                                <option value="">-- Pilih ODP --</option>
+                                {formOptions.odps?.map((odp) => (
+                                    <option key={odp.id} value={odp.id}>
+                                        {odp.name} ({odp.code}) - Kapasitas {odp.total_ports || odp.port_capacity} Port
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="64"
+                                    value={editCustomerForm.odp_port_number}
+                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, odp_port_number: parseInt(e.target.value, 10) || 1 })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Panjang Dropcore (Meter)</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="2000"
+                                    value={editCustomerForm.dropcore_cable_length_meters}
+                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, dropcore_cable_length_meters: parseInt(e.target.value, 10) || 85 })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Latitude Koordinat</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={editCustomerForm.latitude}
+                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, latitude: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
+                                    placeholder="-5.635000"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-slate-400 mb-1 font-medium">Longitude Koordinat</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={editCustomerForm.longitude}
+                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, longitude: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
+                                    placeholder="105.550000"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-3 border-t border-slate-700">
+                            <button
+                                type="button"
+                                onClick={() => setSelectedCustomerForEdit(null)}
+                                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-slate-300 font-semibold"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleSaveCustomerConfig}
+                                disabled={savingCustomerConfig}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-white font-bold flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 disabled:opacity-50"
+                            >
+                                {savingCustomerConfig && <Loader className="w-3.5 h-3.5 animate-spin" />}
+                                Simpan Posisi & Jalur Pelanggan
                             </button>
                         </div>
                     </div>
