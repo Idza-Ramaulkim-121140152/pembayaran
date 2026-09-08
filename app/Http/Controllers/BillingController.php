@@ -1362,67 +1362,24 @@ class BillingController extends Controller
         $selfReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id === $currentUser->id;
         $nonCompanySelfConfirmDebt = $selfReceiver && !$actorIsCompanyFinance;
         $selectingAnotherReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id !== $currentUser->id;
-        $needsOtherReceiverConfirmation = $selectingAnotherReceiver && !$selectedReceiverIsCompanyFinance;
-        $otherReceiverConfirmed = (bool) ($validated['other_receiver_confirmed'] ?? false);
         $receiverConflictResolution = $validated['receiver_conflict_resolution'] ?? null;
 
-        if ($includeInMutation && $needsOtherReceiverConfirmation && !$otherReceiverConfirmed) {
-            return response()->json([
-                'message' => 'Anda memilih akun penerima selain akun sendiri. Konfirmasi ulang untuk melanjutkan.',
-                'action_required' => 'confirm_other_receiver',
-            ], 422);
-        }
-
-        $isAllowedReceiver = $this->paymentReceiverService->isAllowedReceiver($currentUser, $paymentReceiverUserId);
-        $shouldCreatePendingApproval = $includeInMutation && $selectingAnotherReceiver && $isAllowedReceiver;
         $borrower = null;
+        $shouldCreateDebtForReceiver = false;
+        $shouldCreatePendingApproval = false;
 
-        if (!$includeInMutation) {
-            $nonCompanySelfConfirmDebt = false;
-            $receiverConflictResolution = null;
-        } elseif ($nonCompanySelfConfirmDebt && $currentUser) {
-            $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
-            $includeInMutation = true;
-        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') {
-            try {
-                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
-            } catch (\RuntimeException $e) {
-                return response()->json([
-                    'message' => $e->getMessage(),
-                    'action_required' => 'borrower_mapping_required',
-                ], 422);
+        if ($includeInMutation) {
+            if ($selectingAnotherReceiver) {
+                if ($receiverConflictResolution === 'approval') {
+                    $shouldCreatePendingApproval = true;
+                    $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
+                } elseif (!$selectedReceiverIsCompanyFinance) {
+                    $shouldCreateDebtForReceiver = true;
+                    $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($selectedReceiver);
+                }
+            } elseif ($nonCompanySelfConfirmDebt && $currentUser) {
+                $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
             }
-
-            $includeInMutation = true;
-        } elseif ($shouldCreatePendingApproval) {
-            try {
-                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
-            } catch (\RuntimeException $e) {
-                return response()->json([
-                    'message' => $e->getMessage(),
-                    'action_required' => 'borrower_mapping_required',
-                ], 422);
-            }
-
-            $includeInMutation = true;
-        } elseif (!$isAllowedReceiver) {
-            try {
-                $borrower = $this->borrowerLoanService->requireBorrowerForUser($currentUser);
-            } catch (\RuntimeException $e) {
-                return response()->json([
-                    'message' => $e->getMessage(),
-                    'action_required' => 'borrower_mapping_required',
-                ], 422);
-            }
-
-            if (!$receiverConflictResolution) {
-                return response()->json([
-                'message' => 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan. Pilih masukkan ke hutang atau kirim approval ke akun penerima.',
-                    'action_required' => 'resolve_invalid_receiver',
-                ], 422);
-            }
-
-            $includeInMutation = true;
         }
         
         if ($paidAmount && $paidAmount > 0) {
@@ -1451,15 +1408,9 @@ class BillingController extends Controller
 
         $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, now());
         $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
-        if (!$includeInMutation) {
-            $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
-        } elseif ($nonCompanySelfConfirmDebt) {
-            $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
-        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+        if ($shouldCreatePendingApproval) {
             $mutationStatus = FinancialTransaction::STATUS_PENDING;
-        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'approval') {
-            $mutationStatus = FinancialTransaction::STATUS_PENDING;
-        } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') || (!$isAllowedReceiver && $receiverConflictResolution === 'debt')) {
+        } elseif ($receiverConflictResolution === 'debt') {
             $mutationStatus = FinancialTransaction::STATUS_REJECTED;
         }
 
@@ -1471,6 +1422,15 @@ class BillingController extends Controller
 
         if (!$includeInMutation) {
             // Invoice paid intentionally bypasses mutation, approval, and borrower debt effects.
+        } elseif ($shouldCreateDebtForReceiver && $borrower && $selectedReceiver) {
+            $this->borrowerLoanService->createDirectDebt(
+                $borrower,
+                $invoice,
+                $currentUser,
+                $selectedReceiver,
+                $selectedReceiver,
+                'Pembayaran dikonfirmasi oleh ' . ($currentUser?->name ?: 'akun lain') . ', otomatis dicatat ke hutang ' . ($selectedReceiver->name ?? 'penerima') . '.'
+            );
         } elseif ($nonCompanySelfConfirmDebt && $borrower) {
             $this->borrowerLoanService->createDirectDebt(
                 $borrower,
@@ -1478,16 +1438,7 @@ class BillingController extends Controller
                 $currentUser,
                 $selectedReceiver,
                 $selectedReceiver,
-                'Pembayaran self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.',
-            );
-        } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') && $borrower) {
-            $this->borrowerLoanService->createDirectDebt(
-                $borrower,
-                $invoice,
-                $currentUser,
-                $selectedReceiver,
-                $selectedReceiver,
-                'Pembayaran diarahkan langsung menjadi hutang tanpa menunggu approval penerima.'
+                'Pembayaran self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.'
             );
         } elseif ($shouldCreatePendingApproval && $selectedReceiver && $mutation && $borrower) {
             $this->borrowerLoanService->createApprovalRequest(
@@ -1497,24 +1448,6 @@ class BillingController extends Controller
                 $selectedReceiver,
                 $mutation
             );
-        } elseif (!$isAllowedReceiver && $borrower) {
-            if ($receiverConflictResolution === 'debt') {
-                $this->borrowerLoanService->createDirectDebt(
-                    $borrower,
-                    $invoice,
-                    $currentUser,
-                    $selectedReceiver,
-                    $selectedReceiver
-                );
-            } elseif ($receiverConflictResolution === 'approval' && $selectedReceiver) {
-                $this->borrowerLoanService->createApprovalRequest(
-                    $borrower,
-                    $invoice,
-                    $currentUser,
-                    $selectedReceiver,
-                    $mutation
-                );
-            }
         }
 
         $this->sendAutoPaymentConfirmationIfEligible($invoice);
@@ -1524,23 +1457,25 @@ class BillingController extends Controller
             $message = 'Pembayaran pelanggan sudah lunas tanpa masuk mutasi dan tanpa hutang penerima.';
         } elseif ($confirmationResult['isolation_restored']) {
             $message = 'Pembayaran berhasil dikonfirmasi dan status isolir pelanggan dicabut.';
+            if ($shouldCreateDebtForReceiver && $selectedReceiver) {
+                $message .= ' Pembayaran otomatis dimasukkan ke hutang ' . $selectedReceiver->name . '.';
+            }
         } elseif ($confirmationResult['isolation_restore_failed']) {
             $message = 'Pembayaran berhasil dikonfirmasi, tetapi status isolir belum bisa dicabut otomatis: '
                 . ($confirmationResult['isolation_restore_error'] ?: 'silakan cek layanan/PPPoE pelanggan secara manual.');
+            if ($shouldCreateDebtForReceiver && $selectedReceiver) {
+                $message .= ' Pembayaran otomatis dimasukkan ke hutang ' . $selectedReceiver->name . '.';
+            }
+        } elseif ($shouldCreateDebtForReceiver && $selectedReceiver) {
+            $message = 'Pembayaran pelanggan sudah lunas dan otomatis dimasukkan ke hutang ' . $selectedReceiver->name . '.';
         } elseif ($nonCompanySelfConfirmDebt) {
             $message = 'Pembayaran pelanggan sudah lunas, mutasi tetap tercatat, dan otomatis dimasukkan ke hutang akun pengkonfirmasi.';
-        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution !== 'debt') {
+        } elseif ($shouldCreatePendingApproval) {
             $message = $selectedReceiverIsCompanyFinance
                 ? 'Pembayaran pelanggan sudah lunas dan mutasi menunggu persetujuan akun keuangan perusahaan.'
                 : 'Pembayaran pelanggan sudah lunas dan mutasi menunggu persetujuan akun penerima.';
-        } elseif ($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') {
-            $message = 'Pembayaran pelanggan sudah lunas dan langsung dimasukkan ke hutang akun pengkonfirmasi.';
-        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'debt') {
-            $message = 'Pembayaran berhasil dikonfirmasi, mutasi tidak masuk saldo, dan dimasukkan ke hutang akun pengkonfirmasi.';
-        } elseif (!$isAllowedReceiver && $receiverConflictResolution === 'approval') {
-            $message = $selectedReceiverIsCompanyFinance
-                ? 'Pembayaran berhasil dikonfirmasi dan mutasi menunggu persetujuan akun keuangan perusahaan.'
-                : 'Pembayaran berhasil dikonfirmasi dan mutasi menunggu persetujuan akun penerima.';
+        } elseif ($selectedReceiverIsCompanyFinance) {
+            $message = 'Pembayaran berhasil dikonfirmasi dan masuk ke kas/mutasi keuangan perusahaan.';
         }
 
         return response()->json([

@@ -218,7 +218,7 @@ class FakeMigrationMikroTikService extends MikroTikService
         return [];
     }
 
-    public function getAllPPPoESecrets()
+    public function getAllPPPoESecrets(bool $forceFresh = false)
     {
         return $this->secrets;
     }

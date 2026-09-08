@@ -135,7 +135,7 @@ class CompanyFinanceReceiverFlowTest extends TestCase
         $this->assertDatabaseCount('borrower_loans', 0);
     }
 
-    public function test_company_finance_receiver_does_not_require_second_confirmation_popup_when_mapped(): void
+    public function test_company_finance_receiver_confirms_directly_without_creating_debt(): void
     {
         $actor = User::factory()->create([
             'role' => User::ROLE_ADMIN,
@@ -146,15 +146,6 @@ class CompanyFinanceReceiverFlowTest extends TestCase
         CompanyFinanceReceiver::query()->create([
             'user_id' => $companyReceiver->id,
             'is_active' => true,
-        ]);
-        Borrower::query()->create([
-            'name' => 'Borrower Company Finance No Popup',
-            'mapped_user_id' => $actor->id,
-            'is_active' => true,
-        ]);
-        PaymentReceiverUserMapping::query()->create([
-            'user_id' => $actor->id,
-            'receiver_user_id' => $companyReceiver->id,
         ]);
         $invoice = $this->createInvoice(126000);
 
@@ -163,14 +154,13 @@ class CompanyFinanceReceiverFlowTest extends TestCase
             'payment_receiver_user_id' => $companyReceiver->id,
         ])->assertOk();
 
-        $approval = PaymentReceiverApprovalRequest::query()->firstOrFail();
-        $this->assertDatabaseHas('financial_transactions', [
-            'id' => $approval->financial_transaction_id,
-            'status' => FinancialTransaction::STATUS_PENDING,
-        ]);
+        $invoice->refresh();
+        $this->assertSame('paid', $invoice->status);
+        $this->assertSame($companyReceiver->id, $invoice->payment_receiver_user_id);
+        $this->assertDatabaseCount('borrower_loans', 0);
     }
 
-    public function test_company_finance_receiver_without_mapping_returns_invalid_receiver_instead_of_second_confirmation(): void
+    public function test_company_finance_receiver_without_mapping_confirms_directly(): void
     {
         $actor = User::factory()->create([
             'role' => User::ROLE_ADMIN,
@@ -182,20 +172,17 @@ class CompanyFinanceReceiverFlowTest extends TestCase
             'user_id' => $companyReceiver->id,
             'is_active' => true,
         ]);
-        Borrower::query()->create([
-            'name' => 'Borrower Company Finance Invalid Receiver',
-            'mapped_user_id' => $actor->id,
-            'is_active' => true,
-        ]);
         $invoice = $this->createInvoice(127000);
 
         $this->actingAs($actor)->postJson('/api/billing/invoice/' . $invoice->id . '/confirm', [
             'paid_amount' => 127000,
             'payment_receiver_user_id' => $companyReceiver->id,
-        ])->assertStatus(422)
-            ->assertJson([
-                'action_required' => 'resolve_invalid_receiver',
-            ]);
+        ])->assertOk();
+
+        $invoice->refresh();
+        $this->assertSame('paid', $invoice->status);
+        $this->assertSame($companyReceiver->id, $invoice->payment_receiver_user_id);
+        $this->assertDatabaseCount('borrower_loans', 0);
     }
 
     public function test_company_finance_receiver_rejection_creates_debt_for_requesting_user(): void

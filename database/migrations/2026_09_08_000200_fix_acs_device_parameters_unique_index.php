@@ -11,13 +11,22 @@ return new class extends Migration
     {
         if (Schema::hasTable('acs_device_parameters')) {
             // Deduplicate keeping highest id
-            DB::statement("
-                DELETE p1 FROM acs_device_parameters p1
-                INNER JOIN acs_device_parameters p2 
-                WHERE p1.id < p2.id 
-                  AND p1.acs_device_id = p2.acs_device_id 
-                  AND p1.name = p2.name
-            ");
+            if (DB::getDriverName() === 'sqlite') {
+                DB::statement("
+                    DELETE FROM acs_device_parameters
+                    WHERE id NOT IN (
+                        SELECT MAX(id) FROM acs_device_parameters GROUP BY acs_device_id, name
+                    )
+                ");
+            } else {
+                DB::statement("
+                    DELETE p1 FROM acs_device_parameters p1
+                    INNER JOIN acs_device_parameters p2 
+                    WHERE p1.id < p2.id 
+                      AND p1.acs_device_id = p2.acs_device_id 
+                      AND p1.name = p2.name
+                ");
+            }
 
             Schema::table('acs_device_parameters', function (Blueprint $table) {
                 // Ensure foreign key has standalone index first so composite index is not locked

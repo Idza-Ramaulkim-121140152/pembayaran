@@ -89,7 +89,7 @@ class PaymentReceiverChoiceTest extends TestCase
         $this->assertSame(FinancialTransaction::STATUS_PENDING, $mutation->status);
     }
 
-    public function test_user_with_receiver_permission_must_confirm_again_for_non_company_other_receiver(): void
+    public function test_user_with_receiver_permission_automatically_records_debt_for_other_receiver(): void
     {
         $actor = User::factory()->create([
             'role' => User::ROLE_ADMIN,
@@ -97,24 +97,29 @@ class PaymentReceiverChoiceTest extends TestCase
             'can_choose_payment_receiver' => true,
         ]);
         $receiver = User::factory()->create(['role' => User::ROLE_FINANCE]);
-        PaymentReceiverUserMapping::query()->create([
-            'user_id' => $actor->id,
-            'receiver_user_id' => $receiver->id,
-        ]);
-        Borrower::query()->create([
-            'name' => 'Peminjam Receiver Confirm Again',
-            'mapped_user_id' => $actor->id,
-            'is_active' => true,
-        ]);
         $invoice = $this->createInvoice(176000);
 
         $this->actingAs($actor)->postJson('/api/billing/invoice/' . $invoice->id . '/confirm', [
             'paid_amount' => 176000,
             'payment_receiver_user_id' => $receiver->id,
-        ])->assertStatus(422)
-            ->assertJson([
-                'action_required' => 'confirm_other_receiver',
-            ]);
+        ])->assertOk();
+
+        $invoice->refresh();
+        $this->assertSame('paid', $invoice->status);
+        $this->assertSame($receiver->id, $invoice->payment_receiver_user_id);
+
+        $this->assertDatabaseHas('borrower_loans', [
+            'invoice_id' => $invoice->id,
+            'confirmed_by_user_id' => $actor->id,
+            'target_receiver_user_id' => $receiver->id,
+            'actual_receiver_user_id' => $receiver->id,
+            'status' => 'outstanding',
+        ]);
+
+        $this->assertDatabaseHas('borrowers', [
+            'mapped_user_id' => $receiver->id,
+            'name' => $receiver->name,
+        ]);
     }
 
     public function test_manual_income_stores_and_updates_payment_receiver_meta(): void
