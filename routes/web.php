@@ -1,7 +1,7 @@
 
 <?php
 use App\Http\Controllers\CustomerController;
-
+use App\Http\Controllers\OntProxyController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DashboardController;
@@ -804,6 +804,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/customers/{customer}/termination/{termination}/finalize', [CustomerTerminationController::class, 'finalize'])->name('api.customers.termination.finalize');
         Route::post('/api/customers/{customer}/termination/{termination}/cancel', [CustomerTerminationController::class, 'cancel'])->name('api.customers.termination.cancel');
     });
+
+    // Remote ONT Web Gateway (MikroTik PPPoE & In-App Reverse Proxy)
+    Route::get('/remote-ont', [OntProxyController::class, 'index'])->name('remote-ont.index');
+    Route::get('/api/remote-ont/list', [OntProxyController::class, 'apiList'])->name('remote-ont.api.list');
+    Route::post('/api/remote-ont/check-ping', [OntProxyController::class, 'checkPing'])->name('remote-ont.api.check-ping');
+    Route::any('/ont-gateway/{ip}/{path?}', [OntProxyController::class, 'proxy'])
+        ->where('path', '.*')
+        ->name('remote-ont.proxy');
 
     // Serve React app untuk semua routes yang tidak dimulai dengan /api
     Route::get('{any}', function () {

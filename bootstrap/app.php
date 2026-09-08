@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/public/*',
             'api/customer/*',
             'api/ipaymu/*',
+            'ont-gateway/*',
         ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo('/dashboard');
