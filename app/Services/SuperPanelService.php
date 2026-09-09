@@ -1241,6 +1241,18 @@ class SuperPanelService
     {
         $customer = Customer::query()->findOrFail($customerId);
 
+        $targetOdpId = $data['odp_id'] ?? $customer->odp_id;
+        $targetPort = isset($data['odp_port_number']) ? (int) $data['odp_port_number'] : $customer->odp_port_number;
+
+        if ($targetOdpId && $targetPort) {
+            $childOdpUsingPort = Odp::where('parent_id', $targetOdpId)
+                ->where('parent_port', (string) $targetPort)
+                ->first();
+            if ($childOdpUsingPort) {
+                throw new \InvalidArgumentException("Port {$targetPort} pada ODP ini digunakan untuk jalur kabel estafet ke ODP Hilir ({$childOdpUsingPort->nama}). Port ini khusus ODP dan tidak dapat dihubungkan ke pelanggan.");
+            }
+        }
+
         if (isset($data['olt_id'])) {
             $customer->olt_id = $data['olt_id'];
         }
@@ -1415,6 +1427,24 @@ class SuperPanelService
             }
         }
 
+        // Validate mutual exclusivity on parent port if parent is an ODP
+        if ($odp->parent_type === 'odp' && $odp->parent_id && $odp->parent_port && $odp->parent_port !== 'thru') {
+            $custOccupying = Customer::where('odp_id', $odp->parent_id)
+                ->where('odp_port_number', (int) $odp->parent_port)
+                ->first();
+            if ($custOccupying) {
+                throw new \InvalidArgumentException("Port {$odp->parent_port} pada ODP hulu sudah terpakai oleh pelanggan ({$custOccupying->name}). Jalur kabel feeder ke ODP hilir tidak boleh bercampur dengan port dropcore pelanggan.");
+            }
+
+            $otherChild = Odp::where('parent_id', $odp->parent_id)
+                ->where('parent_port', (string) $odp->parent_port)
+                ->where('id', '!=', $odpId)
+                ->first();
+            if ($otherChild) {
+                throw new \InvalidArgumentException("Port {$odp->parent_port} pada ODP hulu sudah digunakan oleh ODP hilir lain ({$otherChild->nama}).");
+            }
+        }
+
         $odp->save();
 
         return $odp->fresh(['olt', 'ponPort', 'customers', 'parent']);
@@ -1510,6 +1540,22 @@ class SuperPanelService
         $parentPort = null;
         if ($parentType === 'odp' && !empty($data['parent_port'])) {
             $parentPort = (string) $data['parent_port'];
+        }
+
+        if ($parentType === 'odp' && $parentId && $parentPort && $parentPort !== 'thru') {
+            $custOccupying = Customer::where('odp_id', $parentId)
+                ->where('odp_port_number', (int) $parentPort)
+                ->first();
+            if ($custOccupying) {
+                throw new \InvalidArgumentException("Port {$parentPort} pada ODP hulu sudah terpakai oleh pelanggan ({$custOccupying->name}). Jalur kabel feeder ke ODP hilir tidak boleh bercampur dengan port dropcore pelanggan.");
+            }
+
+            $otherChild = Odp::where('parent_id', $parentId)
+                ->where('parent_port', (string) $parentPort)
+                ->first();
+            if ($otherChild) {
+                throw new \InvalidArgumentException("Port {$parentPort} pada ODP hulu sudah digunakan oleh ODP hilir lain ({$otherChild->nama}).");
+            }
         }
 
         $node = Odp::create([

@@ -1081,6 +1081,63 @@ export default function SuperPanelPage() {
     const [savingMapping, setSavingMapping] = useState(false);
     const [formOptions, setFormOptions] = useState({ olts: [], odps: [], odcs: [], nodes: [], customers: [] });
 
+    // Helper to calculate available ports for customer assignment to an ODP
+    const getOdpCustomerPortOptions = useCallback((targetOdpId, currentCustId, currentAssignedPort) => {
+        if (!targetOdpId) return [];
+        const odpNode = (gisData?.odp_nodes || []).find(n => n.id === Number(targetOdpId)) ||
+                        (formOptions.odps || []).find(o => o.id === Number(targetOdpId));
+        const total = Number(odpNode?.total_ports || odpNode?.port_capacity || 8);
+
+        // Downstream ODPs that take feeder from targetOdpId
+        const childOdps = (gisData?.odp_nodes || []).filter(
+            n => n.parent_id === Number(targetOdpId) && n.parent_type === 'odp'
+        );
+
+        // Other customers on targetOdpId
+        const existingCusts = (gisData?.customer_drops || []).filter(
+            c => Number(c.odp_id) === Number(targetOdpId) && c.id !== Number(currentCustId)
+        );
+
+        const options = [];
+        for (let p = 1; p <= total; p++) {
+            const portStr = String(p);
+            const childOdp = childOdps.find(n => String(n.parent_port) === portStr);
+            const cust = existingCusts.find(c => Number(c.odp_port_number) === p);
+            const isCurrent = Number(currentAssignedPort) === p;
+
+            if (childOdp) {
+                options.push({
+                    value: p,
+                    label: `Port ${p} - 🔴 Digunakan ODP Hilir: ${childOdp.name || childOdp.nama} (JALUR KHUSUS ODP)`,
+                    disabled: true,
+                    status: 'child_odp',
+                });
+            } else if (cust) {
+                options.push({
+                    value: p,
+                    label: `Port ${p} - 🟡 Terpakai: ${cust.name}`,
+                    disabled: false,
+                    status: 'customer',
+                });
+            } else if (isCurrent) {
+                options.push({
+                    value: p,
+                    label: `Port ${p} - 🟢 Port Pelanggan Ini Saat Ini`,
+                    disabled: false,
+                    status: 'current',
+                });
+            } else {
+                options.push({
+                    value: p,
+                    label: `Port ${p} - 🟢 [KOSONG / TERSEDIA]`,
+                    disabled: false,
+                    status: 'available',
+                });
+            }
+        }
+        return options;
+    }, [gisData, formOptions]);
+
     // Toast helper
     const showToast = (message, type = 'success') => {
         setToast({ message, type });
@@ -4058,15 +4115,18 @@ export default function SuperPanelPage() {
 
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP (1..16)</label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="64"
-                                    value={mappingForm.odp_port_number}
+                                <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP</label>
+                                <select
+                                    value={mappingForm.odp_port_number || 1}
                                     onChange={(e) => setMappingForm({ ...mappingForm, odp_port_number: parseInt(e.target.value, 10) || 1 })}
-                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                                />
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 text-xs"
+                                >
+                                    {getOdpCustomerPortOptions(mappingForm.odp_id, null, mappingForm.odp_port_number).map((opt) => (
+                                        <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
                             <div>
@@ -4162,14 +4222,17 @@ export default function SuperPanelPage() {
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP</label>
-                                <input
-                                    type="number"
-                                    min="1"
-                                    max="64"
-                                    value={editCustomerForm.odp_port_number}
+                                <select
+                                    value={editCustomerForm.odp_port_number || 1}
                                     onChange={(e) => setEditCustomerForm({ ...editCustomerForm, odp_port_number: parseInt(e.target.value, 10) || 1 })}
-                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                                />
+                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 text-xs"
+                                >
+                                    {getOdpCustomerPortOptions(editCustomerForm.odp_id, selectedCustomerForEdit?.id, editCustomerForm.odp_port_number).map((opt) => (
+                                        <option key={opt.value} value={opt.value} disabled={opt.disabled}>
+                                            {opt.label}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
                             <div>

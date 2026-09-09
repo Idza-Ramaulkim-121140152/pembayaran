@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
     Activity,
     AlertCircle,
+    AlertTriangle,
     ArrowDown,
     ArrowRight,
     Cable,
@@ -130,6 +131,30 @@ export default function OdpInternalSchematic({
 
         return sources;
     }, [modules, calculatedPowers]);
+
+    // Map of physical port -> array of { moduleId, outputKey, moduleName, moduleIndex }
+    // Only leaf outputs (not consumed internally by another module) occupy physical ports
+    const claimedPortMap = useMemo(() => {
+        const map = {};
+        modules.forEach((m, mIdx) => {
+            Object.entries(m.outputs || {}).forEach(([k, out]) => {
+                const isInternal = modules.some(other => other.in_source === `${m.id}:${k}`);
+                if (!isInternal && out?.target_type === 'port' && out?.target_id) {
+                    const p = Number(out.target_id);
+                    if (!map[p]) {
+                        map[p] = [];
+                    }
+                    map[p].push({
+                        moduleId: m.id,
+                        outputKey: k,
+                        moduleName: m.name || `Modul #${mIdx + 1}`,
+                        moduleIndex: mIdx + 1,
+                    });
+                }
+            });
+        });
+        return map;
+    }, [modules]);
 
     // Apply quick presets
     const handleApplyPreset = (presetKey) => {
@@ -347,7 +372,22 @@ export default function OdpInternalSchematic({
         const id = 'mod_' + Date.now();
         let newMod = null;
 
+        // Set of currently claimed ports across all modules
+        const usedPorts = new Set(
+            Object.keys(claimedPortMap).map((p) => Number(p))
+        );
+
+        let portCounter = 1;
+        const getNextAvailablePort = () => {
+            while (usedPorts.has(portCounter)) {
+                portCounter++;
+            }
+            usedPorts.add(portCounter);
+            return portCounter;
+        };
+
         if (addForm.type === 'asymmetric') {
+            const tapPort = getNextAvailablePort();
             newMod = {
                 id,
                 name: `Coupler Tap ${addForm.ratio}`,
@@ -364,8 +404,8 @@ export default function OdpInternalSchematic({
                     tap: {
                         label: 'Tap (Rasio Kecil)',
                         target_type: 'port',
-                        target_id: 1,
-                        target_label: 'Port Pelanggan 1',
+                        target_id: tapPort,
+                        target_label: `Port Pelanggan ${tapPort}`,
                     },
                 },
             };
@@ -374,11 +414,12 @@ export default function OdpInternalSchematic({
             const count = spec.ports || 4;
             const outputs = {};
             for (let i = 1; i <= count; i++) {
+                const assignedPort = getNextAvailablePort();
                 outputs[`out_${i}`] = {
                     label: `Out ${i}`,
                     target_type: 'port',
-                    target_id: i,
-                    target_label: `Port Pelanggan ${i}`,
+                    target_id: assignedPort,
+                    target_label: `Port Pelanggan ${assignedPort}`,
                 };
             }
 
@@ -402,7 +443,7 @@ export default function OdpInternalSchematic({
             const spec = PLC_RATIO_TABLE[addForm.ratio] || { ports: 4 };
             onApplySummary?.({
                 rasio_distribusi: addForm.ratio,
-                total_ports: spec.ports,
+                total_ports: Math.max(totalPorts || 0, Math.max(...Array.from(usedPorts), spec.ports)),
             });
         }
 
@@ -736,6 +777,16 @@ export default function OdpInternalSchematic({
                                                 </div>
                                                 {(() => {
                                                     const thruChild = childOdps.find(c => String(c.parent_port) === 'thru');
+                                                    const thruInternalMod = modules.find(m => m.in_source === `${mod.id}:thru`);
+                                                    if (thruInternalMod) {
+                                                        const targetIdx = modules.findIndex(m => m.id === thruInternalMod.id) + 1;
+                                                        return (
+                                                            <div className="mt-1 px-2 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] flex items-center gap-1 font-semibold truncate">
+                                                                <Link className="w-3 h-3 text-indigo-400 shrink-0" />
+                                                                <span>Jumper ke Modul #{targetIdx}: {thruInternalMod.name}</span>
+                                                            </div>
+                                                        );
+                                                    }
                                                     return thruChild ? (
                                                         <div className="mt-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] flex items-center gap-1 font-semibold truncate">
                                                             <span>⚡ Estafet Thru:</span>
@@ -766,15 +817,71 @@ export default function OdpInternalSchematic({
                                                             const val = e.target.value;
                                                             handleUpdateOutput(mod.id, 'tap', {
                                                                 target_type: val,
-                                                                target_label: val === 'module' ? 'Masuk ke Splitter Distribusi' : 'Port Pelanggan',
+                                                                target_id: val === 'port' ? 1 : null,
+                                                                target_label: val === 'module' ? 'Masuk ke Splitter Distribusi' : 'Port Pelanggan 1',
                                                             });
                                                         }}
                                                         className="w-full px-2 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-slate-200"
                                                     >
                                                         <option value="module">🔗 Masuk ke Splitter Distribusi (PLC 1:4 / 1:8)</option>
-                                                        <option value="port">🔌 Langsung ke Port Pelanggan 1</option>
+                                                        <option value="port">🔌 Langsung ke Port Pelanggan</option>
                                                     </select>
                                                 </div>
+
+                                                {/* If Tap goes to a physical port */}
+                                                {mod.outputs?.tap?.target_type === 'port' && (
+                                                    <div className="pt-1 space-y-1">
+                                                        <label className="block text-[10px] text-slate-400">Pilih Port Adaptor:</label>
+                                                        <select
+                                                            value={mod.outputs?.tap?.target_id || 1}
+                                                            onChange={(e) => {
+                                                                const pVal = parseInt(e.target.value, 10);
+                                                                handleUpdateOutput(mod.id, 'tap', {
+                                                                    target_type: 'port',
+                                                                    target_id: pVal,
+                                                                    target_label: `Port Pelanggan ${pVal}`,
+                                                                });
+                                                            }}
+                                                            className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] text-white"
+                                                        >
+                                                            {Array.from({ length: totalPorts || 8 }, (_, i) => i + 1).map((p) => {
+                                                                const claimants = claimedPortMap[p] || [];
+                                                                const isClaimedByOther = claimants.some(c => c.moduleId !== mod.id || c.outputKey !== 'tap');
+                                                                const claimant = claimants.find(c => c.moduleId !== mod.id || c.outputKey !== 'tap');
+                                                                return (
+                                                                    <option key={p} value={p} disabled={isClaimedByOther}>
+                                                                        Port Adaptor #{p} {isClaimedByOther ? `(Terpakai Modul #${claimant?.moduleIndex})` : ''}
+                                                                    </option>
+                                                                );
+                                                            })}
+                                                        </select>
+                                                        {(() => {
+                                                            const tapPort = Number(mod.outputs?.tap?.target_id || 1);
+                                                            const child = childOdps.find(c => String(c.parent_port) === String(tapPort));
+                                                            const cust = customerList.find(c => Number(c.odp_port_number) === tapPort);
+                                                            if (child) {
+                                                                return (
+                                                                    <div className="p-1 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-500/30">
+                                                                        <div className="font-bold">📦 ODP {child.name} (Estafet)</div>
+                                                                        {cust && (
+                                                                            <div className="text-[9px] text-rose-300 font-semibold mt-0.5">
+                                                                                ⚠️ Konflik: Pelanggan ({cust.name}) di port ini!
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            if (cust) {
+                                                                return (
+                                                                    <div className="p-1 rounded bg-emerald-500/20 text-emerald-300 text-[10px] border border-emerald-500/30 font-medium">
+                                                                        👤 {cust.name}
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            return <div className="text-[10px] text-slate-500 italic">⚪ Port Kosong</div>;
+                                                        })()}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     ) : (
@@ -783,16 +890,44 @@ export default function OdpInternalSchematic({
                                             {Object.entries(mod.outputs || {}).map(([key, out], outIdx) => {
                                                 const outPow = calculatedPowers[`${mod.id}:${key}`] ?? inPower;
                                                 const isGood = outPow >= -24 && outPow <= -12;
-                                                const assignedCustomer = customerList.find(c => Number(c.odp_port_number) === Number(out.target_id));
-                                                const assignedChildOdp = childOdps.find(c => String(c.parent_port) === String(out.target_id));
+
+                                                // Check if this output is consumed internally as in_source by another module
+                                                const internalTargetMod = modules.find(m => m.in_source === `${mod.id}:${key}`);
+                                                const isInternal = !!internalTargetMod;
+                                                const internalTargetIndex = internalTargetMod ? modules.findIndex(m => m.id === internalTargetMod.id) + 1 : null;
+
+                                                // Check port assignments if not internal
+                                                const portNum = !isInternal ? Number(out.target_id) : null;
+                                                const assignedCustomer = portNum ? customerList.find(c => Number(c.odp_port_number) === portNum) : null;
+                                                const assignedChildOdp = portNum ? childOdps.find(c => String(c.parent_port) === String(portNum)) : null;
+
+                                                // Check if this port is claimed by multiple outputs
+                                                const claimants = portNum ? (claimedPortMap[portNum] || []) : [];
+                                                const isDuplicateClaim = claimants.length > 1;
+                                                const otherClaimant = claimants.find(c => c.moduleId !== mod.id || c.outputKey !== key);
 
                                                 return (
                                                     <div
                                                         key={key}
-                                                        className="p-2 bg-slate-950/70 border border-slate-800 rounded-lg space-y-1 text-xs"
+                                                        className={`p-2 rounded-lg border space-y-1.5 text-xs transition ${
+                                                            isInternal
+                                                                ? 'bg-indigo-950/40 border-indigo-500/50'
+                                                                : isDuplicateClaim
+                                                                ? 'bg-rose-950/30 border-rose-500/60'
+                                                                : assignedChildOdp
+                                                                ? 'bg-amber-950/25 border-amber-500/50'
+                                                                : 'bg-slate-950/70 border-slate-800'
+                                                        }`}
                                                     >
                                                         <div className="flex items-center justify-between font-bold text-slate-300">
-                                                            <span>Port Out {outIdx + 1}</span>
+                                                            <span className="flex items-center gap-1.5">
+                                                                <span>Port Out {outIdx + 1}</span>
+                                                                {isInternal && (
+                                                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                                                        JUMPER
+                                                                    </span>
+                                                                )}
+                                                            </span>
                                                             <span
                                                                 className={`font-mono text-[11px] font-bold ${
                                                                     outPow < -24 ? 'text-red-400' : 'text-emerald-400'
@@ -802,36 +937,88 @@ export default function OdpInternalSchematic({
                                                             </span>
                                                         </div>
 
-                                                        <div className="text-[10px] text-slate-400">
-                                                            Hubungkan ke Port:
-                                                        </div>
-                                                        <select
-                                                            value={out.target_id || outIdx + 1}
-                                                            onChange={(e) => {
-                                                                const portNum = parseInt(e.target.value, 10);
-                                                                handleUpdateOutput(mod.id, key, {
-                                                                    target_type: 'port',
-                                                                    target_id: portNum,
-                                                                    target_label: `Port Pelanggan ${portNum}`,
-                                                                });
-                                                            }}
-                                                            className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] text-white"
-                                                        >
-                                                            {Array.from({ length: totalPorts || 8 }, (_, i) => i + 1).map((p) => (
-                                                                <option key={p} value={p}>
-                                                                    Port Adaptor #{p}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-
-                                                        {assignedChildOdp && (
-                                                            <div className="text-[10px] text-amber-400 font-semibold truncate pt-0.5" title={`Estafet ke Downstream ODP: ${assignedChildOdp.name}`}>
-                                                                📦 ODP {assignedChildOdp.name}
+                                                        {isInternal ? (
+                                                            /* 1. Internal Jumper connection (does NOT use physical port adaptor) */
+                                                            <div className="p-2 rounded-lg bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 space-y-1">
+                                                                <div className="text-[10px] font-bold flex items-center gap-1 text-indigo-300">
+                                                                    <Link className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                                                    <span>Sambungan Jumper Internal</span>
+                                                                </div>
+                                                                <div className="text-[11px] font-semibold text-white">
+                                                                    ➡️ Masuk ke Modul #{internalTargetIndex}: {internalTargetMod.name}
+                                                                </div>
+                                                                <div className="text-[9px] text-slate-400">
+                                                                    Serat optik disambung internal di kaset ODP (tidak menggunakan port dropcore).
+                                                                </div>
                                                             </div>
-                                                        )}
-                                                        {assignedCustomer && (
-                                                            <div className="text-[10px] text-emerald-400 font-medium truncate pt-0.5">
-                                                                👤 {assignedCustomer.name}
+                                                        ) : (
+                                                            /* 2. Physical Port Adaptor connection */
+                                                            <div className="space-y-1">
+                                                                <div className="text-[10px] text-slate-400">
+                                                                    Hubungkan ke Port:
+                                                                </div>
+                                                                <select
+                                                                    value={out.target_id || ''}
+                                                                    onChange={(e) => {
+                                                                        const pVal = parseInt(e.target.value, 10);
+                                                                        handleUpdateOutput(mod.id, key, {
+                                                                            target_type: 'port',
+                                                                            target_id: pVal,
+                                                                            target_label: `Port Pelanggan ${pVal}`,
+                                                                        });
+                                                                    }}
+                                                                    className="w-full px-1.5 py-1 bg-slate-900 border border-slate-700 rounded text-[11px] text-white focus:outline-none focus:border-blue-500"
+                                                                >
+                                                                    {Array.from({ length: totalPorts || 8 }, (_, i) => i + 1).map((p) => {
+                                                                        const pClaimants = claimedPortMap[p] || [];
+                                                                        const isClaimedByOther = pClaimants.some(c => c.moduleId !== mod.id || c.outputKey !== key);
+                                                                        const claimantInfo = pClaimants.find(c => c.moduleId !== mod.id || c.outputKey !== key);
+                                                                        return (
+                                                                            <option key={p} value={p} disabled={isClaimedByOther}>
+                                                                                Port Adaptor #{p} {isClaimedByOther ? `(Terpakai Modul #${claimantInfo?.moduleIndex})` : ''}
+                                                                            </option>
+                                                                        );
+                                                                    })}
+                                                                </select>
+
+                                                                {/* Conflict warning if multiple outputs connect to this port */}
+                                                                {isDuplicateClaim && otherClaimant && (
+                                                                    <div className="p-1 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[9px] flex items-center gap-1 font-semibold">
+                                                                        <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                                                                        <span>Port #{portNum} ganda dengan Modul #{otherClaimant.moduleIndex}!</span>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* MUTUAL EXCLUSIVITY: Child ODP vs Customer */}
+                                                                {assignedChildOdp ? (
+                                                                    <div className="p-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-200 space-y-0.5">
+                                                                        <div className="text-[10px] font-bold flex items-center gap-1 truncate" title={`Estafet ke Downstream ODP: ${assignedChildOdp.name}`}>
+                                                                            <span>📦 ODP {assignedChildOdp.name}</span>
+                                                                        </div>
+                                                                        <div className="text-[9px] text-amber-400/90 font-medium">
+                                                                            Jalur Estafet ODP Hilir
+                                                                        </div>
+                                                                        {assignedCustomer && (
+                                                                            <div className="mt-1 pt-1 border-t border-rose-500/30 text-[9px] text-rose-300 font-semibold flex items-center gap-1">
+                                                                                <AlertCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                                                                                <span>Konflik: Pelanggan ({assignedCustomer.name}) bertabrakan!</span>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                ) : assignedCustomer ? (
+                                                                    <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
+                                                                        <div className="text-[10px] font-bold flex items-center gap-1 truncate" title={assignedCustomer.name}>
+                                                                            <span>👤 {assignedCustomer.name}</span>
+                                                                        </div>
+                                                                        <div className="text-[9px] text-emerald-400/80">
+                                                                            Pelanggan Aktif (Port Dropcore)
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-[10px] text-slate-500 italic pt-0.5">
+                                                                        ⚪ Port Kosong / Bebas
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )}
                                                     </div>
@@ -854,7 +1041,13 @@ export default function OdpInternalSchematic({
                                 Tray Adaptor Port Dropcore ODP (Total {totalPorts || 8} Port)
                             </span>
                             <span className="text-[11px] text-slate-400">
-                                Port aktif: {customerList.length + childOdps.filter(c => c.parent_port && c.parent_port !== 'thru').length} / {totalPorts || 8}
+                                Port aktif: {
+                                    Array.from({ length: totalPorts || 8 }, (_, i) => i + 1).filter(p => {
+                                        const hasChild = childOdps.some(c => String(c.parent_port) === String(p));
+                                        const hasCust = customerList.some(c => Number(c.odp_port_number) === p);
+                                        return hasChild || hasCust;
+                                    }).length
+                                } / {totalPorts || 8}
                             </span>
                         </div>
 
@@ -864,24 +1057,31 @@ export default function OdpInternalSchematic({
                                 const childOdp = childOdps.find(c => String(c.parent_port) === String(portNum));
                                 const isChildOdp = !!childOdp;
                                 const isCustomer = !!customer;
-                                const isUsed = isChildOdp || isCustomer;
+                                const hasConflict = isChildOdp && isCustomer;
 
                                 return (
                                     <div
                                         key={portNum}
                                         className={`p-2 rounded-xl text-center border transition ${
-                                            isChildOdp
+                                            hasConflict
+                                                ? 'bg-rose-950/50 border-rose-500 text-rose-200 shadow-md shadow-rose-950/50'
+                                                : isChildOdp
                                                 ? 'bg-amber-950/40 border-amber-500/60 text-amber-200 shadow-md shadow-amber-950/30'
                                                 : isCustomer
                                                 ? 'bg-blue-950/40 border-blue-500/50 text-blue-200'
                                                 : 'bg-slate-900/60 border-slate-800 text-slate-400'
                                         }`}
                                     >
-                                        <div className="text-[10px] font-mono font-bold">Port {portNum}</div>
+                                        <div className="text-[10px] font-mono font-bold flex items-center justify-center gap-1">
+                                            <span>Port {portNum}</span>
+                                            {hasConflict && <AlertTriangle className="w-3 h-3 text-rose-400 animate-pulse" />}
+                                        </div>
                                         <div className="w-3 h-3 mx-auto my-1 rounded-full border flex items-center justify-center">
                                             <div
                                                 className={`w-1.5 h-1.5 rounded-full ${
-                                                    isChildOdp
+                                                    hasConflict
+                                                        ? 'bg-rose-500 shadow-[0_0_6px_#EF4444]'
+                                                        : isChildOdp
                                                         ? 'bg-amber-400 shadow-[0_0_6px_#F59E0B]'
                                                         : isCustomer
                                                         ? 'bg-emerald-400 shadow-[0_0_6px_#10B981]'
@@ -890,10 +1090,18 @@ export default function OdpInternalSchematic({
                                             />
                                         </div>
                                         <div
-                                            className="text-[9px] truncate font-medium"
-                                            title={isChildOdp ? `Estafet ke ODP: ${childOdp.name}` : (isCustomer ? customer.name : 'Kosong')}
+                                            className={`text-[9px] truncate font-medium ${hasConflict ? 'text-rose-300 font-bold' : ''}`}
+                                            title={
+                                                hasConflict
+                                                    ? `⚠️ KONFLIK: Port ini dipakai ODP (${childOdp.name}) DAN Pelanggan (${customer.name})!`
+                                                    : isChildOdp
+                                                    ? `Estafet ke ODP: ${childOdp.name}`
+                                                    : isCustomer
+                                                    ? customer.name
+                                                    : 'Kosong'
+                                            }
                                         >
-                                            {isChildOdp ? `📦 ${childOdp.name}` : (isCustomer ? customer.name : 'Kosong')}
+                                            {hasConflict ? `⚠️ ${childOdp.name}` : isChildOdp ? `📦 ${childOdp.name}` : isCustomer ? customer.name : 'Kosong'}
                                         </div>
                                     </div>
                                 );
