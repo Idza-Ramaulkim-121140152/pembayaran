@@ -330,6 +330,39 @@ function NodeFormFields({
         return [];
     }, [nodeObject, gisData]);
 
+    const [customerListState, setCustomerListState] = useState(nodeCustomers);
+    useEffect(() => {
+        setCustomerListState(nodeCustomers);
+    }, [nodeCustomers]);
+
+    const handleCustomerPortChange = (custId, portNum) => {
+        setCustomerListState(prev => {
+            return prev.map(c => {
+                if (custId && c.id === custId) {
+                    return { ...c, odp_port_number: portNum };
+                }
+                if (Number(c.odp_port_number) === portNum) {
+                    return { ...c, odp_port_number: null };
+                }
+                return c;
+            });
+        });
+
+        setForm(prev => {
+            const existing = prev.customer_port_mappings || [];
+            const filtered = existing.filter(m => m.port !== portNum && (!custId || m.customer_id !== custId));
+            if (custId) {
+                filtered.push({ customer_id: custId, port: portNum });
+            } else {
+                const prevCust = (customerListState || []).find(c => Number(c.odp_port_number) === portNum);
+                if (prevCust) {
+                    filtered.push({ customer_id: prevCust.id, port: null });
+                }
+            }
+            return { ...prev, customer_port_mappings: filtered };
+        });
+    };
+
     const nodeChildOdps = useMemo(() => {
         if (nodeObject?.child_odps && Array.isArray(nodeObject.child_odps)) {
             return nodeObject.child_odps;
@@ -517,7 +550,8 @@ function NodeFormFields({
                         availableOdps={availableOdps}
                         availableOdcs={availableOdcs}
                         availableOlts={formOptions?.olts || []}
-                        customerList={nodeCustomers}
+                        customerList={customerListState}
+                        onCustomerPortChange={handleCustomerPortChange}
                         childOdps={nodeChildOdps}
                         totalPorts={form.total_ports || 8}
                         isOdc={form.device_type === 'odc'}
@@ -978,7 +1012,7 @@ export default function SuperPanelPage() {
         olt_id: '',
         pon_port_id: '',
         odp_id: '',
-        odp_port_number: 1,
+        odp_port_number: '',
         dropcore_cable_length_meters: 85,
         latitude: '',
         longitude: '',
@@ -1075,7 +1109,7 @@ export default function SuperPanelPage() {
         olt_id: '',
         pon_port_id: '',
         odp_id: '',
-        odp_port_number: 1,
+        odp_port_number: '',
         dropcore_cable_length_meters: 85,
     });
     const [savingMapping, setSavingMapping] = useState(false);
@@ -1890,6 +1924,7 @@ export default function SuperPanelPage() {
                     feeder_cable_info: found.feeder_cable_info || '',
                     location_address: found.location_address || '',
                     schematic_data: found.schematic_data || found.resolved_schematic || null,
+                    customer_port_mappings: [],
                 });
             }
         };
@@ -1925,7 +1960,7 @@ export default function SuperPanelPage() {
                     olt_id: found.olt_id || '',
                     pon_port_id: found.pon_port_id || '',
                     odp_id: found.odp_id || '',
-                    odp_port_number: found.odp_port_number || 1,
+                    odp_port_number: found.odp_port_number ? found.odp_port_number : '',
                     dropcore_cable_length_meters: found.dropcore_cable_length_meters || 85,
                     latitude: found.latitude || '',
                     longitude: found.longitude || '',
@@ -1975,6 +2010,7 @@ export default function SuperPanelPage() {
                 pon_port_id: editOdpForm.pon_port_id ? parseInt(editOdpForm.pon_port_id, 10) : null,
                 latitude: editOdpForm.latitude ? parseFloat(editOdpForm.latitude) : null,
                 longitude: editOdpForm.longitude ? parseFloat(editOdpForm.longitude) : null,
+                customer_port_mappings: editOdpForm.customer_port_mappings || [],
             };
             const res = await apiClient.post(`/super-panel/odp-config/${selectedOdpForEdit.id}`, payload);
             if (res.data?.success) {
@@ -2058,7 +2094,7 @@ export default function SuperPanelPage() {
                 olt_id: editCustomerForm.olt_id ? parseInt(editCustomerForm.olt_id, 10) : null,
                 pon_port_id: editCustomerForm.pon_port_id ? parseInt(editCustomerForm.pon_port_id, 10) : null,
                 odp_id: editCustomerForm.odp_id ? parseInt(editCustomerForm.odp_id, 10) : null,
-                odp_port_number: parseInt(editCustomerForm.odp_port_number, 10) || 1,
+                odp_port_number: editCustomerForm.odp_port_number ? parseInt(editCustomerForm.odp_port_number, 10) : null,
                 dropcore_cable_length_meters: parseInt(editCustomerForm.dropcore_cable_length_meters, 10) || 85,
                 latitude: editCustomerForm.latitude ? parseFloat(editCustomerForm.latitude) : null,
                 longitude: editCustomerForm.longitude ? parseFloat(editCustomerForm.longitude) : null,
@@ -2082,7 +2118,11 @@ export default function SuperPanelPage() {
         if (!traceResult?.customer?.id) return;
         try {
             setSavingMapping(true);
-            const res = await apiClient.post(`/super-panel/customer-mapping/${traceResult.customer.id}`, mappingForm);
+            const payload = {
+                ...mappingForm,
+                odp_port_number: mappingForm.odp_port_number ? parseInt(mappingForm.odp_port_number, 10) : null,
+            };
+            const res = await apiClient.post(`/super-panel/customer-mapping/${traceResult.customer.id}`, payload);
             if (res.data?.success) {
                 showToast('Mapping pelanggan berhasil diperbarui!');
                 setShowMappingModal(false);
@@ -2715,17 +2755,21 @@ export default function SuperPanelPage() {
 
                                                 <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
                                                     {odp.ports?.map((port) => {
-                                                        const isUsed = port.status === 'used';
+                                                        const isUsed = port.status === 'used' || !!port.customer;
+                                                        const isChildOdp = port.status === 'occupied_odp' || !!port.child_odp;
                                                         const isOverflow = port.is_overflow;
+
+                                                        let title = `Port ${port.port_number}: Bebas / Kosong`;
+                                                        if (isChildOdp) {
+                                                            title = `Port ${port.port_number}: Jalur ODP Hilir (${port.child_odp?.name || 'ODP'})`;
+                                                        } else if (port.customer) {
+                                                            title = `Port ${port.port_number}: ${port.customer.name} (${port.customer.customer_id}) - ${port.customer.package_name}`;
+                                                        }
 
                                                         return (
                                                             <div
                                                                 key={port.port_number}
-                                                                title={
-                                                                    port.customer
-                                                                        ? `Port ${port.port_number}: ${port.customer.name} (${port.customer.customer_id}) - ${port.customer.package_name}`
-                                                                        : `Port ${port.port_number}: Bebas / Kosong`
-                                                                }
+                                                                title={title}
                                                                 onClick={() => {
                                                                     if (port.customer) {
                                                                         handleTraceCustomerFromOutside(port.customer.id);
@@ -2734,13 +2778,19 @@ export default function SuperPanelPage() {
                                                                 className={`h-11 rounded-lg border text-center flex flex-col items-center justify-center p-0.5 cursor-pointer transition ${
                                                                     isOverflow
                                                                         ? 'bg-rose-950/40 border-rose-500 text-rose-300 hover:bg-rose-900/60'
+                                                                        : isChildOdp
+                                                                        ? 'bg-amber-950/50 border-amber-500/60 text-amber-200 hover:bg-amber-900/60'
                                                                         : isUsed
                                                                         ? 'bg-blue-950/50 border-blue-500/60 text-blue-200 hover:bg-blue-900/60'
                                                                         : 'bg-slate-900/60 border-slate-700/60 text-slate-500 hover:border-slate-500 hover:text-slate-300'
                                                                 }`}
                                                             >
                                                                 <span className="text-[9px] font-bold">P{port.port_number}</span>
-                                                                {isUsed ? (
+                                                                {isChildOdp ? (
+                                                                    <span className="text-[8px] truncate max-w-full font-semibold text-amber-400">
+                                                                        ODP
+                                                                    </span>
+                                                                ) : isUsed ? (
                                                                     <span className="text-[8px] truncate max-w-full font-semibold text-emerald-400">
                                                                         {port.customer?.name?.split(' ')[0] || 'User'}
                                                                     </span>
@@ -2751,6 +2801,12 @@ export default function SuperPanelPage() {
                                                         );
                                                     })}
                                                 </div>
+
+                                                {odp.unassigned_customers && odp.unassigned_customers.length > 0 && (
+                                                    <div className="mt-2 p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px] flex items-center justify-between">
+                                                        <span>⚠️ {odp.unassigned_customers.length} Pelanggan belum dimapping ke port</span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
 
@@ -2778,6 +2834,7 @@ export default function SuperPanelPage() {
                                                         feeder_cable_info: odp.feeder_cable_info || '',
                                                         location_address: odp.location_address || '',
                                                         schematic_data: odp.schematic_data || odp.resolved_schematic || null,
+                                                        customer_port_mappings: [],
                                                     });
                                                 }}
                                                 className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition"
@@ -4117,10 +4174,11 @@ export default function SuperPanelPage() {
                             <div>
                                 <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP</label>
                                 <select
-                                    value={mappingForm.odp_port_number || 1}
-                                    onChange={(e) => setMappingForm({ ...mappingForm, odp_port_number: parseInt(e.target.value, 10) || 1 })}
+                                    value={mappingForm.odp_port_number || ''}
+                                    onChange={(e) => setMappingForm({ ...mappingForm, odp_port_number: e.target.value ? parseInt(e.target.value, 10) : '' })}
                                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 text-xs"
                                 >
+                                    <option value="">-- Belum Di-mapping (Kosong / Bebas) --</option>
                                     {getOdpCustomerPortOptions(mappingForm.odp_id, null, mappingForm.odp_port_number).map((opt) => (
                                         <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                                             {opt.label}
@@ -4223,10 +4281,11 @@ export default function SuperPanelPage() {
                             <div>
                                 <label className="block text-slate-400 mb-1 font-medium">Nomor Port ODP</label>
                                 <select
-                                    value={editCustomerForm.odp_port_number || 1}
-                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, odp_port_number: parseInt(e.target.value, 10) || 1 })}
+                                    value={editCustomerForm.odp_port_number || ''}
+                                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, odp_port_number: e.target.value ? parseInt(e.target.value, 10) : '' })}
                                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-blue-500 text-xs"
                                 >
+                                    <option value="">-- Belum Di-mapping (Kosong / Bebas) --</option>
                                     {getOdpCustomerPortOptions(editCustomerForm.odp_id, selectedCustomerForEdit?.id, editCustomerForm.odp_port_number).map((opt) => (
                                         <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                                             {opt.label}

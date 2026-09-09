@@ -61,6 +61,7 @@ export default function OdpInternalSchematic({
     totalPorts = 8,
     isOdc = false,
     onApplySummary,
+    onCustomerPortChange,
 }) {
     const [selectedModuleId, setSelectedModuleId] = useState(null);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -873,12 +874,50 @@ export default function OdpInternalSchematic({
                                                             }
                                                             if (cust) {
                                                                 return (
-                                                                    <div className="p-1 rounded bg-emerald-500/20 text-emerald-300 text-[10px] border border-emerald-500/30 font-medium">
-                                                                        👤 {cust.name}
+                                                                    <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
+                                                                        <div className="text-[10px] font-bold flex items-center justify-between gap-1">
+                                                                            <span className="truncate">👤 {cust.name}</span>
+                                                                            {onCustomerPortChange && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => onCustomerPortChange(null, tapPort)}
+                                                                                    className="text-[9px] text-rose-400 hover:text-rose-300 font-semibold underline shrink-0 px-1"
+                                                                                    title="Lepas pelanggan dari port ini"
+                                                                                >
+                                                                                    ✕ Lepas
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="text-[9px] text-emerald-400/80">
+                                                                            Pelanggan Terhubung (Port {tapPort})
+                                                                        </div>
                                                                     </div>
                                                                 );
                                                             }
-                                                            return <div className="text-[10px] text-slate-500 italic">⚪ Port Kosong</div>;
+                                                            return (
+                                                                <div className="space-y-1">
+                                                                    <div className="text-[10px] text-slate-500 italic">⚪ Port Kosong / Bebas</div>
+                                                                    {onCustomerPortChange && customerList && customerList.length > 0 && (
+                                                                        <select
+                                                                            value=""
+                                                                            onChange={(e) => {
+                                                                                const cId = parseInt(e.target.value, 10);
+                                                                                if (cId) onCustomerPortChange(cId, tapPort);
+                                                                            }}
+                                                                            className="w-full px-1.5 py-0.5 bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded text-[10px] text-slate-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+                                                                        >
+                                                                            <option value="">➕ Map Pelanggan ke Port #{tapPort}...</option>
+                                                                            {customerList
+                                                                                .filter(c => !c.odp_port_number || Number(c.odp_port_number) === 0)
+                                                                                .map((c) => (
+                                                                                    <option key={c.id} value={c.id}>
+                                                                                        {c.name} {c.pppoe_username ? `[${c.pppoe_username}]` : ''}
+                                                                                    </option>
+                                                                                ))}
+                                                                        </select>
+                                                                    )}
+                                                                </div>
+                                                            );
                                                         })()}
                                                     </div>
                                                 )}
@@ -1007,16 +1046,47 @@ export default function OdpInternalSchematic({
                                                                     </div>
                                                                 ) : assignedCustomer ? (
                                                                     <div className="p-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-200">
-                                                                        <div className="text-[10px] font-bold flex items-center gap-1 truncate" title={assignedCustomer.name}>
-                                                                            <span>👤 {assignedCustomer.name}</span>
+                                                                        <div className="text-[10px] font-bold flex items-center justify-between gap-1">
+                                                                            <span className="truncate" title={assignedCustomer.name}>👤 {assignedCustomer.name}</span>
+                                                                            {onCustomerPortChange && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => onCustomerPortChange(null, portNum)}
+                                                                                    className="text-[9px] text-rose-400 hover:text-rose-300 font-semibold underline shrink-0 px-1"
+                                                                                    title="Lepas pelanggan dari port ini"
+                                                                                >
+                                                                                    ✕ Lepas
+                                                                                </button>
+                                                                            )}
                                                                         </div>
                                                                         <div className="text-[9px] text-emerald-400/80">
-                                                                            Pelanggan Aktif (Port Dropcore)
+                                                                            Pelanggan Terhubung (Port {portNum})
                                                                         </div>
                                                                     </div>
                                                                 ) : (
-                                                                    <div className="text-[10px] text-slate-500 italic pt-0.5">
-                                                                        ⚪ Port Kosong / Bebas
+                                                                    <div className="space-y-1">
+                                                                        <div className="text-[10px] text-slate-500 italic">
+                                                                            ⚪ Port Kosong / Bebas
+                                                                        </div>
+                                                                        {onCustomerPortChange && customerList && customerList.length > 0 && (
+                                                                            <select
+                                                                                value=""
+                                                                                onChange={(e) => {
+                                                                                    const cId = parseInt(e.target.value, 10);
+                                                                                    if (cId) onCustomerPortChange(cId, portNum);
+                                                                                }}
+                                                                                className="w-full px-1.5 py-0.5 bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded text-[10px] text-slate-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+                                                                            >
+                                                                                <option value="">➕ Map Pelanggan ke Port #{portNum}...</option>
+                                                                                {customerList
+                                                                                    .filter(c => !c.odp_port_number || Number(c.odp_port_number) === 0)
+                                                                                    .map((c) => (
+                                                                                        <option key={c.id} value={c.id}>
+                                                                                            {c.name} {c.pppoe_username ? `[${c.pppoe_username}]` : ''}
+                                                                                        </option>
+                                                                                    ))}
+                                                                            </select>
+                                                                        )}
                                                                     </div>
                                                                 )}
                                                             </div>

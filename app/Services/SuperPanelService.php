@@ -317,7 +317,7 @@ class SuperPanelService
             $childOdps = $childOdpsByParentId[$odp->id] ?? [];
 
             $capacity = (int) ($odp->total_ports ?: ($isOdc ? 24 : 8));
-            $custCount = $odp->customers->count();
+            $custCount = $odp->customers->filter(fn ($c) => !empty($c->odp_port_number))->count();
             $odpPortsUsed = 0;
             foreach ($childOdps as $co) {
                 if (!empty($co['parent_port']) && $co['parent_port'] !== 'thru') {
@@ -536,13 +536,22 @@ class SuperPanelService
 
         $odps = $query->get();
 
-        $odpMatrixList = $odps->map(function (Odp $odp) {
+        // Get downstream child ODPs
+        $allChildOdps = Odp::query()
+            ->whereNotNull('parent_id')
+            ->where('parent_type', 'odp')
+            ->get();
+        $childOdpsByParentId = [];
+        foreach ($allChildOdps as $co) {
+            if (!empty($co->parent_port) && $co->parent_port !== 'thru') {
+                $childOdpsByParentId[$co->parent_id][(int) $co->parent_port] = $co;
+            }
+        }
+
+        $odpMatrixList = $odps->map(function (Odp $odp) use ($childOdpsByParentId) {
             $totalCapacity = $odp->total_ports ?: $odp->port_capacity;
             $customers = $odp->customers;
-            $usedCount = $customers->count();
-            $freeCount = max(0, $totalCapacity - $usedCount);
-            $utilization = $totalCapacity > 0 ? round(($usedCount / $totalCapacity) * 100, 1) : 0;
-            $isOvercapacity = $usedCount > $totalCapacity;
+            $childPorts = $childOdpsByParentId[$odp->id] ?? [];
 
             // Group customers by odp_port_number
             $customerByPort = [];
@@ -557,18 +566,25 @@ class SuperPanelService
                 }
             }
 
-            // Fill unassigned customers into next free slot or virtual overflow slot
+            // DO NOT auto-fill unassigned customers into free slots!
+            $mappedCustCount = count($customerByPort);
+            $odpPortsUsed = count($childPorts);
+            $usedCount = $mappedCustCount + $odpPortsUsed;
+            $freeCount = max(0, $totalCapacity - $usedCount);
+            $utilization = $totalCapacity > 0 ? round(($usedCount / $totalCapacity) * 100, 1) : 0;
+            $isOvercapacity = $usedCount > $totalCapacity;
+
             $ports = [];
-            $maxSlots = max($totalCapacity, count($customers));
+            $maxSlots = max($totalCapacity, !empty($customerByPort) ? max(array_keys($customerByPort)) : 0);
 
             for ($p = 1; $p <= $maxSlots; $p++) {
                 $assignedCust = $customerByPort[$p] ?? null;
-                if (!$assignedCust && !empty($unassignedCustomers)) {
-                    $assignedCust = array_shift($unassignedCustomers);
-                }
+                $childOdp = $childPorts[$p] ?? null;
 
                 $slotStatus = 'free';
-                if ($assignedCust) {
+                if ($childOdp) {
+                    $slotStatus = 'occupied_odp';
+                } elseif ($assignedCust) {
                     $slotStatus = $p > $totalCapacity ? 'overflow' : 'used';
                 }
 
@@ -576,6 +592,11 @@ class SuperPanelService
                     'port_number' => $p,
                     'status' => $slotStatus,
                     'is_overflow' => $p > $totalCapacity,
+                    'child_odp' => $childOdp ? [
+                        'id' => $childOdp->id,
+                        'name' => $childOdp->nama ?: $childOdp->name,
+                        'device_type' => $childOdp->device_type ?: 'odp',
+                    ] : null,
                     'customer' => $assignedCust ? [
                         'id' => $assignedCust->id,
                         'customer_id' => 'CUST-' . str_pad((string) $assignedCust->id, 4, '0', STR_PAD_LEFT),
@@ -609,6 +630,13 @@ class SuperPanelService
                 'free_ports' => $freeCount,
                 'occupancy_percent' => $utilization,
                 'is_overcapacity' => $isOvercapacity,
+                'unassigned_customers' => array_values(array_map(fn ($c) => [
+                    'id' => $c->id,
+                    'customer_id' => 'CUST-' . str_pad((string) $c->id, 4, '0', STR_PAD_LEFT),
+                    'name' => $c->name,
+                    'phone' => $c->phone,
+                    'pppoe_username' => $c->pppoe_username,
+                ], $unassignedCustomers)),
                 'ports' => $ports,
             ];
         });
@@ -1094,7 +1122,7 @@ class SuperPanelService
 
         // 4. Stage 4: ODP Box & Dropcore Port
         $odpTotalCapacity = $odp ? ($odp->total_ports ?: $odp->port_capacity) : 8;
-        $odpUsed = $odp ? $odp->customers()->count() : 1;
+        $mappedCustCount = $odp ? $odp->customers()->whereNotNull('odp_port_number')->count() : 0;
         $odpInfo = [
             'odp_id' => $odp?->id,
             'odp_name' => $odp?->name ?? 'ODP Sentral Belum Terpetakan',
@@ -1103,12 +1131,12 @@ class SuperPanelService
             'latitude' => (float) ($odp?->latitude ?: -5.635),
             'longitude' => (float) ($odp?->longitude ?: 105.550),
             'total_ports' => $odpTotalCapacity,
-            'assigned_port_number' => $customer->odp_port_number ?: 1,
-            'port_slot_display' => 'Port ' . ($customer->odp_port_number ?: 1) . ' dari ' . $odpTotalCapacity,
+            'assigned_port_number' => $customer->odp_port_number,
+            'port_slot_display' => $customer->odp_port_number ? ('Port ' . $customer->odp_port_number . ' dari ' . $odpTotalCapacity) : 'Belum Terhubung ke Port (Kosong / Bebas)',
             'dropcore_cable_length_meters' => $customer->dropcore_cable_length_meters ?: 85,
-            'odp_occupancy_percent' => $odpTotalCapacity > 0 ? round(($odpUsed / $odpTotalCapacity) * 100, 1) : 0,
-            'odp_used_ports' => $odpUsed,
-            'odp_free_ports' => max(0, $odpTotalCapacity - $odpUsed),
+            'odp_occupancy_percent' => $odpTotalCapacity > 0 ? round(($mappedCustCount / $odpTotalCapacity) * 100, 1) : 0,
+            'odp_used_ports' => $mappedCustCount,
+            'odp_free_ports' => max(0, $odpTotalCapacity - $mappedCustCount),
         ];
 
         // 5. Stage 5: GenieACS (GHCS) CPE Diagnostics
@@ -1262,8 +1290,8 @@ class SuperPanelService
         if (isset($data['odp_id'])) {
             $customer->odp_id = $data['odp_id'];
         }
-        if (isset($data['odp_port_number'])) {
-            $customer->odp_port_number = (int) $data['odp_port_number'];
+        if (array_key_exists('odp_port_number', $data)) {
+            $customer->odp_port_number = !empty($data['odp_port_number']) ? (int) $data['odp_port_number'] : null;
         }
         if (isset($data['dropcore_cable_length_meters'])) {
             $customer->dropcore_cable_length_meters = (int) $data['dropcore_cable_length_meters'];
@@ -1442,6 +1470,30 @@ class SuperPanelService
                 ->first();
             if ($otherChild) {
                 throw new \InvalidArgumentException("Port {$odp->parent_port} pada ODP hulu sudah digunakan oleh ODP hilir lain ({$otherChild->nama}).");
+            }
+        }
+
+        // Persist customer port mappings if provided
+        if (array_key_exists('customer_port_mappings', $data) && is_array($data['customer_port_mappings'])) {
+            foreach ($data['customer_port_mappings'] as $mapping) {
+                $cId = $mapping['customer_id'] ?? $mapping['id'] ?? null;
+                $port = isset($mapping['port']) ? (!empty($mapping['port']) ? (int)$mapping['port'] : null) : null;
+                if ($cId) {
+                    $c = Customer::find($cId);
+                    if ($c) {
+                        if ($port !== null) {
+                            $downstreamOdp = Odp::where('parent_id', $odp->id)
+                                ->where('parent_type', 'odp')
+                                ->where('parent_port', (string) $port)
+                                ->first();
+                            if ($downstreamOdp) {
+                                throw new \InvalidArgumentException("Port {$port} pada ODP ini sudah digunakan sebagai jalur distribusi ke ODP hilir ({$downstreamOdp->nama}). Pelanggan tidak dapat dihubungkan ke port ini.");
+                            }
+                        }
+                        $c->odp_port_number = $port;
+                        $c->save();
+                    }
+                }
             }
         }
 

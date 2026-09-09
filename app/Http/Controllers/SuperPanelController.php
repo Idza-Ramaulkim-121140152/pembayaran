@@ -228,6 +228,7 @@ class SuperPanelController extends Controller
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'schematic_data' => 'nullable',
+            'customer_port_mappings' => 'nullable|array',
         ]);
 
         try {
