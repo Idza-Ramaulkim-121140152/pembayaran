@@ -171,7 +171,7 @@ const MENU_GROUPS = [
             { key: 'monitoringMaps', label: 'Monitoring Maps', to: '/monitoring-maps', icon: MapPin, match: (p) => p === '/monitoring-maps' },
             { key: 'monitoringGenieAcs', label: 'Monitoring GenieACS', to: '/monitoring-genieacs', icon: Wifi, match: (p) => p.startsWith('/monitoring-genieacs') || p.startsWith('/genieacs') },
             { key: 'remoteOnt', label: 'Remote ONT', to: '/remote-ont', icon: Router, match: (p) => p.startsWith('/remote-ont') },
-            { key: 'isolir', label: 'Isolir', to: '/isolir', icon: AlertTriangle, match: (p) => p.startsWith('/isolir') },
+            { key: 'isolir', label: 'Isolir & Telat', to: '/isolir', icon: AlertTriangle, match: (p) => p.startsWith('/isolir') },
         ],
     },
     {

@@ -17,7 +17,8 @@ import {
     Search, 
     X, 
     AlertTriangle,
-    Check
+    CreditCard,
+    ShieldAlert
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -28,14 +29,16 @@ function IsolirPage() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState(null);
-    const [isolatedDevices, setIsolatedDevices] = useState([]);
+    const [devices, setDevices] = useState([]);
 
     // Filter & Search
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState('all'); // 'all' | 'notified' | 'unnotified'
+    const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'isolir' | 'overdue' | 'both'
+    const [noticeFilter, setNoticeFilter] = useState('all'); // 'all' | 'notified' | 'unnotified'
 
     // Notice Modal
     const [selectedDeviceForNotice, setSelectedDeviceForNotice] = useState(null);
+    const [noticeType, setNoticeType] = useState('pencopotan_alat'); // 'pencopotan_alat' | 'peringatan_tagihan'
     const [customMessage, setCustomMessage] = useState('');
     const [sending, setSending] = useState(false);
     const [sendSuccess, setSendSuccess] = useState(null);
@@ -45,10 +48,10 @@ function IsolirPage() {
     const [selectedDeviceForHistory, setSelectedDeviceForHistory] = useState(null);
 
     useEffect(() => {
-        fetchIsolatedDevices();
+        fetchDevices();
     }, []);
 
-    const fetchIsolatedDevices = async () => {
+    const fetchDevices = async () => {
         try {
             setLoading(true);
             setError(null);
@@ -59,10 +62,10 @@ function IsolirPage() {
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
                 },
             });
-            setIsolatedDevices(response.data.data || []);
+            setDevices(response.data.data || []);
         } catch (err) {
-            console.error('Failed to fetch isolated devices:', err);
-            setError(err.response?.data?.message || 'Gagal mengambil data perangkat isolir');
+            console.error('Failed to fetch isolated and overdue devices:', err);
+            setError(err.response?.data?.message || 'Gagal mengambil data perangkat isolir dan telat pembayaran');
         } finally {
             setLoading(false);
         }
@@ -70,7 +73,7 @@ function IsolirPage() {
 
     const handleRefresh = async () => {
         setRefreshing(true);
-        await fetchIsolatedDevices();
+        await fetchDevices();
         setRefreshing(false);
     };
 
@@ -84,6 +87,10 @@ function IsolirPage() {
         });
     };
 
+    const formatCurrency = (amount) => {
+        return 'Rp ' + Number(amount || 0).toLocaleString('id-ID');
+    };
+
     const cleanPhone = (phone) => {
         if (!phone) return '';
         let cleaned = String(phone).replace(/\D/g, '');
@@ -93,7 +100,7 @@ function IsolirPage() {
         return cleaned;
     };
 
-    const buildDefaultMessage = (device) => {
+    const buildDefaultDismantleMessage = (device) => {
         const name = device.customer?.name || device.username;
         const username = device.username;
         const address = device.customer?.address || '-';
@@ -110,16 +117,57 @@ Sehubungan dengan status layanan internet Anda yang saat ini telah terisolir dan
 📦 *Paket Layanan:* ${packageType}
 🔑 *ID / User PPPoE:* ${username}
 
-Apabila Anda masih ingin melanjutkan layanan internet atau telah melakukan pembayaran tagihan, mohon segera hubungi admin kami untuk konfirmasi agar jadwal pencopotan alat dapat dibatalkan.
+Apabila Anda masih ingin melanjutkan layanan internet atau telah menyelesaikan pembayaran tagihan, mohon segera hubungi admin kami untuk konfirmasi agar jadwal pencopotan alat dapat dibatalkan.
 
 Terima kasih atas perhatian dan kerjasamanya.
 
 _Rumah Kita Network_`;
     };
 
-    const openNoticeModal = (device) => {
+    const buildDefaultOverdueMessage = (device) => {
+        const name = device.customer?.name || device.username;
+        const username = device.username;
+        const address = device.customer?.address || '-';
+        const packageType = device.customer?.package_type || '-';
+        const daysText = device.days_overdue > 0 ? ` (${device.days_overdue} hari)` : '';
+        const amountText = device.unpaid_amount > 0 ? formatCurrency(device.unpaid_amount) : 'Sesuai rincian tagihan';
+        const linkText = device.latest_invoice?.invoice_link ? `\n> ⓘ Rincian tagihan & pembayaran:\n${device.latest_invoice.invoice_link}\n` : '';
+
+        return `Halo *${name}*,
+
+Pengingat dari *Rumah Kita Network*.
+
+Kami menginformasikan bahwa tagihan layanan internet Anda saat ini telah melewati batas waktu jatuh tempo${daysText}. Untuk menghindari penghentian atau pembatasan layanan otomatis (isolir), mohon untuk segera melakukan pembayaran:
+
+👤 *Nama Pelanggan:* ${name}
+🏠 *Alamat:* ${address}
+📦 *Paket Layanan:* ${packageType}
+🔑 *ID / User PPPoE:* ${username}
+💰 *Total Tagihan:* ${amountText}
+${linkText}
+Apabila Anda telah melakukan pembayaran, mohon abaikan pesan ini atau kirimkan bukti pembayaran ke admin kami.
+
+Terima kasih atas perhatian dan kerjasamanya.
+
+_Rumah Kita Network_`;
+    };
+
+    const openNoticeModal = (device, initialType = null) => {
+        const type = initialType || (device.is_isolated ? 'pencopotan_alat' : 'peringatan_tagihan');
         setSelectedDeviceForNotice(device);
-        setCustomMessage(buildDefaultMessage(device));
+        setNoticeType(type);
+        setCustomMessage(type === 'peringatan_tagihan' ? buildDefaultOverdueMessage(device) : buildDefaultDismantleMessage(device));
+        setSendSuccess(null);
+        setSendError(null);
+    };
+
+    const switchNoticeType = (newType) => {
+        if (!selectedDeviceForNotice || noticeType === newType) return;
+        setNoticeType(newType);
+        setCustomMessage(newType === 'peringatan_tagihan' 
+            ? buildDefaultOverdueMessage(selectedDeviceForNotice) 
+            : buildDefaultDismantleMessage(selectedDeviceForNotice)
+        );
         setSendSuccess(null);
         setSendError(null);
     };
@@ -150,6 +198,10 @@ _Rumah Kita Network_`;
                 customer_id: selectedDeviceForNotice.customer?.id || null,
                 phone: phone,
                 custom_message: customMessage,
+                notice_type: noticeType,
+                days_overdue: selectedDeviceForNotice.days_overdue || 0,
+                amount: selectedDeviceForNotice.unpaid_amount || 0,
+                invoice_url: selectedDeviceForNotice.latest_invoice?.invoice_link || null,
             };
 
             const response = await axios.post('/api/isolir/send-dismantle-notice', payload, {
@@ -161,10 +213,10 @@ _Rumah Kita Network_`;
             });
 
             const newLog = response.data.log;
-            setSendSuccess(response.data.message || 'Pemberitahuan pencopotan alat berhasil dikirim!');
+            setSendSuccess(response.data.message || 'Pesan notifikasi berhasil dikirim!');
 
             // Update local state so UI instantly reflects the new notice & history
-            setIsolatedDevices(prev => prev.map(d => {
+            setDevices(prev => prev.map(d => {
                 if (d.username === selectedDeviceForNotice.username) {
                     const currentHistory = Array.isArray(d.dismantle_history) ? d.dismantle_history : [];
                     const updatedHistory = [newLog, ...currentHistory];
@@ -182,14 +234,14 @@ _Rumah Kita Network_`;
                 closeNoticeModal();
             }, 1800);
         } catch (err) {
-            console.error('Failed to send dismantle notice:', err);
+            console.error('Failed to send notice:', err);
             const errMsg = err.response?.data?.message || err.message || 'Gagal mengirim pesan WhatsApp';
             setSendError(errMsg);
 
             // If log was still created (e.g. status failed in DB)
             if (err.response?.data?.log) {
                 const failedLog = err.response.data.log;
-                setIsolatedDevices(prev => prev.map(d => {
+                setDevices(prev => prev.map(d => {
                     if (d.username === selectedDeviceForNotice.username) {
                         const currentHistory = Array.isArray(d.dismantle_history) ? d.dismantle_history : [];
                         const updatedHistory = [failedLog, ...currentHistory];
@@ -208,9 +260,21 @@ _Rumah Kita Network_`;
         }
     };
 
+    // Statistics counts
+    const stats = useMemo(() => {
+        const total = devices.length;
+        const isolated = devices.filter(d => d.is_isolated).length;
+        const overdue = devices.filter(d => d.is_overdue).length;
+        const both = devices.filter(d => d.status_type === 'both').length;
+        const notified = devices.filter(d => Boolean(d.last_dismantle_notice)).length;
+        const unnotified = total - notified;
+
+        return { total, isolated, overdue, both, notified, unnotified };
+    }, [devices]);
+
     // Filtered devices
     const filteredDevices = useMemo(() => {
-        return isolatedDevices.filter(device => {
+        return devices.filter(device => {
             const query = searchQuery.toLowerCase().trim();
             const matchesQuery = !query || 
                 (device.username && device.username.toLowerCase().includes(query)) ||
@@ -218,29 +282,33 @@ _Rumah Kita Network_`;
                 (device.customer?.phone && device.customer.phone.includes(query)) ||
                 (device.customer?.address && device.customer.address.toLowerCase().includes(query));
 
-            const hasNotice = Boolean(device.last_dismantle_notice);
-            let matchesStatus = true;
-            if (statusFilter === 'notified') {
-                matchesStatus = hasNotice;
-            } else if (statusFilter === 'unnotified') {
-                matchesStatus = !hasNotice;
+            // Category filter
+            let matchesCategory = true;
+            if (categoryFilter === 'isolir') {
+                matchesCategory = device.is_isolated;
+            } else if (categoryFilter === 'overdue') {
+                matchesCategory = device.is_overdue;
+            } else if (categoryFilter === 'both') {
+                matchesCategory = device.status_type === 'both';
             }
 
-            return matchesQuery && matchesStatus;
+            // Notice filter
+            const hasNotice = Boolean(device.last_dismantle_notice);
+            let matchesNotice = true;
+            if (noticeFilter === 'notified') {
+                matchesNotice = hasNotice;
+            } else if (noticeFilter === 'unnotified') {
+                matchesNotice = !hasNotice;
+            }
+
+            return matchesQuery && matchesCategory && matchesNotice;
         });
-    }, [isolatedDevices, searchQuery, statusFilter]);
-
-    // Statistics counts
-    const totalNotified = useMemo(() => {
-        return isolatedDevices.filter(d => Boolean(d.last_dismantle_notice)).length;
-    }, [isolatedDevices]);
-
-    const totalUnnotified = isolatedDevices.length - totalNotified;
+    }, [devices, searchQuery, categoryFilter, noticeFilter]);
 
     if (loading) {
         return (
             <div className="flex justify-center items-center min-h-[60vh]">
-                <LoadingSpinner text="Memuat data perangkat isolir..." />
+                <LoadingSpinner text="Memuat data perangkat isolir & telat pembayaran..." />
             </div>
         );
     }
@@ -252,10 +320,10 @@ _Rumah Kita Network_`;
                 <div>
                     <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
                         <AlertTriangle className="text-red-600 h-8 w-8" />
-                        Perangkat Isolir
+                        Perangkat Isolir & Telat Pembayaran
                     </h1>
                     <p className="text-gray-600 mt-1">
-                        Daftar perangkat yang dibatasi karena lewat jatuh tempo & manajemen notifikasi pencopotan alat.
+                        Daftar perangkat yang diisolir dan pelanggan yang telat bayar serta manajemen notifikasi WhatsApp penagihan / pencopotan alat.
                     </p>
                 </div>
                 <button
@@ -264,7 +332,7 @@ _Rumah Kita Network_`;
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm font-semibold text-sm"
                 >
                     <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
-                    {refreshing ? 'Memuat...' : 'Refresh MikroTik'}
+                    {refreshing ? 'Memuat...' : 'Refresh MikroTik & Data'}
                 </button>
             </div>
 
@@ -278,49 +346,67 @@ _Rumah Kita Network_`;
             )}
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Total Terdampak */}
+                <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl shadow-md p-5 text-white">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">Total Terdampak</p>
+                            <p className="text-3xl font-extrabold mt-1">{stats.total}</p>
+                            <p className="text-slate-300 text-xs mt-1">{stats.both} isolir & telat bayar</p>
+                        </div>
+                        <div className="bg-white/10 p-3 rounded-xl">
+                            <ShieldAlert size={30} className="text-slate-200" />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Perangkat Isolir */}
                 <div className="bg-gradient-to-r from-red-600 to-rose-600 rounded-2xl shadow-md p-5 text-white">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-red-100 text-xs font-semibold uppercase tracking-wider">Total Perangkat Isolir</p>
-                            <p className="text-3xl font-extrabold mt-1">{isolatedDevices.length}</p>
+                            <p className="text-red-100 text-xs font-semibold uppercase tracking-wider">Perangkat Isolir</p>
+                            <p className="text-3xl font-extrabold mt-1">{stats.isolated}</p>
                             <p className="text-red-100 text-xs mt-1">Profile isolir di MikroTik</p>
                         </div>
                         <div className="bg-white/20 p-3 rounded-xl">
-                            <AlertCircle size={32} />
+                            <Wifi size={30} />
                         </div>
                     </div>
                 </div>
 
+                {/* Telat Pembayaran */}
                 <div className="bg-gradient-to-r from-amber-500 to-orange-600 rounded-2xl shadow-md p-5 text-white">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-amber-100 text-xs font-semibold uppercase tracking-wider">Sudah Diberi Notif</p>
-                            <p className="text-3xl font-extrabold mt-1">{totalNotified}</p>
-                            <p className="text-amber-100 text-xs mt-1">Pemberitahuan pencopotan dikirim</p>
+                            <p className="text-amber-100 text-xs font-semibold uppercase tracking-wider">Telat Pembayaran</p>
+                            <p className="text-3xl font-extrabold mt-1">{stats.overdue}</p>
+                            <p className="text-amber-100 text-xs mt-1">Lewat batas jatuh tempo</p>
                         </div>
                         <div className="bg-white/20 p-3 rounded-xl">
-                            <Clock size={32} />
+                            <CreditCard size={30} />
                         </div>
                     </div>
                 </div>
 
-                <div className="bg-gradient-to-r from-slate-700 to-slate-800 rounded-2xl shadow-md p-5 text-white">
+                {/* Status Notifikasi */}
+                <div className="bg-gradient-to-r from-emerald-600 to-teal-700 rounded-2xl shadow-md p-5 text-white">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">Belum Diberi Notif</p>
-                            <p className="text-3xl font-extrabold mt-1">{totalUnnotified}</p>
-                            <p className="text-slate-300 text-xs mt-1">Menunggu pengiriman pesan</p>
+                            <p className="text-emerald-100 text-xs font-semibold uppercase tracking-wider">Sudah Diberi Notif</p>
+                            <p className="text-3xl font-extrabold mt-1">{stats.notified}</p>
+                            <p className="text-emerald-100 text-xs mt-1">{stats.unnotified} belum dinotifikasi</p>
                         </div>
                         <div className="bg-white/20 p-3 rounded-xl">
-                            <MessageSquare size={32} />
+                            <MessageSquare size={30} />
                         </div>
                     </div>
                 </div>
             </div>
 
             {/* Filter & Search Bar */}
-            <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                {/* Search */}
                 <div className="relative flex-1 max-w-md">
                     <Search className="h-4 w-4 text-gray-400 absolute left-3 top-3" />
                     <input
@@ -340,40 +426,92 @@ _Rumah Kita Network_`;
                     )}
                 </div>
 
-                <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs font-semibold">
-                    <button
-                        type="button"
-                        onClick={() => setStatusFilter('all')}
-                        className={`px-3 py-1.5 rounded-lg transition ${
-                            statusFilter === 'all'
-                                ? 'bg-white shadow-sm text-blue-600 font-bold'
-                                : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                    >
-                        Semua ({isolatedDevices.length})
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setStatusFilter('notified')}
-                        className={`px-3 py-1.5 rounded-lg transition ${
-                            statusFilter === 'notified'
-                                ? 'bg-white shadow-sm text-amber-600 font-bold'
-                                : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                    >
-                        Sudah Notif ({totalNotified})
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setStatusFilter('unnotified')}
-                        className={`px-3 py-1.5 rounded-lg transition ${
-                            statusFilter === 'unnotified'
-                                ? 'bg-white shadow-sm text-slate-800 font-bold'
-                                : 'text-gray-600 hover:text-gray-900'
-                        }`}
-                    >
-                        Belum Notif ({totalUnnotified})
-                    </button>
+                {/* Filters */}
+                <div className="flex flex-wrap items-center gap-2">
+                    {/* Category Filter */}
+                    <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs font-semibold">
+                        <button
+                            type="button"
+                            onClick={() => setCategoryFilter('all')}
+                            className={`px-3 py-1.5 rounded-lg transition ${
+                                categoryFilter === 'all'
+                                    ? 'bg-white shadow-sm text-blue-600 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Semua ({stats.total})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCategoryFilter('isolir')}
+                            className={`px-3 py-1.5 rounded-lg transition ${
+                                categoryFilter === 'isolir'
+                                    ? 'bg-white shadow-sm text-red-600 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Isolir ({stats.isolated})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCategoryFilter('overdue')}
+                            className={`px-3 py-1.5 rounded-lg transition ${
+                                categoryFilter === 'overdue'
+                                    ? 'bg-white shadow-sm text-amber-600 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Telat Bayar ({stats.overdue})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setCategoryFilter('both')}
+                            className={`px-3 py-1.5 rounded-lg transition ${
+                                categoryFilter === 'both'
+                                    ? 'bg-white shadow-sm text-purple-700 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Isolir & Telat ({stats.both})
+                        </button>
+                    </div>
+
+                    {/* Notice Filter */}
+                    <div className="inline-flex rounded-xl bg-gray-100 p-1 text-xs font-semibold">
+                        <button
+                            type="button"
+                            onClick={() => setNoticeFilter('all')}
+                            className={`px-2.5 py-1.5 rounded-lg transition ${
+                                noticeFilter === 'all'
+                                    ? 'bg-white shadow-sm text-gray-900 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Semua Notif
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setNoticeFilter('notified')}
+                            className={`px-2.5 py-1.5 rounded-lg transition ${
+                                noticeFilter === 'notified'
+                                    ? 'bg-white shadow-sm text-emerald-600 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Sudah Notif ({stats.notified})
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setNoticeFilter('unnotified')}
+                            className={`px-2.5 py-1.5 rounded-lg transition ${
+                                noticeFilter === 'unnotified'
+                                    ? 'bg-white shadow-sm text-slate-800 font-bold'
+                                    : 'text-gray-600 hover:text-gray-900'
+                            }`}
+                        >
+                            Belum Notif ({stats.unnotified})
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -384,12 +522,12 @@ _Rumah Kita Network_`;
                         <Wifi size={32} />
                     </div>
                     <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                        {isolatedDevices.length === 0 ? 'Tidak Ada Perangkat Isolir' : 'Tidak Ada Perangkat Sesuai Filter'}
+                        {devices.length === 0 ? 'Tidak Ada Data Isolir Maupun Telat Pembayaran' : 'Tidak Ada Data Sesuai Filter'}
                     </h3>
                     <p className="text-gray-500 text-sm max-w-md mx-auto">
-                        {isolatedDevices.length === 0
-                            ? 'Saat ini tidak ada perangkat yang menggunakan profile isolir di MikroTik.'
-                            : 'Cobalah mengubah kata kunci pencarian atau ganti filter status di atas.'}
+                        {devices.length === 0
+                            ? 'Saat ini semua perangkat dalam kondisi normal dan tidak ada pelanggan telat bayar.'
+                            : 'Cobalah mengubah kata kunci pencarian atau ganti pilihan filter di atas.'}
                     </p>
                 </div>
             ) : (
@@ -406,10 +544,14 @@ _Rumah Kita Network_`;
                             >
                                 <div className="p-5 space-y-4">
                                     {/* Card Header */}
-                                    <div className="flex items-start justify-between">
+                                    <div className="flex items-start justify-between gap-2">
                                         <div className="flex items-center gap-3">
-                                            <div className="w-11 h-11 bg-red-50 text-red-600 rounded-xl flex items-center justify-center font-bold">
-                                                <Wifi size={22} />
+                                            <div className={`w-11 h-11 rounded-xl flex items-center justify-center font-bold ${
+                                                device.is_isolated 
+                                                    ? 'bg-red-50 text-red-600' 
+                                                    : 'bg-amber-50 text-amber-600'
+                                            }`}>
+                                                {device.is_isolated ? <Wifi size={22} /> : <AlertTriangle size={22} />}
                                             </div>
                                             <div>
                                                 <h3 className="text-base font-bold text-gray-900 leading-snug">
@@ -427,9 +569,20 @@ _Rumah Kita Network_`;
                                                 </div>
                                             </div>
                                         </div>
-                                        <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full border border-red-200">
-                                            ISOLIR
-                                        </span>
+
+                                        {/* Status Badges */}
+                                        <div className="flex flex-wrap items-center gap-1.5 justify-end">
+                                            {device.is_isolated && (
+                                                <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-bold rounded-full border border-red-200">
+                                                    ISOLIR
+                                                </span>
+                                            )}
+                                            {device.is_overdue && (
+                                                <span className="px-2.5 py-0.5 bg-amber-100 text-amber-800 text-xs font-bold rounded-full border border-amber-200">
+                                                    TELAT {device.days_overdue} HARI
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
 
                                     {/* Customer Info Box */}
@@ -437,28 +590,43 @@ _Rumah Kita Network_`;
                                         <div className="space-y-2 bg-gray-50 rounded-xl p-3.5 text-xs">
                                             <div className="flex items-center gap-2">
                                                 <Phone size={14} className="text-gray-400 shrink-0" />
-                                                <span className="text-gray-500 w-20">Telepon:</span>
+                                                <span className="text-gray-500 w-24">Telepon:</span>
                                                 <span className="font-semibold text-gray-800">
                                                     {device.customer.phone || '-'}
                                                 </span>
                                             </div>
                                             <div className="flex items-start gap-2">
                                                 <MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
-                                                <span className="text-gray-500 w-20">Alamat:</span>
+                                                <span className="text-gray-500 w-24">Alamat:</span>
                                                 <span className="font-medium text-gray-700 leading-relaxed">
                                                     {device.customer.address || '-'}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <Calendar size={14} className="text-gray-400 shrink-0" />
-                                                <span className="text-gray-500 w-20">Jatuh Tempo:</span>
-                                                <span className="font-bold text-red-600">
+                                                <span className="text-gray-500 w-24">Jatuh Tempo:</span>
+                                                <span className={`font-bold ${device.is_overdue ? 'text-red-600' : 'text-gray-800'}`}>
                                                     {formatDate(device.customer.due_date)}
+                                                    {device.days_overdue > 0 && ` (${device.days_overdue} hari lalu)`}
                                                 </span>
                                             </div>
+                                            {device.unpaid_amount > 0 && (
+                                                <div className="flex items-center gap-2">
+                                                    <CreditCard size={14} className="text-gray-400 shrink-0" />
+                                                    <span className="text-gray-500 w-24">Tagihan Belum:</span>
+                                                    <span className="font-bold text-red-700">
+                                                        {formatCurrency(device.unpaid_amount)}
+                                                        {device.unpaid_invoices_count > 1 && (
+                                                            <span className="text-gray-500 font-normal ml-1">
+                                                                ({device.unpaid_invoices_count} bulan)
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            )}
                                             <div className="flex items-center gap-2">
                                                 <Users size={14} className="text-gray-400 shrink-0" />
-                                                <span className="text-gray-500 w-20">Paket:</span>
+                                                <span className="text-gray-500 w-24">Paket:</span>
                                                 <span className="font-medium text-gray-800">
                                                     {device.customer.package_type || '-'}
                                                 </span>
@@ -477,7 +645,10 @@ _Rumah Kita Network_`;
                                                 <div className="flex items-center justify-between">
                                                     <div className="flex items-center gap-1.5 text-amber-700 font-semibold">
                                                         <Clock size={13} className="shrink-0" />
-                                                        <span>Notifikasi Pencopotan Terakhir:</span>
+                                                        <span>Notifikasi Terakhir:</span>
+                                                        <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-gray-200 text-gray-700">
+                                                            {lastNotice.notice_type === 'peringatan_tagihan' ? 'Peringatan Tagihan' : 'Pencopotan Alat'}
+                                                        </span>
                                                     </div>
                                                     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${
                                                         lastNotice.status === 'sent'
@@ -515,7 +686,7 @@ _Rumah Kita Network_`;
                                             <div className="flex items-center justify-between text-gray-500">
                                                 <span className="flex items-center gap-1.5">
                                                     <Clock size={13} className="text-gray-400" />
-                                                    Belum pernah dikirim notifikasi pencopotan alat
+                                                    Belum pernah dikirim notifikasi penagihan / pencopotan
                                                 </span>
                                             </div>
                                         )}
@@ -540,19 +711,23 @@ _Rumah Kita Network_`;
                                                 <span>({historyCount})</span>
                                             </button>
                                         )}
+
+                                        {/* Notice Button */}
                                         <button
                                             type="button"
                                             onClick={() => openNoticeModal(device)}
                                             disabled={!hasPhone}
-                                            title={!hasPhone ? 'Nomor telepon tidak valid' : 'Kirim pesan pemberitahuan pencopotan alat via WA'}
+                                            title={!hasPhone ? 'Nomor telepon tidak valid' : 'Kirim notifikasi WhatsApp ke pelanggan'}
                                             className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-sm transition active:scale-95 ${
                                                 hasPhone
-                                                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                                                    ? (device.is_isolated ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700')
                                                     : 'bg-gray-400 cursor-not-allowed opacity-60'
                                             }`}
                                         >
                                             <MessageSquare size={14} />
-                                            <span>Kirim WA Pencopotan</span>
+                                            <span>
+                                                {device.is_isolated ? 'Kirim WA Pencopotan' : 'Kirim WA Peringatan'}
+                                            </span>
                                         </button>
                                     </div>
                                 </div>
@@ -567,12 +742,40 @@ _Rumah Kita Network_`;
                 <Modal
                     isOpen={Boolean(selectedDeviceForNotice)}
                     onClose={closeNoticeModal}
-                    title="Kirim Pemberitahuan Pencopotan Alat"
+                    title="Kirim Notifikasi WhatsApp"
                     size="lg"
                 >
                     <div className="space-y-4 text-sm text-gray-700">
+                        {/* Template selector pills */}
+                        <div className="flex items-center gap-2 p-1.5 bg-gray-100 rounded-xl">
+                            <button
+                                type="button"
+                                onClick={() => switchNoticeType('pencopotan_alat')}
+                                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                                    noticeType === 'pencopotan_alat'
+                                        ? 'bg-rose-600 text-white shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                                }`}
+                            >
+                                <AlertTriangle size={14} />
+                                <span>Pencopotan Alat (Isolir)</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => switchNoticeType('peringatan_tagihan')}
+                                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                                    noticeType === 'peringatan_tagihan'
+                                        ? 'bg-emerald-600 text-white shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                                }`}
+                            >
+                                <CreditCard size={14} />
+                                <span>Peringatan Telat Pembayaran</span>
+                            </button>
+                        </div>
+
                         {/* Summary banner */}
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-2 gap-3 text-xs">
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
                             <div>
                                 <span className="text-gray-500">Pelanggan:</span>
                                 <p className="font-bold text-gray-900 text-sm">
@@ -590,12 +793,24 @@ _Rumah Kita Network_`;
                                 <p className="font-mono text-gray-800">{selectedDeviceForNotice.username}</p>
                             </div>
                             <div>
-                                <span className="text-gray-500">Paket Layanan:</span>
+                                <span className="text-gray-500">Keterlambatan:</span>
+                                <p className={`font-bold ${selectedDeviceForNotice.days_overdue > 0 ? 'text-red-600' : 'text-gray-800'}`}>
+                                    {selectedDeviceForNotice.days_overdue > 0 ? `${selectedDeviceForNotice.days_overdue} Hari` : 'Tepat Waktu'}
+                                </p>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Total Tagihan:</span>
+                                <p className="font-bold text-red-600">
+                                    {selectedDeviceForNotice.unpaid_amount > 0 ? formatCurrency(selectedDeviceForNotice.unpaid_amount) : '-'}
+                                </p>
+                            </div>
+                            <div>
+                                <span className="text-gray-500">Paket:</span>
                                 <p className="font-medium text-gray-800">
                                     {selectedDeviceForNotice.customer?.package_type || '-'}
                                 </p>
                             </div>
-                            <div className="col-span-2">
+                            <div className="col-span-2 sm:col-span-3">
                                 <span className="text-gray-500">Alamat:</span>
                                 <p className="font-medium text-gray-800">
                                     {selectedDeviceForNotice.customer?.address || '-'}
@@ -622,7 +837,7 @@ _Rumah Kita Network_`;
                         <div>
                             <div className="flex items-center justify-between mb-1">
                                 <label className="font-bold text-gray-800 text-xs">
-                                    Isi Pesan WhatsApp (Bisa diedit bila perlu penyesuaian tanggal):
+                                    Isi Pesan WhatsApp ({noticeType === 'pencopotan_alat' ? 'Pemberitahuan Pencopotan Alat' : 'Peringatan Jatuh Tempo'}):
                                 </label>
                                 <span className="text-[11px] text-gray-400 font-mono">
                                     {customMessage.length} karakter
@@ -636,7 +851,7 @@ _Rumah Kita Network_`;
                                 className="w-full p-3 bg-white border border-gray-300 rounded-xl text-xs font-sans focus:ring-2 focus:ring-emerald-500 focus:outline-none transition leading-relaxed"
                             />
                             <p className="text-[11px] text-gray-400 mt-1">
-                                💡 Pesan akan dikirim langsung menggunakan service WhatsApp Gateway yang berjalan di server.
+                                💡 Pesan akan dikirim langsung via WhatsApp Gateway server. Anda bisa mengubah isi pesan sebelum mengirim.
                             </p>
                         </div>
 
@@ -693,7 +908,7 @@ _Rumah Kita Network_`;
                 <Modal
                     isOpen={Boolean(selectedDeviceForHistory)}
                     onClose={() => setSelectedDeviceForHistory(null)}
-                    title={`Riwayat Notifikasi Pencopotan - ${selectedDeviceForHistory.customer?.name || selectedDeviceForHistory.username}`}
+                    title={`Riwayat Notifikasi - ${selectedDeviceForHistory.customer?.name || selectedDeviceForHistory.username}`}
                     size="xl"
                 >
                     <div className="space-y-4 text-sm">
@@ -710,7 +925,7 @@ _Rumah Kita Network_`;
                             <div className="p-8 text-center text-gray-400">
                                 <History size={36} className="mx-auto mb-2 text-gray-300" />
                                 <p className="font-semibold text-sm">Belum Ada Riwayat</p>
-                                <p className="text-xs text-gray-400 mt-1">Belum pernah ada pesan pemberitahuan pencopotan alat yang dikirimkan ke pelanggan ini.</p>
+                                <p className="text-xs text-gray-400 mt-1">Belum pernah ada pesan notifikasi yang dikirimkan ke pelanggan ini.</p>
                             </div>
                         ) : (
                             <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
@@ -735,6 +950,9 @@ _Rumah Kita Network_`;
                                                             <XCircle size={12} /> Gagal
                                                         </>
                                                     )}
+                                                </span>
+                                                <span className="text-[10px] px-2 py-0.5 rounded-md font-semibold bg-gray-100 text-gray-700 border border-gray-200">
+                                                    {log.notice_type === 'peringatan_tagihan' ? 'Peringatan Tagihan' : 'Pencopotan Alat'}
                                                 </span>
                                                 <span className="font-semibold text-gray-700">
                                                     {log.sent_at_human}
