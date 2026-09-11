@@ -39,6 +39,7 @@ const GATEWAY_LOG_PATH = path.resolve(__dirname, 'logs/payment-forward.log');
 const RECENT_GATEWAY_EVENTS_LIMIT = 200;
 const CIPHERTEXT_RESOLUTION_TIMEOUT_MS = 30000;
 const LOCAL_AUTH_DATA_PATH = path.resolve(__dirname, 'sessions');
+const WWEBJS_CACHE_PATH = path.resolve(__dirname, '.wwebjs_cache');
 const processedInboundMessageIds = new Map();
 const pendingCiphertextMessages = new Map();
 
@@ -48,8 +49,7 @@ const client = new Client({
         dataPath: './sessions'
     }),
     webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        type: 'none'
     },
     puppeteer: {
         headless: true,
@@ -732,6 +732,104 @@ app.get('/debug/payment-forward-log', (req, res) => {
     });
 });
 
+/**
+ * Normalisasi dan resolusi nomor telepon ke chatId WhatsApp
+ * Menggunakan getNumberId() jika tersedia untuk mendeteksi ID resmi (LID/phone WID),
+ * dengan fallback ke ${formattedPhone}@c.us
+ */
+async function resolveChatId(phoneStr) {
+    let formattedPhone = phoneStr.toString().replace(/\D/g, '');
+
+    // Konversi format Indonesia
+    if (formattedPhone.startsWith('0')) {
+        formattedPhone = '62' + formattedPhone.substring(1);
+    } else if (formattedPhone.startsWith('8')) {
+        formattedPhone = '62' + formattedPhone;
+    }
+
+    // Validasi panjang
+    if (formattedPhone.length < 10 || formattedPhone === '0' || formattedPhone === '62') {
+        throw new Error('Nomor telepon tidak valid');
+    }
+
+    const defaultChatId = formattedPhone + '@c.us';
+
+    // Cek dengan getNumberId jika didukung (paling akurat untuk WhatsApp Web 2.3000+)
+    try {
+        if (typeof client.getNumberId === 'function') {
+            const numberId = await client.getNumberId(formattedPhone);
+            if (numberId && numberId._serialized) {
+                return { chatId: numberId._serialized, formattedPhone };
+            }
+        }
+    } catch (err) {
+        console.warn(`⚠️ getNumberId(${formattedPhone}) warning:`, err.message);
+    }
+
+    // Fallback: cek via isRegisteredUser jika didukung
+    try {
+        if (typeof client.isRegisteredUser === 'function') {
+            const isRegistered = await client.isRegisteredUser(defaultChatId);
+            if (!isRegistered) {
+                throw new Error('Nomor tidak terdaftar di WhatsApp');
+            }
+        }
+    } catch (err) {
+        if (err.message && err.message.includes('Nomor tidak terdaftar')) {
+            throw err;
+        }
+        console.warn(`⚠️ isRegisteredUser(${defaultChatId}) warning:`, err.message);
+    }
+
+    return { chatId: defaultChatId, formattedPhone };
+}
+
+/**
+ * Kirim pesan teks dengan retry jika terjadi context evaluation error
+ */
+async function sendTextMessageSafe(chatId, message, options = { sendSeen: false }) {
+    try {
+        return await client.sendMessage(chatId, message, options);
+    } catch (err) {
+        const isEvalError = err.message && (
+            err.message.includes('getChat') ||
+            err.message.includes('Evaluation failed') ||
+            err.message.includes('Execution context was destroyed')
+        );
+
+        if (isEvalError) {
+            console.warn(`⚠️ client.sendMessage gagal (${err.message}). Mencoba retry dalam 1.5 detik...`);
+            await new Promise(r => setTimeout(r, 1500));
+            return await client.sendMessage(chatId, message, options);
+        }
+
+        throw err;
+    }
+}
+
+/**
+ * Kirim media/file dengan retry jika terjadi context evaluation error
+ */
+async function sendMediaMessageSafe(chatId, media, options = { sendSeen: false }) {
+    try {
+        return await client.sendMessage(chatId, media, options);
+    } catch (err) {
+        const isEvalError = err.message && (
+            err.message.includes('getChat') ||
+            err.message.includes('Evaluation failed') ||
+            err.message.includes('Execution context was destroyed')
+        );
+
+        if (isEvalError) {
+            console.warn(`⚠️ client.sendMessage media gagal (${err.message}). Mencoba retry dalam 1.5 detik...`);
+            await new Promise(r => setTimeout(r, 1500));
+            return await client.sendMessage(chatId, media, options);
+        }
+
+        throw err;
+    }
+}
+
 // Kirim pesan
 app.post('/send', async (req, res) => {
     const { phone, message } = req.body;
@@ -755,41 +853,12 @@ app.post('/send', async (req, res) => {
     }
     
     try {
-        // Format nomor ke format WhatsApp (628xxx@c.us)
-        let formattedPhone = phone.toString().replace(/\D/g, '');
-        
-        // Konversi format Indonesia
-        if (formattedPhone.startsWith('0')) {
-            formattedPhone = '62' + formattedPhone.substring(1);
-        } else if (formattedPhone.startsWith('8')) {
-            formattedPhone = '62' + formattedPhone;
-        }
-        
-        // Validasi
-        if (formattedPhone.length < 10 || formattedPhone === '0' || formattedPhone === '62') {
-            return res.json({
-                success: false,
-                phone: phone,
-                error: 'Nomor telepon tidak valid'
-            });
-        }
-        
-        const chatId = formattedPhone + '@c.us';
-        
-        // Cek apakah nomor terdaftar di WhatsApp
-        const isRegistered = await client.isRegisteredUser(chatId);
-        if (!isRegistered) {
-            return res.json({
-                success: false,
-                phone: formattedPhone,
-                error: 'Nomor tidak terdaftar di WhatsApp'
-            });
-        }
-        
+        const { chatId, formattedPhone } = await resolveChatId(phone);
+
         // Kirim pesan
-        await client.sendMessage(chatId, message, { sendSeen: false });
+        await sendTextMessageSafe(chatId, message, { sendSeen: false });
         
-        console.log(`✅ Pesan terkirim ke ${formattedPhone}`);
+        console.log(`✅ Pesan terkirim ke ${formattedPhone} (${chatId})`);
         
         res.json({
             success: true,
@@ -830,43 +899,19 @@ app.post('/send-media', async (req, res) => {
     }
 
     try {
-        let formattedPhone = phone.toString().replace(/\D/g, '');
-
-        if (formattedPhone.startsWith('0')) {
-            formattedPhone = '62' + formattedPhone.substring(1);
-        } else if (formattedPhone.startsWith('8')) {
-            formattedPhone = '62' + formattedPhone;
-        }
-
-        if (formattedPhone.length < 10 || formattedPhone === '0' || formattedPhone === '62') {
-            return res.json({
-                success: false,
-                phone: phone,
-                error: 'Nomor telepon tidak valid'
-            });
-        }
-
-        const chatId = formattedPhone + '@c.us';
-        const isRegistered = await client.isRegisteredUser(chatId);
-        if (!isRegistered) {
-            return res.json({
-                success: false,
-                phone: formattedPhone,
-                error: 'Nomor tidak terdaftar di WhatsApp'
-            });
-        }
+        const { chatId, formattedPhone } = await resolveChatId(phone);
 
         const media = await MessageMedia.fromUrl(file_url, {
             unsafeMime: true,
             filename: filename || 'dokumen.pdf'
         });
 
-        await client.sendMessage(chatId, media, {
+        await sendMediaMessageSafe(chatId, media, {
             caption: message || '',
             sendSeen: false
         });
 
-        console.log(`✅ Media terkirim ke ${formattedPhone}`);
+        console.log(`✅ Media terkirim ke ${formattedPhone} (${chatId})`);
 
         res.json({
             success: true,
@@ -917,42 +962,10 @@ app.post('/send-bulk', async (req, res) => {
             .replace(/{nama}/g, name);
         
         try {
-            // Format nomor
-            let formattedPhone = phone.toString().replace(/\D/g, '');
-            
-            if (formattedPhone.startsWith('0')) {
-                formattedPhone = '62' + formattedPhone.substring(1);
-            } else if (formattedPhone.startsWith('8')) {
-                formattedPhone = '62' + formattedPhone;
-            }
-            
-            // Validasi
-            if (formattedPhone.length < 10 || formattedPhone === '0' || formattedPhone === '62' || !formattedPhone) {
-                results.push({
-                    phone: phone,
-                    customer_name: name,
-                    success: false,
-                    error: 'Nomor tidak valid atau 0'
-                });
-                continue;
-            }
-            
-            const chatId = formattedPhone + '@c.us';
-            
-            // Cek registrasi
-            const isRegistered = await client.isRegisteredUser(chatId);
-            if (!isRegistered) {
-                results.push({
-                    phone: formattedPhone,
-                    customer_name: name,
-                    success: false,
-                    error: 'Nomor tidak terdaftar di WhatsApp'
-                });
-                continue;
-            }
-            
+            const { chatId, formattedPhone } = await resolveChatId(phone);
+
             // Kirim
-            await client.sendMessage(chatId, personalizedMessage, { sendSeen: false });
+            await sendTextMessageSafe(chatId, personalizedMessage, { sendSeen: false });
             
             console.log(`✅ Terkirim ke ${name} (${formattedPhone})`);
             
@@ -992,17 +1005,31 @@ app.post('/send-bulk', async (req, res) => {
 app.post('/restart', async (req, res) => {
     console.log('🔄 Restart WhatsApp client...');
     resetRuntimeState();
+
+    if (fs.existsSync(WWEBJS_CACHE_PATH)) {
+        try {
+            fs.rmSync(WWEBJS_CACHE_PATH, { recursive: true, force: true });
+            console.log('🧹 Menghapus cache .wwebjs_cache');
+        } catch (e) {
+            console.warn('⚠️ Gagal hapus .wwebjs_cache saat restart:', e.message);
+        }
+    }
     
     try {
         await client.destroy();
-        setTimeout(() => {
-            client.initialize();
-        }, 2000);
-        
-        res.json({ success: true, message: 'WhatsApp sedang direstart' });
     } catch (error) {
-        res.json({ success: false, error: error.message });
+        console.warn('⚠️ client.destroy() saat restart warning:', error.message);
     }
+
+    setTimeout(() => {
+        try {
+            client.initialize();
+        } catch (initErr) {
+            console.error('❌ client.initialize() error saat restart:', initErr.message);
+        }
+    }, 2000);
+    
+    res.json({ success: true, message: 'WhatsApp sedang direstart' });
 });
 
 // Logout
@@ -1034,12 +1061,25 @@ app.post('/reset-session', async (req, res) => {
 
         resetRuntimeState();
 
+        if (fs.existsSync(WWEBJS_CACHE_PATH)) {
+            try {
+                fs.rmSync(WWEBJS_CACHE_PATH, { recursive: true, force: true });
+                console.log('🧹 Menghapus cache .wwebjs_cache saat reset-session');
+            } catch (e) {
+                console.warn('⚠️ Gagal hapus .wwebjs_cache:', e.message);
+            }
+        }
+
         if (fs.existsSync(LOCAL_AUTH_DATA_PATH)) {
             fs.rmSync(LOCAL_AUTH_DATA_PATH, { recursive: true, force: true });
         }
 
         setTimeout(() => {
-            client.initialize();
+            try {
+                client.initialize();
+            } catch (initErr) {
+                console.error('❌ client.initialize() error saat reset-session:', initErr.message);
+            }
         }, 2000);
     }, 50);
 });
