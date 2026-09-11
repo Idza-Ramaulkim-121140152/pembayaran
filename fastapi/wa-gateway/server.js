@@ -43,7 +43,35 @@ const WWEBJS_CACHE_PATH = path.resolve(__dirname, '.wwebjs_cache');
 const processedInboundMessageIds = new Map();
 const pendingCiphertextMessages = new Map();
 
+// Cari executable Chrome/Chromium yang tersedia di sistem
+function findChromiumExecutable() {
+    const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/snap/bin/chromium',
+    ].filter(Boolean);
+
+    for (const p of candidates) {
+        try {
+            if (require('fs').existsSync(p)) {
+                return p;
+            }
+        } catch (_) { /* ignore */ }
+    }
+    return null;
+}
+
 // Inisialisasi WhatsApp Client
+const chromiumPath = findChromiumExecutable();
+if (chromiumPath) {
+    console.log(`🌐 Menggunakan Chrome/Chromium: ${chromiumPath}`);
+} else {
+    console.log('🌐 Chrome/Chromium tidak ditemukan di path sistem, menggunakan bundled puppeteer.');
+}
+
 const client = new Client({
     authStrategy: new LocalAuth({
         dataPath: './sessions'
@@ -53,6 +81,7 @@ const client = new Client({
     },
     puppeteer: {
         headless: true,
+        ...(chromiumPath ? { executablePath: chromiumPath } : {}),
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -64,6 +93,7 @@ const client = new Client({
         ]
     }
 });
+
 
 // Event: QR Code
 client.on('qr', async (qr) => {
