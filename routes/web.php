@@ -332,9 +332,9 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
         // Customer Verification & Prospect Pages (React SPA)
         Route::get('/customer-verification', fn() => view('app'))->name('customer-verification.index');
-        Route::get('/customer-verification/register', fn() => view('app'))->name('customer-verification.register');
+        Route::get('/customer-verification/register', fn() => view('app'))->name('customer-verification.register.view');
         Route::get('/customer-verification/verify/{timestamp}', fn() => view('app'))->name('customer-verification.form');
-        Route::get('/customer-prospects', fn() => view('app'))->name('customer-prospects.index');
+        Route::get('/customer-prospects', fn() => view('app'))->name('customer-prospects.view');
 
         // Distribution Route Page (React SPA)
         Route::get('/jalur-distribusi', fn() => view('app'))->name('distribution.route');

@@ -77,7 +77,7 @@ return new class extends Migration
                 $table->foreignId('completed_by')->nullable()->constrained('users')->nullOnDelete();
                 $table->unsignedInteger('sort_order')->default(0);
                 $table->timestamps();
-                $table->unique(['installation_work_order_id', 'step_key']);
+                $table->unique(['installation_work_order_id', 'step_key'], 'install_checklists_wo_step_unique');
             });
         }
 
