@@ -216,7 +216,7 @@ const dashboardSelectClassName =
     'w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-300 focus:ring-2 focus:ring-orange-100';
 
 function Dashboard() {
-    const userRole = window.appUserRole || 'admin';
+    const userRole = String(window.appUserRole || 'admin').toLowerCase().trim();
     const canEditMutations = !!window.appCanEditMutations;
     const isTeknisi = userRole === 'teknisi';
     const isFinance = userRole === 'finance';
@@ -790,51 +790,55 @@ function Dashboard() {
                                     <Calendar size={15} className="text-orange-500" />
                                     {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
                                 </span>
-                                <span className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-white px-3 py-1.5 shadow-sm">
-                                    <Wallet size={15} className="text-emerald-600" />
-                                    Kas {loading ? 'memuat...' : formatCurrency(cashBalance)}
-                                </span>
+                                {canViewBalance && (
+                                    <span className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-white px-3 py-1.5 shadow-sm">
+                                        <Wallet size={15} className="text-emerald-600" />
+                                        Kas {loading ? 'memuat...' : formatCurrency(cashBalance)}
+                                    </span>
+                                )}
                             </div>
                         </div>
 
-                        <div className="grid w-full max-w-xl gap-4 sm:grid-cols-2">
-                            {canViewBalance && (
-                                <HeroMetric
-                                    label="Saldo Kas Saat Ini"
-                                    value={loading ? 'Memuat...' : formatCurrency(cashBalance)}
-                                    helper={loading ? null : `Masuk ${formatCurrency(monthIncome)} | Keluar ${formatCurrency(monthExpense)} | Pending ${formatCurrency(pendingReceipts)} | Pinjaman ${formatCurrency(totalLoanOutstanding)}`}
-                                    tone="emerald"
-                                />
-                            )}
-                            {canViewBalance && (
-                                <HeroMetric
-                                    label="Total Pinjaman"
-                                    value={loading ? 'Memuat...' : formatCurrency(totalLoanOutstanding)}
-                                    helper="Outstanding hutang ke perusahaan"
-                                    tone="amber"
-                                />
-                            )}
-                            <HeroMetric
-                                label="Cash Runway"
-                                value={runwayDays === null ? '-' : `${runwayDays} hari`}
-                                helper={(
-                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${runwayBadgeClass}`}>
-                                        {runwayStatus}
-                                    </span>
+                        {!isTeknisi && (
+                            <div className="grid w-full max-w-xl gap-4 sm:grid-cols-2">
+                                {canViewBalance && (
+                                    <HeroMetric
+                                        label="Saldo Kas Saat Ini"
+                                        value={loading ? 'Memuat...' : formatCurrency(cashBalance)}
+                                        helper={loading ? null : `Masuk ${formatCurrency(monthIncome)} | Keluar ${formatCurrency(monthExpense)} | Pending ${formatCurrency(pendingReceipts)} | Pinjaman ${formatCurrency(totalLoanOutstanding)}`}
+                                        tone="emerald"
+                                    />
                                 )}
-                                tone={runwayStatus === 'critical' ? 'rose' : runwayStatus === 'warning' ? 'amber' : 'cyan'}
-                            />
-                            <HeroMetric
-                                label="Perubahan Net (MoM)"
-                                value={`${Math.abs(netDeltaPct).toFixed(1)}%`}
-                                tone={isPositiveNetDelta ? 'emerald' : 'rose'}
-                            />
-                            <HeroMetric
-                                label="Aduan Aktif"
-                                value={loading ? '...' : (stats.total_active_complaints || 0)}
-                                tone="violet"
-                            />
-                        </div>
+                                {canViewBalance && (
+                                    <HeroMetric
+                                        label="Total Pinjaman"
+                                        value={loading ? 'Memuat...' : formatCurrency(totalLoanOutstanding)}
+                                        helper="Outstanding hutang ke perusahaan"
+                                        tone="amber"
+                                    />
+                                )}
+                                <HeroMetric
+                                    label="Cash Runway"
+                                    value={runwayDays === null ? '-' : `${runwayDays} hari`}
+                                    helper={(
+                                        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${runwayBadgeClass}`}>
+                                            {runwayStatus}
+                                        </span>
+                                    )}
+                                    tone={runwayStatus === 'critical' ? 'rose' : runwayStatus === 'warning' ? 'amber' : 'cyan'}
+                                />
+                                <HeroMetric
+                                    label="Perubahan Net (MoM)"
+                                    value={`${Math.abs(netDeltaPct).toFixed(1)}%`}
+                                    tone={isPositiveNetDelta ? 'emerald' : 'rose'}
+                                />
+                                <HeroMetric
+                                    label="Aduan Aktif"
+                                    value={loading ? '...' : (stats.total_active_complaints || 0)}
+                                    tone="violet"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     <div className="mt-6 flex flex-wrap gap-3">
