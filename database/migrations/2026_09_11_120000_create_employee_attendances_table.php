@@ -20,6 +20,7 @@ return new class extends Migration
                 $table->string('clock_in_photo')->nullable();
                 $table->string('clock_in_status', 30)->default('on_time'); // 'on_time', 'late'
                 $table->unsignedInteger('clock_in_late_minutes')->default(0);
+                $table->string('late_reason', 255)->nullable();
                 $table->text('clock_in_notes')->nullable();
 
                 $table->dateTime('clock_out_at')->nullable();

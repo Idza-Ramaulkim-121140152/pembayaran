@@ -574,7 +574,7 @@ export default function AttendanceManagementPage() {
                                                     <span className="font-mono font-bold text-slate-900">
                                                         {new Date(row.clock_in_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB
                                                     </span>
-                                                    <div className="mt-1">
+                                                    <div className="mt-1 flex flex-col items-start gap-1">
                                                         <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
                                                             row.clock_in_status === 'late'
                                                                 ? 'bg-amber-100 text-amber-800 border border-amber-200'
@@ -584,6 +584,11 @@ export default function AttendanceManagementPage() {
                                                                 ? `Terlambat ${row.clock_in_late_minutes || 0} mnt`
                                                                 : 'Tepat Waktu'}
                                                         </span>
+                                                        {row.clock_in_status === 'late' && (row.late_reason || row.clock_in_notes) && (
+                                                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 border border-amber-200/80 max-w-[220px] truncate" title={row.late_reason || row.clock_in_notes}>
+                                                                Alasan: {row.late_reason || (row.clock_in_notes?.includes('[Alasan Terlambat:') ? row.clock_in_notes.replace(/^\[Alasan Terlambat:\s*([^\]]+)\].*$/, '$1') : '-')}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ) : (
@@ -784,6 +789,18 @@ export default function AttendanceManagementPage() {
     );
 }
 
+// Helper to parse late reason
+function parseLateReason(rawReason) {
+    if (!rawReason) return { category: '', custom: '' };
+    if (['Bangun Kesiangan', 'Dinas Luar', 'Keperluan Pribadi'].includes(rawReason)) {
+        return { category: rawReason, custom: '' };
+    }
+    if (rawReason.startsWith('Lainnya: ')) {
+        return { category: 'Lainnya', custom: rawReason.replace(/^Lainnya:\s*/, '') };
+    }
+    return { category: 'Lainnya', custom: rawReason };
+}
+
 // Subcomponent: Dialog Edit Absensi
 function EditAttendanceDialog({ attendance, onClose, onSave }) {
     const formatTimeVal = (datetimeStr) => {
@@ -797,6 +814,15 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
         const d = new Date(datetimeStr);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     };
+
+    const initialLate = parseLateReason(
+        attendance.late_reason ||
+        (attendance.clock_in_notes?.includes('[Alasan Terlambat:')
+            ? attendance.clock_in_notes.replace(/^\[Alasan Terlambat:\s*([^\]]+)\].*$/, '$1')
+            : '')
+    );
+    const [lateReasonCategory, setLateReasonCategory] = useState(initialLate.category);
+    const [lateReasonCustom, setLateReasonCustom] = useState(initialLate.custom);
 
     const [form, setForm] = useState({
         date: formatDateVal(attendance.date),
@@ -817,11 +843,19 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
         const clockInAt = form.clock_in_time ? `${datePart} ${form.clock_in_time}:00` : null;
         const clockOutAt = form.clock_out_time ? `${datePart} ${form.clock_out_time}:00` : null;
 
+        let finalLateReason = null;
+        if (form.clock_in_status === 'late' || form.status === 'late') {
+            finalLateReason = lateReasonCategory === 'Lainnya'
+                ? (lateReasonCustom.trim() ? `Lainnya: ${lateReasonCustom.trim()}` : 'Lainnya')
+                : lateReasonCategory;
+        }
+
         onSave({
             date: form.date,
             clock_in_at: clockInAt,
             clock_in_status: form.clock_in_status,
             clock_in_late_minutes: Number(form.clock_in_late_minutes),
+            late_reason: finalLateReason,
             clock_out_at: clockOutAt,
             clock_in_notes: form.clock_in_notes,
             clock_out_notes: form.clock_out_notes,
@@ -831,8 +865,8 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-4 shrink-0">
                     <div>
                         <h3 className="text-sm font-bold text-slate-900">Edit Presensi: {attendance.user?.name}</h3>
                         <p className="text-xs text-slate-500">ID #{attendance.id}</p>
@@ -842,7 +876,7 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
+                <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs overflow-y-auto">
                     <div>
                         <label className="block font-bold text-slate-700">Tanggal</label>
                         <input
@@ -887,6 +921,36 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
                                 onChange={(e) => setForm({ ...form, clock_in_late_minutes: Number(e.target.value) })}
                                 className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 font-medium"
                             />
+                        </div>
+                    )}
+
+                    {(form.clock_in_status === 'late' || form.status === 'late') && (
+                        <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                            <label className="block font-bold text-amber-900">Alasan Keterlambatan</label>
+                            <select
+                                value={lateReasonCategory}
+                                onChange={(e) => setLateReasonCategory(e.target.value)}
+                                className="w-full rounded-xl border border-amber-300 bg-white p-2.5 font-medium"
+                            >
+                                <option value="">-- Pilih Alasan Keterlambatan --</option>
+                                <option value="Bangun Kesiangan">Bangun Kesiangan</option>
+                                <option value="Dinas Luar">Dinas Luar</option>
+                                <option value="Keperluan Pribadi">Keperluan Pribadi</option>
+                                <option value="Lainnya">Lainnya</option>
+                            </select>
+
+                            {lateReasonCategory === 'Lainnya' && (
+                                <div className="pt-1">
+                                    <label className="block text-[11px] font-semibold text-slate-700">Keterangan Tambahan (Lainnya)</label>
+                                    <textarea
+                                        rows={2}
+                                        value={lateReasonCustom}
+                                        onChange={(e) => setLateReasonCustom(e.target.value)}
+                                        placeholder="Ketik keterangan alasan keterlambatan..."
+                                        className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2.5 font-medium"
+                                    />
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -945,6 +1009,9 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
 function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose, onSave }) {
     const todayStr = new Date().toISOString().split('T')[0];
 
+    const [lateReasonCategory, setLateReasonCategory] = useState('');
+    const [lateReasonCustom, setLateReasonCustom] = useState('');
+
     const [form, setForm] = useState({
         user_id: employees[0]?.id || '',
         date: todayStr,
@@ -964,12 +1031,20 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
         const clockInAt = form.clock_in_time ? `${datePart} ${form.clock_in_time}:00` : null;
         const clockOutAt = form.clock_out_time ? `${datePart} ${form.clock_out_time}:00` : null;
 
+        let finalLateReason = null;
+        if (form.clock_in_status === 'late' || form.status === 'late') {
+            finalLateReason = lateReasonCategory === 'Lainnya'
+                ? (lateReasonCustom.trim() ? `Lainnya: ${lateReasonCustom.trim()}` : 'Lainnya')
+                : lateReasonCategory;
+        }
+
         onSave({
             user_id: Number(form.user_id),
             date: form.date,
             clock_in_at: clockInAt,
             clock_in_status: form.clock_in_status,
             clock_in_late_minutes: Number(form.clock_in_late_minutes),
+            late_reason: finalLateReason,
             clock_out_at: clockOutAt,
             status: form.status,
             clock_in_notes: form.clock_in_notes,
@@ -978,8 +1053,8 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in">
-            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-4 shrink-0">
                     <div>
                         <h3 className="text-sm font-bold text-slate-900">Tambah Absensi Manual</h3>
                         <p className="text-xs text-slate-500">Gunakan bila karyawan terkendala kamera/gawai.</p>
@@ -989,7 +1064,7 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs">
+                <form onSubmit={handleSubmit} className="p-5 space-y-4 text-xs overflow-y-auto">
                     <div>
                         <label className="block font-bold text-slate-700">Pilih Karyawan</label>
                         <select
@@ -1041,6 +1116,49 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
                             </select>
                         </div>
                     </div>
+
+                    {form.clock_in_status === 'late' && (
+                        <div>
+                            <label className="block font-bold text-slate-700">Menit Terlambat</label>
+                            <input
+                                type="number"
+                                min="0"
+                                value={form.clock_in_late_minutes}
+                                onChange={(e) => setForm({ ...form, clock_in_late_minutes: Number(e.target.value) })}
+                                className="mt-1 w-full rounded-xl border border-slate-200 p-2.5 font-medium"
+                            />
+                        </div>
+                    )}
+
+                    {(form.clock_in_status === 'late' || form.status === 'late') && (
+                        <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                            <label className="block font-bold text-amber-900">Alasan Keterlambatan</label>
+                            <select
+                                value={lateReasonCategory}
+                                onChange={(e) => setLateReasonCategory(e.target.value)}
+                                className="w-full rounded-xl border border-amber-300 bg-white p-2.5 font-medium"
+                            >
+                                <option value="">-- Pilih Alasan Keterlambatan --</option>
+                                <option value="Bangun Kesiangan">Bangun Kesiangan</option>
+                                <option value="Dinas Luar">Dinas Luar</option>
+                                <option value="Keperluan Pribadi">Keperluan Pribadi</option>
+                                <option value="Lainnya">Lainnya</option>
+                            </select>
+
+                            {lateReasonCategory === 'Lainnya' && (
+                                <div className="pt-1">
+                                    <label className="block text-[11px] font-semibold text-slate-700">Keterangan Tambahan (Lainnya)</label>
+                                    <textarea
+                                        rows={2}
+                                        value={lateReasonCustom}
+                                        onChange={(e) => setLateReasonCustom(e.target.value)}
+                                        placeholder="Ketik keterangan alasan keterlambatan..."
+                                        className="mt-1 w-full rounded-xl border border-amber-300 bg-white p-2.5 font-medium"
+                                    />
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-3">
                         <div>

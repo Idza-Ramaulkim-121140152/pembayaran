@@ -29,6 +29,9 @@ export default function AttendanceCameraModal({
     const [capturedImage, setCapturedImage] = useState(null);
     const [capturedSmileScore, setCapturedSmileScore] = useState(0);
     const [notes, setNotes] = useState('');
+    const [lateReasonCategory, setLateReasonCategory] = useState('');
+    const [lateReasonCustom, setLateReasonCustom] = useState('');
+    const [lateReasonError, setLateReasonError] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [countdown, setCountdown] = useState(null);
 
@@ -86,7 +89,7 @@ export default function AttendanceCameraModal({
             } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
                 setErrorMessage('Kamera tidak ditemukan pada perangkat Anda.');
             } else {
-                setErrorMessage('Gagal membuka kamera: ' . err.message);
+                setErrorMessage('Gagal membuka kamera: ' + err.message);
             }
         }
     }, []);
@@ -144,6 +147,9 @@ export default function AttendanceCameraModal({
             stopCamera();
             setCapturedImage(null);
             setNotes('');
+            setLateReasonCategory('');
+            setLateReasonCustom('');
+            setLateReasonError('');
         }
 
         return () => {
@@ -170,16 +176,41 @@ export default function AttendanceCameraModal({
     const handleConfirmSubmit = async () => {
         if (!capturedImage) return;
 
+        if (isClockIn && isLate) {
+            if (!lateReasonCategory) {
+                setLateReasonError('Pilih alasan keterlambatan terlebih dahulu');
+                return;
+            }
+            if (lateReasonCategory === 'Lainnya' && !lateReasonCustom.trim()) {
+                setLateReasonError('Mohon ketikkan keterangan alasan lainnya');
+                return;
+            }
+        }
+
         try {
             setSubmitting(true);
+            setLateReasonError('');
+
+            let finalLateReason = null;
+            if (isClockIn && isLate) {
+                finalLateReason = lateReasonCategory === 'Lainnya'
+                    ? `Lainnya: ${lateReasonCustom.trim()}`
+                    : lateReasonCategory;
+            }
+
             await onSubmit({
                 photo: capturedImage,
                 smile_score: capturedSmileScore,
+                late_reason: finalLateReason,
                 notes: notes.trim() || null,
             });
             onClose();
         } catch (err) {
             console.error('Submit attendance error:', err);
+            const serverMsg = err?.response?.data?.errors?.late_reason?.[0] || err?.response?.data?.message;
+            if (serverMsg) {
+                setLateReasonError(serverMsg);
+            }
         } finally {
             setSubmitting(false);
         }
@@ -192,9 +223,9 @@ export default function AttendanceCameraModal({
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="relative flex w-full max-w-lg max-h-[92vh] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
                 {/* Header */}
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-5 py-4">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-5 py-4 shrink-0">
                     <div className="flex items-center gap-2.5">
                         <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${isClockIn ? 'bg-orange-500 text-white' : 'bg-blue-600 text-white'}`}>
                             <Camera size={20} />
@@ -218,7 +249,7 @@ export default function AttendanceCameraModal({
                 </div>
 
                 {/* Body Content */}
-                <div className="p-5 space-y-4">
+                <div className="p-5 space-y-4 overflow-y-auto">
                     {/* Schedule & Late Alert */}
                     {isClockIn && (
                         <div className={`rounded-xl border p-3.5 text-xs ${isLate ? 'border-amber-200 bg-amber-50/80 text-amber-900' : 'border-emerald-200 bg-emerald-50/80 text-emerald-900'}`}>
@@ -237,7 +268,7 @@ export default function AttendanceCameraModal({
                                     </div>
                                     <p className="mt-1 leading-relaxed text-slate-600">
                                         {isLate
-                                            ? 'Anda melakukan absensi melewati jam masuk. Status keterlambatan akan dicatat pada sistem, namun Anda tetap dapat melakukan absensi.'
+                                            ? 'Anda melakukan absensi melewati jam masuk. Wajib melampirkan alasan keterlambatan setelah pengambilan foto sebelum data absensi disimpan.'
                                             : 'Waktu kehadiran Anda tercatat tepat waktu sebelum jam masuk.'}
                                     </p>
                                 </div>
@@ -344,18 +375,77 @@ export default function AttendanceCameraModal({
                         )}
                     </div>
 
-                    {/* Additional Notes Field in Captured Mode */}
+                    {/* Captured Form: Late Reason & Notes */}
                     {cameraState === 'captured' && (
-                        <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-700">Catatan Kehadiran (Opsional)</label>
-                            <input
-                                type="text"
-                                value={notes}
-                                onChange={(e) => setNotes(e.target.value)}
-                                placeholder="Contoh: WFO, lembur perbaikan ODP, dsb."
-                                maxLength={250}
-                                className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 placeholder:text-slate-400"
-                            />
+                        <div className="space-y-3 pt-1">
+                            {/* Late Reason section if isClockIn && isLate */}
+                            {isClockIn && isLate && (
+                                <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                                            <AlertTriangle size={15} className="text-amber-600" />
+                                            Alasan Keterlambatan
+                                        </label>
+                                        <span className="text-[11px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                                            Wajib Dipilih
+                                        </span>
+                                    </div>
+
+                                    <select
+                                        value={lateReasonCategory}
+                                        onChange={(e) => {
+                                            setLateReasonCategory(e.target.value);
+                                            if (lateReasonError) setLateReasonError('');
+                                        }}
+                                        className="w-full rounded-xl border border-amber-300 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 shadow-sm"
+                                    >
+                                        <option value="">-- Pilih Alasan Keterlambatan --</option>
+                                        <option value="Bangun Kesiangan">Bangun Kesiangan</option>
+                                        <option value="Dinas Luar">Dinas Luar</option>
+                                        <option value="Keperluan Pribadi">Keperluan Pribadi</option>
+                                        <option value="Lainnya">Lainnya</option>
+                                    </select>
+
+                                    {lateReasonCategory === 'Lainnya' && (
+                                        <div className="space-y-1 pt-1 animate-in fade-in duration-150">
+                                            <label className="text-[11px] font-semibold text-slate-700">
+                                                Jelaskan Alasan Keterlambatan: <span className="text-rose-500">*</span>
+                                            </label>
+                                            <textarea
+                                                rows={2}
+                                                value={lateReasonCustom}
+                                                onChange={(e) => {
+                                                    setLateReasonCustom(e.target.value);
+                                                    if (lateReasonError) setLateReasonError('');
+                                                }}
+                                                placeholder="Tuliskan alasan keterlambatan Anda secara jelas..."
+                                                maxLength={250}
+                                                className="w-full rounded-xl border border-amber-300 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-200 placeholder:text-slate-400 shadow-sm"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {lateReasonError && (
+                                        <p className="text-xs font-semibold text-rose-600 flex items-center gap-1.5 pt-0.5">
+                                            <AlertTriangle size={13} />
+                                            {lateReasonError}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Additional Notes Field */}
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-semibold text-slate-700">Catatan Kehadiran (Opsional)</label>
+                                <input
+                                    type="text"
+                                    value={notes}
+                                    onChange={(e) => setNotes(e.target.value)}
+                                    placeholder="Contoh: WFO, lembur perbaikan ODP, dsb."
+                                    maxLength={250}
+                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:ring-2 focus:ring-orange-100 placeholder:text-slate-400"
+                                />
+                            </div>
                         </div>
                     )}
                 </div>

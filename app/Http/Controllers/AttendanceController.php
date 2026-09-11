@@ -37,12 +37,13 @@ class AttendanceController extends Controller
         $request->validate([
             'photo' => 'nullable|string',
             'smile_score' => 'nullable|numeric|min:0|max:1',
+            'late_reason' => 'nullable|string|max:255',
             'notes' => 'nullable|string|max:500',
         ]);
 
         $attendance = $this->attendanceService->clockIn(
             $request->user(),
-            $request->only(['photo', 'smile_score', 'notes']),
+            $request->only(['photo', 'smile_score', 'late_reason', 'notes']),
             $request->ip(),
             $request->userAgent()
         );
@@ -166,6 +167,7 @@ class AttendanceController extends Controller
             'clock_in_at' => 'nullable|date',
             'clock_in_status' => 'nullable|string|in:on_time,late',
             'clock_in_late_minutes' => 'nullable|integer|min:0',
+            'late_reason' => 'nullable|string|max:255',
             'clock_in_notes' => 'nullable|string|max:500',
             'clock_out_at' => 'nullable|date|after_or_equal:clock_in_at',
             'clock_out_notes' => 'nullable|string|max:500',
@@ -191,6 +193,7 @@ class AttendanceController extends Controller
             'clock_in_at' => 'nullable|date',
             'clock_in_status' => 'nullable|string|in:on_time,late',
             'clock_in_late_minutes' => 'nullable|integer|min:0',
+            'late_reason' => 'nullable|string|max:255',
             'clock_in_notes' => 'nullable|string|max:500',
             'clock_out_at' => 'nullable|date',
             'clock_out_notes' => 'nullable|string|max:500',
@@ -244,6 +247,7 @@ class AttendanceController extends Controller
                 'Jam Masuk',
                 'Status Masuk',
                 'Keterlambatan (Menit)',
+                'Alasan Terlambat',
                 'Jam Pulang',
                 'Durasi Kerja',
                 'Status Absensi',
@@ -261,6 +265,7 @@ class AttendanceController extends Controller
                     $item->clock_in_at ? $item->clock_in_at->format('H:i:s') : '-',
                     $item->clock_in_status === 'late' ? 'Terlambat' : 'Tepat Waktu',
                     $item->clock_in_late_minutes ?? 0,
+                    $item->late_reason ?? '-',
                     $item->clock_out_at ? $item->clock_out_at->format('H:i:s') : '-',
                     $item->work_duration_formatted ?? '-',
                     $item->status ?? 'present',

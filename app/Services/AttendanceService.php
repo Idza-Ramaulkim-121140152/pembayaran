@@ -42,6 +42,7 @@ class AttendanceService
                     $table->string('clock_in_photo')->nullable();
                     $table->string('clock_in_status', 30)->default('on_time');
                     $table->unsignedInteger('clock_in_late_minutes')->default(0);
+                    $table->string('late_reason', 255)->nullable();
                     $table->text('clock_in_notes')->nullable();
 
                     $table->dateTime('clock_out_at')->nullable();
@@ -259,6 +260,16 @@ class AttendanceService
         $clockInStatus = $isLate ? 'late' : 'on_time';
         $status = $isLate ? 'late' : 'present';
 
+        $lateReason = null;
+        if ($isLate) {
+            $lateReason = trim((string) ($data['late_reason'] ?? ''));
+            if ($lateReason === '') {
+                throw ValidationException::withMessages([
+                    'late_reason' => 'Alasan keterlambatan wajib dipilih atau diisi.',
+                ]);
+            }
+        }
+
         // Process selfie photo
         $photoPath = null;
         if (!empty($data['photo'])) {
@@ -267,6 +278,11 @@ class AttendanceService
 
         $smileScore = isset($data['smile_score']) ? (float) $data['smile_score'] : null;
 
+        $notes = $data['notes'] ?? null;
+        if ($lateReason) {
+            $notes = "[Alasan Terlambat: {$lateReason}]" . ($notes ? ' ' . $notes : '');
+        }
+
         $attendance = $existing ?: new EmployeeAttendance();
         $attendance->user_id = $user->id;
         $attendance->date = $todayDate;
@@ -274,7 +290,10 @@ class AttendanceService
         $attendance->clock_in_photo = $photoPath ?: $attendance->clock_in_photo;
         $attendance->clock_in_status = $clockInStatus;
         $attendance->clock_in_late_minutes = $lateMinutes;
-        $attendance->clock_in_notes = $data['notes'] ?? null;
+        if (Schema::hasColumn('employee_attendances', 'late_reason')) {
+            $attendance->late_reason = $lateReason;
+        }
+        $attendance->clock_in_notes = $notes;
         $attendance->status = $status;
         $attendance->smile_score_in = $smileScore;
         $attendance->ip_address = $ip;
@@ -425,13 +444,22 @@ class AttendanceService
 
         $status = $data['status'] ?? ($clockInStatus === 'late' ? 'late' : 'present');
 
+        $lateReason = !empty($data['late_reason']) ? trim((string) $data['late_reason']) : null;
+        $notes = $data['clock_in_notes'] ?? 'Dibuat manual oleh Admin';
+        if ($lateReason && !str_contains($notes, $lateReason)) {
+            $notes = "[Alasan Terlambat: {$lateReason}] " . $notes;
+        }
+
         $record = new EmployeeAttendance();
         $record->user_id = $userId;
         $record->date = $date;
         $record->clock_in_at = $clockInAt;
         $record->clock_in_status = $clockInStatus;
         $record->clock_in_late_minutes = $lateMinutes;
-        $record->clock_in_notes = $data['clock_in_notes'] ?? 'Dibuat manual oleh Admin';
+        if (Schema::hasColumn('employee_attendances', 'late_reason')) {
+            $record->late_reason = $lateReason;
+        }
+        $record->clock_in_notes = $notes;
         $record->clock_out_at = $clockOutAt;
         $record->clock_out_notes = $data['clock_out_notes'] ?? null;
         $record->work_duration_minutes = $durationMinutes;
@@ -489,6 +517,10 @@ class AttendanceService
 
         if (isset($data['clock_out_notes'])) {
             $record->clock_out_notes = $data['clock_out_notes'];
+        }
+
+        if (array_key_exists('late_reason', $data) && Schema::hasColumn('employee_attendances', 'late_reason')) {
+            $record->late_reason = $data['late_reason'] ? trim((string) $data['late_reason']) : null;
         }
 
         if (isset($data['status'])) {

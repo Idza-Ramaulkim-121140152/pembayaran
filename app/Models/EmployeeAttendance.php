@@ -21,6 +21,7 @@ class EmployeeAttendance extends Model
         'clock_in_photo',
         'clock_in_status',
         'clock_in_late_minutes',
+        'late_reason',
         'clock_in_notes',
         'clock_out_at',
         'clock_out_photo',
