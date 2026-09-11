@@ -38,12 +38,14 @@ class AttendanceController extends Controller
             'photo' => 'nullable|string',
             'smile_score' => 'nullable|numeric|min:0|max:1',
             'late_reason' => 'nullable|string|max:255',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
             'notes' => 'nullable|string|max:500',
         ]);
 
         $attendance = $this->attendanceService->clockIn(
             $request->user(),
-            $request->only(['photo', 'smile_score', 'late_reason', 'notes']),
+            $request->only(['photo', 'smile_score', 'late_reason', 'latitude', 'longitude', 'notes']),
             $request->ip(),
             $request->userAgent()
         );
@@ -67,12 +69,14 @@ class AttendanceController extends Controller
         $request->validate([
             'photo' => 'nullable|string',
             'smile_score' => 'nullable|numeric|min:0|max:1',
+            'latitude' => 'nullable|numeric|between:-90,90',
+            'longitude' => 'nullable|numeric|between:-180,180',
             'notes' => 'nullable|string|max:500',
         ]);
 
         $attendance = $this->attendanceService->clockOut(
             $request->user(),
-            $request->only(['photo', 'smile_score', 'notes']),
+            $request->only(['photo', 'smile_score', 'latitude', 'longitude', 'notes']),
             $request->ip(),
             $request->userAgent()
         );
@@ -168,8 +172,12 @@ class AttendanceController extends Controller
             'clock_in_status' => 'nullable|string|in:on_time,late',
             'clock_in_late_minutes' => 'nullable|integer|min:0',
             'late_reason' => 'nullable|string|max:255',
+            'clock_in_latitude' => 'nullable|numeric|between:-90,90',
+            'clock_in_longitude' => 'nullable|numeric|between:-180,180',
             'clock_in_notes' => 'nullable|string|max:500',
             'clock_out_at' => 'nullable|date|after_or_equal:clock_in_at',
+            'clock_out_latitude' => 'nullable|numeric|between:-90,90',
+            'clock_out_longitude' => 'nullable|numeric|between:-180,180',
             'clock_out_notes' => 'nullable|string|max:500',
             'status' => 'nullable|string|in:present,late,leave,sick,alpha',
         ]);
@@ -194,8 +202,12 @@ class AttendanceController extends Controller
             'clock_in_status' => 'nullable|string|in:on_time,late',
             'clock_in_late_minutes' => 'nullable|integer|min:0',
             'late_reason' => 'nullable|string|max:255',
+            'clock_in_latitude' => 'nullable|numeric|between:-90,90',
+            'clock_in_longitude' => 'nullable|numeric|between:-180,180',
             'clock_in_notes' => 'nullable|string|max:500',
             'clock_out_at' => 'nullable|date',
+            'clock_out_latitude' => 'nullable|numeric|between:-90,90',
+            'clock_out_longitude' => 'nullable|numeric|between:-180,180',
             'clock_out_notes' => 'nullable|string|max:500',
             'status' => 'nullable|string|in:present,late,leave,sick,alpha',
         ]);
@@ -248,7 +260,13 @@ class AttendanceController extends Controller
                 'Status Masuk',
                 'Keterlambatan (Menit)',
                 'Alasan Terlambat',
+                'Latitude Masuk',
+                'Longitude Masuk',
+                'Maps Masuk',
                 'Jam Pulang',
+                'Latitude Pulang',
+                'Longitude Pulang',
+                'Maps Pulang',
                 'Durasi Kerja',
                 'Status Absensi',
                 'Catatan Masuk',
@@ -266,7 +284,13 @@ class AttendanceController extends Controller
                     $item->clock_in_status === 'late' ? 'Terlambat' : 'Tepat Waktu',
                     $item->clock_in_late_minutes ?? 0,
                     $item->late_reason ?? '-',
+                    $item->clock_in_latitude ?? '-',
+                    $item->clock_in_longitude ?? '-',
+                    $item->clock_in_maps_url ?? '-',
                     $item->clock_out_at ? $item->clock_out_at->format('H:i:s') : '-',
+                    $item->clock_out_latitude ?? '-',
+                    $item->clock_out_longitude ?? '-',
+                    $item->clock_out_maps_url ?? '-',
                     $item->work_duration_formatted ?? '-',
                     $item->status ?? 'present',
                     $item->clock_in_notes ?? '',

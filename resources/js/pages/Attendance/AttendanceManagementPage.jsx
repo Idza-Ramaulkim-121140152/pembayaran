@@ -19,6 +19,8 @@ import {
     Shield,
     Sparkles,
     TrendingUp,
+    MapPin,
+    ExternalLink,
 } from 'lucide-react';
 import apiClient from '../../services/api';
 
@@ -554,6 +556,9 @@ export default function AttendanceManagementPage() {
                                                         user: row.user?.name,
                                                         time: row.clock_in_at ? new Date(row.clock_in_at).toLocaleTimeString('id-ID') : '',
                                                         smileScore: row.smile_score_in,
+                                                        latitude: row.clock_in_latitude,
+                                                        longitude: row.clock_in_longitude,
+                                                        mapsUrl: row.clock_in_maps_url,
                                                     })}
                                                     className="group relative inline-block h-10 w-10 overflow-hidden rounded-xl border border-emerald-300 shadow-sm transition hover:scale-105"
                                                 >
@@ -589,6 +594,19 @@ export default function AttendanceManagementPage() {
                                                                 Alasan: {row.late_reason || (row.clock_in_notes?.includes('[Alasan Terlambat:') ? row.clock_in_notes.replace(/^\[Alasan Terlambat:\s*([^\]]+)\].*$/, '$1') : '-')}
                                                             </span>
                                                         )}
+                                                        {row.clock_in_latitude && row.clock_in_longitude && (
+                                                            <a
+                                                                href={row.clock_in_maps_url || `https://www.google.com/maps?q=${row.clock_in_latitude},${row.clock_in_longitude}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 hover:bg-blue-100 transition border border-blue-200/70"
+                                                                title={`Buka Titik Koordinat Masuk (${row.clock_in_latitude}, ${row.clock_in_longitude}) di Google Maps`}
+                                                            >
+                                                                <MapPin size={10} className="text-blue-600" />
+                                                                <span>GPS: {Number(row.clock_in_latitude).toFixed(4)}, {Number(row.clock_in_longitude).toFixed(4)}</span>
+                                                                <ExternalLink size={9} className="opacity-60" />
+                                                            </a>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ) : (
@@ -607,6 +625,9 @@ export default function AttendanceManagementPage() {
                                                         user: row.user?.name,
                                                         time: row.clock_out_at ? new Date(row.clock_out_at).toLocaleTimeString('id-ID') : '',
                                                         smileScore: row.smile_score_out,
+                                                        latitude: row.clock_out_latitude,
+                                                        longitude: row.clock_out_longitude,
+                                                        mapsUrl: row.clock_out_maps_url,
                                                     })}
                                                     className="group relative inline-block h-10 w-10 overflow-hidden rounded-xl border border-blue-300 shadow-sm transition hover:scale-105"
                                                 >
@@ -623,9 +644,26 @@ export default function AttendanceManagementPage() {
                                         {/* Jam Pulang */}
                                         <td className="px-4 py-3 whitespace-nowrap">
                                             {row.clock_out_at ? (
-                                                <span className="font-mono font-semibold text-slate-900">
-                                                    {new Date(row.clock_out_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB
-                                                </span>
+                                                <div className="space-y-1">
+                                                    <span className="font-mono font-semibold text-slate-900">
+                                                        {new Date(row.clock_out_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB
+                                                    </span>
+                                                    {row.clock_out_latitude && row.clock_out_longitude && (
+                                                        <div>
+                                                            <a
+                                                                href={row.clock_out_maps_url || `https://www.google.com/maps?q=${row.clock_out_latitude},${row.clock_out_longitude}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 hover:bg-slate-200 transition border border-slate-200"
+                                                                title={`Buka Titik Koordinat Pulang (${row.clock_out_latitude}, ${row.clock_out_longitude}) di Google Maps`}
+                                                            >
+                                                                <MapPin size={10} className="text-slate-600" />
+                                                                <span>GPS: {Number(row.clock_out_latitude).toFixed(4)}, {Number(row.clock_out_longitude).toFixed(4)}</span>
+                                                                <ExternalLink size={9} className="opacity-60" />
+                                                            </a>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             ) : (
                                                 <span className="text-slate-400 italic">Belum pulang</span>
                                             )}
@@ -729,6 +767,23 @@ export default function AttendanceManagementPage() {
                                 </div>
                             )}
                         </div>
+                        {photoPreview.latitude && photoPreview.longitude && (
+                            <div className="flex items-center justify-between border-t border-white/10 bg-slate-950/90 px-4 py-2.5 text-xs">
+                                <span className="flex items-center gap-1.5 text-slate-300">
+                                    <MapPin size={14} className="text-orange-400 shrink-0" />
+                                    <span className="font-mono">{Number(photoPreview.latitude).toFixed(6)}, {Number(photoPreview.longitude).toFixed(6)}</span>
+                                </span>
+                                <a
+                                    href={photoPreview.mapsUrl || `https://www.google.com/maps?q=${photoPreview.latitude},${photoPreview.longitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 rounded-lg bg-orange-500/20 px-2.5 py-1 text-[11px] font-semibold text-orange-400 hover:bg-orange-500/30 transition border border-orange-500/30"
+                                >
+                                    <span>Buka Maps</span>
+                                    <ExternalLink size={11} />
+                                </a>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -829,7 +884,11 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
         clock_in_time: formatTimeVal(attendance.clock_in_at),
         clock_in_status: attendance.clock_in_status || 'on_time',
         clock_in_late_minutes: attendance.clock_in_late_minutes || 0,
+        clock_in_latitude: attendance.clock_in_latitude ?? '',
+        clock_in_longitude: attendance.clock_in_longitude ?? '',
         clock_out_time: formatTimeVal(attendance.clock_out_at),
+        clock_out_latitude: attendance.clock_out_latitude ?? '',
+        clock_out_longitude: attendance.clock_out_longitude ?? '',
         clock_in_notes: attendance.clock_in_notes || '',
         clock_out_notes: attendance.clock_out_notes || '',
         status: attendance.status || 'present',
@@ -856,7 +915,11 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
             clock_in_status: form.clock_in_status,
             clock_in_late_minutes: Number(form.clock_in_late_minutes),
             late_reason: finalLateReason,
+            clock_in_latitude: form.clock_in_latitude !== '' ? Number(form.clock_in_latitude) : null,
+            clock_in_longitude: form.clock_in_longitude !== '' ? Number(form.clock_in_longitude) : null,
             clock_out_at: clockOutAt,
+            clock_out_latitude: form.clock_out_latitude !== '' ? Number(form.clock_out_latitude) : null,
+            clock_out_longitude: form.clock_out_longitude !== '' ? Number(form.clock_out_longitude) : null,
             clock_in_notes: form.clock_in_notes,
             clock_out_notes: form.clock_out_notes,
             status: form.status,
@@ -908,6 +971,38 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
                                 <option value="on_time">Tepat Waktu</option>
                                 <option value="late">Terlambat</option>
                             </select>
+                        </div>
+                    </div>
+
+                    {/* GPS Coordinates Masuk */}
+                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                        <div>
+                            <label className="block font-bold text-slate-700 flex items-center gap-1">
+                                <MapPin size={12} className="text-blue-500" />
+                                Latitude Masuk
+                            </label>
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_in_latitude}
+                                onChange={(e) => setForm({ ...form, clock_in_latitude: e.target.value })}
+                                placeholder="-6.2088..."
+                                className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                        </div>
+                        <div>
+                            <label className="block font-bold text-slate-700 flex items-center gap-1">
+                                <MapPin size={12} className="text-blue-500" />
+                                Longitude Masuk
+                            </label>
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_in_longitude}
+                                onChange={(e) => setForm({ ...form, clock_in_longitude: e.target.value })}
+                                placeholder="106.8456..."
+                                className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
                         </div>
                     </div>
 
@@ -980,6 +1075,38 @@ function EditAttendanceDialog({ attendance, onClose, onSave }) {
                         </div>
                     </div>
 
+                    {/* GPS Coordinates Pulang */}
+                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                        <div>
+                            <label className="block font-bold text-slate-700 flex items-center gap-1">
+                                <MapPin size={12} className="text-slate-500" />
+                                Latitude Pulang
+                            </label>
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_out_latitude}
+                                onChange={(e) => setForm({ ...form, clock_out_latitude: e.target.value })}
+                                placeholder="-6.2088..."
+                                className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                        </div>
+                        <div>
+                            <label className="block font-bold text-slate-700 flex items-center gap-1">
+                                <MapPin size={12} className="text-slate-500" />
+                                Longitude Pulang
+                            </label>
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_out_longitude}
+                                onChange={(e) => setForm({ ...form, clock_out_longitude: e.target.value })}
+                                placeholder="106.8456..."
+                                className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                        </div>
+                    </div>
+
                     <div>
                         <label className="block font-bold text-slate-700">Catatan Masuk / Pulang</label>
                         <textarea
@@ -1011,6 +1138,7 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
 
     const [lateReasonCategory, setLateReasonCategory] = useState('');
     const [lateReasonCustom, setLateReasonCustom] = useState('');
+    const [detectingGps, setDetectingGps] = useState(false);
 
     const [form, setForm] = useState({
         user_id: employees[0]?.id || '',
@@ -1019,9 +1147,36 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
         clock_out_time: workEndTime,
         clock_in_status: 'on_time',
         clock_in_late_minutes: 0,
+        clock_in_latitude: '',
+        clock_in_longitude: '',
+        clock_out_latitude: '',
+        clock_out_longitude: '',
         status: 'present',
         clock_in_notes: 'Input manual oleh Superadmin',
     });
+
+    const handleDetectGps = () => {
+        if (!navigator.geolocation) {
+            alert('Browser atau perangkat Anda tidak mendukung fitur GPS.');
+            return;
+        }
+        setDetectingGps(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setForm((prev) => ({
+                    ...prev,
+                    clock_in_latitude: pos.coords.latitude.toFixed(6),
+                    clock_in_longitude: pos.coords.longitude.toFixed(6),
+                }));
+                setDetectingGps(false);
+            },
+            (err) => {
+                setDetectingGps(false);
+                alert('Gagal mendeteksi lokasi GPS: ' + err.message);
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
+    };
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -1045,7 +1200,11 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
             clock_in_status: form.clock_in_status,
             clock_in_late_minutes: Number(form.clock_in_late_minutes),
             late_reason: finalLateReason,
+            clock_in_latitude: form.clock_in_latitude !== '' ? Number(form.clock_in_latitude) : null,
+            clock_in_longitude: form.clock_in_longitude !== '' ? Number(form.clock_in_longitude) : null,
             clock_out_at: clockOutAt,
+            clock_out_latitude: form.clock_out_latitude !== '' ? Number(form.clock_out_latitude) : null,
+            clock_out_longitude: form.clock_out_longitude !== '' ? Number(form.clock_out_longitude) : null,
             status: form.status,
             clock_in_notes: form.clock_in_notes,
         });
@@ -1117,6 +1276,43 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
                         </div>
                     </div>
 
+                    {/* GPS Coordinates Masuk */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-700 flex items-center gap-1">
+                                <MapPin size={12} className="text-blue-500" />
+                                Koordinat GPS Masuk (Opsional)
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleDetectGps}
+                                disabled={detectingGps}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                            >
+                                <RefreshCw size={10} className={detectingGps ? 'animate-spin' : ''} />
+                                {detectingGps ? 'Mendeteksi...' : 'Ambil GPS Saya'}
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_in_latitude}
+                                onChange={(e) => setForm({ ...form, clock_in_latitude: e.target.value })}
+                                placeholder="Latitude (-6.2088)"
+                                className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_in_longitude}
+                                onChange={(e) => setForm({ ...form, clock_in_longitude: e.target.value })}
+                                placeholder="Longitude (106.8456)"
+                                className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                        </div>
+                    </div>
+
                     {form.clock_in_status === 'late' && (
                         <div>
                             <label className="block font-bold text-slate-700">Menit Terlambat</label>
@@ -1182,6 +1378,32 @@ function ManualAttendanceDialog({ employees, workStartTime, workEndTime, onClose
                                 <option value="leave">Izin / Cuti</option>
                                 <option value="sick">Sakit</option>
                             </select>
+                        </div>
+                    </div>
+
+                    {/* GPS Coordinates Pulang */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3 space-y-2">
+                        <span className="font-bold text-slate-700 flex items-center gap-1">
+                            <MapPin size={12} className="text-slate-500" />
+                            Koordinat GPS Pulang (Opsional)
+                        </span>
+                        <div className="grid grid-cols-2 gap-3">
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_out_latitude}
+                                onChange={(e) => setForm({ ...form, clock_out_latitude: e.target.value })}
+                                placeholder="Latitude (-6.2088)"
+                                className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
+                            <input
+                                type="number"
+                                step="any"
+                                value={form.clock_out_longitude}
+                                onChange={(e) => setForm({ ...form, clock_out_longitude: e.target.value })}
+                                placeholder="Longitude (106.8456)"
+                                className="w-full rounded-lg border border-slate-200 bg-white p-2 font-mono text-xs"
+                            />
                         </div>
                     </div>
 

@@ -22,9 +22,13 @@ class EmployeeAttendance extends Model
         'clock_in_status',
         'clock_in_late_minutes',
         'late_reason',
+        'clock_in_latitude',
+        'clock_in_longitude',
         'clock_in_notes',
         'clock_out_at',
         'clock_out_photo',
+        'clock_out_latitude',
+        'clock_out_longitude',
         'clock_out_notes',
         'work_duration_minutes',
         'status',
@@ -39,6 +43,10 @@ class EmployeeAttendance extends Model
         'clock_in_at' => 'datetime',
         'clock_out_at' => 'datetime',
         'clock_in_late_minutes' => 'integer',
+        'clock_in_latitude' => 'float',
+        'clock_in_longitude' => 'float',
+        'clock_out_latitude' => 'float',
+        'clock_out_longitude' => 'float',
         'work_duration_minutes' => 'integer',
         'smile_score_in' => 'float',
         'smile_score_out' => 'float',
@@ -48,6 +56,8 @@ class EmployeeAttendance extends Model
         'work_duration_formatted',
         'photo_in_url',
         'photo_out_url',
+        'clock_in_maps_url',
+        'clock_out_maps_url',
     ];
 
     public function user(): BelongsTo
@@ -97,6 +107,22 @@ class EmployeeAttendance extends Model
         }
 
         return Storage::disk('public')->url($this->clock_out_photo);
+    }
+
+    public function getClockInMapsUrlAttribute(): ?string
+    {
+        if ($this->clock_in_latitude !== null && $this->clock_in_longitude !== null) {
+            return "https://www.google.com/maps?q={$this->clock_in_latitude},{$this->clock_in_longitude}";
+        }
+        return null;
+    }
+
+    public function getClockOutMapsUrlAttribute(): ?string
+    {
+        if ($this->clock_out_latitude !== null && $this->clock_out_longitude !== null) {
+            return "https://www.google.com/maps?q={$this->clock_out_latitude},{$this->clock_out_longitude}";
+        }
+        return null;
     }
 
     public function scopePeriod($query, $startDate, $endDate)

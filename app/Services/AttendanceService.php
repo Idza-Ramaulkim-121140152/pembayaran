@@ -43,10 +43,14 @@ class AttendanceService
                     $table->string('clock_in_status', 30)->default('on_time');
                     $table->unsignedInteger('clock_in_late_minutes')->default(0);
                     $table->string('late_reason', 255)->nullable();
+                    $table->decimal('clock_in_latitude', 10, 8)->nullable();
+                    $table->decimal('clock_in_longitude', 11, 8)->nullable();
                     $table->text('clock_in_notes')->nullable();
 
                     $table->dateTime('clock_out_at')->nullable();
                     $table->string('clock_out_photo')->nullable();
+                    $table->decimal('clock_out_latitude', 10, 8)->nullable();
+                    $table->decimal('clock_out_longitude', 11, 8)->nullable();
                     $table->text('clock_out_notes')->nullable();
 
                     $table->unsignedInteger('work_duration_minutes')->nullable();
@@ -283,6 +287,9 @@ class AttendanceService
             $notes = "[Alasan Terlambat: {$lateReason}]" . ($notes ? ' ' . $notes : '');
         }
 
+        $latitude = isset($data['latitude']) && is_numeric($data['latitude']) ? (float) $data['latitude'] : null;
+        $longitude = isset($data['longitude']) && is_numeric($data['longitude']) ? (float) $data['longitude'] : null;
+
         $attendance = $existing ?: new EmployeeAttendance();
         $attendance->user_id = $user->id;
         $attendance->date = $todayDate;
@@ -292,6 +299,10 @@ class AttendanceService
         $attendance->clock_in_late_minutes = $lateMinutes;
         if (Schema::hasColumn('employee_attendances', 'late_reason')) {
             $attendance->late_reason = $lateReason;
+        }
+        if (Schema::hasColumn('employee_attendances', 'clock_in_latitude')) {
+            $attendance->clock_in_latitude = $latitude ?: $attendance->clock_in_latitude;
+            $attendance->clock_in_longitude = $longitude ?: $attendance->clock_in_longitude;
         }
         $attendance->clock_in_notes = $notes;
         $attendance->status = $status;
@@ -347,10 +358,16 @@ class AttendanceService
         }
 
         $smileScore = isset($data['smile_score']) ? (float) $data['smile_score'] : null;
+        $latitude = isset($data['latitude']) && is_numeric($data['latitude']) ? (float) $data['latitude'] : null;
+        $longitude = isset($data['longitude']) && is_numeric($data['longitude']) ? (float) $data['longitude'] : null;
 
         $attendance->clock_out_at = $now;
         if ($photoPath) {
             $attendance->clock_out_photo = $photoPath;
+        }
+        if (Schema::hasColumn('employee_attendances', 'clock_out_latitude')) {
+            $attendance->clock_out_latitude = $latitude;
+            $attendance->clock_out_longitude = $longitude;
         }
         $attendance->clock_out_notes = $data['notes'] ?? $attendance->clock_out_notes;
         $attendance->work_duration_minutes = $workDurationMinutes;
@@ -459,6 +476,12 @@ class AttendanceService
         if (Schema::hasColumn('employee_attendances', 'late_reason')) {
             $record->late_reason = $lateReason;
         }
+        if (Schema::hasColumn('employee_attendances', 'clock_in_latitude')) {
+            $record->clock_in_latitude = isset($data['clock_in_latitude']) && is_numeric($data['clock_in_latitude']) ? (float) $data['clock_in_latitude'] : null;
+            $record->clock_in_longitude = isset($data['clock_in_longitude']) && is_numeric($data['clock_in_longitude']) ? (float) $data['clock_in_longitude'] : null;
+            $record->clock_out_latitude = isset($data['clock_out_latitude']) && is_numeric($data['clock_out_latitude']) ? (float) $data['clock_out_latitude'] : null;
+            $record->clock_out_longitude = isset($data['clock_out_longitude']) && is_numeric($data['clock_out_longitude']) ? (float) $data['clock_out_longitude'] : null;
+        }
         $record->clock_in_notes = $notes;
         $record->clock_out_at = $clockOutAt;
         $record->clock_out_notes = $data['clock_out_notes'] ?? null;
@@ -521,6 +544,21 @@ class AttendanceService
 
         if (array_key_exists('late_reason', $data) && Schema::hasColumn('employee_attendances', 'late_reason')) {
             $record->late_reason = $data['late_reason'] ? trim((string) $data['late_reason']) : null;
+        }
+
+        if (Schema::hasColumn('employee_attendances', 'clock_in_latitude')) {
+            if (array_key_exists('clock_in_latitude', $data)) {
+                $record->clock_in_latitude = is_numeric($data['clock_in_latitude']) ? (float) $data['clock_in_latitude'] : null;
+            }
+            if (array_key_exists('clock_in_longitude', $data)) {
+                $record->clock_in_longitude = is_numeric($data['clock_in_longitude']) ? (float) $data['clock_in_longitude'] : null;
+            }
+            if (array_key_exists('clock_out_latitude', $data)) {
+                $record->clock_out_latitude = is_numeric($data['clock_out_latitude']) ? (float) $data['clock_out_latitude'] : null;
+            }
+            if (array_key_exists('clock_out_longitude', $data)) {
+                $record->clock_out_longitude = is_numeric($data['clock_out_longitude']) ? (float) $data['clock_out_longitude'] : null;
+            }
         }
 
         if (isset($data['status'])) {

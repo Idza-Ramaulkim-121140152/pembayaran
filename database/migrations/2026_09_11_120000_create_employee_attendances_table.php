@@ -21,10 +21,14 @@ return new class extends Migration
                 $table->string('clock_in_status', 30)->default('on_time'); // 'on_time', 'late'
                 $table->unsignedInteger('clock_in_late_minutes')->default(0);
                 $table->string('late_reason', 255)->nullable();
+                $table->decimal('clock_in_latitude', 10, 8)->nullable();
+                $table->decimal('clock_in_longitude', 11, 8)->nullable();
                 $table->text('clock_in_notes')->nullable();
 
                 $table->dateTime('clock_out_at')->nullable();
                 $table->string('clock_out_photo')->nullable();
+                $table->decimal('clock_out_latitude', 10, 8)->nullable();
+                $table->decimal('clock_out_longitude', 11, 8)->nullable();
                 $table->text('clock_out_notes')->nullable();
 
                 $table->unsignedInteger('work_duration_minutes')->nullable();

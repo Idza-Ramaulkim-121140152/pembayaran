@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Camera, CheckCircle2, AlertTriangle, RefreshCw, X, Sparkles, Clock, Smile } from 'lucide-react';
+import { Camera, CheckCircle2, AlertTriangle, RefreshCw, X, Sparkles, Clock, Smile, MapPin } from 'lucide-react';
 import { initFaceDetectionModels, detectFaceAndSmile, captureVideoFrame } from '../../utils/smileDetector';
 
 export default function AttendanceCameraModal({
@@ -32,10 +32,68 @@ export default function AttendanceCameraModal({
     const [lateReasonCategory, setLateReasonCategory] = useState('');
     const [lateReasonCustom, setLateReasonCustom] = useState('');
     const [lateReasonError, setLateReasonError] = useState('');
+    const [locationState, setLocationState] = useState({
+        status: 'idle', // 'idle', 'locating', 'success', 'error'
+        latitude: null,
+        longitude: null,
+        accuracy: null,
+        errorMessage: '',
+    });
     const [submitting, setSubmitting] = useState(false);
     const [countdown, setCountdown] = useState(null);
 
     const smileHoldCounterRef = useRef(0);
+
+    // Fetch GPS coordinates
+    const fetchLocation = useCallback(() => {
+        if (!navigator.geolocation) {
+            setLocationState({
+                status: 'error',
+                latitude: null,
+                longitude: null,
+                accuracy: null,
+                errorMessage: 'Perangkat atau browser tidak mendukung fitur GPS.',
+            });
+            return;
+        }
+
+        setLocationState((prev) => ({ ...prev, status: 'locating', errorMessage: '' }));
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setLocationState({
+                    status: 'success',
+                    latitude: pos.coords.latitude,
+                    longitude: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy,
+                    errorMessage: '',
+                });
+            },
+            (err) => {
+                console.warn('Geolocation error:', err);
+                let msg = 'Gagal mendeteksi koordinat GPS.';
+                if (err.code === 1) {
+                    msg = 'Izin lokasi GPS belum diizinkan oleh browser.';
+                } else if (err.code === 2) {
+                    msg = 'Sinyal GPS lokasi tidak ditemukan.';
+                } else if (err.code === 3) {
+                    msg = 'Waktu permintaan lokasi GPS habis (timeout).';
+                }
+                setLocationState({
+                    status: 'error',
+                    latitude: null,
+                    longitude: null,
+                    accuracy: null,
+                    errorMessage: msg,
+                });
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 30000,
+            }
+        );
+    }, []);
 
     // Stop live stream
     const stopCamera = useCallback(() => {
@@ -143,6 +201,7 @@ export default function AttendanceCameraModal({
     useEffect(() => {
         if (isOpen) {
             startCamera();
+            fetchLocation();
         } else {
             stopCamera();
             setCapturedImage(null);
@@ -150,12 +209,19 @@ export default function AttendanceCameraModal({
             setLateReasonCategory('');
             setLateReasonCustom('');
             setLateReasonError('');
+            setLocationState({
+                status: 'idle',
+                latitude: null,
+                longitude: null,
+                accuracy: null,
+                errorMessage: '',
+            });
         }
 
         return () => {
             stopCamera();
         };
-    }, [isOpen, startCamera, stopCamera]);
+    }, [isOpen, startCamera, stopCamera, fetchLocation]);
 
     const handleSnapPhoto = (smileScore = null) => {
         if (!videoRef.current) return;
@@ -202,6 +268,8 @@ export default function AttendanceCameraModal({
                 photo: capturedImage,
                 smile_score: capturedSmileScore,
                 late_reason: finalLateReason,
+                latitude: locationState.latitude,
+                longitude: locationState.longitude,
                 notes: notes.trim() || null,
             });
             onClose();
@@ -287,6 +355,81 @@ export default function AttendanceCameraModal({
                             </p>
                         </div>
                     )}
+
+                    {/* GPS Coordinates Status Bar */}
+                    <div className={`rounded-xl border p-3 text-xs transition ${
+                        locationState.status === 'success'
+                            ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                            : locationState.status === 'error'
+                            ? 'border-amber-200 bg-amber-50/70 text-amber-900'
+                            : 'border-slate-200 bg-slate-50/80 text-slate-600'
+                    }`}>
+                        {locationState.status === 'locating' && (
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <MapPin size={15} className="text-orange-500 animate-pulse shrink-0" />
+                                    <span className="font-medium">Mendeteksi titik koordinat GPS lokasi Anda...</span>
+                                </div>
+                                <RefreshCw size={12} className="animate-spin text-slate-400" />
+                            </div>
+                        )}
+
+                        {locationState.status === 'success' && (
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-start gap-2">
+                                    <MapPin size={16} className="mt-0.5 text-emerald-600 shrink-0" />
+                                    <div>
+                                        <div className="flex items-center gap-1.5 font-semibold">
+                                            <span>Titik Koordinat:</span>
+                                            <span className="font-mono text-[11px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                                                {locationState.latitude?.toFixed(6)}, {locationState.longitude?.toFixed(6)}
+                                            </span>
+                                        </div>
+                                        {locationState.accuracy && (
+                                            <p className="text-[11px] text-emerald-700 mt-0.5">
+                                                Akurasi sinyal: &plusmn;{Math.round(locationState.accuracy)} meter
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={fetchLocation}
+                                    title="Segarkan koordinat GPS"
+                                    className="rounded-lg p-1.5 text-emerald-700 hover:bg-emerald-100 transition"
+                                >
+                                    <RefreshCw size={13} />
+                                </button>
+                            </div>
+                        )}
+
+                        {locationState.status === 'error' && (
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-start gap-2">
+                                    <AlertTriangle size={16} className="mt-0.5 text-amber-600 shrink-0" />
+                                    <div>
+                                        <p className="font-semibold">Titik Koordinat GPS Belum Terdeteksi</p>
+                                        <p className="text-[11px] text-amber-700 mt-0.5">{locationState.errorMessage}</p>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={fetchLocation}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-semibold text-amber-900 shadow-sm hover:bg-amber-100 transition shrink-0"
+                                >
+                                    <RefreshCw size={11} />
+                                    Coba Lagi
+                                </button>
+                            </div>
+                        )}
+
+                        {locationState.status === 'idle' && (
+                            <div className="flex items-center gap-2">
+                                <MapPin size={15} className="text-slate-400 shrink-0" />
+                                <span>Menyiapkan GPS...</span>
+                            </div>
+                        )}
+                    </div>
 
                     {/* Camera Feed / Image Preview */}
                     <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-slate-950 shadow-inner flex items-center justify-center">
