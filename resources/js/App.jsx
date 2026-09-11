@@ -82,6 +82,7 @@ const InstallationReportPage = lazy(() => import('./pages/Reports/InstallationRe
 const InactiveCustomerReportPage = lazy(() => import('./pages/Reports/InactiveCustomerReportPage'));
 const ProjectReportPage = lazy(() => import('./pages/Reports/ProjectReportPage'));
 const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLinksPage'));
+const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
 
 const ROUTE_FALLBACK_ROLES = {
     'dashboard.view': ['superadmin', 'admin', 'teknisi', 'finance'],
@@ -124,6 +125,7 @@ const ROUTE_FALLBACK_ROLES = {
     'master.customer_wifi_links.manage': ['superadmin', 'admin'],
     'masterdata.view': ['superadmin', 'admin', 'finance'],
     'access_policy.manage': ['superadmin'],
+    'attendance.manage': ['superadmin'],
 };
 
 const WA_ALERT_DASHBOARD_PATHS = ['/dashboard', '/dashboard/prediksi'];
@@ -440,6 +442,7 @@ function App() {
                     <Route path="/settings/customer-package-migration" element={<GuardedRoute permissionKey="customer.package_migration.manage" element={<CustomerPackageMigrationPage />} />} />
                     <Route path="/settings/customer-accounts" element={<GuardedRoute permissionKey="customer.account.manage" element={<CustomerAccountsPage />} />} />
                     <Route path="/settings/system-health" element={<GuardedRoute permissionKey="access_policy.manage" element={<SystemHealthPage />} />} />
+                    <Route path="/settings/attendance" element={<GuardedRoute permissionKey="attendance.manage" allowedRoles={['superadmin']} element={<AttendanceManagementPage />} />} />
                     
                     {/* Complaints (Admin) */}
                     <Route path="/complaints" element={<GuardedRoute permissionKey="complaint.view" element={<ComplaintsPage />} />} />

@@ -63,6 +63,7 @@ use App\Http\Controllers\WhatsAppPaymentWebhookController;
 use App\Http\Controllers\GenieAcsMonitoringController;
 use App\Http\Controllers\IpaymuIntegrationController;
 use App\Http\Controllers\SuperPanelController;
+use App\Http\Controllers\AttendanceController;
 
 // Root domain dinonaktifkan untuk landing page publik.
 Route::get('/', function () {
@@ -413,6 +414,21 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/whatsapp/send-notification', [WhatsAppController::class, 'sendNotification'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.send-notification');
         Route::post('/api/whatsapp/send-test', [WhatsAppController::class, 'sendTest'])->name('api.whatsapp.send-test');
         Route::get('/api/whatsapp/logs', [WhatsAppController::class, 'logs'])->name('api.whatsapp.logs');
+
+        // Attendance (Absensi Karyawan) API
+        Route::get('/api/attendance/today', [AttendanceController::class, 'today'])->name('api.attendance.today');
+        Route::post('/api/attendance/clock-in', [AttendanceController::class, 'clockIn'])->name('api.attendance.clock-in');
+        Route::post('/api/attendance/clock-out', [AttendanceController::class, 'clockOut'])->name('api.attendance.clock-out');
+
+        Route::middleware('permission:attendance.manage')->group(function () {
+            Route::get('/api/attendance/settings', [AttendanceController::class, 'getSettings'])->name('api.attendance.settings.get');
+            Route::post('/api/attendance/settings', [AttendanceController::class, 'updateSettings'])->name('api.attendance.settings.update');
+            Route::get('/api/attendance/records', [AttendanceController::class, 'records'])->name('api.attendance.records');
+            Route::post('/api/attendance/records', [AttendanceController::class, 'storeRecord'])->name('api.attendance.records.store');
+            Route::put('/api/attendance/records/{id}', [AttendanceController::class, 'updateRecord'])->name('api.attendance.records.update');
+            Route::delete('/api/attendance/records/{id}', [AttendanceController::class, 'destroyRecord'])->name('api.attendance.records.destroy');
+            Route::get('/api/attendance/export', [AttendanceController::class, 'export'])->name('api.attendance.export');
+        });
 
         // Incident engine and incident management
         Route::get('/api/network-incidents', [NetworkIncidentController::class, 'index'])->middleware('permission:incident.view')->name('api.network-incidents.index');

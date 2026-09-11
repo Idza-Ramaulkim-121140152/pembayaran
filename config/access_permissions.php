@@ -72,6 +72,7 @@ return [
         ['key' => 'user.manage', 'label' => 'Kelola akun pengguna'],
         ['key' => 'access_policy.manage', 'label' => 'Kelola akses & policy'],
         ['key' => 'financial_target.manage', 'label' => 'Kelola target keuangan'],
+        ['key' => 'attendance.manage', 'label' => 'Kelola absensi karyawan'],
     ],
 
     // Baseline kompatibilitas lama.
@@ -222,6 +223,7 @@ return [
         ['menu_key' => 'invoice_management', 'label' => 'Manajemen Invoice', 'permission_keys' => ['billing.invoice.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
         ['menu_key' => 'financial_targets', 'label' => 'Target Keuangan', 'permission_keys' => ['financial_target.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
         ['menu_key' => 'access_policy', 'label' => 'Akses & Policy', 'permission_keys' => ['access_policy.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
+        ['menu_key' => 'attendance_management', 'label' => 'Manajemen Absensi', 'permission_keys' => ['attendance.manage'], 'navbar_section' => 'admin', 'default_visible' => true],
     ],
 
     'priority_modules' => [

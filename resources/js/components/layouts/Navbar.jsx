@@ -30,6 +30,7 @@ import {
 	Wifi,
     Server,
     Router,
+    UserCheck,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -89,6 +90,7 @@ const ACCESS = {
     accessPolicyMaster: ['superadmin'],
     systemLogs: ['superadmin'],
     systemHealth: ['superadmin'],
+    attendanceManagement: ['superadmin'],
     profile: ['superadmin', 'admin', 'teknisi', 'finance'],
 };
 
@@ -147,6 +149,7 @@ const MENU_PERMISSION_MAP = {
     accessPolicyMaster: 'access_policy.manage',
     systemLogs: 'access_policy.manage',
     systemHealth: 'access_policy.manage',
+    attendanceManagement: 'attendance.manage',
     profile: 'dashboard.view',
 };
 
@@ -232,6 +235,7 @@ const MENU_GROUPS = [
         items: [
             { key: 'profile', label: 'Profil Saya', to: '/profile', icon: User, match: (p) => p === '/profile' },
             { key: 'userManagement', label: 'Kelola Akun', to: '/settings/users', icon: Users, match: (p) => p === '/settings/users' },
+            { key: 'attendanceManagement', label: 'Manajemen Absensi', to: '/settings/attendance', icon: UserCheck, match: (p) => p === '/settings/attendance' },
             { key: 'invoiceManagement', label: 'Manajemen Invoice', to: '/settings/invoice-management', icon: FileText, match: (p) => p === '/settings/invoice-management' },
             { key: 'paymentVerification', label: 'Verifikasi Pembayaran AI', to: '/settings/payment-verification', icon: Brain, match: (p) => p === '/settings/payment-verification' },
             { key: 'financialTargets', label: 'Target Keuangan', to: '/settings/financial-targets', icon: Target, match: (p) => p === '/settings/financial-targets' },

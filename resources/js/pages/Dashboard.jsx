@@ -31,6 +31,7 @@ import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
 import ResponsiveDataView from '../components/common/ResponsiveDataView';
 import apiClient from '../services/api';
+import EmployeeAttendanceWidget from '../components/attendance/EmployeeAttendanceWidget';
 
 ChartJS.register(
     CategoryScale,
@@ -221,6 +222,7 @@ function Dashboard() {
     const isTeknisi = userRole === 'teknisi';
     const isFinance = userRole === 'finance';
     const canViewBalance = !isTeknisi;
+    const isEmployee = Boolean(window.appUserIsEmployee);
 
     const [stats, setStats] = useState(DEFAULT_STATS);
     const [monthLabels] = useState(getLastSixMonthLabels);
@@ -776,6 +778,10 @@ function Dashboard() {
     return (
         <DashboardShell>
             <div className="space-y-7 min-w-0">
+                {isEmployee && (
+                    <EmployeeAttendanceWidget />
+                )}
+
                 <section className="px-1 py-2 md:px-0">
                     <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
                         <div className="min-w-0">

@@ -25,6 +25,7 @@
         window.appCanChoosePaymentMutation = @json(auth()->user()->canChoosePaymentMutation());
         window.appCanChoosePaymentReceiver = @json(auth()->user()->canChoosePaymentReceiver());
         window.appCanManageCustomerWifi = @json(app(\App\Services\AccessPolicyService::class)->has(auth()->user(), 'customer.wifi.manage'));
+        window.appUserIsEmployee = @json((bool) (auth()->user()->is_employee ?? false));
         window.isAuthenticated = true;
     </script>
     @else
