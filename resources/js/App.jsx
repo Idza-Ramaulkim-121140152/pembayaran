@@ -118,6 +118,7 @@ const ROUTE_FALLBACK_ROLES = {
     'financial_target.manage': ['superadmin'],
     'master.promo.manage': ['superadmin', 'admin'],
     'master.network_notice.manage': ['superadmin', 'admin', 'teknisi'],
+    'master.wa_notification.manage': ['superadmin', 'admin'],
     'master.wilayah.manage': ['superadmin', 'admin'],
     'master.mikrotik.manage': ['superadmin', 'admin'],
     'master.customer_wifi_links.manage': ['superadmin', 'admin'],
@@ -145,7 +146,12 @@ function hasRoutePermission(permissionKey) {
     return (ROUTE_FALLBACK_ROLES[permissionKey] || []).includes(role);
 }
 
-function GuardedRoute({ permissionKey, element }) {
+function GuardedRoute({ permissionKey, element, allowedRoles }) {
+    const role = window.appUserRole || 'admin';
+    if (allowedRoles && !allowedRoles.includes(role)) {
+        return <Navigate to="/dashboard" replace />;
+    }
+
     if (hasRoutePermission(permissionKey)) {
         return <RouteSuspense>{element}</RouteSuspense>;
     }
@@ -421,7 +427,7 @@ function App() {
                     <Route path="/settings/installation-pricing" element={<GuardedRoute permissionKey="inventory.master.manage" element={<InstallationPricingPage />} />} />
                     <Route path="/settings/promo" element={<GuardedRoute permissionKey="master.promo.manage" element={<PromoManagementPage />} />} />
                     <Route path="/settings/network-notices" element={<GuardedRoute permissionKey="master.network_notice.manage" element={<NetworkNoticePage />} />} />
-                    <Route path="/settings/send-notification" element={<GuardedRoute permissionKey="master.network_notice.manage" element={<SendNotificationPage />} />} />
+                    <Route path="/settings/send-notification" element={<GuardedRoute permissionKey="master.wa_notification.manage" allowedRoles={['superadmin', 'admin']} element={<SendNotificationPage />} />} />
                     <Route path="/settings/master-wilayah" element={<GuardedRoute permissionKey="master.wilayah.manage" element={<MasterWilayahPage />} />} />
                     <Route path="/settings/master-mikrotik" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterMikrotikPage />} />} />
                     <Route path="/settings/master-olt" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterOltPage />} />} />

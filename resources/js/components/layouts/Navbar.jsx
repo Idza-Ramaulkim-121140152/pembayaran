@@ -71,7 +71,7 @@ const ACCESS = {
     isolir: ['superadmin', 'admin', 'teknisi'],
     complaints: ['superadmin', 'admin', 'teknisi'],
     networkNotices: ['superadmin', 'admin', 'teknisi'],
-    waNotification: ['superadmin', 'admin', 'teknisi'],
+    waNotification: ['superadmin', 'admin'],
     paymentMethods: ['superadmin', 'admin', 'finance'],
     paymentReceipts: ['superadmin', 'admin', 'finance'],
     ipaymuIntegration: ['superadmin', 'admin', 'finance'],
@@ -129,7 +129,7 @@ const MENU_PERMISSION_MAP = {
     isolir: 'isolir.view',
     complaints: 'complaint.view',
     networkNotices: 'master.network_notice.manage',
-    waNotification: 'master.network_notice.manage',
+    waNotification: 'master.wa_notification.manage',
     paymentMethods: 'master.payment.manage',
     paymentReceipts: 'master.payment.manage',
     ipaymuIntegration: 'master.payment.manage',
@@ -244,6 +244,9 @@ const MENU_GROUPS = [
 
 function can(menu) {
     const role = window.appUserRole || 'admin';
+    if (ACCESS[menu] && !ACCESS[menu].includes(role)) {
+        return false;
+    }
     const permissionKey = MENU_PERMISSION_MAP[menu];
 
     if (permissionKey && window.appCapabilities && Object.prototype.hasOwnProperty.call(window.appCapabilities, permissionKey)) {

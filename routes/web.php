@@ -410,7 +410,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/whatsapp/qr', [WhatsAppController::class, 'qr'])->name('api.whatsapp.qr');
         Route::post('/api/whatsapp/restart', [WhatsAppController::class, 'restart'])->name('api.whatsapp.restart');
         Route::post('/api/whatsapp/logout', [WhatsAppController::class, 'logout'])->name('api.whatsapp.logout');
-        Route::post('/api/whatsapp/send-notification', [WhatsAppController::class, 'sendNotification'])->name('api.whatsapp.send-notification');
+        Route::post('/api/whatsapp/send-notification', [WhatsAppController::class, 'sendNotification'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.send-notification');
         Route::post('/api/whatsapp/send-test', [WhatsAppController::class, 'sendTest'])->name('api.whatsapp.send-test');
         Route::get('/api/whatsapp/logs', [WhatsAppController::class, 'logs'])->name('api.whatsapp.logs');
 

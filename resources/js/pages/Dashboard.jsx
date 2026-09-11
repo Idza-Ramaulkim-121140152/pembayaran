@@ -941,7 +941,7 @@ function Dashboard() {
                     </div>
                 )}
 
-                {employeePayroll?.enabled && (
+                {!isTeknisi && employeePayroll?.enabled && (
                     <SectionFrame
                         eyebrow="Payroll"
                         title="Ringkasan payroll karyawan"
@@ -1138,25 +1138,27 @@ function Dashboard() {
                     </SectionFrame>
                 )}
 
-                <div className={`grid gap-5 ${!isFinance ? 'xl:grid-cols-[1.45fr_1fr]' : ''}`}>
+                <div className={`grid gap-5 ${!isFinance && !isTeknisi ? 'xl:grid-cols-[1.45fr_1fr]' : ''}`}>
                     {!isFinance ? (
                         <>
-                            <SectionFrame
-                                eyebrow="Aktivasi"
-                                title="Pemasangan baru"
-                            >
-                                <DashboardPanelSurface accent="violet">
-                                    <div className="h-[300px]">
-                                        <Bar data={installationChartData} options={barChartOptions} />
-                                    </div>
-                                </DashboardPanelSurface>
-                            </SectionFrame>
+                            {!isTeknisi && (
+                                <SectionFrame
+                                    eyebrow="Aktivasi"
+                                    title="Pemasangan baru"
+                                >
+                                    <DashboardPanelSurface accent="violet">
+                                        <div className="h-[300px]">
+                                            <Bar data={installationChartData} options={barChartOptions} />
+                                        </div>
+                                    </DashboardPanelSurface>
+                                </SectionFrame>
+                            )}
 
                             <SectionFrame
                                 eyebrow="Shortcut"
                                 title="Aksi cepat"
                             >
-                                <div className="grid gap-3">
+                                <div className={`grid gap-3 ${isTeknisi ? 'sm:grid-cols-2' : ''}`}>
                                     {quickActions.map((item) => (
                                         <ActionTile
                                             key={item.href}

@@ -66,6 +66,7 @@ return [
         ['key' => 'master.payment.manage', 'label' => 'Kelola metode pembayaran'],
         ['key' => 'master.expense_category.manage', 'label' => 'Kelola master jenis pengeluaran'],
         ['key' => 'master.network_notice.manage', 'label' => 'Kelola network notice'],
+        ['key' => 'master.wa_notification.manage', 'label' => 'Kirim notifikasi WhatsApp massal'],
         ['key' => 'master.customer_wifi_links.manage', 'label' => 'Kelola link WiFi pelanggan'],
 
         ['key' => 'user.manage', 'label' => 'Kelola akun pengguna'],
@@ -126,6 +127,7 @@ return [
             'master.payment.manage',
             'master.expense_category.manage',
             'master.network_notice.manage',
+            'master.wa_notification.manage',
             'master.customer_wifi_links.manage',
         ],
         'teknisi' => [
@@ -204,7 +206,7 @@ return [
         ['menu_key' => 'isolir', 'label' => 'Isolir', 'permission_keys' => ['isolir.view'], 'navbar_section' => 'operations', 'default_visible' => true],
         ['menu_key' => 'complaints', 'label' => 'Aduan Pelanggan', 'permission_keys' => ['complaint.view'], 'navbar_section' => 'operations', 'default_visible' => true],
         ['menu_key' => 'network_notices', 'label' => 'Info Gangguan', 'permission_keys' => ['master.network_notice.manage'], 'navbar_section' => 'operations', 'default_visible' => true],
-        ['menu_key' => 'wa_notification', 'label' => 'Kirim Notifikasi WA', 'permission_keys' => ['master.network_notice.manage'], 'navbar_section' => 'operations', 'default_visible' => true],
+        ['menu_key' => 'wa_notification', 'label' => 'Kirim Notifikasi WA', 'permission_keys' => ['master.wa_notification.manage'], 'navbar_section' => 'operations', 'default_visible' => true],
         ['menu_key' => 'odp_management', 'label' => 'Kelola ODP', 'permission_keys' => ['odp.view'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'distribution_route', 'label' => 'Jalur Distribusi', 'permission_keys' => ['odp.mapping.view'], 'navbar_section' => 'settings', 'default_visible' => true],
         ['menu_key' => 'installation', 'label' => 'Workflow Instalasi', 'permission_keys' => ['installation.view'], 'navbar_section' => 'settings', 'default_visible' => true],

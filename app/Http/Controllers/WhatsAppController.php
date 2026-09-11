@@ -116,6 +116,13 @@ class WhatsAppController extends Controller
      */
     public function sendNotification(Request $request)
     {
+        if ($request->user() && $request->user()->isTeknisi()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akses ditolak: role teknisi tidak memiliki izin untuk mengirim notifikasi WhatsApp massal.',
+            ], 403);
+        }
+
         $request->validate([
             'customer_ids' => 'nullable|array',
             'customer_ids.*' => 'integer|exists:customers,id',
