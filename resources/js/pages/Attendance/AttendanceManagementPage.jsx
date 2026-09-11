@@ -18,6 +18,7 @@ import {
     Smile,
     Shield,
     Sparkles,
+    TrendingUp,
 } from 'lucide-react';
 import apiClient from '../../services/api';
 
