@@ -3,7 +3,7 @@ import {
     Send, Users, MapPin, UserCheck, X, Check, AlertTriangle,
     RefreshCw, Phone, Search, ChevronDown, Wifi, WifiOff,
     MessageSquare, CheckCircle, XCircle, Clock, Filter, AlertCircle,
-    TestTube, History
+    TestTube, History, ShieldAlert, CheckCircle2, Settings
 } from 'lucide-react';
 import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 
@@ -35,6 +35,23 @@ function SendNotificationPage() {
     const [showLogsModal, setShowLogsModal] = useState(false);
     const [logs, setLogs] = useState([]);
     const [logsLoading, setLogsLoading] = useState(false);
+
+    // Area Outage Alert state
+    const [showAreaAlertModal, setShowAreaAlertModal] = useState(false);
+    const [waGroups, setWaGroups] = useState([]);
+    const [waGroupsLoading, setWaGroupsLoading] = useState(false);
+    const [areaSettings, setAreaSettings] = useState({
+        enabled: true,
+        threshold_percent: 50,
+        min_customers: 3,
+        cooldown_minutes: 30,
+        target_group_id: '',
+        target_group_name: '',
+    });
+    const [areaSettingsLoading, setAreaSettingsLoading] = useState(false);
+    const [areaSettingsSaving, setAreaSettingsSaving] = useState(false);
+    const [areaScanning, setAreaScanning] = useState(false);
+    const [areaScanResult, setAreaScanResult] = useState(null);
 
     // Mode: 'all', 'area', 'select'
     const [mode, setMode] = useState('all');
@@ -299,6 +316,91 @@ function SendNotificationPage() {
         }
     };
 
+    // Area Outage Alert handlers
+    const fetchAreaAlertSettings = async () => {
+        setAreaSettingsLoading(true);
+        try {
+            const res = await fetch('/api/whatsapp/area-alert/settings', {
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            const data = await res.json();
+            if (data.success && data.settings) {
+                setAreaSettings(data.settings);
+            }
+        } catch (err) {
+            console.error('Failed to fetch area alert settings', err);
+        } finally {
+            setAreaSettingsLoading(false);
+        }
+    };
+
+    const fetchWaGroups = async () => {
+        setWaGroupsLoading(true);
+        try {
+            const res = await fetch('/api/whatsapp/groups', {
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            const data = await res.json();
+            if (data.success && Array.isArray(data.groups)) {
+                setWaGroups(data.groups);
+            }
+        } catch (err) {
+            console.error('Failed to fetch WA groups', err);
+        } finally {
+            setWaGroupsLoading(false);
+        }
+    };
+
+    const handleSaveAreaSettings = async () => {
+        setAreaSettingsSaving(true);
+        try {
+            const res = await fetch('/api/whatsapp/area-alert/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify(areaSettings),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Gagal menyimpan pengaturan');
+            }
+            alert('Pengaturan peringatan gangguan area berhasil disimpan!');
+            if (data.settings) {
+                setAreaSettings(data.settings);
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            setAreaSettingsSaving(false);
+        }
+    };
+
+    const handleScanAreaOutagesNow = async () => {
+        setAreaScanning(true);
+        setAreaScanResult(null);
+        try {
+            const res = await fetch('/api/whatsapp/area-alert/check-now', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+            });
+            const data = await res.json();
+            setAreaScanResult(data);
+        } catch (err) {
+            setAreaScanResult({
+                status: 'error',
+                message: 'Gagal melakukan pemindaian: ' + err.message,
+            });
+        } finally {
+            setAreaScanning(false);
+        }
+    };
+
     // Fetch logs
     const fetchLogs = async () => {
         setLogsLoading(true);
@@ -374,6 +476,13 @@ function SendNotificationPage() {
                     <p className="text-gray-600">Kirim notifikasi gangguan ke pelanggan via WhatsApp</p>
                 </div>
                 <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
+                    <button
+                        onClick={() => { setShowAreaAlertModal(true); fetchAreaAlertSettings(); fetchWaGroups(); }}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-3 py-2 text-sm bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 border border-orange-200 transition font-medium"
+                    >
+                        <ShieldAlert size={16} />
+                        Peringatan Gangguan Area (Grup WA)
+                    </button>
                     <button
                         onClick={() => { setShowTestModal(true); setTestResult(null); }}
                         className="w-full sm:w-auto flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition"
@@ -1038,6 +1147,289 @@ function SendNotificationPage() {
                                 <button
                                     onClick={() => setShowLogsModal(false)}
                                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                                >
+                                    Tutup
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Area Outage Alert Modal */}
+            {showAreaAlertModal && (
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="flex min-h-full items-end sm:items-center justify-center p-2 sm:p-4">
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs" onClick={() => setShowAreaAlertModal(false)}></div>
+                        <div className="relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+                            {/* Modal Header */}
+                            <div className="shrink-0 px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-white">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
+                                        <ShieldAlert size={18} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-bold text-gray-900">
+                                            Pengaturan Peringatan Gangguan Area
+                                        </h3>
+                                        <p className="text-xs text-gray-500">
+                                            Kirim peringatan otomatis ke grup WhatsApp teknisi jika koneksi area nonaktif &ge; 50%
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowAreaAlertModal(false)}
+                                    className="p-1 hover:bg-gray-100 rounded-lg transition"
+                                >
+                                    <X size={20} className="text-gray-500" />
+                                </button>
+                            </div>
+
+                            {/* Modal Body */}
+                            <div className="p-5 space-y-5 overflow-y-auto flex-1">
+                                {areaSettingsLoading ? (
+                                    <div className="flex justify-center py-8">
+                                        <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* Status Aktif / Nonaktif Toggle */}
+                                        <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                                            <div>
+                                                <div className="text-sm font-semibold text-gray-900">
+                                                    Status Monitoring Otomatis
+                                                </div>
+                                                <div className="text-xs text-gray-500">
+                                                    Pemeriksaan otomatis berjalan tiap 5 menit via scheduler background
+                                                </div>
+                                            </div>
+                                            <label className="relative inline-flex items-center cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={areaSettings.enabled}
+                                                    onChange={(e) => setAreaSettings(prev => ({ ...prev, enabled: e.target.checked }))}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                                            </label>
+                                        </div>
+
+                                        {/* Target Grup WhatsApp */}
+                                        <div>
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                                                    Pilih Grup WhatsApp Tujuan Notifikasi
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={fetchWaGroups}
+                                                    disabled={waGroupsLoading}
+                                                    className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1 font-medium"
+                                                >
+                                                    <RefreshCw size={12} className={waGroupsLoading ? 'animate-spin' : ''} />
+                                                    Muat Ulang Daftar Grup
+                                                </button>
+                                            </div>
+
+                                            <select
+                                                value={areaSettings.target_group_id || ''}
+                                                onChange={(e) => {
+                                                    const gId = e.target.value;
+                                                    const grp = waGroups.find(g => g.id === gId);
+                                                    setAreaSettings(prev => ({
+                                                        ...prev,
+                                                        target_group_id: gId,
+                                                        target_group_name: grp ? grp.name : prev.target_group_name,
+                                                    }));
+                                                }}
+                                                className="w-full border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white"
+                                            >
+                                                <option value="">-- Pilih Grup WhatsApp dari Gateway --</option>
+                                                {waGroups.map(grp => (
+                                                    <option key={grp.id} value={grp.id}>
+                                                        👥 {grp.name} ({grp.id})
+                                                    </option>
+                                                ))}
+                                            </select>
+
+                                            {areaSettings.target_group_id ? (
+                                                <div className="mt-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-800">
+                                                    <span>Grup Terpilih: <strong>{areaSettings.target_group_name || areaSettings.target_group_id}</strong></span>
+                                                    <span className="font-mono text-2xs opacity-75">{areaSettings.target_group_id}</span>
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-amber-600 mt-1">
+                                                    * Silakan pilih grup WhatsApp teknisi/admin agar notifikasi peringatan dapat terkirim.
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        {/* Parameter Ambang Batas */}
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                                    Ambang Batas Offline (%)
+                                                </label>
+                                                <div className="relative">
+                                                    <input
+                                                        type="number"
+                                                        min="10"
+                                                        max="100"
+                                                        value={areaSettings.threshold_percent}
+                                                        onChange={(e) => setAreaSettings(prev => ({ ...prev, threshold_percent: Number(e.target.value) }))}
+                                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500"
+                                                    />
+                                                    <span className="absolute right-3 top-2 text-xs text-gray-400 font-bold">%</span>
+                                                </div>
+                                                <p className="text-2xs text-gray-500 mt-0.5">Default 50% nonaktif</p>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                                    Min. Pelanggan Area
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="500"
+                                                    value={areaSettings.min_customers}
+                                                    onChange={(e) => setAreaSettings(prev => ({ ...prev, min_customers: Number(e.target.value) }))}
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500"
+                                                />
+                                                <p className="text-2xs text-gray-500 mt-0.5">Abaikan area &lt; N user</p>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                                    Cooldown Alert (Menit)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="5"
+                                                    max="1440"
+                                                    value={areaSettings.cooldown_minutes}
+                                                    onChange={(e) => setAreaSettings(prev => ({ ...prev, cooldown_minutes: Number(e.target.value) }))}
+                                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500"
+                                                />
+                                                <p className="text-2xs text-gray-500 mt-0.5">Jeda alert per area</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-end pt-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveAreaSettings}
+                                                disabled={areaSettingsSaving}
+                                                className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold shadow-xs transition disabled:opacity-50"
+                                            >
+                                                {areaSettingsSaving ? (
+                                                    <>
+                                                        <RefreshCw size={15} className="animate-spin" />
+                                                        Menyimpan...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Check size={15} />
+                                                        Simpan Pengaturan Peringatan
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+
+                                        {/* Divider: Manual Trigger & Testing */}
+                                        <div className="pt-4 border-t border-gray-200">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div>
+                                                    <h4 className="text-sm font-bold text-gray-900">
+                                                        Uji Pemindaian & Deteksi Gangguan Sekarang
+                                                    </h4>
+                                                    <p className="text-xs text-gray-500">
+                                                        Jalankan scan instan ke sesi MikroTik PPPoE aktif dan hitung persentase pelanggan offline tiap dusun.
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleScanAreaOutagesNow}
+                                                    disabled={areaScanning}
+                                                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 shrink-0"
+                                                >
+                                                    {areaScanning ? (
+                                                        <>
+                                                            <RefreshCw size={13} className="animate-spin" />
+                                                            Scanning...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Radio size={13} />
+                                                            Scan Sekarang
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+
+                                            {/* Scan Results Display */}
+                                            {areaScanResult && (
+                                                <div className="mt-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                                                    <div className="flex items-center justify-between text-xs">
+                                                        <span className="font-semibold text-slate-800">
+                                                            Hasil Scan: {areaScanResult.status === 'success' ? 'Sukses' : areaScanResult.message}
+                                                        </span>
+                                                        <span className="text-slate-500">
+                                                            {areaScanResult.scanned_at ? new Date(areaScanResult.scanned_at).toLocaleTimeString('id-ID') : ''}
+                                                        </span>
+                                                    </div>
+
+                                                    {areaScanResult.status === 'success' && (
+                                                        <>
+                                                            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                                                                <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                                    <div className="text-slate-400 font-medium">Total Area</div>
+                                                                    <div className="text-base font-bold text-slate-800">{areaScanResult.total_areas || 0}</div>
+                                                                </div>
+                                                                <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                                    <div className="text-slate-400 font-medium">Area Gangguan</div>
+                                                                    <div className="text-base font-bold text-red-600">{areaScanResult.outage_areas_count || 0}</div>
+                                                                </div>
+                                                                <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                                    <div className="text-slate-400 font-medium">Alert Dikirim</div>
+                                                                    <div className="text-base font-bold text-emerald-600">{areaScanResult.new_incidents_created || 0}</div>
+                                                                </div>
+                                                            </div>
+
+                                                            {Array.isArray(areaScanResult.incidents) && areaScanResult.incidents.length > 0 && (
+                                                                <div className="space-y-1.5 mt-2">
+                                                                    <div className="text-2xs font-bold text-slate-500 uppercase">Insiden Terdeteksi:</div>
+                                                                    {areaScanResult.incidents.map(inc => (
+                                                                        <div key={inc.id || inc.token} className="p-2 bg-red-50 border border-red-100 rounded-lg flex items-center justify-between text-xs text-red-900">
+                                                                            <div>
+                                                                                <strong>Area {inc.area_code}</strong>: {inc.inactive_customers_count}/{inc.total_customers} offline
+                                                                            </div>
+                                                                            <a
+                                                                                href={`/area-incident/${inc.token}`}
+                                                                                target="_blank"
+                                                                                rel="noreferrer"
+                                                                                className="text-xs text-blue-600 hover:underline font-semibold"
+                                                                            >
+                                                                                Buka Aksi {'->'}
+                                                                            </a>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="shrink-0 px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end">
+                                <button
+                                    onClick={() => setShowAreaAlertModal(false)}
+                                    className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-xl transition"
                                 >
                                     Tutup
                                 </button>

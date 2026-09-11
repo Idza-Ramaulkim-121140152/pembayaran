@@ -762,13 +762,59 @@ app.get('/debug/payment-forward-log', (req, res) => {
     });
 });
 
+app.get('/groups', async (req, res) => {
+    const current = await getRealtimeStatus();
+
+    if (!current.ready) {
+        return res.status(503).json({
+            success: false,
+            error: current.hasQR
+                ? 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
+                : `WhatsApp belum siap (state: ${current.state || 'unknown'})`
+        });
+    }
+
+    try {
+        const chats = await client.getChats();
+        const groups = chats
+            .filter(c => c.isGroup || (c.id && c.id._serialized && c.id._serialized.endsWith('@g.us')))
+            .map(c => ({
+                id: c.id._serialized,
+                name: c.name || 'Grup Tanpa Nama',
+                unread_count: c.unreadCount || 0,
+            }));
+
+        res.json({
+            success: true,
+            groups
+        });
+    } catch (err) {
+        console.error('❌ Error mengambil daftar grup:', err.message);
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
 /**
  * Normalisasi dan resolusi nomor telepon ke chatId WhatsApp
- * Menggunakan getNumberId() jika tersedia untuk mendeteksi ID resmi (LID/phone WID),
- * dengan fallback ke ${formattedPhone}@c.us
+ * Mendukung group ID (@g.us) serta nomor perorangan (@c.us)
+ * Menggunakan getNumberId() jika tersedia untuk mendeteksi ID resmi (LID/phone WID)
  */
 async function resolveChatId(phoneStr) {
-    let formattedPhone = phoneStr.toString().replace(/\D/g, '');
+    if (!phoneStr) {
+        throw new Error('Parameter nomor atau ID WhatsApp diperlukan');
+    }
+
+    const rawStr = phoneStr.toString().trim();
+
+    // Jika sudah berbentuk WhatsApp Group ID (@g.us)
+    if (rawStr.includes('@g.us')) {
+        return { chatId: rawStr, formattedPhone: rawStr };
+    }
+
+    let formattedPhone = rawStr.replace(/\D/g, '');
 
     // Konversi format Indonesia
     if (formattedPhone.startsWith('0')) {

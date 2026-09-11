@@ -89,6 +89,17 @@ Route::get('/portal_pelanggan/{token}', function () {
     return view('app');
 })->name('customer.public-portal.alias');
 
+// Area Incident Action Page (Teknisi / Admin via WhatsApp Link)
+Route::get('/area-incident/{token}', function () {
+    return view('app');
+})->name('area-incident.show');
+
+// Area Incident Public Action API (Tanpa Login via Token Unik Insiden)
+Route::get('/api/area-incident/{token}', [WhatsAppController::class, 'getIncidentByToken'])->name('api.area-incident.get');
+Route::post('/api/area-incident/{token}/mark-notice', [WhatsAppController::class, 'markIncidentNotice'])->name('api.area-incident.mark-notice');
+Route::post('/api/area-incident/{token}/send-notification', [WhatsAppController::class, 'sendIncidentCustomerNotification'])->name('api.area-incident.send-notification');
+
+
 // Route publik untuk akses invoice tanpa login
 Route::get('/api/invoice/{invoice_link}', [BillingController::class, 'showInvoiceApi'])->name('api.invoice.show');
 Route::get('/invoice/{invoice_link}/print', [InvoiceDocumentController::class, 'showPrint'])->name('invoice.public.print');
@@ -414,6 +425,11 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/whatsapp/send-notification', [WhatsAppController::class, 'sendNotification'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.send-notification');
         Route::post('/api/whatsapp/send-test', [WhatsAppController::class, 'sendTest'])->name('api.whatsapp.send-test');
         Route::get('/api/whatsapp/logs', [WhatsAppController::class, 'logs'])->name('api.whatsapp.logs');
+        Route::get('/api/whatsapp/groups', [WhatsAppController::class, 'groups'])->name('api.whatsapp.groups');
+        Route::get('/api/whatsapp/area-alert/settings', [WhatsAppController::class, 'getAreaAlertSettings'])->name('api.whatsapp.area-alert.settings');
+        Route::post('/api/whatsapp/area-alert/settings', [WhatsAppController::class, 'saveAreaAlertSettings'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.area-alert.save-settings');
+        Route::post('/api/whatsapp/area-alert/check-now', [WhatsAppController::class, 'checkAreaOutagesNow'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.area-alert.check-now');
+
 
         // Attendance (Absensi Karyawan) API
         Route::get('/api/attendance/today', [AttendanceController::class, 'today'])->name('api.attendance.today');

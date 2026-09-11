@@ -83,6 +83,8 @@ const InactiveCustomerReportPage = lazy(() => import('./pages/Reports/InactiveCu
 const ProjectReportPage = lazy(() => import('./pages/Reports/ProjectReportPage'));
 const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLinksPage'));
 const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
+const AreaIncidentActionPage = lazy(() => import('./pages/AreaIncidentActionPage'));
+
 
 const ROUTE_FALLBACK_ROLES = {
     'dashboard.view': ['superadmin', 'admin', 'teknisi', 'finance'],
@@ -210,8 +212,10 @@ function AppLayout({ children }) {
     const isCustomerRoute = location.pathname.startsWith('/customer/');
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
     const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
-    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal;
+    const isAreaIncidentPage = location.pathname.startsWith('/area-incident/');
+    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal || isAreaIncidentPage;
     const showNavbar = !isPublicPage;
+
     const shouldCheckWhatsAppConnection = showNavbar
         && WA_ALERT_DASHBOARD_PATHS.includes(location.pathname)
         && WA_ALERT_ROLES.includes(window.appUserRole || '');
@@ -372,6 +376,10 @@ function App() {
                     {/* Public Customer Self-Service Portal (Tanpa Login) */}
                     <Route path="/portal-pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />
                     <Route path="/portal_pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />
+
+                    {/* Area Incident Action Page (Teknisi / Admin via WA link) */}
+                    <Route path="/area-incident/:token" element={<RouteSuspense><AreaIncidentActionPage /></RouteSuspense>} />
+
                     
                     {/* Customers */}
                     <Route path="/customers" element={<GuardedRoute permissionKey="customer.view" element={<CustomersPage />} />} />

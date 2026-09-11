@@ -57,3 +57,9 @@ Schedule::command('dashboard:prediction-health --max-age-minutes=11000 --quiet-o
     ->dailyAt('06:00')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
+
+Schedule::command('network:check-area-outages')
+    ->everyFiveMinutes()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+

@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AreaOutageIncident;
 use App\Models\Customer;
 use App\Models\NetworkNotice;
 use App\Models\NotificationLog;
+use App\Services\AreaOutageMonitorService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -464,4 +466,142 @@ class WhatsAppController extends Controller
             Log::error('Failed to log notification: ' . $e->getMessage());
         }
     }
+
+    /**
+     * GET /api/whatsapp/groups
+     * Get list of WhatsApp groups from Gateway
+     */
+    public function groups()
+    {
+        try {
+            $response = Http::timeout(10)->get($this->gatewayUrl() . '/groups');
+            return response()->json($response->json(), $response->status());
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'groups' => [],
+                'error' => 'Tidak dapat mengambil daftar grup WhatsApp: ' . $e->getMessage(),
+            ], 503);
+        }
+    }
+
+    /**
+     * GET /api/whatsapp/area-alert/settings
+     */
+    public function getAreaAlertSettings(AreaOutageMonitorService $service)
+    {
+        return response()->json([
+            'success' => true,
+            'settings' => $service->getSettings(),
+        ]);
+    }
+
+    /**
+     * POST /api/whatsapp/area-alert/settings
+     */
+    public function saveAreaAlertSettings(Request $request, AreaOutageMonitorService $service)
+    {
+        $validated = $request->validate([
+            'enabled' => 'nullable|boolean',
+            'threshold_percent' => 'required|numeric|min:10|max:100',
+            'min_customers' => 'required|integer|min:1|max:500',
+            'cooldown_minutes' => 'required|integer|min:5|max:1440',
+            'target_group_id' => 'nullable|string|max:120',
+            'target_group_name' => 'nullable|string|max:150',
+        ]);
+
+        $settings = $service->updateSettings($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengaturan peringatan gangguan area berhasil disimpan.',
+            'settings' => $settings,
+        ]);
+    }
+
+    /**
+     * POST /api/whatsapp/area-alert/check-now
+     */
+    public function checkAreaOutagesNow(Request $request, AreaOutageMonitorService $service)
+    {
+        $result = $service->scanAreaOutages(true);
+        return response()->json($result);
+    }
+
+    /**
+     * GET /api/area-incident/{token}
+     */
+    public function getIncidentByToken(string $token, AreaOutageMonitorService $service)
+    {
+        $incident = $service->getIncidentByToken($token);
+
+        if (!$incident) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Insiden gangguan area tidak ditemukan atau link sudah tidak berlaku.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'incident' => $incident,
+        ]);
+    }
+
+    /**
+     * POST /api/area-incident/{token}/mark-notice
+     */
+    public function markIncidentNotice(string $token, Request $request, AreaOutageMonitorService $service)
+    {
+        $incident = $service->getIncidentByToken($token);
+        if (!$incident) {
+            return response()->json(['success' => false, 'message' => 'Insiden tidak ditemukan.'], 404);
+        }
+
+        $validated = $request->validate([
+            'type' => 'required|in:pemadaman_listrik,maintenance_jaringan,other',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $notice = $service->markIncidentNotice($incident, $validated['type'], $validated['notes'] ?? null, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Gangguan berhasil ditandai dan informasi status jaringan telah diperbarui.',
+            'notice' => $notice,
+            'incident' => $incident->fresh('networkNotice'),
+        ]);
+    }
+
+    /**
+     * POST /api/area-incident/{token}/send-notification
+     */
+    public function sendIncidentCustomerNotification(string $token, Request $request, AreaOutageMonitorService $service)
+    {
+        $incident = $service->getIncidentByToken($token);
+        if (!$incident) {
+            return response()->json(['success' => false, 'message' => 'Insiden tidak ditemukan.'], 404);
+        }
+
+        $validated = $request->validate([
+            'message' => 'required|string|min:5|max:2000',
+            'customer_ids' => 'nullable|array',
+            'customer_ids.*' => 'integer',
+        ]);
+
+        $result = $service->notifyInactiveCustomers(
+            $incident,
+            $validated['message'],
+            $validated['customer_ids'] ?? null
+        );
+
+        return response()->json([
+            'success' => $result['success'],
+            'message' => $result['message'],
+            'sent_count' => $result['sent_count'] ?? 0,
+            'failed_count' => $result['failed_count'] ?? 0,
+            'incident' => $incident->fresh('networkNotice'),
+        ], $result['success'] ? 200 : 422);
+    }
 }
+
