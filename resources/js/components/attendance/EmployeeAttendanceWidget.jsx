@@ -13,7 +13,7 @@ import {
     LogOut,
     HelpCircle,
 } from 'lucide-react';
-import apiClient from '../../utils/apiClient';
+import apiClient from '../../services/api';
 import AttendanceCameraModal from './AttendanceCameraModal';
 
 export default function EmployeeAttendanceWidget() {

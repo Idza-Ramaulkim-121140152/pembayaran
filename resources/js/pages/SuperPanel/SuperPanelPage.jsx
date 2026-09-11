@@ -3238,7 +3238,7 @@ export default function SuperPanelPage() {
                                                                 className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-blue-500"
                                                             >
                                                                 <option value="all">Semua Sinyal ({activePon.onus?.length || 0})</option>
-                                                                <option value="good">🟢 Optimal (>= -24 dBm)</option>
+                                                                <option value="good">🟢 Optimal (&ge; -24 dBm)</option>
                                                                 <option value="warning">🟡 Waspada (-24 s/d -27 dBm)</option>
                                                                 <option value="critical">🔴 Kritis (&lt; -27 dBm)</option>
                                                                 <option value="online">Online</option>

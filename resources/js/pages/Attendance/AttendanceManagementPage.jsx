@@ -19,7 +19,7 @@ import {
     Shield,
     Sparkles,
 } from 'lucide-react';
-import apiClient from '../../utils/apiClient';
+import apiClient from '../../services/api';
 
 export default function AttendanceManagementPage() {
     const [loading, setLoading] = useState(true);
