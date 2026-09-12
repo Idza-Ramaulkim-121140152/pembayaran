@@ -1934,20 +1934,20 @@ function CustomerVerificationForm() {
                     theme="dashboard"
                     size="lg"
                 >
-                    <div className="space-y-4 text-slate-100">
-                        <p className="text-sm text-slate-300">
+                    <div className="space-y-4 text-slate-800">
+                        <p className="text-sm text-slate-600 leading-relaxed">
                             Biaya pemasangan akan dicatat ke mutasi dengan alur penerima pembayaran yang sama seperti konfirmasi penagihan.
                         </p>
-                        <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-                            <p className="text-sm text-slate-300">Nominal biaya pemasangan</p>
-                            <p className="mt-2 text-2xl font-bold text-amber-300">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Nominal biaya pemasangan</p>
+                            <p className="mt-1 text-2xl font-bold text-amber-600">
                                 {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(formData.installation_fee || 0))}
                             </p>
                         </div>
                         <div>
-                            <label className="mb-2 block text-sm font-medium text-slate-200">Terima via</label>
+                            <label className="mb-1.5 block text-sm font-semibold text-slate-700">Terima via</label>
                             <select
-                                className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white"
+                                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
                                 value={paymentReceiptOptionId}
                                 onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
                             >
@@ -1959,9 +1959,9 @@ function CustomerVerificationForm() {
                         </div>
                         {canChoosePaymentReceiver && (
                             <div>
-                                <label className="mb-2 block text-sm font-medium text-slate-200">Akun penerima pembayaran</label>
+                                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Akun penerima pembayaran</label>
                                 <select
-                                    className="w-full rounded-xl border border-white/10 bg-slate-950/70 px-4 py-3 text-sm text-white"
+                                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
                                     value={paymentReceiverUserId}
                                     onChange={(e) => setPaymentReceiverUserId(e.target.value)}
                                     disabled={loadingPaymentReceivers}
@@ -1975,10 +1975,10 @@ function CustomerVerificationForm() {
                                 </select>
                             </div>
                         )}
-                        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm text-cyan-50">
+                        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs sm:text-sm text-blue-900 leading-relaxed">
                             Jika akun penerima bukan diri sendiri, sistem bisa meminta approval akun penerima atau langsung memasukkan biaya pemasangan ke hutang sesuai keputusan Anda.
                         </div>
-                        <div className="flex gap-3 justify-end">
+                        <div className="flex gap-3 justify-end pt-2">
                             <Button type="button" variant="secondary" onClick={closeInstallationPaymentFlow}>
                                 Batal
                             </Button>
@@ -1995,16 +1995,16 @@ function CustomerVerificationForm() {
                     title="Konfirmasi Akun Penerima"
                     theme="dashboard"
                 >
-                    <div className="space-y-4 text-slate-100">
-                        <p className="text-sm text-slate-300">
+                    <div className="space-y-4 text-slate-800">
+                        <p className="text-sm text-slate-600 leading-relaxed">
                             Anda memilih akun penerima selain akun Anda sendiri. Pilih apakah mutasi biaya pemasangan menunggu konfirmasi akun penerima atau langsung dimasukkan ke hutang.
                         </p>
                         {otherReceiverModal.selectedReceiver?.is_company_finance_receiver && (
-                            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-sm text-emerald-50">
+                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 leading-relaxed">
                                 Akun yang dipilih adalah akun keuangan perusahaan. Jika akun ini menyetujui, mutasi biaya pemasangan akan menjadi confirmed tanpa membuat hutang.
                             </div>
                         )}
-                        <div className="flex gap-3 justify-end">
+                        <div className="flex gap-3 justify-end pt-2">
                             <Button type="button" variant="secondary" onClick={() => setOtherReceiverModal({ open: false, selectedReceiver: null })}>
                                 Batal
                             </Button>
@@ -2046,11 +2046,11 @@ function CustomerVerificationForm() {
                     title="Akun Penerima Tidak Diizinkan"
                     theme="dashboard"
                 >
-                    <div className="space-y-4 text-slate-100">
-                        <p className="text-sm text-slate-300">
+                    <div className="space-y-4 text-slate-800">
+                        <p className="text-sm text-slate-600 leading-relaxed">
                             {receiverConflictModal.message || 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan.'}
                         </p>
-                        <div className="flex gap-3 justify-end">
+                        <div className="flex gap-3 justify-end pt-2">
                             <Button type="button" variant="secondary" onClick={() => setReceiverConflictModal({ open: false, message: '' })}>
                                 Batal
                             </Button>
