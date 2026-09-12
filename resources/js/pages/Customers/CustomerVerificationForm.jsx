@@ -137,11 +137,10 @@ function CustomerVerificationForm() {
             setOdpList([]);
             setOdpScope('dusun');
             setShowExpandOdp(false);
-            setFormData((prev) => ({ ...prev, odp: '' }));
             return;
         }
 
-        fetchOdpOptions('dusun');
+        fetchOdpOptions('dusun', formData.desa_id, formData.dusun_id);
     }, [formData.desa_id, formData.dusun_id]);
 
     useEffect(() => {
@@ -294,11 +293,12 @@ function CustomerVerificationForm() {
         }
     };
 
-    const fetchOdpOptions = async (scope = 'dusun') => {
+    const fetchOdpOptions = async (scope = 'dusun', desaId = formData.desa_id, dusunId = formData.dusun_id) => {
+        if (!desaId || !dusunId) return;
         try {
             setOdpLoading(true);
             setShowExpandOdp(false);
-            const url = `/api/customer-verification/odps/options?desa_id=${encodeURIComponent(formData.desa_id)}&dusun_id=${encodeURIComponent(formData.dusun_id)}&scope=${scope}`;
+            const url = `/api/customer-verification/odps/options?desa_id=${encodeURIComponent(desaId)}&dusun_id=${encodeURIComponent(dusunId)}&scope=${scope}`;
             const response = await fetch(url, {
                 headers: {
                     'Accept': 'application/json',
@@ -439,15 +439,47 @@ function CustomerVerificationForm() {
                 sanitizedData[key] = data.customer_data[key] ?? '';
             }
 
-            // Preload desa & dusun options before applying form data so select options exist
+            // Preload desa, dusun, and ODP options before applying form data so select options exist
             if (sanitizedData.kecamatan_id) {
                 await fetchDesaOptions(sanitizedData.kecamatan_id);
                 if (sanitizedData.desa_id) {
                     await fetchDusunOptions(sanitizedData.desa_id);
+                    if (sanitizedData.dusun_id) {
+                        await fetchOdpOptions('dusun', sanitizedData.desa_id, sanitizedData.dusun_id);
+                    }
                 }
             }
 
             const resolvedTimestamp = sanitizedData.google_sheets_timestamp || decodedFromParam || '';
+
+            // Resolusi tanggal aktivasi & due date fallback
+            const resolvedActivationDate = sanitizedData.activation_date
+                || sanitizedData.tanggal_aktivasi
+                || new Date().toISOString().split('T')[0];
+            
+            let resolvedDueDate = sanitizedData.due_date;
+            if (!resolvedDueDate && resolvedActivationDate) {
+                try {
+                    const actDate = new Date(resolvedActivationDate);
+                    actDate.setDate(actDate.getDate() + 30);
+                    resolvedDueDate = actDate.toISOString().split('T')[0];
+                } catch (e) {
+                    resolvedDueDate = '';
+                }
+            }
+
+            // Resolusi gender fallback
+            let resolvedGender = sanitizedData.gender || '';
+            if (!resolvedGender && sanitizedData.jenis_kelamin) {
+                const jk = sanitizedData.jenis_kelamin.toLowerCase();
+                if (jk.includes('laki') || jk.includes('pria') || jk === 'male') {
+                    resolvedGender = 'male';
+                } else if (jk.includes('perempuan') || jk.includes('wanita') || jk === 'female') {
+                    resolvedGender = 'female';
+                }
+            }
+
+            const resolvedOdp = sanitizedData.odp || '';
 
             const hasSanitizedLaborFee = sanitizedData.installation_labor_fee !== ''
                 && sanitizedData.installation_labor_fee !== null
@@ -460,6 +492,10 @@ function CustomerVerificationForm() {
                 ...DEFAULT_FORM_DATA,
                 ...sanitizedData,
                 google_sheets_timestamp: resolvedTimestamp,
+                activation_date: resolvedActivationDate,
+                due_date: resolvedDueDate || prev.due_date,
+                gender: resolvedGender,
+                odp: resolvedOdp,
                 contract_ktp_number: sanitizedData.contract_ktp_number || data.sheets_reference?.nik || '',
                 contract_photo_front_url: data.sheets_reference?.photo_front_url || sanitizedData.photo_front_url || '',
                 contract_photo_modem_url: data.sheets_reference?.photo_modem_url || sanitizedData.photo_modem_url || '',

@@ -375,6 +375,50 @@ class CustomerVerificationController extends Controller
             }
             $customerData['installation_fee'] = $fee;
 
+            // Normalisasi Tanggal Aktivasi & Due Date
+            $rawActivationDate = $sheetsData['activation_date'] ?? ($sheetsData['tanggal_aktivasi'] ?? ($customerData['activation_date'] ?? ($customerData['tanggal_aktivasi'] ?? null)));
+            $activationDate = null;
+            if ($rawActivationDate) {
+                if (is_numeric($rawActivationDate) || ctype_digit(trim((string)$rawActivationDate))) {
+                    $day = (int) $rawActivationDate;
+                    $activationDate = now()->year . '-' . str_pad(now()->month, 2, '0', STR_PAD_LEFT) . '-' . str_pad($day, 2, '0', STR_PAD_LEFT);
+                } else {
+                    try {
+                        $parsedDate = \Carbon\Carbon::parse($rawActivationDate);
+                        $activationDate = $parsedDate->format('Y-m-d');
+                    } catch (\Exception $e) {
+                        $activationDate = now()->format('Y-m-d');
+                    }
+                }
+            } else {
+                $activationDate = now()->format('Y-m-d');
+            }
+
+            try {
+                $calculatedDueDate = \Carbon\Carbon::parse($activationDate)->addDays(30)->format('Y-m-d');
+            } catch (\Exception $e) {
+                $calculatedDueDate = now()->addDays(30)->format('Y-m-d');
+            }
+
+            $customerData['activation_date'] = $activationDate;
+            $customerData['tanggal_aktivasi'] = $activationDate;
+            $customerData['due_date'] = $sheetsData['due_date'] ?? ($customerData['due_date'] ?? $calculatedDueDate);
+
+            // Normalisasi Gender
+            $rawGender = strtolower((string)($sheetsData['gender'] ?? ($sheetsData['jenis_kelamin'] ?? ($customerData['gender'] ?? ($customerData['jenis_kelamin'] ?? '')))));
+            $gender = '';
+            if (stripos($rawGender, 'laki') !== false || stripos($rawGender, 'pria') !== false || $rawGender === 'male') {
+                $gender = 'male';
+            } elseif (stripos($rawGender, 'perempuan') !== false || stripos($rawGender, 'wanita') !== false || $rawGender === 'female') {
+                $gender = 'female';
+            }
+            $customerData['gender'] = $gender;
+            $customerData['jenis_kelamin'] = $gender === 'female' ? 'Perempuan' : ($gender === 'male' ? 'Laki-laki' : '');
+
+            // Normalisasi Koordinat
+            $customerData['latitude'] = (string)($sheetsData['latitude'] ?? ($customerData['latitude'] ?? ''));
+            $customerData['longitude'] = (string)($sheetsData['longitude'] ?? ($customerData['longitude'] ?? ''));
+
             $customerData['kecamatan_id'] = $kecamatanId ? (string)$kecamatanId : '';
             $customerData['desa_id'] = $desaId ? (string)$desaId : '';
             $customerData['dusun_id'] = $dusunId ? (string)$dusunId : '';
@@ -443,6 +487,15 @@ class CustomerVerificationController extends Controller
                     }
                 }
             }
+        }
+
+        if (!$request->filled('activation_date') && $request->filled('tanggal_aktivasi')) {
+            $request->merge(['activation_date' => $request->input('tanggal_aktivasi')]);
+        }
+        if (!$request->filled('gender') && $request->filled('jenis_kelamin')) {
+            $jk = strtolower((string)$request->input('jenis_kelamin'));
+            $mappedGender = (stripos($jk, 'perempuan') !== false || stripos($jk, 'wanita') !== false || $jk === 'female') ? 'female' : 'male';
+            $request->merge(['gender' => $mappedGender]);
         }
 
         $validated = $request->validate($this->verificationValidationRules());
