@@ -173,8 +173,6 @@ function CustomerVerificationForm() {
     useEffect(() => {
         if (!formData.kecamatan_id) {
             setDesaOptions([]);
-            setDusunOptions([]);
-            setFormData((prev) => ({ ...prev, desa_id: '', dusun_id: '' }));
             return;
         }
 
@@ -184,7 +182,6 @@ function CustomerVerificationForm() {
     useEffect(() => {
         if (!formData.desa_id) {
             setDusunOptions([]);
-            setFormData((prev) => ({ ...prev, dusun_id: '' }));
             return;
         }
 
@@ -420,6 +417,10 @@ function CustomerVerificationForm() {
 
     const fetchCustomerData = async () => {
         try {
+            const decodedFromParam = (() => {
+                try { return atob(timestamp); } catch (e) { return timestamp; }
+            })();
+
             const response = await fetch(`/api/customer-verification/get/${timestamp}`, {
                 headers: {
                     'Accept': 'application/json',
@@ -438,6 +439,16 @@ function CustomerVerificationForm() {
                 sanitizedData[key] = data.customer_data[key] ?? '';
             }
 
+            // Preload desa & dusun options before applying form data so select options exist
+            if (sanitizedData.kecamatan_id) {
+                await fetchDesaOptions(sanitizedData.kecamatan_id);
+                if (sanitizedData.desa_id) {
+                    await fetchDusunOptions(sanitizedData.desa_id);
+                }
+            }
+
+            const resolvedTimestamp = sanitizedData.google_sheets_timestamp || decodedFromParam || '';
+
             const hasSanitizedLaborFee = sanitizedData.installation_labor_fee !== ''
                 && sanitizedData.installation_labor_fee !== null
                 && sanitizedData.installation_labor_fee !== undefined;
@@ -448,6 +459,7 @@ function CustomerVerificationForm() {
             setFormData((prev) => ({
                 ...DEFAULT_FORM_DATA,
                 ...sanitizedData,
+                google_sheets_timestamp: resolvedTimestamp,
                 contract_ktp_number: sanitizedData.contract_ktp_number || data.sheets_reference?.nik || '',
                 contract_photo_front_url: data.sheets_reference?.photo_front_url || sanitizedData.photo_front_url || '',
                 contract_photo_modem_url: data.sheets_reference?.photo_modem_url || sanitizedData.photo_modem_url || '',
@@ -775,8 +787,13 @@ function CustomerVerificationForm() {
                 throw new Error('MAC Address Router/Modem wajib diisi untuk verifikasi dan aktivasi.');
             }
 
+            const decodedTs = (() => {
+                try { return atob(timestamp); } catch (e) { return timestamp; }
+            })();
+
             const payload = {
                 ...formData,
+                google_sheets_timestamp: formData.google_sheets_timestamp || decodedTs,
                 kecamatan_id: formData.kecamatan_id ? Number(formData.kecamatan_id) : null,
                 desa_id: formData.desa_id ? Number(formData.desa_id) : null,
                 dusun_id: formData.dusun_id ? Number(formData.dusun_id) : null,
@@ -873,7 +890,13 @@ function CustomerVerificationForm() {
                     return;
                 }
 
-                const message = result.message || 'Failed to verify customer';
+                let message = result.message || 'Failed to verify customer';
+                if (result.errors && typeof result.errors === 'object') {
+                    const fieldErrors = Object.values(result.errors).flat().join('\n• ');
+                    if (fieldErrors) {
+                        message = `${message}:\n• ${fieldErrors}`;
+                    }
+                }
                 throw new Error(message);
             }
 

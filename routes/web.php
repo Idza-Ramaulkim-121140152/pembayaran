@@ -338,6 +338,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::prefix('api/customer-prospects')->group(function () {
             Route::get('/', [\App\Http\Controllers\CustomerProspectController::class, 'index'])->name('customer-prospects.index');
             Route::get('/recommendations', [\App\Http\Controllers\CustomerProspectController::class, 'recommendations'])->name('customer-prospects.recommendations');
+            Route::get('/{id}', [\App\Http\Controllers\CustomerProspectController::class, 'show'])->name('customer-prospects.show');
             Route::post('/{id}/status', [\App\Http\Controllers\CustomerProspectController::class, 'updateStatus'])->name('customer-prospects.status');
             Route::delete('/{id}', [\App\Http\Controllers\CustomerProspectController::class, 'destroy'])->name('customer-prospects.destroy');
         });

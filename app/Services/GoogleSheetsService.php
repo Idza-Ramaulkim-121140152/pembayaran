@@ -310,17 +310,22 @@ class GoogleSheetsService
             'pppoe_username' => $userPppoe,
             'pppoe_password' => $sheetsData['password_pppoe'] ?? '', // Keep for PPPoE secret creation
             'odp' => $sheetsData['odp'] ?? '',
-            'installation_fee' => isset($sheetsData['harga']) ? (int) str_replace(['Rp', '.', ',', ' '], '', $sheetsData['harga']) : 0,
+            'installation_fee' => isset($sheetsData['harga']) ? (int) str_replace(['Rp', '.', ',', ' '], '', $sheetsData['harga']) : (isset($sheetsData['biaya_pemasangan']) ? (int) str_replace(['Rp', '.', ',', ' '], '', $sheetsData['biaya_pemasangan']) : 0),
             'is_active' => true,
             'latitude' => $sheetsData['latitude'] ?? '',
             'longitude' => $sheetsData['longitude'] ?? '',
+            'kecamatan_id' => $sheetsData['kecamatan_id'] ?? '',
+            'desa_id' => $sheetsData['desa_id'] ?? '',
+            'dusun_id' => $sheetsData['dusun_id'] ?? '',
+            'contract_router_mac' => $sheetsData['mac_address'] ?? ($sheetsData['contract_router_mac'] ?? ($sheetsData['mac'] ?? '')),
+            'contract_ktp_number' => $sheetsData['nik'] ?? ($sheetsData['contract_ktp_number'] ?? ''),
             
             // Sensitive data references (not stored in database, just for display)
             'nik_url' => $sheetsData['nik'] ?? '',
-            'photo_ktp_url' => $sheetsData['foto_ktp'] ?? '',
-            'photo_front_url' => $sheetsData['foto_depan_rumah'] ?? '',
-            'photo_opm_url' => $sheetsData['foto_opm'] ?? '',
-            'photo_modem_url' => $sheetsData['foto_modem'] ?? '',
+            'photo_ktp_url' => $sheetsData['foto_ktp'] ?? ($sheetsData['photo_ktp_url'] ?? ''),
+            'photo_front_url' => $sheetsData['foto_depan_rumah'] ?? ($sheetsData['photo_front_url'] ?? ''),
+            'photo_opm_url' => $sheetsData['foto_opm'] ?? ($sheetsData['photo_opm_url'] ?? ''),
+            'photo_modem_url' => $sheetsData['foto_modem'] ?? ($sheetsData['photo_modem_url'] ?? ''),
         ];
     }
 

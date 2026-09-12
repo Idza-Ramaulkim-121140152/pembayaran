@@ -207,6 +207,25 @@ class CustomerProspectController extends Controller
     }
 
     /**
+     * Internal endpoint: Get a single prospect by ID
+     */
+    public function show($id)
+    {
+        $prospect = CustomerProspect::with([
+            'kecamatan:id,name',
+            'desa:id,name',
+            'dusun:id,name',
+            'verifiedBy:id,name',
+            'registeredBy:id,name',
+        ])->findOrFail($id);
+
+        return response()->json([
+            'success' => true,
+            'data' => $prospect,
+        ]);
+    }
+
+    /**
      * Delete a prospect to clean up clutter
      */
     public function destroy($id)

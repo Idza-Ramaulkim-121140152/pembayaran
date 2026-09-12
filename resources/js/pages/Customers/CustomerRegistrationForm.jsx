@@ -27,6 +27,8 @@ const INITIAL_FORM = {
     biaya_pemasangan: '250000',
     odp: '',
     mac_address: '',
+    latitude: '',
+    longitude: '',
 };
 
 function CustomerRegistrationForm() {
@@ -95,19 +97,32 @@ function CustomerRegistrationForm() {
     const fetchRecommendations = async () => {
         setLoadingRecs(true);
         try {
+            const searchParams = new URLSearchParams(location.search);
+            const prospectIdParam = searchParams.get('prospect_id');
+
             const res = await fetch('/api/customer-prospects/recommendations');
             const json = await res.json();
-            if (json.success) {
-                setRecommendations(json.data || []);
+            const recList = json.data || [];
+            setRecommendations(recList);
 
-                // Check if URL has prospect_id query param
-                const searchParams = new URLSearchParams(location.search);
-                const prospectIdParam = searchParams.get('prospect_id');
-                if (prospectIdParam) {
-                    const match = (json.data || []).find((p) => String(p.id) === String(prospectIdParam));
-                    if (match) {
-                        applyProspectData(match);
+            if (prospectIdParam) {
+                let targetProspect = recList.find((p) => String(p.id) === String(prospectIdParam));
+                if (!targetProspect) {
+                    try {
+                        const directRes = await fetch(`/api/customer-prospects/${prospectIdParam}`, {
+                            headers: { 'Accept': 'application/json' },
+                        });
+                        const directJson = await directRes.json();
+                        if (directJson.success && directJson.data) {
+                            targetProspect = directJson.data;
+                        }
+                    } catch (err) {
+                        console.error('Failed to fetch direct prospect by id', err);
                     }
+                }
+
+                if (targetProspect) {
+                    await applyProspectData(targetProspect);
                 }
             }
         } catch (e) {
@@ -117,8 +132,20 @@ function CustomerRegistrationForm() {
         }
     };
 
-    const applyProspectData = (prospect) => {
+    const applyProspectData = async (prospect) => {
+        if (!prospect) return;
         setSelectedProspectId(prospect.id);
+
+        if (prospect.kecamatan_id) {
+            await fetchDesa(prospect.kecamatan_id);
+            if (prospect.desa_id) {
+                await fetchDusun(prospect.desa_id);
+                if (prospect.dusun_id) {
+                    fetchOdps(prospect.desa_id, prospect.dusun_id);
+                }
+            }
+        }
+
         setFormData((prev) => ({
             ...prev,
             nama: prospect.nama || '',
@@ -131,14 +158,9 @@ function CustomerRegistrationForm() {
             alamat: prospect.alamat || '',
             paket: prospect.paket || prev.paket,
             paket_custom: prospect.paket_custom || '',
+            latitude: prospect.latitude ? String(prospect.latitude) : prev.latitude,
+            longitude: prospect.longitude ? String(prospect.longitude) : prev.longitude,
         }));
-
-        if (prospect.kecamatan_id) {
-            fetchDesa(prospect.kecamatan_id);
-            if (prospect.desa_id) {
-                fetchDusun(prospect.desa_id);
-            }
-        }
 
         if (prospect.foto_depan_rumah) {
             setPhotoPreviews((prev) => ({ ...prev, foto_depan_rumah: prospect.foto_depan_rumah }));
@@ -174,8 +196,6 @@ function CustomerRegistrationForm() {
     useEffect(() => {
         if (!formData.kecamatan_id) {
             setDesaList([]);
-            setDusunList([]);
-            setFormData((prev) => ({ ...prev, desa_id: '', dusun_id: '' }));
             return;
         }
         fetchDesa(formData.kecamatan_id);
@@ -184,7 +204,6 @@ function CustomerRegistrationForm() {
     useEffect(() => {
         if (!formData.desa_id) {
             setDusunList([]);
-            setFormData((prev) => ({ ...prev, dusun_id: '' }));
             return;
         }
         fetchDusun(formData.desa_id);
@@ -193,7 +212,6 @@ function CustomerRegistrationForm() {
     useEffect(() => {
         if (!formData.desa_id || !formData.dusun_id) {
             setOdpList([]);
-            setFormData((prev) => ({ ...prev, odp: '' }));
             return;
         }
         fetchOdps(formData.desa_id, formData.dusun_id);
@@ -254,6 +272,25 @@ function CustomerRegistrationForm() {
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
+        if (name === 'kecamatan_id') {
+            setFormData((prev) => ({
+                ...prev,
+                kecamatan_id: value,
+                desa_id: '',
+                dusun_id: '',
+                odp: '',
+            }));
+            return;
+        }
+        if (name === 'desa_id') {
+            setFormData((prev) => ({
+                ...prev,
+                desa_id: value,
+                dusun_id: '',
+                odp: '',
+            }));
+            return;
+        }
         setFormData((prev) => ({ ...prev, [name]: value }));
     };
 

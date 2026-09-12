@@ -334,16 +334,25 @@ function CustomerProspectsPage() {
                                                 <button
                                                     type="button"
                                                     onClick={() => handleUpdateStatus(item.id, 'approved')}
-                                                    className="flex-1 inline-flex items-center justify-center gap-1 py-2 px-3 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-sm transition"
+                                                    className="inline-flex items-center justify-center gap-1 py-2 px-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold shadow-sm transition"
+                                                    title="Setujui calon pelanggan"
                                                 >
-                                                    <CheckCircle2 size={14} /> Setujui (Siap Pasang)
+                                                    <CheckCircle2 size={14} /> Setujui
                                                 </button>
+                                                <Link
+                                                    to={`/customer-verification/register?prospect_id=${item.id}`}
+                                                    className="flex-1 inline-flex items-center justify-center gap-1 py-2 px-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition"
+                                                    title="Langsung daftarkan dan pasang"
+                                                >
+                                                    Langsung Pasang →
+                                                </Link>
                                                 <button
                                                     type="button"
                                                     onClick={() => setRejectModal({ open: true, item, reason: '' })}
-                                                    className="py-2 px-3 border border-red-200 text-red-600 hover:bg-red-50 rounded-xl text-xs font-semibold transition"
+                                                    className="py-2 px-2.5 border border-red-200 text-red-600 hover:bg-red-50 rounded-xl text-xs font-semibold transition"
+                                                    title="Tolak / batalkan calon pelanggan"
                                                 >
-                                                    Tolak / Batal
+                                                    Tolak
                                                 </button>
                                             </>
                                         )}

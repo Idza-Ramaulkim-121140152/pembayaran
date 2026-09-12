@@ -118,6 +118,10 @@ class CustomerVerificationController extends Controller
             'foto_ktp' => 'nullable|file|image|max:10240',
             'foto_modem' => 'nullable|file|image|max:10240',
             'foto_opm' => 'nullable|file|image|max:10240',
+            'foto_depan_rumah_url' => 'nullable|string',
+            'foto_ktp_url' => 'nullable|string',
+            'foto_modem_url' => 'nullable|string',
+            'foto_opm_url' => 'nullable|string',
         ]);
 
         $timestamp = now()->format('d/m/Y H:i:s');
@@ -129,6 +133,8 @@ class CustomerVerificationController extends Controller
             if ($request->hasFile($field) && $request->file($field)->isValid()) {
                 $path = $request->file($field)->store('customer-registrations/' . $slug, 'public');
                 $photoUrls[$field] = url(Storage::url($path));
+            } elseif ($request->filled($field . '_url')) {
+                $photoUrls[$field] = (string) $request->input($field . '_url');
             } else {
                 $photoUrls[$field] = '';
             }
@@ -147,14 +153,23 @@ class CustomerVerificationController extends Controller
 
         $registrationPayload = [
             'timestamp' => $timestamp,
+            'google_sheets_timestamp' => $timestamp,
             'nama' => $validated['nama'],
+            'name' => $validated['nama'],
             'tanggal_aktivasi' => $validated['tanggal_aktivasi'],
+            'activation_date' => $validated['tanggal_aktivasi'],
             'no_telp' => $validated['no_telp'],
+            'phone' => $validated['no_telp'],
             'nik' => $validated['nik'],
+            'contract_ktp_number' => $validated['nik'],
             'jenis_kelamin' => in_array($validated['jenis_kelamin'], ['Perempuan', 'female']) ? 'Perempuan' : 'Laki-laki',
+            'gender' => in_array($validated['jenis_kelamin'], ['Perempuan', 'female']) ? 'female' : 'male',
             'paket' => $validated['paket'],
+            'package_type' => $validated['paket'],
             'paket_custom' => $validated['paket_custom'] ?? '',
+            'custom_package' => $validated['paket_custom'] ?? '',
             'alamat' => $address,
+            'address' => $address,
             'desa' => $desa?->name ?? '',
             'dusun' => $dusun?->name ?? '',
             'kecamatan_id' => (int) $validated['kecamatan_id'],
@@ -164,10 +179,16 @@ class CustomerVerificationController extends Controller
             'foto_ktp' => $photoUrls['foto_ktp'],
             'foto_modem' => $photoUrls['foto_modem'],
             'foto_opm' => $photoUrls['foto_opm'],
+            'photo_front_url' => $photoUrls['foto_depan_rumah'],
+            'photo_ktp_url' => $photoUrls['foto_ktp'],
+            'photo_modem_url' => $photoUrls['foto_modem'],
+            'photo_opm_url' => $photoUrls['foto_opm'],
             'harga' => (string) $validated['biaya_pemasangan'],
             'biaya_pemasangan' => (string) $validated['biaya_pemasangan'],
+            'installation_fee' => (int) $validated['biaya_pemasangan'],
             'odp' => $validated['odp'] ?? '',
             'mac_address' => $normalizedMac,
+            'contract_router_mac' => $normalizedMac,
         ];
 
         // 1. Simpan di local pending registry agar verifikasi bisa langsung membacanya
@@ -257,7 +278,10 @@ class CustomerVerificationController extends Controller
     public function getCustomerForVerification($timestamp)
     {
         try {
-            $decodedTimestamp = base64_decode($timestamp);
+            $decodedTimestamp = base64_decode($timestamp, true);
+            if ($decodedTimestamp === false || !preg_match('/[0-9]/', $decodedTimestamp)) {
+                $decodedTimestamp = $timestamp;
+            }
             
             if (!$decodedTimestamp) {
                 return response()->json([
@@ -277,6 +301,33 @@ class CustomerVerificationController extends Controller
             if (!$sheetsData && $this->sheetsService) {
                 $sheetsData = $this->sheetsService->getCustomerByTimestamp($decodedTimestamp);
             }
+
+            // 3. Jika tidak ada di lokal maupun sheets, cari di CustomerProspect
+            if (!$sheetsData) {
+                $prospect = \App\Models\CustomerProspect::where('registration_no', $decodedTimestamp)
+                    ->orWhere('nik', $decodedTimestamp)
+                    ->orWhere('id', is_numeric($decodedTimestamp) ? (int)$decodedTimestamp : 0)
+                    ->first();
+                if ($prospect) {
+                    $sheetsData = [
+                        'timestamp' => $prospect->created_at?->format('d/m/Y H:i:s') ?? now()->format('d/m/Y H:i:s'),
+                        'nama' => $prospect->nama,
+                        'no_telp' => $prospect->no_telp,
+                        'nik' => $prospect->nik ?? '',
+                        'jenis_kelamin' => $prospect->jenis_kelamin,
+                        'kecamatan_id' => $prospect->kecamatan_id,
+                        'desa_id' => $prospect->desa_id,
+                        'dusun_id' => $prospect->dusun_id,
+                        'alamat' => $prospect->alamat ?? '',
+                        'paket' => $prospect->paket ?? '',
+                        'paket_custom' => $prospect->paket_custom ?? '',
+                        'foto_depan_rumah' => $prospect->foto_depan_rumah ?? '',
+                        'foto_ktp' => $prospect->foto_ktp ?? '',
+                        'biaya_pemasangan' => 250000,
+                        'harga' => '250000',
+                    ];
+                }
+            }
             
             if (!$sheetsData) {
                 return response()->json([
@@ -288,9 +339,9 @@ class CustomerVerificationController extends Controller
             $customerData = $this->sheetsService ? $this->sheetsService->convertToCustomerData($sheetsData) : $sheetsData;
 
             // Resolusi Wilayah (Kecamatan, Desa, Dusun) secara otomatis jika belum terisi ID
-            $kecamatanId = $sheetsData['kecamatan_id'] ?? null;
-            $desaId = $sheetsData['desa_id'] ?? null;
-            $dusunId = $sheetsData['dusun_id'] ?? null;
+            $kecamatanId = $sheetsData['kecamatan_id'] ?? ($customerData['kecamatan_id'] ?? null);
+            $desaId = $sheetsData['desa_id'] ?? ($customerData['desa_id'] ?? null);
+            $dusunId = $sheetsData['dusun_id'] ?? ($customerData['dusun_id'] ?? null);
 
             if (!$desaId && !empty($sheetsData['desa'])) {
                 $desaMatch = MasterWilayahDesa::whereRaw('LOWER(name) = ?', [strtolower(trim((string)$sheetsData['desa']))])->first();
@@ -309,21 +360,40 @@ class CustomerVerificationController extends Controller
                 }
             }
 
+            // Pastikan seluruh field terisi lengkap dalam format form frontend:
+            $customerData['google_sheets_timestamp'] = $decodedTimestamp;
+            $customerData['name'] = $customerData['name'] ?? ($sheetsData['nama'] ?? ($sheetsData['name'] ?? ''));
+            $customerData['phone'] = $customerData['phone'] ?? ($sheetsData['no_telp'] ?? ($sheetsData['phone'] ?? ''));
+            $customerData['package_type'] = $customerData['package_type'] ?? ($sheetsData['paket'] ?? ($sheetsData['package_type'] ?? ''));
+            $customerData['custom_package'] = $customerData['custom_package'] ?? ($sheetsData['paket_custom'] ?? '');
+            $customerData['address'] = $customerData['address'] ?? ($sheetsData['alamat'] ?? ($sheetsData['address'] ?? ''));
+            $customerData['odp'] = $customerData['odp'] ?? ($sheetsData['odp'] ?? '');
+            
+            $fee = $customerData['installation_fee'] ?? ($sheetsData['biaya_pemasangan'] ?? ($sheetsData['harga'] ?? 0));
+            if (is_string($fee)) {
+                $fee = (int) str_replace(['Rp', '.', ',', ' '], '', $fee);
+            }
+            $customerData['installation_fee'] = $fee;
+
             $customerData['kecamatan_id'] = $kecamatanId ? (string)$kecamatanId : '';
             $customerData['desa_id'] = $desaId ? (string)$desaId : '';
             $customerData['dusun_id'] = $dusunId ? (string)$dusunId : '';
-            $customerData['contract_router_mac'] = $sheetsData['mac_address'] ?? ($sheetsData['mac'] ?? '');
-            $customerData['contract_ktp_number'] = $sheetsData['nik'] ?? '';
+            $customerData['contract_router_mac'] = $sheetsData['mac_address'] ?? ($sheetsData['contract_router_mac'] ?? ($sheetsData['mac'] ?? ($customerData['contract_router_mac'] ?? '')));
+            $customerData['contract_ktp_number'] = $sheetsData['nik'] ?? ($sheetsData['contract_ktp_number'] ?? ($customerData['contract_ktp_number'] ?? ''));
 
-            $photoFront = $sheetsData['foto_depan_rumah'] ?? ($sheetsData['photo_front_url'] ?? '');
-            $photoModem = $sheetsData['foto_modem'] ?? ($sheetsData['photo_modem_url'] ?? '');
-            $photoKtp = $sheetsData['foto_ktp'] ?? ($sheetsData['photo_ktp_url'] ?? '');
-            $photoOpm = $sheetsData['foto_opm'] ?? ($sheetsData['photo_opm_url'] ?? '');
+            $photoFront = $sheetsData['foto_depan_rumah'] ?? ($sheetsData['photo_front_url'] ?? ($customerData['photo_front_url'] ?? ''));
+            $photoModem = $sheetsData['foto_modem'] ?? ($sheetsData['photo_modem_url'] ?? ($customerData['photo_modem_url'] ?? ''));
+            $photoKtp = $sheetsData['foto_ktp'] ?? ($sheetsData['photo_ktp_url'] ?? ($customerData['photo_ktp_url'] ?? ''));
+            $photoOpm = $sheetsData['foto_opm'] ?? ($sheetsData['photo_opm_url'] ?? ($customerData['photo_opm_url'] ?? ''));
 
             $customerData['contract_photo_front_url'] = $photoFront;
             $customerData['contract_photo_modem_url'] = $photoModem;
             $customerData['contract_photo_ktp_url'] = $photoKtp;
             $customerData['contract_photo_opm_url'] = $photoOpm;
+            $customerData['photo_front_url'] = $photoFront;
+            $customerData['photo_modem_url'] = $photoModem;
+            $customerData['photo_ktp_url'] = $photoKtp;
+            $customerData['photo_opm_url'] = $photoOpm;
             
             $response = [
                 'success' => true,
@@ -334,7 +404,7 @@ class CustomerVerificationController extends Controller
                     'photo_modem_url' => $photoModem,
                     'photo_ktp_url' => $photoKtp,
                     'photo_opm_url' => $photoOpm,
-                    'mac_address' => $sheetsData['mac_address'] ?? '',
+                    'mac_address' => $customerData['contract_router_mac'],
                 ]
             ];
 
@@ -357,6 +427,24 @@ class CustomerVerificationController extends Controller
      */
     public function verifyCustomer(Request $request)
     {
+        if (!$request->filled('google_sheets_timestamp')) {
+            $ts = $request->input('timestamp') ?: $request->input('encoded_timestamp');
+            if ($ts) {
+                $decoded = base64_decode($ts, true);
+                $request->merge([
+                    'google_sheets_timestamp' => ($decoded !== false && preg_match('/[0-9]/', $decoded)) ? $decoded : $ts,
+                ]);
+            } else {
+                $referer = (string) $request->header('referer');
+                if (preg_match('#/customer-verification/verify/([A-Za-z0-9+/=]+)#', $referer, $matches)) {
+                    $decoded = base64_decode($matches[1], true);
+                    if ($decoded) {
+                        $request->merge(['google_sheets_timestamp' => $decoded]);
+                    }
+                }
+            }
+        }
+
         $validated = $request->validate($this->verificationValidationRules());
         $agreementInput = $request->only([
             'contract_ktp_number',
