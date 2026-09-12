@@ -332,6 +332,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::get('/odps/options', [\App\Http\Controllers\CustomerVerificationController::class, 'odpOptions'])->name('customer-verification.odps.options');
             Route::post('/verify', [\App\Http\Controllers\CustomerVerificationController::class, 'verifyCustomer'])->name('customer-verification.verify');
             Route::get('/verified', [\App\Http\Controllers\CustomerVerificationController::class, 'getVerifiedTimestamps'])->name('customer-verification.verified');
+            Route::delete('/pending/{timestamp?}', [\App\Http\Controllers\CustomerVerificationController::class, 'deletePendingCustomer'])->name('customer-verification.pending.delete');
         });
 
         // Customer Prospects (Verifikasi Calon Pelanggan Publik/Internal)

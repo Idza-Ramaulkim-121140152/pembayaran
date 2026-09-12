@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, FileCheck, ExternalLink, Loader, Calendar, MapPin, Phone, User as UserIcon, UserCheck } from 'lucide-react';
+import { Users, FileCheck, ExternalLink, Loader, Calendar, MapPin, Phone, User as UserIcon, UserCheck, Trash2 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
@@ -9,9 +9,18 @@ function CustomerVerificationPage() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [successMessage, setSuccessMessage] = useState(null);
     const [pendingCustomers, setPendingCustomers] = useState([]);
     const [formUrl, setFormUrl] = useState('');
     const [showList, setShowList] = useState(false);
+    const [deleteModal, setDeleteModal] = useState({
+        open: false,
+        customer: null,
+        loading: false,
+    });
+
+    const userRole = String(window.appUserRole || 'admin').toLowerCase().trim();
+    const isSuperAdminOrAdmin = ['superadmin', 'admin'].includes(userRole);
 
     useEffect(() => {
         fetchFormUrl();
@@ -77,6 +86,45 @@ function CustomerVerificationPage() {
         navigate(`/customer-verification/verify/${encodedTimestamp}`);
     };
 
+    const handleDeleteCustomer = async () => {
+        if (!deleteModal.customer) return;
+        const customerToDelete = deleteModal.customer;
+        setDeleteModal((prev) => ({ ...prev, loading: true }));
+        setError(null);
+
+        try {
+            const rawTimestamp = customerToDelete.timestamp;
+            const encodedTimestamp = btoa(rawTimestamp);
+            const response = await fetch(`/api/customer-verification/pending/${encodeURIComponent(encodedTimestamp)}`, {
+                method: 'DELETE',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+                },
+                body: JSON.stringify({
+                    timestamp: rawTimestamp,
+                }),
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Gagal menghapus data pendaftaran pending');
+            }
+
+            setPendingCustomers((prev) => prev.filter((c) => c.timestamp !== rawTimestamp));
+            setSuccessMessage(`Data pendaftaran "${customerToDelete.nama || rawTimestamp}" berhasil dihapus.`);
+            setDeleteModal({ open: false, customer: null, loading: false });
+
+            setTimeout(() => {
+                setSuccessMessage(null);
+            }, 6000);
+        } catch (err) {
+            setError(err.message || 'Gagal menghapus data pendaftaran');
+            setDeleteModal((prev) => ({ ...prev, loading: false }));
+        }
+    };
+
     const formatDate = (dateStr) => {
         if (!dateStr) return '-';
         try {
@@ -114,6 +162,12 @@ function CustomerVerificationPage() {
                 {error && (
                     <Alert variant="error" className="mb-6">
                         {error}
+                    </Alert>
+                )}
+
+                {successMessage && (
+                    <Alert variant="success" className="mb-6">
+                        {successMessage}
                     </Alert>
                 )}
 
@@ -317,16 +371,38 @@ function CustomerVerificationPage() {
                                                 </div>
                                             </div>
 
-                                            <Button
-                                                variant="primary"
-                                                size="sm"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleSelectCustomer(customer.timestamp);
-                                                }}
-                                            >
-                                                Verifikasi →
-                                            </Button>
+                                            <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                                                {isSuperAdminOrAdmin && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setDeleteModal({
+                                                                open: true,
+                                                                customer: customer,
+                                                                loading: false,
+                                                            });
+                                                        }}
+                                                        className="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 font-medium"
+                                                        title="Hapus data pendaftaran pending"
+                                                    >
+                                                        <Trash2 size={14} className="mr-1" />
+                                                        Hapus
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    variant="primary"
+                                                    size="sm"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleSelectCustomer(customer.timestamp);
+                                                    }}
+                                                >
+                                                    Verifikasi →
+                                                </Button>
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
@@ -356,6 +432,63 @@ function CustomerVerificationPage() {
                         </div>
                     </div>
                 </div>
+                {/* Delete Confirmation Modal */}
+                {deleteModal.open && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-[fadeIn_.15s_ease-out]">
+                        <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4">
+                            <div className="flex items-center gap-3 text-rose-600">
+                                <div className="p-2.5 bg-rose-100 rounded-xl">
+                                    <Trash2 size={24} className="text-rose-600" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">Hapus Pendaftaran Pending</h3>
+                                    <p className="text-xs text-gray-500">Konfirmasi tindakan Super Admin / Administrator</p>
+                                </div>
+                            </div>
+
+                            <p className="text-sm text-gray-600 leading-relaxed">
+                                Apakah Anda yakin ingin menghapus data pendaftaran pending untuk{' '}
+                                <span className="font-bold text-gray-900">{deleteModal.customer?.nama || 'Pelanggan'}</span>{' '}
+                                dengan waktu pendaftaran <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">{deleteModal.customer?.timestamp}</span>?
+                            </p>
+
+                            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-xs text-rose-700 leading-relaxed">
+                                Data yang dihapus akan dikeluarkan dari antrean verifikasi dan tidak dapat dipulihkan kembali.
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2.5 pt-2">
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => setDeleteModal({ open: false, customer: null, loading: false })}
+                                    disabled={deleteModal.loading}
+                                    className="text-xs font-semibold px-4 py-2"
+                                >
+                                    Batal
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="danger"
+                                    onClick={handleDeleteCustomer}
+                                    disabled={deleteModal.loading}
+                                    className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 flex items-center gap-1.5"
+                                >
+                                    {deleteModal.loading ? (
+                                        <>
+                                            <Loader size={14} className="animate-spin" />
+                                            Menghapus...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Trash2 size={14} />
+                                            Ya, Hapus Data
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

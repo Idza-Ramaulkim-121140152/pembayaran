@@ -422,4 +422,36 @@ class GoogleSheetsService
             return false;
         }
     }
+
+    /**
+     * Clear / delete customer row in Google Sheets by timestamp
+     */
+    public function deleteCustomerByTimestamp(string $timestamp): bool
+    {
+        try {
+            $customer = $this->getCustomerByTimestamp($timestamp);
+            if (!$customer || empty($customer['_row_number'])) {
+                return false;
+            }
+
+            $rowNumber = (int) $customer['_row_number'];
+            $sheetName = explode('!', $this->range)[0] ?? 'Sheet1';
+            $url = "https://sheets.googleapis.com/v4/spreadsheets/{$this->spreadsheetId}/values/{$sheetName}!A{$rowNumber}:Z{$rowNumber}:clear";
+
+            $response = $this->httpClient->post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $this->accessToken,
+                    'Content-Type' => 'application/json',
+                    'Accept' => 'application/json',
+                ],
+                'body' => '{}',
+            ]);
+
+            return in_array($response->getStatusCode(), [200, 204], true);
+        } catch (Exception $e) {
+            \Log::warning('Google Sheets deleteCustomerByTimestamp error: ' . $e->getMessage());
+            return false;
+        }
+    }
 }
+

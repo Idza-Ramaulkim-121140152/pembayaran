@@ -14,6 +14,7 @@ use App\Models\PayrollProjectDetail;
 use App\Models\NotificationLog;
 use App\Models\PaymentReceiptOption;
 use App\Models\SiteSetting;
+use App\Models\SystemAuditLog;
 use App\Models\User;
 use App\Models\FinancialTransaction;
 use App\Services\BillingMessageTemplateService;
@@ -228,6 +229,9 @@ class CustomerVerificationController extends Controller
             ->map(fn($t) => trim((string)$t))
             ->toArray();
 
+        $deletedTimestamps = Cache::get('customer_registrations_deleted', []);
+        $excludedTimestamps = array_unique(array_merge($verifiedTimestamps, $deletedTimestamps));
+
         $pendingCustomers = [];
         $seenTimestamps = [];
 
@@ -235,7 +239,7 @@ class CustomerVerificationController extends Controller
         $localRegistrations = Cache::get('customer_registrations_pending', []);
         foreach ($localRegistrations as $timestamp => $regData) {
             $normalizedTime = trim((string)$timestamp);
-            if (!in_array($normalizedTime, $verifiedTimestamps, true) && !isset($seenTimestamps[$normalizedTime])) {
+            if (!in_array($normalizedTime, $excludedTimestamps, true) && !isset($seenTimestamps[$normalizedTime])) {
                 $pendingCustomers[] = $regData;
                 $seenTimestamps[$normalizedTime] = true;
             }
@@ -247,7 +251,7 @@ class CustomerVerificationController extends Controller
                 $sheetsPending = $this->sheetsService->fetchPendingCustomers();
                 foreach ($sheetsPending as $cust) {
                     $normalizedTime = trim((string)($cust['timestamp'] ?? ''));
-                    if ($normalizedTime !== '' && !isset($seenTimestamps[$normalizedTime]) && !in_array($normalizedTime, $verifiedTimestamps, true)) {
+                    if ($normalizedTime !== '' && !isset($seenTimestamps[$normalizedTime]) && !in_array($normalizedTime, $excludedTimestamps, true)) {
                         $pendingCustomers[] = $cust;
                         $seenTimestamps[$normalizedTime] = true;
                     }
@@ -270,6 +274,125 @@ class CustomerVerificationController extends Controller
     }
 
     /**
+     * Delete a pending customer registration (Super Admin & Admin only)
+     * 
+     * @param Request $request
+     * @param string|null $timestamp (base64 encoded or plain)
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function deletePendingCustomer(Request $request, $timestamp = null)
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->role, [User::ROLE_SUPERADMIN, User::ROLE_ADMIN], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hanya Super Admin atau Administrator yang diizinkan menghapus data ini.'
+            ], 403);
+        }
+
+        $rawTimestamp = $timestamp ?? $request->input('timestamp');
+        if (empty($rawTimestamp)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Timestamp pendaftaran tidak ditemukan.'
+            ], 400);
+        }
+
+        $decodedTimestamp = base64_decode($rawTimestamp, true);
+        if ($decodedTimestamp === false || !preg_match('/[0-9]/', $decodedTimestamp)) {
+            $decodedTimestamp = $rawTimestamp;
+        }
+        $decodedTimestamp = trim((string)$decodedTimestamp);
+
+        // 1. Hapus dari local registry pending jika ada
+        $localRegistrations = Cache::get('customer_registrations_pending', []);
+        $deletedFromLocal = false;
+        $customerInfo = null;
+
+        if (isset($localRegistrations[$decodedTimestamp])) {
+            $customerInfo = $localRegistrations[$decodedTimestamp];
+            unset($localRegistrations[$decodedTimestamp]);
+            $deletedFromLocal = true;
+        }
+
+        foreach ($localRegistrations as $k => $v) {
+            if (trim((string)$k) === $decodedTimestamp || trim((string)($v['timestamp'] ?? '')) === $decodedTimestamp) {
+                if (!$customerInfo) {
+                    $customerInfo = $v;
+                }
+                unset($localRegistrations[$k]);
+                $deletedFromLocal = true;
+            }
+        }
+
+        if ($deletedFromLocal) {
+            Cache::put('customer_registrations_pending', $localRegistrations, now()->addDays(30));
+        }
+
+        // 2. Tambahkan ke blacklist deleted registrations (supaya dari Google Sheets atau sumber lain tidak muncul lagi)
+        $deletedTimestamps = Cache::get('customer_registrations_deleted', []);
+        if (!in_array($decodedTimestamp, $deletedTimestamps, true)) {
+            $deletedTimestamps[] = $decodedTimestamp;
+            Cache::put('customer_registrations_deleted', array_values(array_unique($deletedTimestamps)), now()->addYears(1));
+        }
+
+        // 3. Jika sheetsService aktif, coba hapus/clear baris di Google Sheets
+        $sheetsCleared = false;
+        if ($this->sheetsService) {
+            try {
+                $sheetsCleared = $this->sheetsService->deleteCustomerByTimestamp($decodedTimestamp);
+            } catch (\Throwable $e) {
+                \Log::warning('Failed deleting row in Google Sheets for timestamp: ' . $decodedTimestamp . ' - ' . $e->getMessage());
+            }
+        }
+
+        // 4. Jika ada CustomerProspect yang berelasi, tandai status rejected
+        try {
+            $prospect = \App\Models\CustomerProspect::where('registration_no', $decodedTimestamp)
+                ->orWhere('nik', $decodedTimestamp)
+                ->orWhere('id', is_numeric($decodedTimestamp) ? (int)$decodedTimestamp : 0)
+                ->first();
+
+            if ($prospect && $prospect->status !== 'installed') {
+                $prospect->status = 'rejected';
+                $prospect->rejection_reason = 'Dihapus dari pendaftaran pending oleh ' . $user->name;
+                $prospect->save();
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Error updating related prospect on pending customer delete: ' . $e->getMessage());
+        }
+
+        // 5. Catat audit log
+        try {
+            SystemAuditLog::create([
+                'event_type' => 'customer_pending_deleted',
+                'subject_type' => 'pending_customer',
+                'subject_id' => 0,
+                'actor_id' => $user->id,
+                'payload' => [
+                    'timestamp' => $decodedTimestamp,
+                    'customer_name' => $customerInfo['nama'] ?? ($customerInfo['name'] ?? null),
+                    'deleted_by' => $user->name,
+                    'deleted_by_role' => $user->role,
+                    'sheets_cleared' => $sheetsCleared,
+                    'deleted_from_local' => $deletedFromLocal,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('Failed creating audit log for pending customer deletion: ' . $e->getMessage());
+        }
+
+        \Log::info("Pending customer registration deleted: {$decodedTimestamp} by user {$user->name} ({$user->role})");
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Data pendaftaran pending berhasil dihapus.',
+            'timestamp' => $decodedTimestamp,
+            'sheets_cleared' => $sheetsCleared,
+        ]);
+    }
+
+    /**
      * Get customer detail by timestamp for verification with auto-populated relations
      * 
      * @param string $timestamp (base64 encoded)
@@ -287,6 +410,13 @@ class CustomerVerificationController extends Controller
                 return response()->json([
                     'error' => 'Invalid timestamp format'
                 ], 400);
+            }
+
+            $deletedTimestamps = Cache::get('customer_registrations_deleted', []);
+            if (in_array($decodedTimestamp, $deletedTimestamps, true)) {
+                return response()->json([
+                    'error' => 'Data pendaftaran pelanggan sudah dihapus'
+                ], 404);
             }
 
             $sheetsData = null;
