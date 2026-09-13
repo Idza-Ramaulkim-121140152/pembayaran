@@ -689,7 +689,7 @@ class CustomerVerificationController extends Controller
             $validated['kecamatan_id'] = $kecamatan->id;
             $validated['desa_id'] = $desa->id;
             $validated['dusun_id'] = $dusun->id;
-            $validated['area_code'] = $areaPrefix;
+            $validated['area_code'] = strtoupper($dusun->code ?: substr($areaPrefix, -3));
             if (empty($validated['address'])) {
                 $validated['address'] = $dusun->name . ', ' . $desa->name . ', ' . $kecamatan->name;
             }

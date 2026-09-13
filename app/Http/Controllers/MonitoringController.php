@@ -220,9 +220,11 @@ class MonitoringController extends Controller
             }
 
             $result[] = [
+                'id' => $customer->id,
                 'customer_id' => $customer->id,
                 'customer_name' => $customer->name,
                 'pppoe_username' => $customer->pppoe_username,
+                'area_code' => \App\Services\AreaOutageMonitorService::extractAreaCode($customer->pppoe_username) ?? 'N/A',
                 'customer_phone' => $customer->phone,
                 'customer_address' => $customer->address,
                 'package_type' => $customer->package_type,

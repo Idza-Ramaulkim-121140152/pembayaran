@@ -266,13 +266,9 @@ class GoogleSheetsService
             $tanggalAktivasi = now()->format('Y-m-d');
         }
         
-        // Extract area_code from username PPPoE (first 3 letters before dash)
+        // Extract area_code from username PPPoE (unify KALTAMCJA/CJA -> CJA)
         $userPppoe = $sheetsData['user_pppoe'] ?? '';
-        $areaCode = '';
-        if ($userPppoe && strpos($userPppoe, '-') !== false) {
-            $parts = explode('-', $userPppoe);
-            $areaCode = strtoupper(substr($parts[0], 0, 3));
-        }
+        $areaCode = \App\Services\AreaOutageMonitorService::extractAreaCode($userPppoe) ?? '';
         
         // Calculate due date (+30 days from activation date)
         $dueDate = '';

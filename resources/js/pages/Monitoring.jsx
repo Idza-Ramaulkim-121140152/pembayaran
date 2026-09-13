@@ -45,6 +45,52 @@ export default function Monitoring() {
         await fetchData();
     };
 
+    const extractAreaCode = (customerOrUsername) => {
+        const value = typeof customerOrUsername === 'object'
+            ? (customerOrUsername?.area_code || customerOrUsername?.pppoe_username)
+            : customerOrUsername;
+
+        if (!value) return 'N/A';
+        const trimmed = String(value).trim();
+        if (!trimmed) return 'N/A';
+
+        // 1. Explicit alias: KALTAMCJA (kode baru) & CJA (kode lama) adalah area yang sama
+        if (trimmed.toUpperCase() === 'KALTAMCJA' || trimmed.toUpperCase() === 'CJA') {
+            return 'CJA';
+        }
+
+        // 2. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
+        if (trimmed.includes('-')) {
+            const prefix = trimmed.split('-')[0].trim();
+            if (prefix.toUpperCase() === 'KALTAMCJA') {
+                return 'CJA';
+            }
+            if (prefix.length >= 3) {
+                return prefix.slice(-3).toUpperCase();
+            }
+        }
+
+        // 3. Format awalan KALTAM tanpa strip (prefix 9 karakter, 3 char terakhir adalah dusun)
+        const kaltamMatch = trimmed.match(/^KALTAM([A-Za-z]{3})/i);
+        if (kaltamMatch) {
+            return kaltamMatch[1].toUpperCase();
+        }
+
+        // 4. Format 9 karakter (Kecamatan 3 + Desa 3 + Dusun 3) -> ambil 3 karakter terakhir
+        const nineMatch = trimmed.match(/^[A-Za-z]{6}([A-Za-z]{3})$/i);
+        if (nineMatch) {
+            return nineMatch[1].toUpperCase();
+        }
+
+        // 5. Format 3 huruf alfabet pertama jika tanpa strip
+        const threeMatch = trimmed.match(/^([A-Za-z]{3})/i);
+        if (threeMatch) {
+            return threeMatch[1].toUpperCase();
+        }
+
+        return trimmed.toUpperCase();
+    };
+
     const getFilteredCustomers = () => {
         let filtered = data.customers;
 
@@ -55,6 +101,7 @@ export default function Monitoring() {
             const term = searchTerm.toLowerCase();
             filtered = filtered.filter(c =>
                 c.pppoe_username?.toLowerCase().includes(term) ||
+                extractAreaCode(c).toLowerCase().includes(term) ||
                 c.customer_name?.toLowerCase().includes(term) ||
                 c.ip_address?.toLowerCase().includes(term) ||
                 c.caller_id?.toLowerCase().includes(term) ||
@@ -80,7 +127,7 @@ export default function Monitoring() {
         const areas = {};
 
         data.customers.forEach(customer => {
-            const areaCode = customer.pppoe_username?.substring(0, 3).toUpperCase() || 'N/A';
+            const areaCode = extractAreaCode(customer);
 
             if (!areas[areaCode]) {
                 areas[areaCode] = { total: 0, online: 0 };
@@ -99,7 +146,7 @@ export default function Monitoring() {
 
     const getCustomersByArea = (areaCode) => {
         return data.customers.filter(customer => {
-            const customerArea = customer.pppoe_username?.substring(0, 3).toUpperCase() || 'N/A';
+            const customerArea = extractAreaCode(customer);
             return customerArea === areaCode;
         });
     };
@@ -116,9 +163,14 @@ export default function Monitoring() {
             key: 'pppoe_username',
             label: 'Username PPPoE',
             render: (customer) => (
-                <span className={`font-medium ${getStatusColor(customer)}`}>
-                    {customer.pppoe_username || '-'}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`font-medium ${getStatusColor(customer)}`}>
+                        {customer.pppoe_username || '-'}
+                    </span>
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold bg-slate-100 text-slate-700 rounded border border-slate-200">
+                        {extractAreaCode(customer)}
+                    </span>
+                </div>
             ),
         },
         { key: 'status', label: 'Status', render: (customer) => getStatusBadge(customer) },

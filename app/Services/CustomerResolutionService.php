@@ -133,8 +133,8 @@ class CustomerResolutionService
             }
         }
 
-        // C. Extract PPPoE Username from text (e.g. CJA-kastori, SMD-cecep)
-        if (preg_match('/\b([A-Z]{2,4}-[a-zA-Z0-9_-]+)\b/', $text, $pppoeMatch)) {
+        // C. Extract PPPoE Username from text (e.g. CJA-kastori, SMD-cecep, KALTAMCJA-jumingan)
+        if (preg_match('/\b([A-Z]{2,12}-[a-zA-Z0-9_-]+)\b/', $text, $pppoeMatch)) {
             $pppoe = $pppoeMatch[1];
             $cust = Customer::query()->where('pppoe_username', $pppoe)->first();
             if ($cust) return $cust;

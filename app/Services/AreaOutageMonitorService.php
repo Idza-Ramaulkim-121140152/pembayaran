@@ -83,21 +83,34 @@ class AreaOutageMonitorService
             return null;
         }
 
+        // 0. Explicit alias: KALTAMCJA (kode baru) & CJA (kode lama) adalah area yang sama
+        if (strcasecmp($trimmed, 'KALTAMCJA') === 0 || strcasecmp($trimmed, 'CJA') === 0) {
+            return 'CJA';
+        }
+
         // 1. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
         if (str_contains($trimmed, '-')) {
             $parts = explode('-', $trimmed, 2);
             $prefix = trim($parts[0]);
+            if (strcasecmp($prefix, 'KALTAMCJA') === 0) {
+                return 'CJA';
+            }
             if (strlen($prefix) >= 3) {
                 return strtoupper(substr($prefix, -3));
             }
         }
 
-        // 2. Format awalan KALTAM tanpa strip (prefix 9 karakter, 3 char terakhir adalah dusun)
+        // 2. Format 9 karakter (Kecamatan 3 + Desa 3 + Dusun 3, misal KALTAMCJA)
+        if (preg_match('/^[A-Za-z]{6}([A-Za-z]{3})$/i', $trimmed, $matches)) {
+            return strtoupper($matches[1]);
+        }
+
+        // 3. Format awalan KALTAM tanpa strip (prefix 9 karakter, 3 char terakhir adalah dusun)
         if (preg_match('/^KALTAM([A-Za-z]{3})/i', $trimmed, $matches)) {
             return strtoupper($matches[1]);
         }
 
-        // 3. Format 3 huruf alfabet pertama jika tanpa strip
+        // 4. Format 3 huruf alfabet pertama jika tanpa strip
         if (preg_match('/^([A-Za-z]{3})/i', $trimmed, $matches)) {
             return strtoupper($matches[1]);
         }
