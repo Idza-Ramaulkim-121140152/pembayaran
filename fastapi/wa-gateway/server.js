@@ -813,29 +813,82 @@ app.post('/groups/resolve-invite', async (req, res) => {
         return res.status(400).json({ success: false, error: 'Parameter inviteUrl diperlukan' });
     }
 
+    // Pastikan WA client sudah siap sebelum mencoba operasi grup
+    const current = await getRealtimeStatus();
+    if (!current.ready) {
+        return res.status(503).json({
+            success: false,
+            error: current.hasQR
+                ? 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
+                : `WhatsApp belum siap (state: ${current.state || 'unknown'}). Coba lagi setelah bot terhubung.`
+        });
+    }
+
     try {
+        // Ekstrak kode undangan dari URL
         const match = String(inviteUrl).match(/chat\.whatsapp\.com\/([A-Za-z0-9_-]+)/);
         const code = match ? match[1] : String(inviteUrl).trim();
 
-        const inviteInfo = await client.getInviteInfo(code);
+        let groupId = null;
+        let groupName = null;
+        let participantsCount = 0;
         let joined = false;
 
         if (joinIfNecessary) {
+            // Coba bergabung ke grup — acceptInvite() mengembalikan group chatId string
             try {
-                await client.acceptInvite(code);
+                const joinedChatId = await client.acceptInvite(code);
                 joined = true;
+                console.log(`✅ Bot berhasil bergabung ke grup: ${joinedChatId}`);
+
+                // Tunggu sebentar agar chat muncul di daftar
+                await new Promise(r => setTimeout(r, 1500));
+
+                // Ambil detail grup dari chat yang baru diikuti
+                try {
+                    const chat = await client.getChatById(joinedChatId);
+                    groupId = joinedChatId;
+                    groupName = chat.name || chat.formattedTitle || 'Grup WhatsApp';
+                    participantsCount = chat.participants ? chat.participants.length : 0;
+                } catch (chatErr) {
+                    // Fallback: gunakan ID yang dikembalikan acceptInvite
+                    console.warn('⚠️ Tidak bisa baca detail chat setelah join:', chatErr.message);
+                    groupId = typeof joinedChatId === 'string' ? joinedChatId : String(joinedChatId);
+                    groupName = 'Grup WhatsApp';
+                }
             } catch (joinErr) {
-                console.warn('Accept invite note:', joinErr.message);
+                const errMsg = joinErr.message || '';
+                const alreadyMember = errMsg.includes('already') || errMsg.includes('member') ||
+                    errMsg.includes('already a participant') || errMsg.includes('already in group');
+
+                if (!alreadyMember) {
+                    // Error bukan karena sudah member — lempar ulang
+                    throw joinErr;
+                }
+                console.log('ℹ️ Bot sudah bergabung ke grup ini sebelumnya.');
             }
         }
 
-        const groupId = inviteInfo.id ? (inviteInfo.id._serialized || inviteInfo.id) : null;
+        // Jika belum dapat info grup (tidak join, atau sudah member), ambil via getInviteInfo
+        if (!groupId) {
+            const inviteInfo = await client.getInviteInfo(code);
+            groupId = inviteInfo.id
+                ? (inviteInfo.id._serialized || String(inviteInfo.id))
+                : null;
+            groupName = inviteInfo.subject || 'Grup WhatsApp';
+            participantsCount = inviteInfo.size || 0;
+        }
+
+        if (!groupId) {
+            throw new Error('Tidak dapat membaca ID grup dari link undangan ini.');
+        }
+
         res.json({
             success: true,
             group: {
                 id: groupId,
-                name: inviteInfo.subject || 'Grup WhatsApp',
-                participants_count: inviteInfo.size || 0,
+                name: groupName || 'Grup WhatsApp',
+                participants_count: participantsCount,
                 joined
             }
         });
@@ -843,7 +896,7 @@ app.post('/groups/resolve-invite', async (req, res) => {
         console.error('❌ Error resolve invite:', err.message);
         res.status(400).json({
             success: false,
-            error: 'Gagal membaca link undangan grup: ' + err.message
+            error: err.message || 'Gagal membaca link undangan grup'
         });
     }
 });
