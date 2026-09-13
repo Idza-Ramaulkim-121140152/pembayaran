@@ -64,8 +64,51 @@ class AreaOutageMonitorService
     }
 
     /**
+     * Peta konversi kode lama (3 huruf dusun) ke kode baru (9 huruf wilayah).
+     */
+    public static function getWilayahCodeMap(): array
+    {
+        static $cache = null;
+        if ($cache !== null) {
+            return $cache;
+        }
+
+        $map = [
+            'CJA' => 'KALTAMCJA',
+            'CNS' => 'KALTAMCNS',
+            'KBS' => 'KALTAMKBS',
+            'KBU' => 'KALTAMKBU',
+            'MGS' => 'KALTAMMGS',
+            'RJS' => 'KALTAMRJS',
+            'SMD' => 'KALTAMSMD',
+            'LBR' => 'KALMRKLBR',
+            'MRK' => 'KALMRKMRK',
+            'SRJ' => 'KALGTRSRJ',
+        ];
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('master_wilayah_dusuns')) {
+                $dusuns = \App\Models\MasterWilayahDusun::with('desa.kecamatan')->get();
+                foreach ($dusuns as $dusun) {
+                    $kec = strtoupper(trim((string) ($dusun->desa?->kecamatan?->code ?? '')));
+                    $desa = strtoupper(trim((string) ($dusun->desa?->code ?? '')));
+                    $dus = strtoupper(trim((string) ($dusun->code ?? '')));
+                    if ($kec !== '' && $desa !== '' && $dus !== '') {
+                        $map[$dus] = $kec . $desa . $dus;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // fallback ke daftar default
+        }
+
+        $cache = $map;
+        return $cache;
+    }
+
+    /**
      * Ekstraksi kode area dari username PPPoE.
-     * Menggabungkan kode lama (CJA) ke kode baru (KALTAMCJA).
+     * Menggabungkan kode lama (3 huruf dusun) ke kode baru (9 huruf wilayah).
      */
     public static function extractAreaCode(?string $pppoeUsername): ?string
     {
@@ -78,37 +121,52 @@ class AreaOutageMonitorService
             return null;
         }
 
-        // 0. Unifikasi: CJA (kode lama) digabungkan ke KALTAMCJA (kode baru)
-        if (strcasecmp($trimmed, 'CJA') === 0 || strcasecmp($trimmed, 'KALTAMCJA') === 0) {
-            return 'KALTAMCJA';
-        }
+        $map = self::getWilayahCodeMap();
 
-        // 1. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
+        // 1. Format dengan tanda strip '-' (misal CJA-arif2, KALTAMCNS-budi, CNS-tono)
         if (str_contains($trimmed, '-')) {
-            $parts = explode('-', $trimmed, 2);
-            $prefix = strtoupper(trim($parts[0]));
-            if ($prefix === 'CJA' || $prefix === 'KALTAMCJA') {
-                return 'KALTAMCJA';
+            $prefix = strtoupper(trim(explode('-', $trimmed, 2)[0]));
+            if (isset($map[$prefix])) {
+                return $map[$prefix];
+            }
+            if (strlen($prefix) === 9) {
+                return $prefix;
+            }
+            if (strlen($prefix) > 3) {
+                $last3 = substr($prefix, -3);
+                if (isset($map[$last3])) {
+                    return $map[$last3];
+                }
             }
             return $prefix;
         }
 
-        // 2. Awalan KALTAMCJA tanpa strip (misal KALTAMCJA123)
-        if (preg_match('/^KALTAMCJA/i', $trimmed)) {
-            return 'KALTAMCJA';
+        $upper = strtoupper($trimmed);
+
+        // 2. Jika kode persis ada di map (misal 'CNS' => 'KALTAMCNS')
+        if (isset($map[$upper])) {
+            return $map[$upper];
         }
 
-        // 3. Awalan CJA tanpa strip (misal CJA123)
-        if (preg_match('/^CJA/i', $trimmed)) {
-            return 'KALTAMCJA';
+        // 3. Jika sudah 9 karakter
+        if (strlen($upper) === 9) {
+            return $upper;
         }
 
-        // 4. Format huruf alfabet umum jika tanpa strip
-        if (preg_match('/^([A-Za-z]+)/i', $trimmed, $matches)) {
-            return strtoupper($matches[1]);
+        // 4. Cek awalan tanpa strip
+        foreach ($map as $short => $full) {
+            if (str_starts_with($upper, $full) || str_starts_with($upper, $short)) {
+                return $full;
+            }
         }
 
-        return strtoupper($trimmed);
+        // 5. Format huruf alfabet umum jika tanpa strip
+        if (preg_match('/^([A-Za-z]+)/i', $upper, $matches)) {
+            $alpha = strtoupper($matches[1]);
+            return $map[$alpha] ?? $alpha;
+        }
+
+        return $upper;
     }
 
     /**

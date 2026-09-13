@@ -3,6 +3,19 @@ import axios from 'axios';
 import { FaServer, FaUsers, FaCheckCircle, FaTimesCircle, FaSpinner, FaSyncAlt, FaNetworkWired, FaExclamationTriangle, FaSearch } from 'react-icons/fa';
 import ResponsiveDataView from '../components/common/ResponsiveDataView';
 
+const DEFAULT_AREA_MAP = {
+    'CJA': 'KALTAMCJA',
+    'CNS': 'KALTAMCNS',
+    'KBS': 'KALTAMKBS',
+    'KBU': 'KALTAMKBU',
+    'MGS': 'KALTAMMGS',
+    'RJS': 'KALTAMRJS',
+    'SMD': 'KALTAMSMD',
+    'LBR': 'KALMRKLBR',
+    'MRK': 'KALMRKMRK',
+    'SRJ': 'KALGTRSRJ',
+};
+
 export default function Monitoring() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -45,6 +58,23 @@ export default function Monitoring() {
         await fetchData();
     };
 
+    // Peta penggabungan kode lama (3 huruf dusun) ke kode baru (9 huruf wilayah)
+    const areaMap = useMemo(() => {
+        const map = { ...DEFAULT_AREA_MAP, ...(data.area_map || {}) };
+        // Pelajari secara dinamis dari kode 9 karakter yang ada pada customer aktif
+        (data.customers || []).forEach(c => {
+            const raw = String(c.pppoe_username || c.area_code || '').trim();
+            const prefix = raw.includes('-') ? raw.split('-')[0].trim().toUpperCase() : raw.toUpperCase();
+            if (prefix.length === 9) {
+                const dusun = prefix.slice(-3);
+                if (!map[dusun]) {
+                    map[dusun] = prefix;
+                }
+            }
+        });
+        return map;
+    }, [data.customers, data.area_map]);
+
     const extractAreaCode = (customerOrUsername) => {
         const value = typeof customerOrUsername === 'object'
             ? (customerOrUsername?.area_code || customerOrUsername?.pppoe_username)
@@ -54,31 +84,48 @@ export default function Monitoring() {
         const trimmed = String(value).trim();
         if (!trimmed) return 'N/A';
 
-        const upper = trimmed.toUpperCase();
-
-        // 1. Unifikasi: CJA (kode lama) digabungkan ke KALTAMCJA (kode baru)
-        if (upper === 'CJA' || upper === 'KALTAMCJA') {
-            return 'KALTAMCJA';
-        }
-
-        // 2. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
+        // 1. Ambil prefix sebelum tanda strip '-' jika ada (misal CNS-arif2 atau KALTAMCNS-budi)
         if (trimmed.includes('-')) {
             const prefix = trimmed.split('-')[0].trim().toUpperCase();
-            if (prefix === 'CJA' || prefix === 'KALTAMCJA') {
-                return 'KALTAMCJA';
+            if (areaMap[prefix]) {
+                return areaMap[prefix];
+            }
+            if (prefix.length === 9) {
+                return prefix;
+            }
+            if (prefix.length > 3) {
+                const last3 = prefix.slice(-3);
+                if (areaMap[last3]) {
+                    return areaMap[last3];
+                }
             }
             return prefix;
         }
 
-        // 3. Awalan tanpa strip (misal KALTAMCJA123 atau CJA123)
-        if (/^KALTAMCJA/i.test(trimmed) || /^CJA/i.test(trimmed)) {
-            return 'KALTAMCJA';
+        const upper = trimmed.toUpperCase();
+
+        // 2. Jika kode persis ada di areaMap (misal 'CNS' => 'KALTAMCNS')
+        if (areaMap[upper]) {
+            return areaMap[upper];
         }
 
-        // 4. Format huruf alfabet umum jika tanpa strip
-        const match = trimmed.match(/^([A-Za-z]+)/i);
+        // 3. Jika sudah 9 karakter
+        if (upper.length === 9) {
+            return upper;
+        }
+
+        // 4. Cek awalan tanpa strip
+        for (const [shortCode, fullCode] of Object.entries(areaMap)) {
+            if (upper.startsWith(fullCode) || upper.startsWith(shortCode)) {
+                return fullCode;
+            }
+        }
+
+        // 5. Format huruf alfabet umum jika tanpa strip
+        const match = upper.match(/^([A-Za-z]+)/i);
         if (match) {
-            return match[1].toUpperCase();
+            const alpha = match[1].toUpperCase();
+            return areaMap[alpha] || alpha;
         }
 
         return upper;
@@ -92,16 +139,22 @@ export default function Monitoring() {
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(c =>
-                c.pppoe_username?.toLowerCase().includes(term) ||
-                extractAreaCode(c).toLowerCase().includes(term) ||
-                c.customer_name?.toLowerCase().includes(term) ||
-                c.ip_address?.toLowerCase().includes(term) ||
-                c.caller_id?.toLowerCase().includes(term) ||
-                c.customer_phone?.toLowerCase().includes(term) ||
-                c.customer_address?.toLowerCase().includes(term) ||
-                c.package_type?.toLowerCase().includes(term)
-            );
+            filtered = filtered.filter(c => {
+                const area = extractAreaCode(c).toLowerCase();
+                const rawArea = (c.area_code || '').toLowerCase();
+                const pppoe = (c.pppoe_username || '').toLowerCase();
+                return (
+                    pppoe.includes(term) ||
+                    area.includes(term) ||
+                    rawArea.includes(term) ||
+                    c.customer_name?.toLowerCase().includes(term) ||
+                    c.ip_address?.toLowerCase().includes(term) ||
+                    c.caller_id?.toLowerCase().includes(term) ||
+                    c.customer_phone?.toLowerCase().includes(term) ||
+                    c.customer_address?.toLowerCase().includes(term) ||
+                    c.package_type?.toLowerCase().includes(term)
+                );
+            });
         }
 
         return filtered;

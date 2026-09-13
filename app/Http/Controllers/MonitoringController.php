@@ -126,6 +126,7 @@ class MonitoringController extends Controller
             'serverInfo' => $serverInfo,
             'customers' => $customerData,
             'summary' => $summary,
+            'area_map' => \App\Services\AreaOutageMonitorService::getWilayahCodeMap(),
         ];
     }
 
