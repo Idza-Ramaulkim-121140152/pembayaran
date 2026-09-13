@@ -279,7 +279,8 @@ class OltSnmpService
             $telemetry['firmware_version'] = ($sysInfo[4] ?? 'v7.80') . ' ' . ($sysInfo[5] ?? 'Release20240930');
             $telemetry['cpu_usage_percent'] = is_numeric($sysInfo[9] ?? null) ? (int) $sysInfo[9] : 0;
             $telemetry['memory_usage_percent'] = is_numeric($sysInfo[10] ?? null) ? (float) $sysInfo[10] : 51.0;
-            $telemetry['temperature_celsius'] = $portTelemetry[1]['temperature'] ?? 54.0;
+            $activeTemps = array_filter(array_column($portTelemetry, 'temperature'), fn($t) => !empty($t) && $t < 150);
+            $telemetry['temperature_celsius'] = !empty($activeTemps) ? (float) reset($activeTemps) : 38.0;
 
             // Update live PON ports SFP TX Power and counts
             foreach ($olt->ponPorts as $p) {
@@ -287,27 +288,24 @@ class OltSnmpService
                 $counts = $ponCounts[$pIdx] ?? null;
                 $t = $portTelemetry[$pIdx] ?? null;
 
-                $updateData = [];
-                if ($t && !empty($t['tx_power_dbm'])) {
-                    $updateData['tx_power_dbm'] = $t['tx_power_dbm'];
-                }
-                if ($t && !empty($t['temperature'])) {
-                    $updateData['temperature'] = $t['temperature'];
-                }
-                if ($t && !empty($t['voltage'])) {
-                    $updateData['voltage'] = $t['voltage'];
-                }
-                if ($t && !empty($t['current_ma'])) {
-                    $updateData['current_ma'] = $t['current_ma'];
-                }
+                $hasSfp = !empty($t['has_sfp']);
+                $onlineCount = $counts ? (int)$counts['online'] : (int)$p->online_onu_count;
+                $totalCount = $counts ? (int)$counts['total'] : (int)$p->total_registered_onu;
+                $isUp = ($hasSfp && (!empty($t['is_linkup']) || $onlineCount > 0)) || $onlineCount > 0;
+
+                $updateData = [
+                    'oper_status' => $isUp ? 'up' : 'down',
+                    'tx_power_dbm' => $isUp ? ($t['tx_power_dbm'] ?? $p->tx_power_dbm) : null,
+                    'temperature' => $isUp ? ($t['temperature'] ?? $p->temperature) : null,
+                    'voltage' => $isUp ? ($t['voltage'] ?? 3.3) : 0.0,
+                    'current_ma' => $isUp ? ($t['current_ma'] ?? 14.0) : 0.0,
+                ];
                 if ($counts) {
-                    $updateData['total_registered_onu'] = $counts['total'];
-                    $updateData['online_onu_count'] = $counts['online'];
-                    $updateData['offline_onu_count'] = $counts['offline'];
+                    $updateData['total_registered_onu'] = $totalCount;
+                    $updateData['online_onu_count'] = $onlineCount;
+                    $updateData['offline_onu_count'] = (int)($counts['offline'] ?? 0);
                 }
-                if (!empty($updateData)) {
-                    $p->update($updateData);
-                }
+                $p->update($updateData);
             }
         }
 
@@ -570,15 +568,29 @@ class OltSnmpService
                 if ($pContent !== false && preg_match('/var\s+ponPortStatus\s*=\s*new\s+Array\((.*?)\);/s', $pContent, $pom)) {
                     $opm = [];
                     eval('$opm = [' . $pom[1] . '];');
-                    $temp = isset($opm[7]) && is_numeric($opm[7]) && (float)$opm[7] < 150 ? (float)$opm[7] : 32.0;
-                    $volt = isset($opm[8]) && is_numeric($opm[8]) ? (float)$opm[8] : 3.0;
-                    $curr = isset($opm[9]) && is_numeric($opm[9]) ? (float)$opm[9] : 15.0;
-                    $tx = isset($opm[10]) && is_numeric($opm[10]) ? (float)$opm[10] : 9.50;
+
+                    $linkStatus = isset($opm[2]) ? (int)$opm[2] : 0;
+                    $onlineCount = isset($opm[4]) ? (int)$opm[4] : 0;
+                    $totalCount = isset($opm[5]) ? (int)$opm[5] : 0;
+
+                    $rawTemp = isset($opm[7]) && is_numeric($opm[7]) ? (float)$opm[7] : 0;
+                    $rawVolt = isset($opm[8]) && is_numeric($opm[8]) ? (float)$opm[8] : 0;
+                    $rawCurr = isset($opm[9]) && is_numeric($opm[9]) ? (float)$opm[9] : 0;
+                    $rawTx = isset($opm[10]) && is_numeric($opm[10]) ? (float)$opm[10] : 0;
+
+                    // Detect whether physical SFP transceiver is present:
+                    // When empty, voltage is 0, temp is 255 (out of range), linkStatus is 0
+                    $hasSfp = ($rawVolt > 0 && $rawTemp < 150 && ($linkStatus === 1 || $onlineCount > 0));
+
                     $result['port_telemetry'][$pIdx] = [
-                        'tx_power_dbm' => $tx,
-                        'temperature' => $temp,
-                        'voltage' => $volt,
-                        'current_ma' => $curr,
+                        'has_sfp' => $hasSfp,
+                        'is_linkup' => $linkStatus === 1 || $onlineCount > 0,
+                        'tx_power_dbm' => $hasSfp ? $rawTx : null,
+                        'temperature' => $hasSfp ? $rawTemp : null,
+                        'voltage' => $hasSfp ? $rawVolt : 0.0,
+                        'current_ma' => $hasSfp ? $rawCurr : 0.0,
+                        'online_onus' => $onlineCount,
+                        'total_onus' => $totalCount,
                     ];
                 } else {
                     // Fallback to oltPortConfig.asp?oltportno=0/1_X
@@ -588,22 +600,28 @@ class OltSnmpService
                     if ($pContent !== false && preg_match('/var\s+oltPonOpmInfo\s*=\s*new\s+Array\((.*?)\);/s', $pContent, $om)) {
                         $opm = [];
                         eval('$opm = [' . $om[1] . '];');
-                        $tx = isset($opm[5]) && is_numeric($opm[5]) && (float) $opm[5] > 0 ? (float) $opm[5] : ($pIdx === 1 ? 10.06 : 9.84);
-                        $temp = isset($opm[2]) && is_numeric($opm[2]) && (float) $opm[2] > 0 ? (float) $opm[2] : ($pIdx === 1 ? 54.0 : 49.0);
-                        $volt = isset($opm[3]) && is_numeric($opm[3]) && (float) $opm[3] > 0 ? (float) $opm[3] : 3.0;
-                        $curr = isset($opm[4]) && is_numeric($opm[4]) && (float) $opm[4] > 0 ? (float) $opm[4] : ($pIdx === 1 ? 11.0 : 28.0);
+                        $rawTemp = isset($opm[2]) && is_numeric($opm[2]) ? (float) $opm[2] : 0;
+                        $rawVolt = isset($opm[3]) && is_numeric($opm[3]) ? (float) $opm[3] : 0;
+                        $rawCurr = isset($opm[4]) && is_numeric($opm[4]) ? (float) $opm[4] : 0;
+                        $rawTx = isset($opm[5]) && is_numeric($opm[5]) ? (float) $opm[5] : 0;
+
+                        $hasSfp = ($rawVolt > 0 && $rawTemp > 0 && $rawTemp < 150 && $rawTx > 0);
                         $result['port_telemetry'][$pIdx] = [
-                            'tx_power_dbm' => $tx,
-                            'temperature' => $temp,
-                            'voltage' => $volt,
-                            'current_ma' => $curr,
+                            'has_sfp' => $hasSfp,
+                            'is_linkup' => $hasSfp,
+                            'tx_power_dbm' => $hasSfp ? $rawTx : null,
+                            'temperature' => $hasSfp ? $rawTemp : null,
+                            'voltage' => $hasSfp ? $rawVolt : 0.0,
+                            'current_ma' => $hasSfp ? $rawCurr : 0.0,
                         ];
                     } else {
                         $result['port_telemetry'][$pIdx] = [
-                            'tx_power_dbm' => 9.50 + ($pIdx * 0.1),
-                            'temperature' => 45.0,
-                            'voltage' => 3.3,
-                            'current_ma' => 15.0,
+                            'has_sfp' => false,
+                            'is_linkup' => false,
+                            'tx_power_dbm' => null,
+                            'temperature' => null,
+                            'voltage' => 0.0,
+                            'current_ma' => 0.0,
                         ];
                     }
                 }
@@ -685,43 +703,31 @@ class OltSnmpService
         $is8Port = str_contains($modelUpper, '8P') || str_contains($modelUpper, '7308') || count($ponCounts) >= 8;
         $totalPorts = $is8Port ? 8 : ($is4Port ? 4 : (count($ponCounts) > 0 ? max(count($ponCounts), 2) : 2));
 
+        // Gather valid port temperatures
+        $activeTemps = array_filter(array_column($portTelemetry, 'temperature'), fn($t) => !empty($t) && $t < 150);
+        $avgTemp = !empty($activeTemps) ? (float) reset($activeTemps) : 38.0;
+
         $olt->brand = 'HIOSO';
         $olt->model = $detectedModel;
         $olt->total_pon_ports = $totalPorts;
         $olt->last_status = 'online';
         $olt->last_checked_at = now();
         $olt->simulation_mode = false;
-        $olt->telemetry_data = [
-            'mode' => 'realtime',
-            'status' => 'online',
-            'is_reachable' => true,
-            'brand' => 'HIOSO',
-            'model' => $detectedModel,
-            'uptime' => $sysInfo[8] ?? '-',
-            'mac_address' => $sysInfo[6] ?? '78:5c:72:a8:2e:80',
-            'firmware_version' => ($sysInfo[4] ?? 'v7.80') . ' ' . ($sysInfo[5] ?? 'Release20240930'),
-            'cpu_usage_percent' => is_numeric($sysInfo[9] ?? null) ? (int) $sysInfo[9] : 0,
-            'memory_usage_percent' => is_numeric($sysInfo[10] ?? null) ? (float) $sysInfo[10] : 51.0,
-            'temperature_celsius' => $portTelemetry[1]['temperature'] ?? 54.0,
-            'total_pon_ports' => $totalPorts,
-            'active_pon_ports' => $totalPorts,
-            'total_onus' => count($parsedOnus),
-            'online_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] === 'online')),
-            'offline_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] !== 'online')),
-        ];
-        $olt->save();
 
         // 2. Synchronize PON Ports
         OltPonPort::where('olt_id', $olt->id)->where('pon_index', '>', $totalPorts)->delete();
 
         $savedPorts = [];
+        $activePortsCount = 0;
         foreach (range(1, $totalPorts) as $pIdx) {
             $counts = $ponCounts[$pIdx] ?? ['total' => 0, 'online' => 0, 'offline' => 0];
             $telemetry = $portTelemetry[$pIdx] ?? [
-                'tx_power_dbm' => 9.50 + ($pIdx * 0.1),
-                'temperature' => 48.0 + $pIdx,
-                'voltage' => 3.3,
-                'current_ma' => 15.0 + ($pIdx * 3),
+                'has_sfp' => false,
+                'is_linkup' => false,
+                'tx_power_dbm' => null,
+                'temperature' => null,
+                'voltage' => 0.0,
+                'current_ma' => 0.0,
             ];
             $ident = "0/1/{$pIdx}";
 
@@ -734,26 +740,60 @@ class OltSnmpService
             }
             $name = $existing?->name ?: $defaultName;
 
+            $portOnus = array_filter($parsedOnus, fn($o) => $o['pon_index'] === $pIdx);
+            $portOnlineOnus = array_filter($portOnus, fn($o) => $o['status'] === 'online');
+            $totCount = $counts['total'] ?: count($portOnus);
+            $onCount = $counts['online'] ?: count($portOnlineOnus);
+            $offCount = $counts['offline'] ?: (count($portOnus) - count($portOnlineOnus));
+
+            $hasSfp = !empty($telemetry['has_sfp']) || ($totCount > 0 && !empty($telemetry['tx_power_dbm']));
+            $isLinkUp = !empty($telemetry['is_linkup']) || $onCount > 0;
+            $operStatus = ($hasSfp && $isLinkUp) || ($onCount > 0) ? 'up' : 'down';
+
+            if ($operStatus === 'up') {
+                $activePortsCount++;
+            }
+
             $port = OltPonPort::updateOrCreate(
                 ['olt_id' => $olt->id, 'pon_index' => $pIdx],
                 [
                     'pon_identifier' => $ident,
                     'name' => $name,
                     'admin_status' => 'up',
-                    'oper_status' => 'up',
-                    'tx_power_dbm' => $telemetry['tx_power_dbm'],
-                    'temperature' => $telemetry['temperature'],
-                    'voltage' => $telemetry['voltage'],
-                    'current_ma' => $telemetry['current_ma'],
-                    'total_registered_onu' => $counts['total'] ?: count(array_filter($parsedOnus, fn($o) => $o['pon_index'] === $pIdx)),
-                    'online_onu_count' => $counts['online'] ?: count(array_filter($parsedOnus, fn($o) => $o['pon_index'] === $pIdx && $o['status'] === 'online')),
-                    'offline_onu_count' => $counts['offline'] ?: count(array_filter($parsedOnus, fn($o) => $o['pon_index'] === $pIdx && $o['status'] !== 'online')),
+                    'oper_status' => $operStatus,
+                    'tx_power_dbm' => $operStatus === 'up' ? ($telemetry['tx_power_dbm'] ?? null) : null,
+                    'temperature' => $operStatus === 'up' ? ($telemetry['temperature'] ?? null) : null,
+                    'voltage' => $operStatus === 'up' ? ($telemetry['voltage'] ?? 3.3) : 0.0,
+                    'current_ma' => $operStatus === 'up' ? ($telemetry['current_ma'] ?? 14.0) : 0.0,
+                    'total_registered_onu' => $totCount,
+                    'online_onu_count' => $onCount,
+                    'offline_onu_count' => $offCount,
                     'max_onu_capacity' => 64,
                     'description' => 'Port PON Fisik OLT (' . $ident . ')',
                 ]
             );
             $savedPorts[$pIdx] = $port;
         }
+
+        $olt->telemetry_data = [
+            'mode' => 'realtime',
+            'status' => 'online',
+            'is_reachable' => true,
+            'brand' => 'HIOSO',
+            'model' => $detectedModel,
+            'uptime' => $sysInfo[8] ?? '-',
+            'mac_address' => $sysInfo[6] ?? '78:5c:72:a8:2e:80',
+            'firmware_version' => ($sysInfo[4] ?? 'v7.80') . ' ' . ($sysInfo[5] ?? 'Release20240930'),
+            'cpu_usage_percent' => is_numeric($sysInfo[9] ?? null) ? (int) $sysInfo[9] : 0,
+            'memory_usage_percent' => is_numeric($sysInfo[10] ?? null) ? (float) $sysInfo[10] : 51.0,
+            'temperature_celsius' => $avgTemp,
+            'total_pon_ports' => $totalPorts,
+            'active_pon_ports' => $activePortsCount,
+            'total_onus' => count($parsedOnus),
+            'online_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] === 'online')),
+            'offline_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] !== 'online')),
+        ];
+        $olt->save();
 
         // Reset all customers previously assigned to this OLT so unmapped customers are NOT falsely attached
         \Illuminate\Support\Facades\DB::table('customers')->where('olt_id', $olt->id)->update([

@@ -3151,16 +3151,16 @@ export default function SuperPanelPage() {
                                                             <span className="text-xs font-black text-white">PON {port.pon_index}</span>
                                                             <span
                                                                 className={`w-2.5 h-2.5 rounded-full ${
-                                                                    isUp ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'
+                                                                    isUp ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
                                                                 }`}
-                                                                title={isUp ? 'PON Operasional UP' : 'PON Down'}
+                                                                title={isUp ? 'PON Operasional UP' : 'PON Down / No SFP'}
                                                             />
                                                         </div>
 
                                                         <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
-                                                            <div>TX: <strong className="text-slate-200">+{port.tx_power_dbm ? Number(port.tx_power_dbm).toFixed(2) : '4.25'} dBm</strong></div>
-                                                            <div>Temp: <strong className="text-slate-200">{port.temperature ? Number(port.temperature).toFixed(1) : '43.2'}°C</strong></div>
-                                                            <div>ONU: <strong className="text-emerald-400">{onusCount}</strong>/{port.max_onu_capacity || 64}</div>
+                                                            <div>TX: <strong className={isUp ? 'text-slate-200' : 'text-rose-400 font-bold'}>{isUp && port.tx_power_dbm ? `+${Number(port.tx_power_dbm).toFixed(2)} dBm` : 'OFF'}</strong></div>
+                                                            <div>Temp: <strong className="text-slate-200">{isUp && port.temperature ? `${Number(port.temperature).toFixed(1)}°C` : '-'}</strong></div>
+                                                            <div>ONU: <strong className={isUp ? 'text-emerald-400' : 'text-slate-400'}>{onusCount}</strong>/{port.max_onu_capacity || 64}</div>
                                                         </div>
 
                                                         {/* Mini Signal Pills */}
