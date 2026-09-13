@@ -428,6 +428,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/whatsapp/send-test', [WhatsAppController::class, 'sendTest'])->name('api.whatsapp.send-test');
         Route::get('/api/whatsapp/logs', [WhatsAppController::class, 'logs'])->name('api.whatsapp.logs');
         Route::get('/api/whatsapp/groups', [WhatsAppController::class, 'groups'])->name('api.whatsapp.groups');
+        Route::post('/api/whatsapp/groups/resolve-invite', [WhatsAppController::class, 'resolveGroupInvite'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.groups.resolve-invite');
+        Route::post('/api/whatsapp/groups/test-message', [WhatsAppController::class, 'sendGroupTestMessage'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.groups.test-message');
         Route::get('/api/whatsapp/area-alert/settings', [WhatsAppController::class, 'getAreaAlertSettings'])->name('api.whatsapp.area-alert.settings');
         Route::post('/api/whatsapp/area-alert/settings', [WhatsAppController::class, 'saveAreaAlertSettings'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.area-alert.save-settings');
         Route::post('/api/whatsapp/area-alert/check-now', [WhatsAppController::class, 'checkAreaOutagesNow'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.area-alert.check-now');

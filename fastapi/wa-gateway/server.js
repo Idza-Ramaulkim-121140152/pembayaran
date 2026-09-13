@@ -768,6 +768,7 @@ app.get('/groups', async (req, res) => {
     if (!current.ready) {
         return res.status(503).json({
             success: false,
+            groups: [],
             error: current.hasQR
                 ? 'WhatsApp belum siap. Silakan scan QR code terlebih dahulu.'
                 : `WhatsApp belum siap (state: ${current.state || 'unknown'})`
@@ -776,23 +777,73 @@ app.get('/groups', async (req, res) => {
 
     try {
         const chats = await client.getChats();
-        const groups = chats
-            .filter(c => c.isGroup || (c.id && c.id._serialized && c.id._serialized.endsWith('@g.us')))
-            .map(c => ({
-                id: c.id._serialized,
-                name: c.name || 'Grup Tanpa Nama',
-                unread_count: c.unreadCount || 0,
-            }));
+        const groups = (chats || [])
+            .filter(c => {
+                if (!c) return false;
+                const serializedId = c.id ? (c.id._serialized || c.id) : '';
+                return c.isGroup === true || String(serializedId).includes('@g.us');
+            })
+            .map(c => {
+                const serializedId = c.id ? (c.id._serialized || c.id) : '';
+                return {
+                    id: serializedId,
+                    name: c.name || c.formattedTitle || 'Grup WhatsApp',
+                    unread_count: c.unreadCount || 0,
+                };
+            });
 
         res.json({
             success: true,
-            groups
+            groups,
+            count: groups.length
         });
     } catch (err) {
         console.error('❌ Error mengambil daftar grup:', err.message);
         res.status(500).json({
             success: false,
+            groups: [],
             error: err.message
+        });
+    }
+});
+
+app.post('/groups/resolve-invite', async (req, res) => {
+    const { inviteUrl, joinIfNecessary } = req.body;
+    if (!inviteUrl) {
+        return res.status(400).json({ success: false, error: 'Parameter inviteUrl diperlukan' });
+    }
+
+    try {
+        const match = String(inviteUrl).match(/chat\.whatsapp\.com\/([A-Za-z0-9_-]+)/);
+        const code = match ? match[1] : String(inviteUrl).trim();
+
+        const inviteInfo = await client.getInviteInfo(code);
+        let joined = false;
+
+        if (joinIfNecessary) {
+            try {
+                await client.acceptInvite(code);
+                joined = true;
+            } catch (joinErr) {
+                console.warn('Accept invite note:', joinErr.message);
+            }
+        }
+
+        const groupId = inviteInfo.id ? (inviteInfo.id._serialized || inviteInfo.id) : null;
+        res.json({
+            success: true,
+            group: {
+                id: groupId,
+                name: inviteInfo.subject || 'Grup WhatsApp',
+                participants_count: inviteInfo.size || 0,
+                joined
+            }
+        });
+    } catch (err) {
+        console.error('❌ Error resolve invite:', err.message);
+        res.status(400).json({
+            success: false,
+            error: 'Gagal membaca link undangan grup: ' + err.message
         });
     }
 });

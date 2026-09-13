@@ -475,12 +475,96 @@ class WhatsAppController extends Controller
     {
         try {
             $response = Http::timeout(10)->get($this->gatewayUrl() . '/groups');
-            return response()->json($response->json(), $response->status());
+            $data = $response->json();
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'groups' => [],
+                    'error' => $data['error'] ?? $data['message'] ?? ('Gateway mengembalikan status ' . $response->status()),
+                ], $response->status());
+            }
+
+            return response()->json([
+                'success' => true,
+                'groups' => $data['groups'] ?? [],
+                'count' => count($data['groups'] ?? []),
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
                 'groups' => [],
-                'error' => 'Tidak dapat mengambil daftar grup WhatsApp: ' . $e->getMessage(),
+                'error' => 'Tidak dapat terhubung ke WhatsApp Gateway: ' . $e->getMessage(),
+            ], 503);
+        }
+    }
+
+    /**
+     * POST /api/whatsapp/groups/resolve-invite
+     */
+    public function resolveGroupInvite(Request $request)
+    {
+        $request->validate([
+            'invite_url' => 'required|string',
+            'auto_join' => 'nullable|boolean',
+        ]);
+
+        try {
+            $response = Http::timeout(15)->post($this->gatewayUrl() . '/groups/resolve-invite', [
+                'inviteUrl' => $request->input('invite_url'),
+                'joinIfNecessary' => (bool)$request->input('auto_join', true),
+            ]);
+
+            return response()->json($response->json(), $response->status());
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Gagal menghubungi gateway: ' . $e->getMessage(),
+            ], 503);
+        }
+    }
+
+    /**
+     * POST /api/whatsapp/groups/test-message
+     */
+    public function sendGroupTestMessage(Request $request)
+    {
+        $request->validate([
+            'target_group_id' => 'required|string',
+            'target_group_name' => 'nullable|string',
+        ]);
+
+        $groupId = trim((string)$request->input('target_group_id'));
+        if (!str_contains($groupId, '@g.us')) {
+            $groupId .= '@g.us';
+        }
+
+        $groupName = $request->input('target_group_name') ?: 'Teknisi';
+        $message = "🔔 *UJI COBA INTEGRASI NOTIFIKASI GANGGUAN AREA*\n\nHalo Rekan Tim {$groupName},\n\nIni adalah pesan uji coba otomatis dari sistem monitoring ISP Rumah Kita Net.\nJika pesan ini masuk, berarti integrasi notifikasi peringatan gangguan area ke grup ini telah *BERHASIL* terhubung dan siap digunakan! ✅\n\nWaktu pengujian: " . now()->translatedFormat('d F Y, H:i:s') . ' WIB';
+
+        try {
+            $response = Http::timeout(20)->post($this->gatewayUrl() . '/send', [
+                'phone' => $groupId,
+                'message' => $message,
+            ]);
+
+            $data = $response->json();
+            if (!$response->successful() || empty($data['success'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => $data['error'] ?? $data['message'] ?? 'Gagal mengirim pesan uji coba ke grup. Pastikan bot sudah diundang/bergabung ke grup.',
+                ], 422);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pesan uji coba berhasil terkirim ke grup WhatsApp!',
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Gagal menghubungi WhatsApp Gateway: ' . $e->getMessage(),
             ], 503);
         }
     }

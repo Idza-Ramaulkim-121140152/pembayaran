@@ -40,6 +40,14 @@ function SendNotificationPage() {
     const [showAreaAlertModal, setShowAreaAlertModal] = useState(false);
     const [waGroups, setWaGroups] = useState([]);
     const [waGroupsLoading, setWaGroupsLoading] = useState(false);
+    const [waGroupsError, setWaGroupsError] = useState(null);
+    const [groupInputMode, setGroupInputMode] = useState('select'); // 'select' | 'manual'
+    const [manualGroupId, setManualGroupId] = useState('');
+    const [manualGroupName, setManualGroupName] = useState('');
+    const [resolvingInvite, setResolvingInvite] = useState(false);
+    const [inviteError, setInviteError] = useState(null);
+    const [groupTesting, setGroupTesting] = useState(false);
+    const [groupTestResult, setGroupTestResult] = useState(null);
     const [areaSettings, setAreaSettings] = useState({
         enabled: true,
         threshold_percent: 50,
@@ -326,6 +334,10 @@ function SendNotificationPage() {
             const data = await res.json();
             if (data.success && data.settings) {
                 setAreaSettings(data.settings);
+                if (data.settings.target_group_id) {
+                    setManualGroupId(data.settings.target_group_id);
+                    setManualGroupName(data.settings.target_group_name || '');
+                }
             }
         } catch (err) {
             console.error('Failed to fetch area alert settings', err);
@@ -336,6 +348,7 @@ function SendNotificationPage() {
 
     const fetchWaGroups = async () => {
         setWaGroupsLoading(true);
+        setWaGroupsError(null);
         try {
             const res = await fetch('/api/whatsapp/groups', {
                 headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
@@ -343,11 +356,128 @@ function SendNotificationPage() {
             const data = await res.json();
             if (data.success && Array.isArray(data.groups)) {
                 setWaGroups(data.groups);
+                if (data.groups.length === 0) {
+                    setWaGroupsError('Gateway tidak mendeteksi grup apapun pada akun WhatsApp ini.');
+                }
+            } else {
+                setWaGroupsError(data.error || data.message || 'Gagal mengambil daftar grup');
             }
         } catch (err) {
             console.error('Failed to fetch WA groups', err);
+            setWaGroupsError(err.message || 'Gagal terhubung ke WhatsApp Gateway');
         } finally {
             setWaGroupsLoading(false);
+        }
+    };
+
+    const handleApplyManualGroup = () => {
+        if (!manualGroupId.trim()) {
+            alert('Masukkan ID atau link grup WhatsApp terlebih dahulu.');
+            return;
+        }
+
+        let gId = manualGroupId.trim();
+        if (gId.includes('chat.whatsapp.com')) {
+            handleResolveInvite();
+            return;
+        }
+
+        if (!gId.includes('@g.us')) {
+            gId = gId.replace(/[^0-9-]/g, '') + '@g.us';
+        }
+
+        const gName = manualGroupName.trim() || 'Grup WhatsApp';
+        setAreaSettings(prev => ({
+            ...prev,
+            target_group_id: gId,
+            target_group_name: gName,
+        }));
+        setGroupTestResult({
+            success: true,
+            message: `Grup berhasil diatur ke: "${gName}" (${gId}). Jangan lupa klik tombol "Simpan Pengaturan Peringatan" di bawah.`,
+        });
+    };
+
+    const handleResolveInvite = async () => {
+        if (!manualGroupId.trim()) return;
+        setResolvingInvite(true);
+        setInviteError(null);
+        try {
+            const res = await fetch('/api/whatsapp/groups/resolve-invite', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    invite_url: manualGroupId.trim(),
+                    auto_join: true,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success || !data.group) {
+                throw new Error(data.error || 'Gagal membaca link undangan grup');
+            }
+
+            const grp = data.group;
+            setManualGroupId(grp.id);
+            setManualGroupName(grp.name);
+            setAreaSettings(prev => ({
+                ...prev,
+                target_group_id: grp.id,
+                target_group_name: grp.name,
+            }));
+            setGroupTestResult({
+                success: true,
+                message: `Berhasil! Grup "${grp.name}" (${grp.id}) ditemukan${grp.joined ? ' dan bot telah bergabung ke grup' : ''}. Klik "Simpan Pengaturan Peringatan" untuk menerapkan.`,
+            });
+        } catch (err) {
+            setInviteError(err.message);
+        } finally {
+            setResolvingInvite(false);
+        }
+    };
+
+    const handleTestGroupMessage = async () => {
+        const targetId = areaSettings.target_group_id || manualGroupId.trim();
+        if (!targetId) {
+            alert('Pilih atau masukkan grup WhatsApp terlebih dahulu.');
+            return;
+        }
+
+        setGroupTesting(true);
+        setGroupTestResult(null);
+        try {
+            const res = await fetch('/api/whatsapp/groups/test-message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    target_group_id: targetId,
+                    target_group_name: areaSettings.target_group_name || manualGroupName.trim() || 'Teknisi',
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Gagal mengirim pesan uji coba ke grup');
+            }
+
+            setGroupTestResult({
+                success: true,
+                message: 'Pesan uji coba berhasil terkirim ke grup WhatsApp! Silakan periksa chat grup Anda.',
+            });
+        } catch (err) {
+            setGroupTestResult({
+                success: false,
+                message: err.message,
+            });
+        } finally {
+            setGroupTesting(false);
         }
     };
 
@@ -1215,52 +1345,223 @@ function SendNotificationPage() {
                                         </div>
 
                                         {/* Target Grup WhatsApp */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-1.5">
-                                                <label className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                                                    Pilih Grup WhatsApp Tujuan Notifikasi
-                                                </label>
-                                                <button
-                                                    type="button"
-                                                    onClick={fetchWaGroups}
-                                                    disabled={waGroupsLoading}
-                                                    className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1 font-medium"
-                                                >
-                                                    <RefreshCw size={12} className={waGroupsLoading ? 'animate-spin' : ''} />
-                                                    Muat Ulang Daftar Grup
-                                                </button>
+                                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                                <div>
+                                                    <label className="text-xs font-bold text-gray-800 uppercase tracking-wider block">
+                                                        Grup WhatsApp Tujuan Peringatan
+                                                    </label>
+                                                    <p className="text-2xs text-gray-500">
+                                                        Bot WA harus sudah menjadi anggota di grup tujuan notifikasi
+                                                    </p>
+                                                </div>
+
+                                                {/* Mode Tabs */}
+                                                <div className="inline-flex bg-slate-200 p-0.5 rounded-lg text-xs font-medium self-start sm:self-auto">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setGroupInputMode('select')}
+                                                        className={`px-3 py-1 rounded-md transition ${
+                                                            groupInputMode === 'select'
+                                                                ? 'bg-white text-gray-900 shadow-xs font-semibold'
+                                                                : 'text-gray-600 hover:text-gray-900'
+                                                        }`}
+                                                    >
+                                                        Pilih dari Gateway
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setGroupInputMode('manual')}
+                                                        className={`px-3 py-1 rounded-md transition ${
+                                                            groupInputMode === 'manual'
+                                                                ? 'bg-white text-gray-900 shadow-xs font-semibold'
+                                                                : 'text-gray-600 hover:text-gray-900'
+                                                        }`}
+                                                    >
+                                                        Input Manual / Link Undangan
+                                                    </button>
+                                                </div>
                                             </div>
 
-                                            <select
-                                                value={areaSettings.target_group_id || ''}
-                                                onChange={(e) => {
-                                                    const gId = e.target.value;
-                                                    const grp = waGroups.find(g => g.id === gId);
-                                                    setAreaSettings(prev => ({
-                                                        ...prev,
-                                                        target_group_id: gId,
-                                                        target_group_name: grp ? grp.name : prev.target_group_name,
-                                                    }));
-                                                }}
-                                                className="w-full border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white"
-                                            >
-                                                <option value="">-- Pilih Grup WhatsApp dari Gateway --</option>
-                                                {waGroups.map(grp => (
-                                                    <option key={grp.id} value={grp.id}>
-                                                        👥 {grp.name} ({grp.id})
-                                                    </option>
-                                                ))}
-                                            </select>
+                                            {/* Tab 1: Select from Gateway */}
+                                            {groupInputMode === 'select' ? (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-xs text-gray-600">Daftar grup yang diikuti oleh nomor Bot WhatsApp:</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={fetchWaGroups}
+                                                            disabled={waGroupsLoading}
+                                                            className="text-xs text-orange-600 hover:text-orange-700 flex items-center gap-1 font-medium disabled:opacity-50"
+                                                        >
+                                                            <RefreshCw size={12} className={waGroupsLoading ? 'animate-spin' : ''} />
+                                                            Segarkan Daftar
+                                                        </button>
+                                                    </div>
 
-                                            {areaSettings.target_group_id ? (
-                                                <div className="mt-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-800">
-                                                    <span>Grup Terpilih: <strong>{areaSettings.target_group_name || areaSettings.target_group_id}</strong></span>
-                                                    <span className="font-mono text-2xs opacity-75">{areaSettings.target_group_id}</span>
+                                                    <select
+                                                        value={areaSettings.target_group_id || ''}
+                                                        onChange={(e) => {
+                                                            const gId = e.target.value;
+                                                            const grp = waGroups.find(g => g.id === gId);
+                                                            setAreaSettings(prev => ({
+                                                                ...prev,
+                                                                target_group_id: gId,
+                                                                target_group_name: grp ? grp.name : prev.target_group_name,
+                                                            }));
+                                                            if (grp) {
+                                                                setManualGroupId(grp.id);
+                                                                setManualGroupName(grp.name);
+                                                            }
+                                                            setGroupTestResult(null);
+                                                        }}
+                                                        disabled={waGroupsLoading}
+                                                        className="w-full border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white disabled:bg-gray-100"
+                                                    >
+                                                        <option value="">-- Pilih Grup WhatsApp dari Gateway --</option>
+                                                        {waGroups.map(grp => (
+                                                            <option key={grp.id} value={grp.id}>
+                                                                👥 {grp.name} ({grp.id})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+
+                                                    {waGroups.length === 0 && !waGroupsLoading && (
+                                                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 space-y-1">
+                                                            <div className="font-semibold flex items-center gap-1.5 text-amber-900">
+                                                                <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                                                                Tidak ada grup WhatsApp yang terdeteksi di Gateway
+                                                            </div>
+                                                            <p>
+                                                                Pastikan akun WhatsApp bot (nomor gateway) sudah <strong>dimasukkan ke dalam grup WhatsApp</strong> oleh admin grup tersebut di aplikasi WhatsApp HP.
+                                                            </p>
+                                                            <p className="text-amber-700">
+                                                                Atau gunakan tab <strong>"Input Manual / Link Undangan"</strong> untuk memasukkan ID grup langsung atau link undangan grup (<code>chat.whatsapp.com/...</code>).
+                                                            </p>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ) : (
-                                                <p className="text-xs text-amber-600 mt-1">
-                                                    * Silakan pilih grup WhatsApp teknisi/admin agar notifikasi peringatan dapat terkirim.
-                                                </p>
+                                                /* Tab 2: Manual Input / Invite Link */
+                                                <div className="space-y-3 bg-white p-3.5 border border-gray-200 rounded-xl">
+                                                    <div>
+                                                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                                            ID Grup (contoh: <code>1203630xxx@g.us</code>) ATAU Link Undangan Grup
+                                                        </label>
+                                                        <div className="flex gap-2">
+                                                            <input
+                                                                type="text"
+                                                                value={manualGroupId}
+                                                                onChange={(e) => setManualGroupId(e.target.value)}
+                                                                placeholder="https://chat.whatsapp.com/xxx ATAU 12036302837xxxx@g.us"
+                                                                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500 font-mono"
+                                                            />
+                                                            {manualGroupId.includes('chat.whatsapp.com') ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleResolveInvite}
+                                                                    disabled={resolvingInvite}
+                                                                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition disabled:opacity-50"
+                                                                >
+                                                                    {resolvingInvite ? (
+                                                                        <>
+                                                                            <RefreshCw size={12} className="animate-spin" />
+                                                                            Membaca Link...
+                                                                        </>
+                                                                    ) : (
+                                                                        'Gabung via Link'
+                                                                    )}
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleApplyManualGroup}
+                                                                    className="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap transition"
+                                                                >
+                                                                    Terapkan
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-2xs text-gray-500 mt-1">
+                                                            Tip: Anda bisa salin <em>"Tautan Undangan Grup"</em> dari info grup WhatsApp dan tempel di sini. Bot akan otomatis bergabung & mendeteksi ID grup.
+                                                        </p>
+                                                    </div>
+
+                                                    {inviteError && (
+                                                        <div className="p-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2">
+                                                            <AlertCircle size={14} className="text-red-500 flex-shrink-0" />
+                                                            <span>{inviteError}</span>
+                                                        </div>
+                                                    )}
+
+                                                    <div>
+                                                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                                            Nama Grup (Label Pengingat)
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            value={manualGroupName}
+                                                            onChange={(e) => setManualGroupName(e.target.value)}
+                                                            placeholder="Contoh: Tim Teknisi Lapangan RumahKitaNet"
+                                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-orange-500"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Grup Terpilih & Uji Kirim Pesan */}
+                                            {areaSettings.target_group_id ? (
+                                                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-2">
+                                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                                        <div>
+                                                            <div className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                                                                <CheckCircle2 size={14} className="text-emerald-600 flex-shrink-0" />
+                                                                Grup Tujuan Terpilih: {areaSettings.target_group_name || 'Grup WhatsApp'}
+                                                            </div>
+                                                            <div className="text-2xs font-mono text-emerald-700 break-all">
+                                                                ID: {areaSettings.target_group_id}
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleTestGroupMessage}
+                                                            disabled={groupTesting}
+                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-semibold transition shadow-2xs self-start sm:self-auto disabled:opacity-50"
+                                                        >
+                                                            {groupTesting ? (
+                                                                <>
+                                                                    <RefreshCw size={12} className="animate-spin text-emerald-600" />
+                                                                    Mengirim Uji Coba...
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <TestTube size={13} className="text-emerald-600" />
+                                                                    Uji Kirim Pesan ke Grup
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    </div>
+
+                                                    {groupTestResult && (
+                                                        <div className={`p-2.5 rounded-lg text-xs flex items-start gap-2 ${
+                                                            groupTestResult.success
+                                                                ? 'bg-emerald-100/70 border border-emerald-300 text-emerald-900'
+                                                                : 'bg-red-50 border border-red-200 text-red-800'
+                                                        }`}>
+                                                            {groupTestResult.success ? (
+                                                                <CheckCircle size={14} className="text-emerald-600 flex-shrink-0 mt-0.5" />
+                                                            ) : (
+                                                                <AlertCircle size={14} className="text-red-600 flex-shrink-0 mt-0.5" />
+                                                            )}
+                                                            <span className="flex-1">{groupTestResult.message}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <div className="p-2.5 bg-amber-50/70 border border-dashed border-amber-300 rounded-xl flex items-center gap-2 text-xs text-amber-800">
+                                                    <AlertCircle size={14} className="text-amber-600 flex-shrink-0" />
+                                                    <span>Belum ada grup yang dipilih. Notifikasi gangguan area tidak akan terkirim jika grup belum diatur.</span>
+                                                </div>
                                             )}
                                         </div>
 
