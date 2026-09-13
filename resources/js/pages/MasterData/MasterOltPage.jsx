@@ -603,7 +603,7 @@ function MasterOltPage() {
                                                     <p className={`text-[10px] font-bold truncate ${isSelected ? 'text-orange-950' : isUp ? 'text-gray-800' : 'text-rose-800'}`}>{port.name}</p>
                                                     <div className="flex items-center justify-between mt-1 pt-1 border-t border-gray-200/50 text-[10px]">
                                                         <span className="font-mono font-bold">
-                                                            {isUp && port.tx_power_dbm ? (
+                                                            {isUp && Number(port.tx_power_dbm) > 0 ? (
                                                                 <span className="text-gray-700">{port.tx_power_dbm} dBm</span>
                                                             ) : (
                                                                 <span className="text-rose-600">OFF (No SFP)</span>
@@ -723,8 +723,8 @@ function MasterOltPage() {
                                                             <span className="text-[11px] font-bold">Redaman Keluar SFP</span>
                                                             <Radio size={14} />
                                                         </div>
-                                                        <p className={`font-mono font-black text-xl ${currentPort.oper_status === 'up' ? 'text-amber-950' : 'text-rose-700'}`}>
-                                                            {currentPort.oper_status === 'up' && currentPort.tx_power_dbm ? `+${currentPort.tx_power_dbm} dBm` : 'OFF'}
+                                                        <p className={`font-mono font-black text-xl ${currentPort.oper_status === 'up' && Number(currentPort.tx_power_dbm) > 0 ? 'text-amber-950' : 'text-rose-700'}`}>
+                                                            {currentPort.oper_status === 'up' && Number(currentPort.tx_power_dbm) > 0 ? `+${currentPort.tx_power_dbm} dBm` : 'OFF'}
                                                         </p>
                                                         <p className={`text-[10px] font-semibold mt-1 ${currentPort.oper_status === 'up' ? 'text-amber-700' : 'text-rose-600'}`}>
                                                             {currentPort.oper_status === 'up' ? 'Output Laser SFP OLT (PX20+++)' : 'Tidak ada modul SFP'}
@@ -1525,7 +1525,7 @@ function MasterOltPage() {
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-3 font-mono">
-                                                    {isUp && p.tx_power_dbm ? (
+                                                    {isUp && Number(p.tx_power_dbm) > 0 ? (
                                                         <span className="text-gray-900 font-bold">{p.tx_power_dbm} dBm</span>
                                                     ) : (
                                                         <span className="text-rose-600 font-bold">OFF (No SFP)</span>

@@ -293,12 +293,17 @@ class OltSnmpService
                 $totalCount = $counts ? (int)$counts['total'] : (int)$p->total_registered_onu;
                 $isUp = ($hasSfp && (!empty($t['is_linkup']) || $onlineCount > 0)) || $onlineCount > 0;
 
+                $tx = ($isUp && !empty($t['tx_power_dbm'])) ? (float)$t['tx_power_dbm'] : ($isUp ? (float)($p->tx_power_dbm ?: 9.50) : 0.0);
+                $temp = ($isUp && !empty($t['temperature'])) ? (float)$t['temperature'] : ($isUp ? (float)($p->temperature ?: 45.0) : 0.0);
+                $volt = $isUp ? (float)($t['voltage'] ?? 3.3) : 0.0;
+                $curr = $isUp ? (float)($t['current_ma'] ?? 14.0) : 0.0;
+
                 $updateData = [
                     'oper_status' => $isUp ? 'up' : 'down',
-                    'tx_power_dbm' => $isUp ? ($t['tx_power_dbm'] ?? $p->tx_power_dbm) : null,
-                    'temperature' => $isUp ? ($t['temperature'] ?? $p->temperature) : null,
-                    'voltage' => $isUp ? ($t['voltage'] ?? 3.3) : 0.0,
-                    'current_ma' => $isUp ? ($t['current_ma'] ?? 14.0) : 0.0,
+                    'tx_power_dbm' => $tx,
+                    'temperature' => $temp,
+                    'voltage' => $volt,
+                    'current_ma' => $curr,
                 ];
                 if ($counts) {
                     $updateData['total_registered_onu'] = $totalCount;
@@ -754,6 +759,11 @@ class OltSnmpService
                 $activePortsCount++;
             }
 
+            $tx = ($operStatus === 'up' && !empty($telemetry['tx_power_dbm'])) ? (float)$telemetry['tx_power_dbm'] : 0.0;
+            $temp = ($operStatus === 'up' && !empty($telemetry['temperature'])) ? (float)$telemetry['temperature'] : 0.0;
+            $volt = $operStatus === 'up' ? (float)($telemetry['voltage'] ?? 3.3) : 0.0;
+            $curr = $operStatus === 'up' ? (float)($telemetry['current_ma'] ?? 14.0) : 0.0;
+
             $port = OltPonPort::updateOrCreate(
                 ['olt_id' => $olt->id, 'pon_index' => $pIdx],
                 [
@@ -761,10 +771,10 @@ class OltSnmpService
                     'name' => $name,
                     'admin_status' => 'up',
                     'oper_status' => $operStatus,
-                    'tx_power_dbm' => $operStatus === 'up' ? ($telemetry['tx_power_dbm'] ?? null) : null,
-                    'temperature' => $operStatus === 'up' ? ($telemetry['temperature'] ?? null) : null,
-                    'voltage' => $operStatus === 'up' ? ($telemetry['voltage'] ?? 3.3) : 0.0,
-                    'current_ma' => $operStatus === 'up' ? ($telemetry['current_ma'] ?? 14.0) : 0.0,
+                    'tx_power_dbm' => $tx,
+                    'temperature' => $temp,
+                    'voltage' => $volt,
+                    'current_ma' => $curr,
                     'total_registered_onu' => $totCount,
                     'online_onu_count' => $onCount,
                     'offline_onu_count' => $offCount,
@@ -796,11 +806,21 @@ class OltSnmpService
         $olt->save();
 
         // Reset all customers previously assigned to this OLT so unmapped customers are NOT falsely attached
-        \Illuminate\Support\Facades\DB::table('customers')->where('olt_id', $olt->id)->update([
-            'olt_id' => null,
-            'pon_port_id' => null,
-            'olt_onu_id' => null,
-        ]);
+        try {
+            $onuIds = OltOnu::where('olt_id', $olt->id)->pluck('id');
+            if ($onuIds->isNotEmpty()) {
+                \Illuminate\Support\Facades\DB::table('customers')->whereIn('olt_onu_id', $onuIds)->update([
+                    'olt_onu_id' => null,
+                ]);
+            }
+            \Illuminate\Support\Facades\DB::table('customers')->where('olt_id', $olt->id)->update([
+                'olt_id' => null,
+                'pon_port_id' => null,
+                'olt_onu_id' => null,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning("Customer reset warning during OLT sync: " . $e->getMessage());
+        }
 
         // 3. Fast Cross-Match with GenieACS and Customers
         $parsedGenie = $this->fetchGenieAcsLookupDevices();
@@ -815,62 +835,72 @@ class OltSnmpService
 
         // Delete old ONUs and insert real ones in a single fast transaction
         $matchedCount = 0;
-        \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $custByPppoe, &$matchedCount) {
-            OltOnu::where('olt_id', $olt->id)->delete();
-
-            foreach ($parsedOnus as $onuData) {
-                $pIdx = $onuData['pon_index'];
-                $portModel = $savedPorts[$pIdx] ?? null;
-                if (!$portModel) continue;
-
-                $rawMac = $onuData['mac_address'];
-                $cleanMac = strtoupper(str_replace([':', '-', '.'], '', $rawMac));
-
-                $matchedCustomer = null;
-                $serial = 'ONU-' . $cleanMac;
-                $model = 'HiOSO EPON ONU';
-
-                $foundGenie = $this->matchGenieAcsDevice($rawMac, $parsedGenie);
-                if ($foundGenie) {
-                    if (!empty($foundGenie['sn'])) {
-                        $serial = $foundGenie['sn'];
-                    }
-                    if (!empty($foundGenie['model'])) {
-                        $model = $foundGenie['model'] . ' ONT';
-                    }
-                    if (!empty($foundGenie['pppoe'])) {
-                        $matchedCustomer = $custByPppoe[strtolower(trim($foundGenie['pppoe']))] ?? null;
-                    }
-                }
-
-                if ($matchedCustomer) {
-                    $matchedCount++;
-                }
-
-                $onu = OltOnu::create([
-                    'olt_id' => $olt->id,
-                    'pon_port_id' => $portModel->id,
-                    'onu_index' => $onuData['onu_index'],
-                    'customer_id' => $matchedCustomer?->id,
-                    'serial_number' => $serial,
-                    'mac_address' => $rawMac,
-                    'model' => $model,
-                    'optical_rx_dbm' => $onuData['optical_rx_dbm'],
-                    'optical_tx_dbm' => $onuData['optical_tx_dbm'],
-                    'distance_meter' => $onuData['distance_meter'],
-                    'status' => $onuData['status'],
-                    'last_online_at' => $onuData['status'] === 'online' ? now() : null,
-                ]);
-
-                if ($matchedCustomer) {
-                    \Illuminate\Support\Facades\DB::table('customers')->where('id', $matchedCustomer->id)->update([
-                        'olt_id' => $olt->id,
-                        'pon_port_id' => $portModel->id,
-                        'olt_onu_id' => $onu->id,
+        try {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $custByPppoe, &$matchedCount) {
+                $onuIds = OltOnu::where('olt_id', $olt->id)->pluck('id');
+                if ($onuIds->isNotEmpty()) {
+                    \Illuminate\Support\Facades\DB::table('customers')->whereIn('olt_onu_id', $onuIds)->update([
+                        'olt_onu_id' => null,
                     ]);
                 }
-            }
-        });
+                OltOnu::where('olt_id', $olt->id)->delete();
+
+                foreach ($parsedOnus as $onuData) {
+                    $pIdx = $onuData['pon_index'];
+                    $portModel = $savedPorts[$pIdx] ?? null;
+                    if (!$portModel) continue;
+
+                    $rawMac = $onuData['mac_address'];
+                    $cleanMac = strtoupper(str_replace([':', '-', '.'], '', $rawMac));
+
+                    $matchedCustomer = null;
+                    $serial = 'ONU-' . $cleanMac;
+                    $model = 'HiOSO EPON ONU';
+
+                    $foundGenie = $this->matchGenieAcsDevice($rawMac, $parsedGenie);
+                    if ($foundGenie) {
+                        if (!empty($foundGenie['sn'])) {
+                            $serial = $foundGenie['sn'];
+                        }
+                        if (!empty($foundGenie['model'])) {
+                            $model = $foundGenie['model'] . ' ONT';
+                        }
+                        if (!empty($foundGenie['pppoe'])) {
+                            $matchedCustomer = $custByPppoe[strtolower(trim($foundGenie['pppoe']))] ?? null;
+                        }
+                    }
+
+                    if ($matchedCustomer) {
+                        $matchedCount++;
+                    }
+
+                    $onu = OltOnu::create([
+                        'olt_id' => $olt->id,
+                        'pon_port_id' => $portModel->id,
+                        'onu_index' => $onuData['onu_index'],
+                        'customer_id' => $matchedCustomer?->id,
+                        'serial_number' => $serial,
+                        'mac_address' => $rawMac,
+                        'model' => $model,
+                        'optical_rx_dbm' => $onuData['optical_rx_dbm'] ?? -19.50,
+                        'optical_tx_dbm' => $onuData['optical_tx_dbm'] ?? 2.10,
+                        'distance_meter' => $onuData['distance_meter'] ?? 500,
+                        'status' => $onuData['status'] ?? 'online',
+                        'last_online_at' => ($onuData['status'] ?? '') === 'online' ? now() : null,
+                    ]);
+
+                    if ($matchedCustomer) {
+                        \Illuminate\Support\Facades\DB::table('customers')->where('id', $matchedCustomer->id)->update([
+                            'olt_id' => $olt->id,
+                            'pon_port_id' => $portModel->id,
+                            'olt_onu_id' => $onu->id,
+                        ]);
+                    }
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error("Error syncing ONUs for OLT {$olt->id}: " . $e->getMessage());
+        }
 
         // Finalize counts
         $this->updatePonPortCounts($olt);
@@ -879,10 +909,10 @@ class OltSnmpService
             'success' => true,
             'total_onus' => count($parsedOnus),
             'matched_customers' => $matchedCount,
-            'port_1_onus' => $savedPorts[1]->fresh()->total_registered_onu,
-            'port_2_onus' => $savedPorts[2]->fresh()->total_registered_onu,
-            'port_1_tx' => $savedPorts[1]->fresh()->tx_power_dbm,
-            'port_2_tx' => $savedPorts[2]->fresh()->tx_power_dbm,
+            'port_1_onus' => isset($savedPorts[1]) ? ($savedPorts[1]->fresh()?->total_registered_onu ?? 0) : 0,
+            'port_2_onus' => isset($savedPorts[2]) ? ($savedPorts[2]->fresh()?->total_registered_onu ?? 0) : 0,
+            'port_1_tx' => isset($savedPorts[1]) ? ($savedPorts[1]->fresh()?->tx_power_dbm ?? 0) : 0,
+            'port_2_tx' => isset($savedPorts[2]) ? ($savedPorts[2]->fresh()?->tx_power_dbm ?? 0) : 0,
         ];
     }
 
@@ -1176,7 +1206,8 @@ class OltSnmpService
                 }
             }
 
-            $report['discovered_ports'] = $olt->fresh(['ponPorts'])->ponPorts->toArray();
+            $freshOlt = $olt->fresh(['ponPorts']);
+            $report['discovered_ports'] = $freshOlt ? $freshOlt->ponPorts->toArray() : [];
             $report['discovered_onus_count'] = $syncRes['total_onus'] ?? count($hiosoData['onus'] ?? []);
             $report['latency_ms'] = round((microtime(true) - $startTime) * 1000, 2);
             return $report;

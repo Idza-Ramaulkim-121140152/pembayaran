@@ -281,21 +281,35 @@ class MasterOltController extends Controller
      */
     public function autoDiscover(MasterOlt $olt)
     {
-        $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
+        try {
+            $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
 
-        $portsCount = count($discovery['discovered_ports'] ?? []);
-        $onusCount = $discovery['discovered_onus_count'] ?? 0;
+            $portsCount = count($discovery['discovered_ports'] ?? []);
+            $onusCount = $discovery['discovered_onus_count'] ?? 0;
 
-        $msg = $discovery['is_reachable']
-            ? "Auto-Discovery BERHASIL: Terdeteksi {$discovery['detected_brand']} ({$discovery['detected_model']}) dengan {$portsCount} Port PON dan {$onusCount} perangkat ONU/ONT terhubung."
-            : "Auto-Discovery GAGAL: OLT pada {$olt->host} tidak merespon SNMP/Telnet. Pastikan IP dapat dijangkau dan service aktif.";
+            $msg = $discovery['is_reachable']
+                ? "Auto-Discovery BERHASIL: Terdeteksi {$discovery['detected_brand']} ({$discovery['detected_model']}) dengan {$portsCount} Port PON dan {$onusCount} perangkat ONU/ONT terhubung."
+                : "Auto-Discovery GAGAL: OLT pada {$olt->host} tidak merespon SNMP/Telnet. Pastikan IP dapat dijangkau dan service aktif.";
 
-        return response()->json([
-            'success' => $discovery['is_reachable'],
-            'message' => $msg,
-            'data' => $olt->fresh(['ponPorts']),
-            'discovery' => $discovery,
-        ], $discovery['is_reachable'] ? 200 : 422);
+            return response()->json([
+                'success' => $discovery['is_reachable'],
+                'message' => $msg,
+                'data' => $olt->fresh(['ponPorts']),
+                'discovery' => $discovery,
+            ], $discovery['is_reachable'] ? 200 : 422);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Auto-discovery exception for OLT {$olt->id}: " . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat Auto-Discovery: ' . $e->getMessage(),
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
