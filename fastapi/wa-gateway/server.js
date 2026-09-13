@@ -860,12 +860,20 @@ app.post('/groups/resolve-invite', async (req, res) => {
                 const errMsg = joinErr.message || '';
                 const alreadyMember = errMsg.includes('already') || errMsg.includes('member') ||
                     errMsg.includes('already a participant') || errMsg.includes('already in group');
+                // WA internal API error (WWebJS.joinGroupViaInvite undefined) — fallback ke getInviteInfo
+                const isInternalWAError = errMsg.includes('joinGroupViaInvite') ||
+                    errMsg.includes('Cannot read properties of undefined') ||
+                    errMsg.includes('WWebJS');
 
-                if (!alreadyMember) {
-                    // Error bukan karena sudah member — lempar ulang
+                if (!alreadyMember && !isInternalWAError) {
+                    // Error bukan karena sudah member dan bukan internal WA error — lempar ulang
                     throw joinErr;
                 }
-                console.log('ℹ️ Bot sudah bergabung ke grup ini sebelumnya.');
+                if (alreadyMember) {
+                    console.log('ℹ️ Bot sudah bergabung ke grup ini sebelumnya.');
+                } else {
+                    console.warn('⚠️ acceptInvite gagal (WA internal API error), fallback ke getInviteInfo:', errMsg);
+                }
             }
         }
 
