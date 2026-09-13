@@ -348,8 +348,17 @@ function App() {
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AppLayout>
                 <Routes>
-                    {/* Root domain is private; send visitors to customer login */}
-                    <Route path="/" element={<Navigate to="/customer/login" replace />} />
+                    {/* Root domain redirect: ke /dashboard jika sudah login, ke /login jika belum login */}
+                    <Route
+                        path="/"
+                        element={
+                            window.isAuthenticated ? (
+                                <Navigate to="/dashboard" replace />
+                            ) : (
+                                <Navigate to="/login" replace />
+                            )
+                        }
+                    />
                     
                     {/* Network Status Page (Public) */}
                     <Route path="/status-jaringan" element={<RouteSuspense><NetworkStatusPage /></RouteSuspense>} />

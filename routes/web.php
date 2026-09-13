@@ -65,9 +65,12 @@ use App\Http\Controllers\IpaymuIntegrationController;
 use App\Http\Controllers\SuperPanelController;
 use App\Http\Controllers\AttendanceController;
 
-// Root domain dinonaktifkan untuk landing page publik.
+// Root domain redirect: ke /dashboard jika sudah login, ke /login jika belum login
 Route::get('/', function () {
-    return redirect()->route('customer.login');
+    if (auth()->check()) {
+        return redirect()->route('dashboard');
+    }
+    return redirect()->route('login');
 })->name('landing');
 
 // Network Status Page (Public - tanpa login)
