@@ -64,13 +64,8 @@ class AreaOutageMonitorService
     }
 
     /**
-     * Ekstraksi kode dusun / area dari username PPPoE.
-     * Mengambil 3 karakter di akhir prefix sebelum nama pelanggan.
-     * Contoh:
-     * - 'CJA-arif2' -> 'CJA'
-     * - 'KALTAMCJA-jumingan621' -> 'CJA'
-     * - 'CCA-budi' -> 'CCA'
-     * - 'KALTAMCCA-budi' -> 'CCA'
+     * Ekstraksi kode area dari username PPPoE.
+     * Menggabungkan kode lama (CJA) ke kode baru (KALTAMCJA).
      */
     public static function extractAreaCode(?string $pppoeUsername): ?string
     {
@@ -83,39 +78,37 @@ class AreaOutageMonitorService
             return null;
         }
 
-        // 0. Explicit alias: KALTAMCJA (kode baru) & CJA (kode lama) adalah area yang sama
-        if (strcasecmp($trimmed, 'KALTAMCJA') === 0 || strcasecmp($trimmed, 'CJA') === 0) {
-            return 'CJA';
+        // 0. Unifikasi: CJA (kode lama) digabungkan ke KALTAMCJA (kode baru)
+        if (strcasecmp($trimmed, 'CJA') === 0 || strcasecmp($trimmed, 'KALTAMCJA') === 0) {
+            return 'KALTAMCJA';
         }
 
         // 1. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
         if (str_contains($trimmed, '-')) {
             $parts = explode('-', $trimmed, 2);
-            $prefix = trim($parts[0]);
-            if (strcasecmp($prefix, 'KALTAMCJA') === 0) {
-                return 'CJA';
+            $prefix = strtoupper(trim($parts[0]));
+            if ($prefix === 'CJA' || $prefix === 'KALTAMCJA') {
+                return 'KALTAMCJA';
             }
-            if (strlen($prefix) >= 3) {
-                return strtoupper(substr($prefix, -3));
-            }
+            return $prefix;
         }
 
-        // 2. Format 9 karakter (Kecamatan 3 + Desa 3 + Dusun 3, misal KALTAMCJA)
-        if (preg_match('/^[A-Za-z]{6}([A-Za-z]{3})$/i', $trimmed, $matches)) {
+        // 2. Awalan KALTAMCJA tanpa strip (misal KALTAMCJA123)
+        if (preg_match('/^KALTAMCJA/i', $trimmed)) {
+            return 'KALTAMCJA';
+        }
+
+        // 3. Awalan CJA tanpa strip (misal CJA123)
+        if (preg_match('/^CJA/i', $trimmed)) {
+            return 'KALTAMCJA';
+        }
+
+        // 4. Format huruf alfabet umum jika tanpa strip
+        if (preg_match('/^([A-Za-z]+)/i', $trimmed, $matches)) {
             return strtoupper($matches[1]);
         }
 
-        // 3. Format awalan KALTAM tanpa strip (prefix 9 karakter, 3 char terakhir adalah dusun)
-        if (preg_match('/^KALTAM([A-Za-z]{3})/i', $trimmed, $matches)) {
-            return strtoupper($matches[1]);
-        }
-
-        // 4. Format 3 huruf alfabet pertama jika tanpa strip
-        if (preg_match('/^([A-Za-z]{3})/i', $trimmed, $matches)) {
-            return strtoupper($matches[1]);
-        }
-
-        return null;
+        return strtoupper($trimmed);
     }
 
     /**

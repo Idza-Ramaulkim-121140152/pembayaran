@@ -50,38 +50,6 @@ class Customer extends Model
     protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
     protected $hidden = ['home_router_password', 'mobile_password'];
 
-    // Accessor & Mutator untuk normalisasi kode area (KALTAMCJA & CJA -> CJA)
-    public function getAreaCodeAttribute($value)
-    {
-        if (!$value) {
-            return $value;
-        }
-        $upper = strtoupper(trim((string) $value));
-        if ($upper === 'KALTAMCJA') {
-            return 'CJA';
-        }
-        if (strlen($upper) === 9) {
-            return substr($upper, -3);
-        }
-        return $upper;
-    }
-
-    public function setAreaCodeAttribute($value)
-    {
-        if ($value === null) {
-            $this->attributes['area_code'] = null;
-            return;
-        }
-        $upper = strtoupper(trim((string) $value));
-        if ($upper === 'KALTAMCJA') {
-            $this->attributes['area_code'] = 'CJA';
-        } elseif (strlen($upper) === 9) {
-            $this->attributes['area_code'] = substr($upper, -3);
-        } else {
-            $this->attributes['area_code'] = $upper;
-        }
-    }
-
     // Accessor untuk kompatibilitas dengan field lama
     public function getNamaAttribute()
     {

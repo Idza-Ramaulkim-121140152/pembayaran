@@ -54,41 +54,34 @@ export default function Monitoring() {
         const trimmed = String(value).trim();
         if (!trimmed) return 'N/A';
 
-        // 1. Explicit alias: KALTAMCJA (kode baru) & CJA (kode lama) adalah area yang sama
-        if (trimmed.toUpperCase() === 'KALTAMCJA' || trimmed.toUpperCase() === 'CJA') {
-            return 'CJA';
+        const upper = trimmed.toUpperCase();
+
+        // 1. Unifikasi: CJA (kode lama) digabungkan ke KALTAMCJA (kode baru)
+        if (upper === 'CJA' || upper === 'KALTAMCJA') {
+            return 'KALTAMCJA';
         }
 
         // 2. Format dengan tanda strip '-' (misal CJA-arif2 atau KALTAMCJA-jumingan621)
         if (trimmed.includes('-')) {
-            const prefix = trimmed.split('-')[0].trim();
-            if (prefix.toUpperCase() === 'KALTAMCJA') {
-                return 'CJA';
+            const prefix = trimmed.split('-')[0].trim().toUpperCase();
+            if (prefix === 'CJA' || prefix === 'KALTAMCJA') {
+                return 'KALTAMCJA';
             }
-            if (prefix.length >= 3) {
-                return prefix.slice(-3).toUpperCase();
-            }
+            return prefix;
         }
 
-        // 3. Format awalan KALTAM tanpa strip (prefix 9 karakter, 3 char terakhir adalah dusun)
-        const kaltamMatch = trimmed.match(/^KALTAM([A-Za-z]{3})/i);
-        if (kaltamMatch) {
-            return kaltamMatch[1].toUpperCase();
+        // 3. Awalan tanpa strip (misal KALTAMCJA123 atau CJA123)
+        if (/^KALTAMCJA/i.test(trimmed) || /^CJA/i.test(trimmed)) {
+            return 'KALTAMCJA';
         }
 
-        // 4. Format 9 karakter (Kecamatan 3 + Desa 3 + Dusun 3) -> ambil 3 karakter terakhir
-        const nineMatch = trimmed.match(/^[A-Za-z]{6}([A-Za-z]{3})$/i);
-        if (nineMatch) {
-            return nineMatch[1].toUpperCase();
+        // 4. Format huruf alfabet umum jika tanpa strip
+        const match = trimmed.match(/^([A-Za-z]+)/i);
+        if (match) {
+            return match[1].toUpperCase();
         }
 
-        // 5. Format 3 huruf alfabet pertama jika tanpa strip
-        const threeMatch = trimmed.match(/^([A-Za-z]{3})/i);
-        if (threeMatch) {
-            return threeMatch[1].toUpperCase();
-        }
-
-        return trimmed.toUpperCase();
+        return upper;
     };
 
     const getFilteredCustomers = () => {
