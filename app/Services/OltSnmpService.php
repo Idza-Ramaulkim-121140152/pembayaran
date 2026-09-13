@@ -633,9 +633,15 @@ class OltSnmpService
         $parsedOnus = $hiosoData['onus'] ?? [];
 
         // 1. Update Master OLT
+        $detectedModel = $sysInfo[3] ?? $olt->model ?? 'HA7302CST';
+        $modelUpper = strtoupper((string) $detectedModel);
+        $is4Port = str_contains($modelUpper, '4P') || str_contains($modelUpper, '7304') || count($ponCounts) >= 4;
+        $is8Port = str_contains($modelUpper, '8P') || str_contains($modelUpper, '7308') || count($ponCounts) >= 8;
+        $totalPorts = $is8Port ? 8 : ($is4Port ? 4 : (count($ponCounts) > 0 ? max(count($ponCounts), 2) : 2));
+
         $olt->brand = 'HIOSO';
-        $olt->model = $sysInfo[3] ?? 'HA7302CST';
-        $olt->total_pon_ports = 2;
+        $olt->model = $detectedModel;
+        $olt->total_pon_ports = $totalPorts;
         $olt->last_status = 'online';
         $olt->last_checked_at = now();
         $olt->simulation_mode = false;
@@ -644,15 +650,15 @@ class OltSnmpService
             'status' => 'online',
             'is_reachable' => true,
             'brand' => 'HIOSO',
-            'model' => $sysInfo[3] ?? 'HA7302CST',
+            'model' => $detectedModel,
             'uptime' => $sysInfo[8] ?? '-',
             'mac_address' => $sysInfo[6] ?? '78:5c:72:a8:2e:80',
             'firmware_version' => ($sysInfo[4] ?? 'v7.80') . ' ' . ($sysInfo[5] ?? 'Release20240930'),
             'cpu_usage_percent' => is_numeric($sysInfo[9] ?? null) ? (int) $sysInfo[9] : 0,
             'memory_usage_percent' => is_numeric($sysInfo[10] ?? null) ? (float) $sysInfo[10] : 51.0,
             'temperature_celsius' => $portTelemetry[1]['temperature'] ?? 54.0,
-            'total_pon_ports' => 2,
-            'active_pon_ports' => 2,
+            'total_pon_ports' => $totalPorts,
+            'active_pon_ports' => $totalPorts,
             'total_onus' => count($parsedOnus),
             'online_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] === 'online')),
             'offline_onus' => count(array_filter($parsedOnus, fn($o) => $o['status'] !== 'online')),
@@ -660,21 +666,27 @@ class OltSnmpService
         $olt->save();
 
         // 2. Synchronize PON Ports
-        OltPonPort::where('olt_id', $olt->id)->where('pon_index', '>', 2)->delete();
+        OltPonPort::where('olt_id', $olt->id)->where('pon_index', '>', $totalPorts)->delete();
 
         $savedPorts = [];
-        foreach ([1, 2] as $pIdx) {
+        foreach (range(1, $totalPorts) as $pIdx) {
             $counts = $ponCounts[$pIdx] ?? ['total' => 0, 'online' => 0, 'offline' => 0];
             $telemetry = $portTelemetry[$pIdx] ?? [
-                'tx_power_dbm' => $pIdx === 1 ? 10.06 : 9.84,
-                'temperature' => $pIdx === 1 ? 54.0 : 49.0,
-                'voltage' => 3.0,
-                'current_ma' => $pIdx === 1 ? 11.0 : 28.0,
+                'tx_power_dbm' => 9.50 + ($pIdx * 0.1),
+                'temperature' => 48.0 + $pIdx,
+                'voltage' => 3.3,
+                'current_ma' => 15.0 + ($pIdx * 3),
             ];
             $ident = "0/1/{$pIdx}";
 
             $existing = OltPonPort::where('olt_id', $olt->id)->where('pon_index', $pIdx)->first();
-            $name = $existing?->name ?: ($pIdx === 1 ? 'PON 1 (Jalur Utama Sentral - Kalianda)' : 'PON 2 (Jalur Timur - Palas / Way Panji)');
+            $defaultName = "PON {$pIdx} (Port {$ident})";
+            if ($pIdx === 1 && str_contains($olt->name, 'Kalianda')) {
+                $defaultName = 'PON 1 (Jalur Utama Sentral - Kalianda)';
+            } elseif ($pIdx === 2 && str_contains($olt->name, 'Kalianda')) {
+                $defaultName = 'PON 2 (Jalur Timur - Palas / Way Panji)';
+            }
+            $name = $existing?->name ?: $defaultName;
 
             $port = OltPonPort::updateOrCreate(
                 ['olt_id' => $olt->id, 'pon_index' => $pIdx],
@@ -1065,7 +1077,19 @@ class OltSnmpService
             $report['http_connected'] = true;
             $report['is_reachable'] = true;
             $report['detected_brand'] = 'HIOSO';
-            $report['detected_model'] = $hiosoData['model'] ?? 'HA7302CST';
+            $report['detected_model'] = $hiosoData['model'] ?? ($olt->model ?: '4P1GM');
+
+            // Also test SNMP so report correctly indicates SNMP is active
+            $sysDescr = $this->rawSnmpGet($host, $snmpPort, $community, self::OID_MAP['Generic']['sysDescr'], 800000, 1);
+            if ($sysDescr !== false && $sysDescr !== '') {
+                $report['snmp_connected'] = true;
+                $report['sys_descr'] = $sysDescr;
+                $uptimeRes = $this->rawSnmpGet($host, $snmpPort, $community, self::OID_MAP['Generic']['sysUpTime'], 600000, 1);
+                if ($uptimeRes !== false) {
+                    $report['uptime'] = $uptimeRes;
+                }
+            }
+
             $report['discovered_ports'] = $olt->fresh(['ponPorts'])->ponPorts->toArray();
             $report['discovered_onus_count'] = $syncRes['total_onus'] ?? count($hiosoData['onus'] ?? []);
             $report['latency_ms'] = round((microtime(true) - $startTime) * 1000, 2);
