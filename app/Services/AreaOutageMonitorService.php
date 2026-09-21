@@ -278,9 +278,15 @@ class AreaOutageMonitorService
         }
 
         // 3. Ambil seluruh pelanggan aktif (bukan isolir) yang memiliki pppoe_username
+        // Exclude: is_service_isolated=true ATAU mikrotik_profile='Isolir' (isolir via MikroTik langsung)
         $customers = Customer::query()
             ->where('is_active', true)
             ->where('is_service_isolated', false)
+            ->where(function ($q) {
+                // Juga kecualikan pelanggan yang profil MikroTik-nya di-set 'Isolir'
+                $q->whereNull('mikrotik_profile')
+                  ->orWhere('mikrotik_profile', '!=', 'Isolir');
+            })
             ->whereNotNull('pppoe_username')
             ->where('pppoe_username', '!=', '')
             ->get(['id', 'name', 'phone', 'pppoe_username', 'odp', 'address']);
