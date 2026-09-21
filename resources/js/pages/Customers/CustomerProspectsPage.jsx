@@ -3,7 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { 
     UserCheck, Users, Clock, CheckCircle2, XCircle, 
     Trash2, Search, ArrowRight, ExternalLink, Phone, 
-    MapPin, Wifi, Send, Eye, ShieldAlert, Loader2, RefreshCw
+    MapPin, Wifi, Send, Eye, ShieldAlert, Loader2, RefreshCw,
+    Clipboard, ClipboardCheck
 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
@@ -24,6 +25,58 @@ function CustomerProspectsPage() {
     const [rejectModal, setRejectModal] = useState({ open: false, item: null, reason: '' });
     // Photo Preview Modal
     const [photoModal, setPhotoModal] = useState({ open: false, url: '', title: '' });
+    // Copy feedback state
+    const [copiedId, setCopiedId] = useState(null);
+
+    const handleCopyData = (item) => {
+        const wilayah = [
+            item.dusun?.name ? `Dusun ${item.dusun.name}` : '',
+            item.desa?.name  ? `Desa ${item.desa.name}`   : '',
+            item.kecamatan?.name || '',
+        ].filter(Boolean).join(', ');
+
+        const tglDaftar = item.created_at
+            ? new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })
+            : '-';
+
+        const kelamin = item.jenis_kelamin === 'L' ? 'Laki-laki'
+                      : item.jenis_kelamin === 'P' ? 'Perempuan'
+                      : item.jenis_kelamin || '';
+
+        const lines = [
+            `📋 *DATA PEMASANGAN - ${item.registration_no}*`,
+            ``,
+            `👤 *Nama:* ${item.nama}`,
+            `📱 *WhatsApp:* ${item.no_telp}`,
+            item.nik        ? `🪪 *NIK:* ${item.nik}` : null,
+            kelamin         ? `👤 *Jenis Kelamin:* ${kelamin}` : null,
+            ``,
+            wilayah         ? `📍 *Wilayah:* ${wilayah}` : null,
+            item.alamat     ? `🏠 *Alamat:* ${item.alamat}` : null,
+            ``,
+            `📦 *Paket:* ${item.paket || item.paket_custom || 'Standar'}`,
+            item.catatan    ? `📝 *Catatan:* ${item.catatan}` : null,
+            (item.latitude && item.longitude)
+                            ? `🗺️ *Koordinat:* ${item.latitude}, ${item.longitude}` : null,
+            ``,
+            `📅 *Tgl Daftar:* ${tglDaftar}`,
+        ].filter((l) => l !== null).join('\n');
+
+        navigator.clipboard.writeText(lines).then(() => {
+            setCopiedId(item.id);
+            setTimeout(() => setCopiedId(null), 2500);
+        }).catch(() => {
+            // fallback textarea copy
+            const ta = document.createElement('textarea');
+            ta.value = lines;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            setCopiedId(item.id);
+            setTimeout(() => setCopiedId(null), 2500);
+        });
+    };
 
     useEffect(() => {
         fetchProspects();
@@ -325,6 +378,23 @@ function CustomerProspectsPage() {
                                                 <span className="font-bold">Alasan Dibatalkan:</span> {item.rejection_reason}
                                             </div>
                                         )}
+
+                                        {/* Copy Data Pemasangan Button */}
+                                        <button
+                                            type="button"
+                                            onClick={() => handleCopyData(item)}
+                                            className={`w-full mt-1 inline-flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold border transition ${
+                                                copiedId === item.id
+                                                    ? 'bg-green-50 border-green-300 text-green-700'
+                                                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700'
+                                            }`}
+                                            title="Salin semua data pemasangan untuk dikirim ke teknisi via WhatsApp"
+                                        >
+                                            {copiedId === item.id
+                                                ? <><ClipboardCheck size={14} /> Data Tersalin ke Clipboard!</>
+                                                : <><Clipboard size={14} /> Copy Data Pemasangan</>
+                                            }
+                                        </button>
                                     </div>
 
                                     {/* Action Bar Footer */}
