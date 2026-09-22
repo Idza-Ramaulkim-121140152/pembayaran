@@ -292,10 +292,8 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [loanContext, setLoanContext] = useState(null);
     const [loanHandling, setLoanHandling] = useState('cash');
     const [loanDeductionAmount, setLoanDeductionAmount] = useState('');
-    const [loanChoicePromptOpen, setLoanChoicePromptOpen] = useState(false);
-
-    const totalGajiBulanan = (Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0);
-    const isMonthly = (member.tipe_gaji || 'bulanan') !== 'proyek';
+    const totalGajiBulanan = member ? ((Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0)) : 0;
+    const isMonthly = member ? ((member.tipe_gaji || 'bulanan') !== 'proyek') : true;
 
     useEffect(() => {
         if (isOpen && member) {
