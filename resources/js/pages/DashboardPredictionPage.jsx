@@ -403,11 +403,13 @@ export default function DashboardPredictionPage() {
                             highlight
                             icon={Wallet}
                             iconColor="text-indigo-600 dark:text-indigo-400"
-                            label="Total Saldo Tersedia"
-                            value={data.current_balance || 0}
+                            label="Saldo Kas Tersedia"
+                            value={data.available_balance != null ? data.available_balance : (data.current_balance || 0)}
                             compact
-                            sub="Kas riil saat ini (semua mutasi)"
-                            subColor="text-indigo-600 dark:text-indigo-400 font-medium"
+                            sub={loans > 0
+                                ? ('Total Kas ' + formatRupiah(data.total_balance || 0, true) + ' - Pinjaman ' + formatRupiah(loans, true))
+                                : 'Saldo bersih di luar pinjaman'}
+                            subColor="text-indigo-600 dark:text-indigo-300 font-medium"
                         />
                         <KpiCard
                             icon={ArrowUpRight}

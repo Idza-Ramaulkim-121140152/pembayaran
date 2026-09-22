@@ -1572,11 +1572,17 @@ class DashboardController extends Controller
             }
         }
 
+        $availableBalance = $currentBalance - $loansOutstanding;
+        $availableAsOf    = $monthEndBalance - $loansOutstanding;
+
         return response()->json([
-            'current_balance'          => (int) round($currentBalance),
+            'available_balance'        => (int) round($availableBalance),
+            'total_balance'            => (int) round($currentBalance),
+            'loans_outstanding'        => (int) round($loansOutstanding),
+            'current_balance'          => (int) round($availableBalance),
             'total_cumulative_income'  => (int) round($totalCumulativeIncome),
             'total_cumulative_expense' => (int) round($totalCumulativeExpense),
-            'as_of_balance'            => (int) round($monthEndBalance),
+            'as_of_balance'            => (int) round($availableAsOf),
             'today'                    => $todaySnapshot,
             'yesterday'                => $yesterdaySnapshot,
             'monthly_income'           => [
@@ -1595,7 +1601,6 @@ class DashboardController extends Controller
                 'other'     => (int) round($monthExpOther),
             ],
             'monthly_net'              => (int) round($monthNet),
-            'loans_outstanding'        => (int) round($loansOutstanding),
             'daily_series'             => $dailySeries,
             'forecast_cards'           => $forecastCards,
             'six_month_trend'          => $sixMonthTrend,
