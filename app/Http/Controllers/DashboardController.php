@@ -1348,13 +1348,33 @@ class DashboardController extends Controller
             }
         }
 
+        // ── Upcoming scheduled employee salaries by payday day-of-month ────────
+        $upcomingSalaries = [];
+        try {
+            if (Schema::hasTable('payroll_members') && Schema::hasColumn('payroll_members', 'tanggal_gajian')) {
+                $salaryMembers = PayrollMember::where('is_active', true)
+                    ->whereIn('tipe_gaji', ['bulanan', 'campuran'])
+                    ->whereNotNull('tanggal_gajian')
+                    ->get();
+                foreach ($salaryMembers as $m) {
+                    $day = (int) $m->tanggal_gajian;
+                    $upcomingSalaries[$day] = ($upcomingSalaries[$day] ?? 0) + (float) (($m->gaji_pokok ?? 0) + ($m->tunjangan ?? 0));
+                }
+            }
+        } catch (\Exception $e) {
+            // gracefully fallback
+        }
+
         $dailySeries = [];
         for ($cursor = $chartStart->copy(); $cursor->lte($chartFutureEnd); $cursor->addDay()) {
             $dateStr  = $cursor->toDateString();
             $isFuture = $cursor->isAfter($today);
             $isToday  = $cursor->isSameDay($today);
+            $dayNum   = $cursor->day;
 
             if ($isFuture) {
+                $forecastExpense = (int) round($upcomingSalaries[$dayNum] ?? 0);
+                $forecastIncome  = $forecastMap[$dateStr]['predicted_revenue'] ?? null;
                 $dailySeries[] = [
                     'date'                => $dateStr,
                     'day_name'            => $this->getWeekdayName($cursor->dayOfWeek),
@@ -1363,9 +1383,10 @@ class DashboardController extends Controller
                     'income'              => null,
                     'income_invoice'      => null,
                     'income_installation' => null,
-                    'expense'             => null,
-                    'net'                 => null,
-                    'forecast_income'     => $forecastMap[$dateStr]['predicted_revenue'] ?? null,
+                    'expense'             => $forecastExpense > 0 ? $forecastExpense : null,
+                    'net'                 => ($forecastIncome !== null && $forecastExpense > 0) ? (int) round($forecastIncome - $forecastExpense) : null,
+                    'forecast_income'     => $forecastIncome,
+                    'forecast_expense'    => $forecastExpense > 0 ? $forecastExpense : null,
                     'confidence'          => $forecastMap[$dateStr]['confidence'] ?? null,
                 ];
             } else {
@@ -1387,6 +1408,7 @@ class DashboardController extends Controller
                     'expense'             => (int) round($exp),
                     'net'                 => (int) round($inc - $exp),
                     'forecast_income'     => null,
+                    'forecast_expense'    => null,
                     'confidence'          => null,
                 ];
             }

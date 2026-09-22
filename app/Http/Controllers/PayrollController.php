@@ -32,8 +32,19 @@ class PayrollController extends Controller
      */
     public function index(Request $request)
     {
-        // Ringkasan gaji per anggota: total bagian - total pembayaran
-        $unpaidSummary = PayrollMember::select('payroll_members.id', 'payroll_members.nama', 'payroll_members.telepon')
+        // Ringkasan gaji per anggota: total bagian - total pembayaran + info gaji bulanan
+        $unpaidSummary = PayrollMember::select(
+                'payroll_members.id',
+                'payroll_members.nama',
+                'payroll_members.telepon',
+                'payroll_members.tipe_gaji',
+                'payroll_members.gaji_pokok',
+                'payroll_members.tunjangan',
+                'payroll_members.tanggal_gajian',
+                'payroll_members.nama_bank',
+                'payroll_members.nomor_rekening',
+                'payroll_members.is_active'
+            )
             ->selectRaw('COALESCE((
                 SELECT SUM(ppm.bagian) FROM payroll_project_members ppm WHERE ppm.payroll_member_id = payroll_members.id
             ), 0) as total_bagian')
@@ -52,7 +63,8 @@ class PayrollController extends Controller
 
                 return [
                     ...$member->toArray(),
-                    'borrower' => $loanContext['borrower'],
+                    'total_gaji_bulanan'   => (float) ($member->gaji_pokok ?? 0) + (float) ($member->tunjangan ?? 0),
+                    'borrower'             => $loanContext['borrower'],
                     'borrower_outstanding' => $loanContext['outstanding'],
                 ];
             });
@@ -79,7 +91,11 @@ class PayrollController extends Controller
      */
     public function members()
     {
-        $members = PayrollMember::orderBy('nama')->get();
+        $members = PayrollMember::orderBy('nama')->get()->map(function (PayrollMember $m) {
+            $arr = $m->toArray();
+            $arr['total_gaji_bulanan'] = (float) ($m->gaji_pokok ?? 0) + (float) ($m->tunjangan ?? 0);
+            return $arr;
+        });
         return response()->json(['data' => $members]);
     }
 
@@ -89,13 +105,30 @@ class PayrollController extends Controller
     public function storeMember(Request $request)
     {
         $validated = $request->validate([
-            'nama' => 'required|string|max:255',
-            'telepon' => 'nullable|string|max:20',
+            'nama'           => 'required|string|max:255',
+            'telepon'        => 'nullable|string|max:20',
+            'tipe_gaji'      => 'nullable|in:bulanan,proyek,campuran',
+            'gaji_pokok'     => 'nullable|numeric|min:0',
+            'tunjangan'      => 'nullable|numeric|min:0',
+            'tanggal_gajian' => 'nullable|integer|min:1|max:31',
+            'nama_bank'      => 'nullable|string|max:100',
+            'nomor_rekening' => 'nullable|string|max:100',
+            'is_active'      => 'nullable|boolean',
         ]);
 
-        $member = PayrollMember::create($validated);
+        $member = PayrollMember::create([
+            'nama'           => $validated['nama'],
+            'telepon'        => $validated['telepon'] ?? null,
+            'tipe_gaji'      => $validated['tipe_gaji'] ?? 'bulanan',
+            'gaji_pokok'     => $validated['gaji_pokok'] ?? 0,
+            'tunjangan'      => $validated['tunjangan'] ?? 0,
+            'tanggal_gajian' => $validated['tanggal_gajian'] ?? 1,
+            'nama_bank'      => $validated['nama_bank'] ?? null,
+            'nomor_rekening' => $validated['nomor_rekening'] ?? null,
+            'is_active'      => $validated['is_active'] ?? true,
+        ]);
 
-        return response()->json(['data' => $member, 'message' => 'Anggota berhasil ditambahkan'], 201);
+        return response()->json(['data' => $member, 'message' => 'Karyawan / Anggota berhasil ditambahkan'], 201);
     }
 
     /**
@@ -105,13 +138,20 @@ class PayrollController extends Controller
     {
         $member = PayrollMember::findOrFail($id);
         $validated = $request->validate([
-            'nama' => 'required|string|max:255',
-            'telepon' => 'nullable|string|max:20',
+            'nama'           => 'required|string|max:255',
+            'telepon'        => 'nullable|string|max:20',
+            'tipe_gaji'      => 'nullable|in:bulanan,proyek,campuran',
+            'gaji_pokok'     => 'nullable|numeric|min:0',
+            'tunjangan'      => 'nullable|numeric|min:0',
+            'tanggal_gajian' => 'nullable|integer|min:1|max:31',
+            'nama_bank'      => 'nullable|string|max:100',
+            'nomor_rekening' => 'nullable|string|max:100',
+            'is_active'      => 'nullable|boolean',
         ]);
 
         $member->update($validated);
 
-        return response()->json(['data' => $member, 'message' => 'Anggota berhasil diperbarui']);
+        return response()->json(['data' => $member, 'message' => 'Data gaji karyawan berhasil diperbarui']);
     }
 
     /**
@@ -332,21 +372,27 @@ class PayrollController extends Controller
         ]);
 
         $member = PayrollMember::findOrFail($memberId);
+        $isMonthly = in_array($member->tipe_gaji ?? 'bulanan', ['bulanan', 'campuran']);
 
-        // Hitung sisa unpaid
+        // Hitung sisa unpaid dari proyek
         $totalBagian = DB::table('payroll_project_members')
             ->where('payroll_member_id', $memberId)
             ->sum('bagian');
         $totalPayments = DB::table('payroll_member_payments')
             ->where('payroll_member_id', $memberId)
             ->sum('nominal');
-        $remaining = $totalBagian - $totalPayments;
+        $remaining = max(0, $totalBagian - $totalPayments);
 
-        if ($remaining <= 0) {
+        $nominal = (int) $validated['nominal'];
+
+        if (!$isMonthly && $remaining <= 0) {
             return response()->json(['message' => 'Tidak ada saldo yang belum dibayar untuk anggota ini'], 422);
         }
 
-        $nominal = (int) min($validated['nominal'], $remaining); // jangan lebih dari sisa
+        if (!$isMonthly && $nominal > $remaining) {
+            $nominal = (int) $remaining;
+        }
+
         $loanHandling = $validated['loan_handling'] ?? 'cash';
         $loanDeductionAmount = 0;
         $borrower = null;
