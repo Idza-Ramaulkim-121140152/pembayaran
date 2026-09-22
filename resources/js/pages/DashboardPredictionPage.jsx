@@ -429,7 +429,7 @@ export default function DashboardPredictionPage() {
                                 Pendapatan Harian
                             </h2>
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                14 hari terakhir + hari ini + 7 hari prediksi AI (ungu)
+                                Histori harian bulan ini + 7 hari prediksi AI (ungu)
                             </p>
                         </div>
                         <div className="h-56">

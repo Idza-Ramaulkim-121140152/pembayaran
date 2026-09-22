@@ -1284,7 +1284,11 @@ class DashboardController extends Controller
         // ── 2. Build daily breakdown map ──────────────────────────────────────────
         $dailyMap = [];
         foreach ($monthTx as $row) {
-            $date     = (string) $row->transaction_date;
+            $rawDate  = $row->transaction_date;
+            $date     = $rawDate instanceof \DateTimeInterface
+                ? $rawDate->format('Y-m-d')
+                : substr((string) $rawDate, 0, 10);
+
             $amount   = (float) ($row->total ?? 0);
             $source   = (string) ($row->source ?? '');
             $category = strtolower((string) ($row->category ?? ''));
@@ -1326,9 +1330,14 @@ class DashboardController extends Controller
             }
         }
 
-        // ── 3. Daily chart series (14-day history + today + 7-day future) ─────────
-        $chartStart     = $today->copy()->subDays(13)->startOfDay();
-        $chartFutureEnd = $today->copy()->addDays(7)->endOfDay();
+        // ── 3. Daily chart series (full month history + today + 7-day future) ──────
+        if ($isCurrentMonth) {
+            $chartStart     = $startOfMonth->copy()->startOfDay();
+            $chartFutureEnd = $today->copy()->addDays(7)->endOfDay();
+        } else {
+            $chartStart     = $startOfMonth->copy()->startOfDay();
+            $chartFutureEnd = $endOfMonth->copy()->endOfDay();
+        }
 
         $forecastMap = [];
         if ($isCurrentMonth) {
