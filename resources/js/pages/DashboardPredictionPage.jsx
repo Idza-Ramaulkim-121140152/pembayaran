@@ -102,12 +102,16 @@ function todayYM() {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function KpiCard({ icon: Icon, iconColor, label, value, sub, subColor, compact }) {
+function KpiCard({ icon: Icon, iconColor, label, value, sub, subColor, compact, className, highlight }) {
     return (
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col gap-1">
+        <div className={`rounded-xl p-4 shadow-sm border flex flex-col gap-1 transition-all ${
+            highlight
+                ? 'bg-gradient-to-br from-indigo-50/90 via-white to-indigo-50/40 dark:from-indigo-950/40 dark:via-gray-800 dark:to-indigo-950/20 border-indigo-200 dark:border-indigo-800/60 shadow-indigo-100/50 dark:shadow-none'
+                : 'bg-white dark:bg-gray-800 border-gray-100 dark:border-gray-700'
+        } ${className || ''}`}>
             <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                <Icon size={14} className={iconColor} />
-                {label}
+                {Icon && <Icon size={14} className={iconColor} />}
+                <span className="truncate">{label}</span>
             </div>
             <div className="text-xl font-bold text-gray-900 dark:text-white leading-tight">
                 {formatRupiah(value, compact)}
@@ -393,6 +397,47 @@ export default function DashboardPredictionPage() {
                 <div className="flex justify-center py-20"><LoadingSpinner /></div>
             ) : !data ? null : (
                 <>
+                    {/* Ringkasan Saldo & Arus Kas Utama */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <KpiCard
+                            highlight
+                            icon={Wallet}
+                            iconColor="text-indigo-600 dark:text-indigo-400"
+                            label="Total Saldo Tersedia"
+                            value={data.current_balance || 0}
+                            compact
+                            sub="Kas riil saat ini (semua mutasi)"
+                            subColor="text-indigo-600 dark:text-indigo-400 font-medium"
+                        />
+                        <KpiCard
+                            icon={ArrowUpRight}
+                            iconColor="text-emerald-500"
+                            label={'Pemasukan ' + monthLabel(selectedMonth)}
+                            value={mi.total || 0}
+                            compact
+                            sub={formatRupiah(mi.invoice || 0, true) + ' dari tagihan'}
+                            subColor="text-gray-500 dark:text-gray-400"
+                        />
+                        <KpiCard
+                            icon={ArrowDownRight}
+                            iconColor="text-red-500"
+                            label={'Pengeluaran ' + monthLabel(selectedMonth)}
+                            value={me.total || 0}
+                            compact
+                            sub={expPct + '% dari pemasukan'}
+                            subColor="text-gray-500 dark:text-gray-400"
+                        />
+                        <KpiCard
+                            icon={TrendingUp}
+                            iconColor={net >= 0 ? 'text-emerald-500' : 'text-red-500'}
+                            label={'Net ' + monthLabel(selectedMonth)}
+                            value={net}
+                            compact
+                            sub={'Margin: ' + marginPct + '%'}
+                            subColor={net >= 0 ? 'text-emerald-600 font-medium' : 'text-red-500 font-medium'}
+                        />
+                    </div>
+
                     {/* Today Snapshot */}
                     {isCurrentMonth && (
                         <div>

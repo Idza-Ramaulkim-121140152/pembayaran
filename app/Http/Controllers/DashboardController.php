@@ -1536,32 +1536,72 @@ class DashboardController extends Controller
             usort($forecastCards, fn ($a, $b) => strcmp($a['date'], $b['date']));
         }
 
+        // ── 9. Overall current available balance ──────────────────────────────────
+        $currentBalance         = 0.0;
+        $totalCumulativeIncome  = 0.0;
+        $totalCumulativeExpense = 0.0;
+        $monthEndBalance        = 0.0;
+
+        if ($this->isLedgerReady()) {
+            try {
+                $ledgerSummary          = app(FinancialLedgerService::class)->getSummary();
+                $currentBalance         = (float) ($ledgerSummary['balance'] ?? 0);
+                $totalCumulativeIncome  = (float) ($ledgerSummary['total_income'] ?? 0);
+                $totalCumulativeExpense = (float) ($ledgerSummary['total_expense'] ?? 0);
+
+                $asOfDate        = $isCurrentMonth ? $today : $endOfMonth;
+                $summaryAsOf     = app(FinancialLedgerService::class)->getSummaryAsOfDate($asOfDate);
+                $monthEndBalance = (float) ($summaryAsOf['balance'] ?? 0);
+            } catch (\Exception $e) {
+                $totInc = (float) FinancialTransaction::query()
+                    ->where('type', 'income')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), fn ($q) => $q->where('status', FinancialTransaction::STATUS_CONFIRMED))
+                    ->sum('amount');
+                $totExp = (float) FinancialTransaction::query()
+                    ->where('type', 'expense')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), fn ($q) => $q->where('status', FinancialTransaction::STATUS_CONFIRMED))
+                    ->sum('amount');
+                $totAdj = (float) FinancialTransaction::query()
+                    ->where('type', 'adjustment')
+                    ->when(Schema::hasColumn('financial_transactions', 'status'), fn ($q) => $q->where('status', FinancialTransaction::STATUS_CONFIRMED))
+                    ->sum('amount');
+                $currentBalance         = $totInc - $totExp + $totAdj;
+                $totalCumulativeIncome  = $totInc;
+                $totalCumulativeExpense = $totExp;
+                $monthEndBalance        = $currentBalance;
+            }
+        }
+
         return response()->json([
-            'today'             => $todaySnapshot,
-            'yesterday'         => $yesterdaySnapshot,
-            'monthly_income'    => [
-                'total'         => (int) round($monthTotalIncome),
-                'invoice'       => (int) round($monthIncInvoice),
-                'installation'  => (int) round($monthIncInstallation),
-                'manual'        => (int) round($monthIncManual),
-                'other'         => (int) round($monthIncOther),
+            'current_balance'          => (int) round($currentBalance),
+            'total_cumulative_income'  => (int) round($totalCumulativeIncome),
+            'total_cumulative_expense' => (int) round($totalCumulativeExpense),
+            'as_of_balance'            => (int) round($monthEndBalance),
+            'today'                    => $todaySnapshot,
+            'yesterday'                => $yesterdaySnapshot,
+            'monthly_income'           => [
+                'total'        => (int) round($monthTotalIncome),
+                'invoice'      => (int) round($monthIncInvoice),
+                'installation' => (int) round($monthIncInstallation),
+                'manual'       => (int) round($monthIncManual),
+                'other'        => (int) round($monthIncOther),
             ],
-            'monthly_expense'   => [
-                'total'         => (int) round($monthTotalExpense),
-                'bandwidth'     => (int) round($monthExpBandwidth),
-                'gaji'          => (int) round($monthExpGaji),
-                'pinjaman'      => (int) round($monthExpPinjaman),
-                'alat'          => (int) round($monthExpAlat),
-                'other'         => (int) round($monthExpOther),
+            'monthly_expense'          => [
+                'total'     => (int) round($monthTotalExpense),
+                'bandwidth' => (int) round($monthExpBandwidth),
+                'gaji'      => (int) round($monthExpGaji),
+                'pinjaman'  => (int) round($monthExpPinjaman),
+                'alat'      => (int) round($monthExpAlat),
+                'other'     => (int) round($monthExpOther),
             ],
-            'monthly_net'       => (int) round($monthNet),
-            'loans_outstanding' => (int) round($loansOutstanding),
-            'daily_series'      => $dailySeries,
-            'forecast_cards'    => $forecastCards,
-            'six_month_trend'   => $sixMonthTrend,
-            'month'             => $monthRef->format('Y-m'),
-            'month_label'       => $monthRef->format('F Y'),
-            'is_current_month'  => $isCurrentMonth,
+            'monthly_net'              => (int) round($monthNet),
+            'loans_outstanding'        => (int) round($loansOutstanding),
+            'daily_series'             => $dailySeries,
+            'forecast_cards'           => $forecastCards,
+            'six_month_trend'          => $sixMonthTrend,
+            'month'                    => $monthRef->format('Y-m'),
+            'month_label'              => $monthRef->format('F Y'),
+            'is_current_month'         => $isCurrentMonth,
         ]);
     }
 
