@@ -1246,6 +1246,332 @@ class DashboardController extends Controller
         ], $context));
     }
 
+    public function cashflowDaily(Request $request)
+    {
+        if (!$this->canViewFinancialMetrics($request->user())) {
+            return response()->json(['message' => 'Anda tidak memiliki izin melihat data keuangan.'], 403);
+        }
+
+        $validated = $request->validate([
+            'month' => 'nullable|date_format:Y-m',
+        ]);
+
+        $monthValue = $validated['month'] ?? Carbon::today()->format('Y-m');
+
+        try {
+            $monthRef = Carbon::createFromFormat('Y-m', $monthValue);
+        } catch (\Exception $e) {
+            $monthRef = Carbon::today();
+        }
+
+        $startOfMonth   = $monthRef->copy()->startOfMonth()->startOfDay();
+        $endOfMonth     = $monthRef->copy()->endOfMonth()->endOfDay();
+        $today          = Carbon::today();
+        $isCurrentMonth = $today->format('Y-m') === $monthRef->format('Y-m');
+
+        // ── 1. Transaction data for the month ─────────────────────────────────────
+        $monthTx = collect();
+        if ($this->isLedgerReady()) {
+            $monthTx = FinancialTransaction::query()
+                ->where('status', FinancialTransaction::STATUS_CONFIRMED)
+                ->whereBetween('transaction_date', [$startOfMonth->toDateString(), $endOfMonth->toDateString()])
+                ->selectRaw('transaction_date, source, category, type, SUM(amount) as total')
+                ->groupBy('transaction_date', 'source', 'category', 'type')
+                ->orderBy('transaction_date')
+                ->get();
+        }
+
+        // ── 2. Build daily breakdown map ──────────────────────────────────────────
+        $dailyMap = [];
+        foreach ($monthTx as $row) {
+            $date     = (string) $row->transaction_date;
+            $amount   = (float) ($row->total ?? 0);
+            $source   = (string) ($row->source ?? '');
+            $category = strtolower((string) ($row->category ?? ''));
+            $type     = (string) ($row->type ?? '');
+
+            if (!isset($dailyMap[$date])) {
+                $dailyMap[$date] = [
+                    'income_invoice'      => 0.0,
+                    'income_installation' => 0.0,
+                    'income_manual'       => 0.0,
+                    'income_other'        => 0.0,
+                    'expense_bandwidth'   => 0.0,
+                    'expense_gaji'        => 0.0,
+                    'expense_pinjaman'    => 0.0,
+                    'expense_alat'        => 0.0,
+                    'expense_other'       => 0.0,
+                ];
+            }
+
+            if ($type === 'income') {
+                if ($source === 'invoice_payment') {
+                    $dailyMap[$date]['income_invoice'] += $amount;
+                } elseif ($source === 'installation_income') {
+                    $dailyMap[$date]['income_installation'] += $amount;
+                } elseif ($source === 'manual_income') {
+                    $dailyMap[$date]['income_manual'] += $amount;
+                } else {
+                    $dailyMap[$date]['income_other'] += $amount;
+                }
+            } elseif ($type === 'expense') {
+                $expCat = $this->classifyExpenseCategory($category, $source);
+                $dailyMap[$date]['expense_' . $expCat] += $amount;
+            } elseif ($type === 'adjustment') {
+                if ($amount >= 0) {
+                    $dailyMap[$date]['income_other'] += $amount;
+                } else {
+                    $dailyMap[$date]['expense_other'] += abs($amount);
+                }
+            }
+        }
+
+        // ── 3. Daily chart series (14-day history + today + 7-day future) ─────────
+        $chartStart     = $today->copy()->subDays(13)->startOfDay();
+        $chartFutureEnd = $today->copy()->addDays(7)->endOfDay();
+
+        $forecastMap = [];
+        if ($isCurrentMonth) {
+            try {
+                $forecastStart = $today->copy()->addDay()->startOfDay();
+                $forecastEnd   = $today->copy()->addDays(7)->endOfDay();
+                $revForecast   = $this->buildRevenueForecast($forecastStart, $forecastEnd);
+                foreach ($revForecast['daily_forecast'] ?? [] as $fRow) {
+                    $forecastMap[$fRow['date']] = [
+                        'predicted_revenue' => (int) round((float) ($fRow['predicted_revenue'] ?? 0)),
+                        'confidence'        => (int) round((float) ($fRow['confidence'] ?? 0)),
+                        'day_name'          => $fRow['day_name'] ?? '',
+                    ];
+                }
+            } catch (\Exception $e) {
+                // silently skip if forecast fails
+            }
+        }
+
+        $dailySeries = [];
+        for ($cursor = $chartStart->copy(); $cursor->lte($chartFutureEnd); $cursor->addDay()) {
+            $dateStr  = $cursor->toDateString();
+            $isFuture = $cursor->isAfter($today);
+            $isToday  = $cursor->isSameDay($today);
+
+            if ($isFuture) {
+                $dailySeries[] = [
+                    'date'                => $dateStr,
+                    'day_name'            => $this->getWeekdayName($cursor->dayOfWeek),
+                    'is_today'            => false,
+                    'is_future'           => true,
+                    'income'              => null,
+                    'income_invoice'      => null,
+                    'income_installation' => null,
+                    'expense'             => null,
+                    'net'                 => null,
+                    'forecast_income'     => $forecastMap[$dateStr]['predicted_revenue'] ?? null,
+                    'confidence'          => $forecastMap[$dateStr]['confidence'] ?? null,
+                ];
+            } else {
+                $d   = $dailyMap[$dateStr] ?? [];
+                $inc = ($d['income_invoice'] ?? 0) + ($d['income_installation'] ?? 0)
+                     + ($d['income_manual'] ?? 0) + ($d['income_other'] ?? 0);
+                $exp = ($d['expense_bandwidth'] ?? 0) + ($d['expense_gaji'] ?? 0)
+                     + ($d['expense_pinjaman'] ?? 0) + ($d['expense_alat'] ?? 0)
+                     + ($d['expense_other'] ?? 0);
+
+                $dailySeries[] = [
+                    'date'                => $dateStr,
+                    'day_name'            => $this->getWeekdayName($cursor->dayOfWeek),
+                    'is_today'            => $isToday,
+                    'is_future'           => false,
+                    'income'              => (int) round($inc),
+                    'income_invoice'      => (int) round($d['income_invoice'] ?? 0),
+                    'income_installation' => (int) round($d['income_installation'] ?? 0),
+                    'expense'             => (int) round($exp),
+                    'net'                 => (int) round($inc - $exp),
+                    'forecast_income'     => null,
+                    'confidence'          => null,
+                ];
+            }
+        }
+
+        // ── 4. Monthly totals ──────────────────────────────────────────────────────
+        $monthIncInvoice      = 0.0;
+        $monthIncInstallation = 0.0;
+        $monthIncManual       = 0.0;
+        $monthIncOther        = 0.0;
+        $monthExpBandwidth    = 0.0;
+        $monthExpGaji         = 0.0;
+        $monthExpPinjaman     = 0.0;
+        $monthExpAlat         = 0.0;
+        $monthExpOther        = 0.0;
+
+        foreach ($dailyMap as $d) {
+            $monthIncInvoice      += $d['income_invoice'];
+            $monthIncInstallation += $d['income_installation'];
+            $monthIncManual       += $d['income_manual'];
+            $monthIncOther        += $d['income_other'];
+            $monthExpBandwidth    += $d['expense_bandwidth'];
+            $monthExpGaji         += $d['expense_gaji'];
+            $monthExpPinjaman     += $d['expense_pinjaman'];
+            $monthExpAlat         += $d['expense_alat'];
+            $monthExpOther        += $d['expense_other'];
+        }
+
+        $monthTotalIncome  = $monthIncInvoice + $monthIncInstallation + $monthIncManual + $monthIncOther;
+        $monthTotalExpense = $monthExpBandwidth + $monthExpGaji + $monthExpPinjaman + $monthExpAlat + $monthExpOther;
+        $monthNet          = $monthTotalIncome - $monthTotalExpense;
+
+        // ── 5. Today & Yesterday snapshots ────────────────────────────────────────
+        $buildDaySnapshot = function (string $dateStr) use ($dailyMap): array {
+            $d   = $dailyMap[$dateStr] ?? [];
+            $inc = ($d['income_invoice'] ?? 0) + ($d['income_installation'] ?? 0)
+                 + ($d['income_manual'] ?? 0) + ($d['income_other'] ?? 0);
+            $exp = ($d['expense_bandwidth'] ?? 0) + ($d['expense_gaji'] ?? 0)
+                 + ($d['expense_pinjaman'] ?? 0) + ($d['expense_alat'] ?? 0)
+                 + ($d['expense_other'] ?? 0);
+            return [
+                'date'                => $dateStr,
+                'income_total'        => (int) round($inc),
+                'income_invoice'      => (int) round($d['income_invoice'] ?? 0),
+                'income_installation' => (int) round($d['income_installation'] ?? 0),
+                'income_manual'       => (int) round($d['income_manual'] ?? 0),
+                'income_other'        => (int) round($d['income_other'] ?? 0),
+                'expense_total'       => (int) round($exp),
+                'expense_bandwidth'   => (int) round($d['expense_bandwidth'] ?? 0),
+                'expense_gaji'        => (int) round($d['expense_gaji'] ?? 0),
+                'expense_pinjaman'    => (int) round($d['expense_pinjaman'] ?? 0),
+                'expense_alat'        => (int) round($d['expense_alat'] ?? 0),
+                'expense_other'       => (int) round($d['expense_other'] ?? 0),
+                'net'                 => (int) round($inc - $exp),
+            ];
+        };
+
+        $todaySnapshot     = $buildDaySnapshot($today->toDateString());
+        $yesterdaySnapshot = $buildDaySnapshot($today->copy()->subDay()->toDateString());
+
+        // ── 6. Outstanding loans ───────────────────────────────────────────────────
+        $loansOutstanding = 0.0;
+        try {
+            if (Schema::hasTable('borrower_loans')) {
+                $loansOutstanding = (float) DB::table('borrower_loans')
+                    ->where('status', 'outstanding')
+                    ->selectRaw('COALESCE(SUM(amount - COALESCE(settled_amount, 0)), 0) as total')
+                    ->value('total');
+            }
+        } catch (\Exception $e) {
+            // silently skip
+        }
+
+        // ── 7. Six-month cashflow trend ────────────────────────────────────────────
+        $sixMonthTrend = [];
+        for ($i = 5; $i >= 0; $i--) {
+            $mRef   = $today->copy()->subMonths($i)->startOfMonth();
+            $mStart = $mRef->copy()->startOfMonth()->toDateString();
+            $mEnd   = $mRef->copy()->endOfMonth()->toDateString();
+
+            $mTotals = null;
+            if ($this->isLedgerReady()) {
+                $mTotals = FinancialTransaction::query()
+                    ->where('status', FinancialTransaction::STATUS_CONFIRMED)
+                    ->whereBetween('transaction_date', [$mStart, $mEnd])
+                    ->selectRaw("
+                        COALESCE(SUM(CASE WHEN type = 'income' THEN amount WHEN type = 'adjustment' AND amount > 0 THEN amount ELSE 0 END), 0) AS total_income,
+                        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount WHEN type = 'adjustment' AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS total_expense
+                    ")
+                    ->first();
+            }
+
+            $mIncome  = (float) ($mTotals->total_income ?? 0);
+            $mExpense = (float) ($mTotals->total_expense ?? 0);
+
+            $sixMonthTrend[] = [
+                'month'     => $mRef->format('M Y'),
+                'month_key' => $mRef->format('Y-m'),
+                'income'    => (int) round($mIncome),
+                'expense'   => (int) round($mExpense),
+                'net'       => (int) round($mIncome - $mExpense),
+            ];
+        }
+
+        // ── 8. AI forecast cards ───────────────────────────────────────────────────
+        $forecastCards = [];
+        if ($isCurrentMonth) {
+            foreach ($forecastMap as $date => $fData) {
+                $forecastCards[] = [
+                    'date'              => $date,
+                    'day_name'          => $fData['day_name'],
+                    'predicted_revenue' => $fData['predicted_revenue'],
+                    'confidence'        => $fData['confidence'],
+                ];
+            }
+            usort($forecastCards, fn ($a, $b) => strcmp($a['date'], $b['date']));
+        }
+
+        return response()->json([
+            'today'             => $todaySnapshot,
+            'yesterday'         => $yesterdaySnapshot,
+            'monthly_income'    => [
+                'total'         => (int) round($monthTotalIncome),
+                'invoice'       => (int) round($monthIncInvoice),
+                'installation'  => (int) round($monthIncInstallation),
+                'manual'        => (int) round($monthIncManual),
+                'other'         => (int) round($monthIncOther),
+            ],
+            'monthly_expense'   => [
+                'total'         => (int) round($monthTotalExpense),
+                'bandwidth'     => (int) round($monthExpBandwidth),
+                'gaji'          => (int) round($monthExpGaji),
+                'pinjaman'      => (int) round($monthExpPinjaman),
+                'alat'          => (int) round($monthExpAlat),
+                'other'         => (int) round($monthExpOther),
+            ],
+            'monthly_net'       => (int) round($monthNet),
+            'loans_outstanding' => (int) round($loansOutstanding),
+            'daily_series'      => $dailySeries,
+            'forecast_cards'    => $forecastCards,
+            'six_month_trend'   => $sixMonthTrend,
+            'month'             => $monthRef->format('Y-m'),
+            'month_label'       => $monthRef->format('F Y'),
+            'is_current_month'  => $isCurrentMonth,
+        ]);
+    }
+
+    private function classifyExpenseCategory(string $category, string $source): string
+    {
+        $cat = strtolower($category);
+        $src = strtolower($source);
+
+        // Bandwidth/ISP — includes typo 'bandwith' as used in seeded data
+        if (str_contains($cat, 'bandwidth') || str_contains($cat, 'bandwith')
+            || str_contains($cat, 'internet') || str_contains($cat, 'isp')
+            || str_contains($cat, 'transit') || str_contains($cat, 'ix')
+            || str_contains($cat, 'bw')) {
+            return 'bandwidth';
+        }
+        // Payroll/Salary
+        if (str_contains($cat, 'gaji') || str_contains($cat, 'payroll')
+            || str_contains($cat, 'salary') || str_contains($cat, 'upah')
+            || str_contains($cat, 'tunjangan') || $src === 'payroll') {
+            return 'gaji';
+        }
+        // Loans — 'Pembayaran Pinjaman' is a seeded category name
+        if (str_contains($cat, 'pinjaman') || str_contains($cat, 'cicilan')
+            || str_contains($cat, 'kredit') || str_contains($cat, 'hutang')
+            || str_contains($cat, 'angsuran') || str_contains($cat, 'kpr')
+            || str_contains($cat, 'loan')) {
+            return 'pinjaman';
+        }
+        // Equipment/Tools — 'Pembelian Alat', 'Peralatan', 'Inventori' are seeded
+        if (str_contains($cat, 'alat') || str_contains($cat, 'perlengkapan')
+            || str_contains($cat, 'barang') || str_contains($cat, 'material')
+            || str_contains($cat, 'inventori') || str_contains($cat, 'inventory')
+            || str_contains($cat, 'peralatan') || str_contains($cat, 'kabel')
+            || str_contains($cat, 'router') || str_contains($cat, 'olt')
+            || str_contains($cat, 'odp') || str_contains($cat, 'perangkat')
+            || str_contains($cat, 'tool') || str_contains($cat, 'pembelian')) {
+            return 'alat';
+        }
+        return 'other';
+    }
+
     public function ispIntelligence(Request $request)
     {
         if (!$this->canViewFinancialMetrics($request->user())) {

@@ -611,6 +611,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/dashboard/management-kpis', [DashboardController::class, 'managementKpis'])->name('api.dashboard.management-kpis');
         Route::get('/api/dashboard/financial-projection', [DashboardController::class, 'financialProjection'])->name('api.dashboard.financial-projection');
         Route::get('/api/dashboard/isp-intelligence', [DashboardController::class, 'ispIntelligence'])->name('api.dashboard.isp-intelligence');
+        Route::get('/api/dashboard/cashflow-daily', [DashboardController::class, 'cashflowDaily'])->name('api.dashboard.cashflow-daily');
         Route::post('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'confirmMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.confirm');
         Route::delete('/api/dashboard/financial-projection/mandatory-events/confirm', [DashboardController::class, 'revokeMandatoryExpenseExecution'])->name('api.dashboard.financial-projection.mandatory.revoke');
         Route::post('/api/dashboard/financial-projection/purchase-goals/fulfill', [DashboardController::class, 'fulfillPurchaseGoal'])->name('api.dashboard.financial-projection.purchase.fulfill');
