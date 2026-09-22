@@ -186,7 +186,7 @@ export default function DashboardPredictionPage() {
         setLoading(true);
         setError(null);
         try {
-            const res = await apiClient.get('/api/dashboard/cashflow-daily', {
+            const res = await apiClient.get('/dashboard/cashflow-daily', {
                 params: { month },
                 signal: ctrl.signal,
             });
@@ -212,7 +212,7 @@ export default function DashboardPredictionPage() {
             const params = { start_date: startDate, end_date: endDate, per_page: 30, page: txPage };
             if (txFilter !== 'all') params.type = txFilter;
             if (txKeyword.trim()) params.keyword = txKeyword.trim();
-            const res = await apiClient.get('/api/finance/transactions', { params });
+            const res = await apiClient.get('/finance/transactions', { params });
             setTxData(res.data);
         } catch (_) {
             setTxData(null);
