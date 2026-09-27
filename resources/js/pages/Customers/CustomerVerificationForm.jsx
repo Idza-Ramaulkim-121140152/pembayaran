@@ -1,6 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader, MapPin, ExternalLink, AlertCircle, Upload, Scan, Sparkles, Check, X, Loader2 } from 'lucide-react';
+import {
+    ArrowLeft,
+    Loader,
+    MapPin,
+    ExternalLink,
+    AlertCircle,
+    Upload,
+    Scan,
+    Sparkles,
+    Check,
+    X,
+    Loader2,
+    Banknote,
+    CreditCard,
+    CheckCircle2,
+    Info,
+    Building2,
+} from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -58,9 +75,10 @@ const DEFAULT_FORM_DATA = {
 function CustomerVerificationForm() {
     const { timestamp } = useParams();
     const navigate = useNavigate();
-    const userRole = window.appUserRole || 'admin';
+    const userRole = String(window.appUserRole || 'admin').toLowerCase().trim();
     const isSuperAdmin = userRole === 'superadmin';
-    const canChoosePaymentReceiver = isSuperAdmin || !!window.appCanChoosePaymentReceiver;
+    const isTeknisi = userRole === 'teknisi';
+    const canChoosePaymentReceiver = !isTeknisi && (isSuperAdmin || !!window.appCanChoosePaymentReceiver);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
@@ -69,6 +87,7 @@ function CustomerVerificationForm() {
     const [paymentReceivers, setPaymentReceivers] = useState([]);
     const [loadingPaymentReceivers, setLoadingPaymentReceivers] = useState(false);
     const [paymentReceiptOptionId, setPaymentReceiptOptionId] = useState('');
+    const [paymentMethodType, setPaymentMethodType] = useState('tunai'); // 'tunai' | 'transfer'
     const [paymentReceiverUserId, setPaymentReceiverUserId] = useState(window.appUserId ? String(window.appUserId) : '');
     const [installationPaymentModal, setInstallationPaymentModal] = useState({ open: false });
     const [otherReceiverModal, setOtherReceiverModal] = useState({ open: false, selectedReceiver: null });
@@ -113,6 +132,15 @@ function CustomerVerificationForm() {
     const cableStockOptions = installInventoryOptions.cable_items?.length > 0
         ? installInventoryOptions.cable_items
         : installInventoryOptions.all_items;
+
+    const cashReceiptOption = useMemo(() => {
+        return paymentReceiptOptions.find((opt) => /tunai|cash/i.test(opt.name)) || paymentReceiptOptions[0] || null;
+    }, [paymentReceiptOptions]);
+
+    const transferReceiptOptions = useMemo(() => {
+        const list = paymentReceiptOptions.filter((opt) => !/tunai|cash/i.test(opt.name));
+        return list.length > 0 ? list : paymentReceiptOptions;
+    }, [paymentReceiptOptions]);
 
     const odpDropdownRef = useRef(null);
     const odpListContainerRef = useRef(null);
@@ -868,11 +896,22 @@ function CustomerVerificationForm() {
 
             const installationFee = Number(payload.installation_fee || 0);
             if (installationFee > 0) {
-                if (paymentReceiptOptions.length > 0 && !paymentReceiptOptionId) {
-                    throw new Error('Pilih metode pada Terima via untuk biaya pemasangan.');
+                payload.payment_method_type = paymentMethodType;
+
+                let selectedOptionId = paymentReceiptOptionId;
+                if (isTeknisi) {
+                    if (paymentMethodType === 'tunai') {
+                        selectedOptionId = selectedOptionId || (cashReceiptOption ? String(cashReceiptOption.id) : '');
+                    } else {
+                        selectedOptionId = selectedOptionId || (transferReceiptOptions[0] ? String(transferReceiptOptions[0].id) : '');
+                    }
                 }
 
-                payload.payment_receipt_option_id = paymentReceiptOptionId ? Number(paymentReceiptOptionId) : null;
+                if (paymentReceiptOptions.length > 0 && !selectedOptionId) {
+                    throw new Error('Pilih opsi metode penerimaan untuk biaya pemasangan.');
+                }
+
+                payload.payment_receipt_option_id = selectedOptionId ? Number(selectedOptionId) : null;
                 payload.payment_receiver_user_id = canChoosePaymentReceiver && paymentReceiverUserId
                     ? Number(paymentReceiverUserId)
                     : null;
@@ -967,6 +1006,13 @@ function CustomerVerificationForm() {
         }
 
         if (Number(formData.installation_fee || 0) > 0) {
+            if (isTeknisi) {
+                if (paymentMethodType === 'tunai' && cashReceiptOption) {
+                    setPaymentReceiptOptionId(String(cashReceiptOption.id));
+                } else if (paymentMethodType === 'transfer' && transferReceiptOptions[0]) {
+                    setPaymentReceiptOptionId(String(transferReceiptOptions[0].id));
+                }
+            }
             setInstallationPaymentModal({ open: true });
             return;
         }
@@ -1934,56 +1980,175 @@ function CustomerVerificationForm() {
                     theme="dashboard"
                     size="lg"
                 >
-                    <div className="space-y-4 text-slate-800">
-                        <p className="text-sm text-slate-600 leading-relaxed">
-                            Biaya pemasangan akan dicatat ke mutasi dengan alur penerima pembayaran yang sama seperti konfirmasi penagihan.
+                    <div className="space-y-4 text-slate-800 dark:text-slate-100">
+                        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                            {isTeknisi
+                                ? 'Pilih metode penerimaan pembayaran biaya pemasangan dari pelanggan saat verifikasi di lokasi.'
+                                : 'Biaya pemasangan akan dicatat ke mutasi dengan alur penerima pembayaran yang sama seperti konfirmasi penagihan.'}
                         </p>
-                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Nominal biaya pemasangan</p>
-                            <p className="mt-1 text-2xl font-bold text-amber-600">
+
+                        {/* Total Fee Card */}
+                        <div className="rounded-2xl border-2 border-amber-500/30 dark:border-amber-500/40 bg-gradient-to-br from-amber-50 via-white to-amber-50/40 dark:from-slate-800 dark:via-slate-800/95 dark:to-slate-800/80 p-4 sm:p-5 shadow-sm">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                                    Total Biaya Pemasangan
+                                </span>
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200">
+                                    {isTeknisi ? 'Menunggu Konfirmasi' : 'Wajib Dikonfirmasi'}
+                                </span>
+                            </div>
+                            <p className="mt-2 text-2xl sm:text-3xl font-extrabold text-amber-600 dark:text-amber-400 tracking-tight">
                                 {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(formData.installation_fee || 0))}
                             </p>
                         </div>
-                        <div>
-                            <label className="mb-1.5 block text-sm font-semibold text-slate-700">Terima via</label>
-                            <select
-                                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
-                                value={paymentReceiptOptionId}
-                                onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
-                            >
-                                <option value="">Pilih metode</option>
-                                {paymentReceiptOptions.map((option) => (
-                                    <option key={option.id} value={option.id}>{option.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                        {canChoosePaymentReceiver && (
-                            <div>
-                                <label className="mb-1.5 block text-sm font-semibold text-slate-700">Akun penerima pembayaran</label>
-                                <select
-                                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
-                                    value={paymentReceiverUserId}
-                                    onChange={(e) => setPaymentReceiverUserId(e.target.value)}
-                                    disabled={loadingPaymentReceivers}
-                                >
-                                    <option value="">{loadingPaymentReceivers ? 'Memuat penerima...' : 'Akun saya (default)'}</option>
-                                    {paymentReceivers.map((receiver) => (
-                                        <option key={receiver.id} value={receiver.id}>
-                                            {getPaymentReceiverLabel(receiver)}
-                                        </option>
-                                    ))}
-                                </select>
+
+                        {/* Role Teknisi: Streamlined 2-Option Selector */}
+                        {isTeknisi ? (
+                            <div className="space-y-3">
+                                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                                    Opsi Penerimaan Pembayaran
+                                </label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {/* Option 1: Tunai */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setPaymentMethodType('tunai');
+                                            if (cashReceiptOption) setPaymentReceiptOptionId(String(cashReceiptOption.id));
+                                        }}
+                                        className={`relative flex items-start gap-3 p-3.5 sm:p-4 rounded-xl border-2 text-left transition-all ${
+                                            paymentMethodType === 'tunai'
+                                                ? 'border-emerald-600 bg-emerald-50/90 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-100 shadow-sm ring-2 ring-emerald-500/20'
+                                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                        }`}
+                                    >
+                                        <div className={`p-2 rounded-lg shrink-0 ${paymentMethodType === 'tunai' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                                            <Banknote size={20} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-bold text-sm text-slate-900 dark:text-white">Tunai (Cash)</span>
+                                                {paymentMethodType === 'tunai' && <CheckCircle2 size={16} className="text-emerald-600 dark:text-emerald-400 shrink-0" />}
+                                            </div>
+                                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">
+                                                Uang tunai diterima langsung oleh teknisi di lokasi
+                                            </p>
+                                        </div>
+                                    </button>
+
+                                    {/* Option 2: Transfer */}
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setPaymentMethodType('transfer');
+                                            if (transferReceiptOptions[0]) setPaymentReceiptOptionId(String(transferReceiptOptions[0].id));
+                                        }}
+                                        className={`relative flex items-start gap-3 p-3.5 sm:p-4 rounded-xl border-2 text-left transition-all ${
+                                            paymentMethodType === 'transfer'
+                                                ? 'border-blue-600 bg-blue-50/90 dark:bg-blue-950/50 text-blue-950 dark:text-blue-100 shadow-sm ring-2 ring-blue-500/20'
+                                                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600'
+                                        }`}
+                                    >
+                                        <div className={`p-2 rounded-lg shrink-0 ${paymentMethodType === 'transfer' ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                                            <CreditCard size={20} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-bold text-sm text-slate-900 dark:text-white">Transfer Bank</span>
+                                                {paymentMethodType === 'transfer' && <CheckCircle2 size={16} className="text-blue-600 dark:text-blue-400 shrink-0" />}
+                                            </div>
+                                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">
+                                                Pelanggan bayar via transfer rekening kantor
+                                            </p>
+                                        </div>
+                                    </button>
+                                </div>
+
+                                {/* Bank choice if transfer is chosen and options exist */}
+                                {paymentMethodType === 'transfer' && transferReceiptOptions.length > 1 && (
+                                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                                        <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                            Pilih Bank / Rekening Tujuan (Opsional)
+                                        </label>
+                                        <select
+                                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3.5 py-2 text-xs sm:text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                            value={paymentReceiptOptionId}
+                                            onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
+                                        >
+                                            {transferReceiptOptions.map((option) => (
+                                                <option key={option.id} value={option.id}>{option.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+
+                                {/* High-contrast Financial Pending Status Box */}
+                                <div className="rounded-2xl border border-amber-300 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-950/40 p-3.5 sm:p-4 text-slate-800 dark:text-amber-100">
+                                    <div className="flex items-start gap-2.5">
+                                        <Info size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                                        <div className="text-xs sm:text-sm leading-relaxed">
+                                            <span className="font-bold text-amber-900 dark:text-amber-300 block mb-0.5">
+                                                Status: Pending Keuangan (Menunggu Konfirmasi)
+                                            </span>
+                                            {paymentMethodType === 'tunai' ? (
+                                                <p className="text-amber-800 dark:text-amber-200">
+                                                    Biaya pemasangan tunai akan masuk ke <strong>pendingan keuangan</strong> dan harus dikonfirmasi/diterima dulu oleh petugas, admin, atau finance kantor.
+                                                </p>
+                                            ) : (
+                                                <p className="text-amber-800 dark:text-amber-200">
+                                                    Biaya pemasangan transfer akan masuk ke <strong>pendingan keuangan</strong> dan menunggu pengecekan mutasi bank oleh petugas, admin, atau finance kantor.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            /* Admin/Superadmin standard view */
+                            <div className="space-y-3">
+                                <div>
+                                    <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-300">Terima via</label>
+                                    <select
+                                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
+                                        value={paymentReceiptOptionId}
+                                        onChange={(e) => setPaymentReceiptOptionId(e.target.value)}
+                                    >
+                                        <option value="">Pilih metode</option>
+                                        {paymentReceiptOptions.map((option) => (
+                                            <option key={option.id} value={option.id}>{option.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {canChoosePaymentReceiver && (
+                                    <div>
+                                        <label className="mb-1.5 block text-sm font-semibold text-slate-700 dark:text-slate-300">Akun penerima pembayaran</label>
+                                        <select
+                                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2.5 text-sm text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-sm"
+                                            value={paymentReceiverUserId}
+                                            onChange={(e) => setPaymentReceiverUserId(e.target.value)}
+                                            disabled={loadingPaymentReceivers}
+                                        >
+                                            <option value="">{loadingPaymentReceivers ? 'Memuat penerima...' : 'Akun saya (default)'}</option>
+                                            {paymentReceivers.map((receiver) => (
+                                                <option key={receiver.id} value={receiver.id}>
+                                                    {getPaymentReceiverLabel(receiver)}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                <div className="rounded-2xl border border-blue-200 dark:border-blue-800/80 bg-blue-50 dark:bg-blue-950/40 p-3.5 sm:p-4 text-xs sm:text-sm text-blue-900 dark:text-blue-200 leading-relaxed">
+                                    Jika akun penerima bukan diri sendiri, sistem bisa meminta approval akun penerima atau langsung memasukkan biaya pemasangan ke hutang sesuai keputusan Anda.
+                                </div>
                             </div>
                         )}
-                        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-xs sm:text-sm text-blue-900 leading-relaxed">
-                            Jika akun penerima bukan diri sendiri, sistem bisa meminta approval akun penerima atau langsung memasukkan biaya pemasangan ke hutang sesuai keputusan Anda.
-                        </div>
-                        <div className="flex gap-3 justify-end pt-2">
+
+                        <div className="flex gap-3 justify-end pt-3 border-t border-slate-200 dark:border-slate-700">
                             <Button type="button" variant="secondary" onClick={closeInstallationPaymentFlow}>
                                 Batal
                             </Button>
                             <Button type="button" variant="primary" disabled={submitting} onClick={() => performVerification()}>
-                                {submitting ? 'Memproses...' : 'Lanjutkan Verifikasi'}
+                                {submitting ? 'Memproses...' : 'Konfirmasi & Simpan'}
                             </Button>
                         </div>
                     </div>
@@ -1995,12 +2160,12 @@ function CustomerVerificationForm() {
                     title="Konfirmasi Akun Penerima"
                     theme="dashboard"
                 >
-                    <div className="space-y-4 text-slate-800">
-                        <p className="text-sm text-slate-600 leading-relaxed">
+                    <div className="space-y-4 text-slate-800 dark:text-slate-100">
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
                             Anda memilih akun penerima selain akun Anda sendiri. Pilih apakah mutasi biaya pemasangan menunggu konfirmasi akun penerima atau langsung dimasukkan ke hutang.
                         </p>
                         {otherReceiverModal.selectedReceiver?.is_company_finance_receiver && (
-                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 leading-relaxed">
+                            <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-sm text-emerald-900 dark:text-emerald-200 leading-relaxed">
                                 Akun yang dipilih adalah akun keuangan perusahaan. Jika akun ini menyetujui, mutasi biaya pemasangan akan menjadi confirmed tanpa membuat hutang.
                             </div>
                         )}
@@ -2046,8 +2211,8 @@ function CustomerVerificationForm() {
                     title="Akun Penerima Tidak Diizinkan"
                     theme="dashboard"
                 >
-                    <div className="space-y-4 text-slate-800">
-                        <p className="text-sm text-slate-600 leading-relaxed">
+                    <div className="space-y-4 text-slate-800 dark:text-slate-100">
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
                             {receiverConflictModal.message || 'Akun penerima yang dipilih tidak termasuk mapping yang diizinkan.'}
                         </p>
                         <div className="flex gap-3 justify-end pt-2">
@@ -2088,49 +2253,47 @@ function CustomerVerificationForm() {
 
                 {/* Secret Info Modal */}
                 {showSecretModal && secretInfo && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                        <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-5 sm:p-6 text-slate-900 dark:text-slate-100">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
+                                <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-950/60 rounded-xl flex items-center justify-center shrink-0">
+                                    <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
                                 </div>
                                 <div>
-                                    <h3 className="text-xl font-bold text-gray-900">Verifikasi Berhasil!</h3>
-                                    <p className="text-sm text-gray-500">PPPoE user telah dibuat</p>
+                                    <h3 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white">Verifikasi Berhasil!</h3>
+                                    <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">PPPoE user & aktivasi selesai</p>
                                 </div>
                             </div>
 
-                            <div className="bg-gray-50 rounded-lg p-4 space-y-3 mb-4">
+                            <div className="bg-slate-50 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-xl p-4 space-y-3 mb-4">
                                 <div>
-                                    <p className="text-xs text-gray-500 mb-1">Username PPPoE</p>
-                                    <p className="text-lg font-mono font-bold text-gray-900">{secretInfo.name}</p>
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5 uppercase tracking-wider">Username PPPoE</p>
+                                    <p className="text-base sm:text-lg font-mono font-bold text-slate-900 dark:text-white select-all">{secretInfo.name}</p>
                                 </div>
                                 <div>
-                                    <p className="text-xs text-gray-500 mb-1">Password</p>
-                                    <p className="text-lg font-mono font-bold text-gray-900">{secretInfo.password}</p>
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5 uppercase tracking-wider">Password</p>
+                                    <p className="text-base sm:text-lg font-mono font-bold text-slate-900 dark:text-white select-all">{secretInfo.password}</p>
                                 </div>
                                 <div>
-                                    <p className="text-xs text-gray-500 mb-1">Profile/Paket</p>
-                                    <p className="text-sm font-medium text-gray-900">{secretInfo.profile}</p>
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5 uppercase tracking-wider">Profile / Paket</p>
+                                    <p className="text-sm font-medium text-slate-900 dark:text-slate-200">{secretInfo.profile}</p>
                                 </div>
                                 <div>
-                                    <p className="text-xs text-gray-500 mb-1">IP Address</p>
-                                    <p className="text-sm font-mono font-medium text-gray-900">{secretInfo.remote_address}</p>
+                                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-0.5 uppercase tracking-wider">IP Address</p>
+                                    <p className="text-sm font-mono font-medium text-slate-900 dark:text-slate-200">{secretInfo.remote_address}</p>
                                 </div>
                             </div>
 
                             {agreementInfo && (
-                                <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                                    <p className="text-xs text-emerald-700 mb-1">Kontrak Pelanggan</p>
-                                    <p className="text-sm font-semibold text-emerald-900">{agreementInfo.agreement_number}</p>
+                                <div className="mb-4 rounded-xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/90 dark:bg-emerald-950/40 p-3.5 sm:p-4">
+                                    <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300 mb-0.5">Kontrak Pelanggan</p>
+                                    <p className="text-sm font-semibold text-emerald-950 dark:text-emerald-100">{agreementInfo.agreement_number}</p>
                                     <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                                         <a
                                             href={agreementInfo.download_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+                                            className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-3 py-2 text-xs sm:text-sm font-medium text-white hover:bg-emerald-700 shadow-sm"
                                         >
                                             Download PDF
                                         </a>
@@ -2138,7 +2301,7 @@ function CustomerVerificationForm() {
                                             href={agreementInfo.verify_url}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="inline-flex items-center justify-center rounded-lg bg-white px-3 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                                            className="inline-flex items-center justify-center rounded-lg bg-white dark:bg-slate-800 px-3 py-2 text-xs sm:text-sm font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-300 dark:ring-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-700"
                                         >
                                             Verifikasi QR
                                         </a>
@@ -2152,7 +2315,7 @@ function CustomerVerificationForm() {
                                         setShowSecretModal(false);
                                         navigate('/customer-verification');
                                     }}
-                                    className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm shadow-sm"
                                 >
                                     Tutup & Lanjutkan
                                 </button>
@@ -2162,15 +2325,20 @@ function CustomerVerificationForm() {
                 )}
 
                 {showErrorModal && (
-                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                        <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-                            <h3 className="text-xl font-bold text-red-700 mb-2">Verifikasi Gagal</h3>
-                            <p className="text-sm text-gray-700 mb-4">
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-5 sm:p-6 text-slate-900 dark:text-slate-100">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-10 h-10 bg-red-100 dark:bg-red-950/60 rounded-xl flex items-center justify-center shrink-0">
+                                    <X className="w-5 h-5 text-red-600 dark:text-red-400" />
+                                </div>
+                                <h3 className="text-lg font-bold text-red-700 dark:text-red-400">Verifikasi Gagal</h3>
+                            </div>
+                            <p className="text-sm text-slate-700 dark:text-slate-300 mb-5 leading-relaxed bg-slate-50 dark:bg-slate-800/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700">
                                 {errorModalMessage || 'Terjadi kesalahan saat verifikasi pelanggan.'}
                             </p>
                             <button
                                 onClick={() => setShowErrorModal(false)}
-                                className="w-full bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors font-medium"
+                                className="w-full bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm"
                                 type="button"
                             >
                                 Tutup

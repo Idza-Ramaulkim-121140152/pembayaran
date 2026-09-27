@@ -962,6 +962,7 @@ class CustomerVerificationController extends Controller
             'pppoe_password' => 'nullable|string|max:64',
             'odp' => 'nullable|string|max:64',
             'installation_fee' => 'nullable|numeric',
+            'payment_method_type' => 'nullable|string|in:tunai,transfer',
             'payment_receipt_option_id' => 'nullable|integer',
             'payment_receiver_user_id' => 'nullable|integer|exists:users,id',
             'other_receiver_confirmed' => 'nullable|boolean',
@@ -1342,7 +1343,41 @@ class CustomerVerificationController extends Controller
 
     private function resolveInstallationPaymentFlow(array $validated, ?User $currentUser, int $installationFee): array
     {
+        $isTeknisi = $currentUser?->isTeknisi() ?? false;
+        $paymentMethodType = strtolower((string) ($validated['payment_method_type'] ?? ''));
         $paymentReceiptOptionId = $validated['payment_receipt_option_id'] ?? null;
+
+        $receiptOption = null;
+        if ($paymentReceiptOptionId) {
+            $receiptOption = PaymentReceiptOption::query()
+                ->where('id', $paymentReceiptOptionId)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        // Special streamlined flow for role 'teknisi':
+        // Both Tunai and Transfer are recorded as PENDING financial transactions awaiting office/finance confirmation.
+        if ($isTeknisi && (empty($validated['payment_receiver_user_id']) || !empty($validated['payment_method_type']))) {
+            $methodLabel = $paymentMethodType === 'transfer' ? 'Transfer Bank' : 'Tunai';
+            $receiptName = $receiptOption?->name ?? $methodLabel;
+            $message = "Biaya pemasangan ({$receiptName}) dicatat sebagai pending keuangan dan menunggu konfirmasi penerimaan oleh kantor/finance.";
+
+            return [
+                'response' => null,
+                'enabled' => true,
+                'selected_receiver' => $currentUser,
+                'selected_receiver_is_company_finance' => false,
+                'receipt_option' => $receiptOption,
+                'mutation_status' => FinancialTransaction::STATUS_PENDING,
+                'borrower' => null,
+                'should_create_pending_approval' => false,
+                'should_create_direct_debt' => false,
+                'non_company_self_confirm_debt' => false,
+                'message' => $message,
+                'installation_fee' => $installationFee,
+            ];
+        }
+
         $paymentReceiverUserId = $currentUser?->canChoosePaymentReceiver()
             ? (int) ($validated['payment_receiver_user_id'] ?? $currentUser?->id)
             : $currentUser?->id;
@@ -1397,14 +1432,6 @@ class CustomerVerificationController extends Controller
         } elseif (($shouldCreatePendingApproval && $receiverConflictResolution === 'debt') || (!$isAllowedReceiver && $receiverConflictResolution === 'debt')) {
             $mutationStatus = FinancialTransaction::STATUS_REJECTED;
             $shouldCreateDirectDebt = true;
-        }
-
-        $receiptOption = null;
-        if ($paymentReceiptOptionId) {
-            $receiptOption = PaymentReceiptOption::query()
-                ->where('id', $paymentReceiptOptionId)
-                ->where('is_active', true)
-                ->first();
         }
 
         $message = null;

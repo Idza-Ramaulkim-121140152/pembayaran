@@ -258,6 +258,67 @@ class CustomerVerificationInstallationIncomeFlowTest extends TestCase
         ]);
     }
 
+    public function test_technician_verification_creates_pending_transaction_for_tunai(): void
+    {
+        $actor = User::factory()->create([
+            'role' => User::ROLE_TEKNISI,
+        ]);
+        PaymentReceiptOption::query()->create([
+            'name' => 'Tunai Lapangan',
+            'type' => 'tunai',
+            'is_active' => true,
+        ]);
+        $receipt = PaymentReceiptOption::query()->firstOrFail();
+
+        $response = $this->actingAs($actor)->post('/api/customer-verification/verify', $this->verificationPayload([
+            'google_sheets_timestamp' => 'ts-tek-tunai',
+            'installation_fee' => 150000,
+            'payment_method_type' => 'tunai',
+            'payment_receipt_option_id' => $receipt->id,
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertOk();
+        $this->assertDatabaseHas('financial_transactions', [
+            'source' => 'installation_income',
+            'type' => 'income',
+            'status' => FinancialTransaction::STATUS_PENDING,
+            'amount' => 150000,
+            'created_by' => $actor->id,
+        ]);
+        // Should not create debt/loan directly
+        $this->assertDatabaseCount('borrower_loans', 0);
+    }
+
+    public function test_technician_verification_creates_pending_transaction_for_transfer(): void
+    {
+        $actor = User::factory()->create([
+            'role' => User::ROLE_TEKNISI,
+        ]);
+        PaymentReceiptOption::query()->create([
+            'name' => 'BCA Kantor',
+            'type' => 'transfer',
+            'is_active' => true,
+        ]);
+        $receipt = PaymentReceiptOption::query()->firstOrFail();
+
+        $response = $this->actingAs($actor)->post('/api/customer-verification/verify', $this->verificationPayload([
+            'google_sheets_timestamp' => 'ts-tek-transfer',
+            'installation_fee' => 200000,
+            'payment_method_type' => 'transfer',
+            'payment_receipt_option_id' => $receipt->id,
+        ]), ['Accept' => 'application/json']);
+
+        $response->assertOk();
+        $this->assertDatabaseHas('financial_transactions', [
+            'source' => 'installation_income',
+            'type' => 'income',
+            'status' => FinancialTransaction::STATUS_PENDING,
+            'amount' => 200000,
+            'created_by' => $actor->id,
+        ]);
+        $this->assertDatabaseCount('borrower_loans', 0);
+    }
+
     private function verificationPayload(array $overrides = []): array
     {
         $kecamatan = MasterWilayahKecamatan::query()->create([
@@ -301,6 +362,7 @@ class CustomerVerificationInstallationIncomeFlowTest extends TestCase
             'kecamatan_id' => $kecamatan->id,
             'desa_id' => $desa->id,
             'dusun_id' => $dusun->id,
+            'contract_router_mac' => 'AA:BB:CC:DD:EE:FF',
             'enable_home_router' => 0,
             'enable_installation_team' => 0,
         ], $overrides);

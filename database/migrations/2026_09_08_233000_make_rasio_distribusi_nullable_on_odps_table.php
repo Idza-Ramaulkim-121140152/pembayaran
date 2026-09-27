@@ -10,7 +10,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        DB::statement("ALTER TABLE `odps` MODIFY COLUMN `rasio_distribusi` VARCHAR(50) NULL DEFAULT '1:8'");
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE `odps` MODIFY COLUMN `rasio_distribusi` VARCHAR(50) NULL DEFAULT '1:8'");
+        }
     }
 
     /**
@@ -18,6 +20,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement("ALTER TABLE `odps` MODIFY COLUMN `rasio_distribusi` ENUM('1:2', '1:4', '1:8', '1:16') NOT NULL DEFAULT '1:8'");
+        if (DB::getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE `odps` MODIFY COLUMN `rasio_distribusi` ENUM('1:2', '1:4', '1:8', '1:16') NOT NULL DEFAULT '1:8'");
+        }
     }
 };
