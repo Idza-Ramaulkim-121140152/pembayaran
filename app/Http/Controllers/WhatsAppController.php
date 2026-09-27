@@ -80,18 +80,42 @@ class WhatsAppController extends Controller
 
     /**
      * POST /api/whatsapp/restart
-     * Restart WhatsApp client
+     * Restart WhatsApp client dengan fallback System Hard Restart
      */
     public function restart()
     {
+        // 1. Coba restart normal via HTTP ke Gateway
         try {
-            $response = Http::timeout(10)->post($this->gatewayUrl() . '/restart');
-            return response()->json($response->json());
+            $response = Http::timeout(3)->post($this->gatewayUrl() . '/restart');
+            if ($response->successful()) {
+                return response()->json($response->json());
+            }
         } catch (\Exception $e) {
+            Log::warning('WhatsApp HTTP restart gagal, mengeksekusi fallback restart sistem: ' . $e->getMessage());
+        }
+
+        // 2. Fallback: Eksekusi restart sistem (kill port 3001 & restart supervisor)
+        try {
+            @shell_exec('sudo /usr/bin/fuser -k 3001/tcp 2>/dev/null');
+
+            $sessionPath = base_path('fastapi/wa-gateway/sessions');
+            if (is_dir($sessionPath)) {
+                @shell_exec("rm -rf {$sessionPath}/*/Singleton* 2>/dev/null");
+            }
+
+            $output = @shell_exec('sudo /usr/bin/supervisorctl restart pembayaran-wa:* 2>&1');
+            Log::info("Supervisor restart output from Web: {$output}");
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Layanan WhatsApp Gateway berhasil di-restart melalui sistem server. Silakan tunggu 5-10 detik lalu refresh QR.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('System restart failed: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal restart WhatsApp: ' . $e->getMessage(),
-            ], 503);
+            ], 500);
         }
     }
 
