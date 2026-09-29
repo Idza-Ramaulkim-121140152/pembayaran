@@ -622,6 +622,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/finance/manual-income', [FinancialTransactionController::class, 'storeManualIncome'])->name('api.finance.manual-income.store');
         Route::post('/api/finance/balance-adjustments', [FinancialTransactionController::class, 'adjustBalance'])->name('api.finance.adjustments.store');
         Route::put('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'update'])->name('api.finance.transactions.update');
+        Route::post('/api/finance/transactions/{financialTransaction}/confirm', [FinancialTransactionController::class, 'confirm'])->name('api.finance.transactions.confirm');
+        Route::post('/api/finance/transactions/{financialTransaction}/reject', [FinancialTransactionController::class, 'reject'])->name('api.finance.transactions.reject');
         Route::delete('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'destroy'])->name('api.finance.transactions.destroy');
         Route::get('/api/borrowers', [BorrowerController::class, 'index'])->name('api.borrowers.index');
         Route::post('/api/borrowers', [BorrowerController::class, 'store'])->name('api.borrowers.store');

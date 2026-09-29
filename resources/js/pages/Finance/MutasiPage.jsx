@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Edit2, Trash2, Plus } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Edit2, Trash2, Plus, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
 import apiClient from '../../services/api';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -77,6 +77,9 @@ function MutasiPage() {
     const [paymentReceivers, setPaymentReceivers] = useState([]);
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
+    const [confirmModalItem, setConfirmModalItem] = useState(null);
+    const [rejectModalItem, setRejectModalItem] = useState(null);
+    const [actionLoading, setActionLoading] = useState(false);
     const [selected, setSelected] = useState(null);
     const [pageSize, setPageSize] = useState(50);
     const [pageInfo, setPageInfo] = useState({ current: 1, last: 1, total: 0 });
@@ -105,6 +108,7 @@ function MutasiPage() {
     const [editForm, setEditForm] = useState({
         description: '',
         amount: '',
+        status: 'confirmed',
         transaction_date: new Date().toISOString().split('T')[0],
         payment_receipt_option_id: '',
         payment_receiver_user_id: '',
@@ -362,6 +366,7 @@ function MutasiPage() {
         setEditForm({
             description: item.description || '',
             amount: item.amount,
+            status: item.status || 'confirmed',
             transaction_date: item.transaction_date,
             payment_receipt_option_id: item?.meta?.received_via_id ? String(item.meta.received_via_id) : '',
             payment_receiver_user_id: item?.meta?.payment_receiver_user_id ? String(item.meta.payment_receiver_user_id) : '',
@@ -378,6 +383,7 @@ function MutasiPage() {
             await apiClient.put(`/finance/transactions/${selected.id}`, {
                 description: editForm.description,
                 amount: Number(editForm.amount),
+                status: editForm.status,
                 transaction_date: editForm.transaction_date,
                 category: selected.category,
                 payment_receipt_option_id: editForm.payment_receipt_option_id
@@ -397,6 +403,36 @@ function MutasiPage() {
             setError(err.response?.data?.message || 'Gagal memperbarui mutasi');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleConfirmTransaction = async (item) => {
+        if (!item) return;
+        try {
+            setActionLoading(true);
+            await apiClient.post(`/finance/transactions/${item.id}/confirm`);
+            setSuccess(`Transaksi "${item.description || 'Pemasukan'}" berhasil dikonfirmasi dan masuk ke pembukuan kas resmi.`);
+            setConfirmModalItem(null);
+            loadData(pageInfo.current);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal mengonfirmasi transaksi.');
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleRejectTransaction = async (item) => {
+        if (!item) return;
+        try {
+            setActionLoading(true);
+            await apiClient.post(`/finance/transactions/${item.id}/reject`);
+            setSuccess(`Transaksi "${item.description || 'Pemasukan'}" telah ditolak.`);
+            setRejectModalItem(null);
+            loadData(pageInfo.current);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal menolak transaksi.');
+        } finally {
+            setActionLoading(false);
         }
     };
 
@@ -509,6 +545,35 @@ function MutasiPage() {
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
+
+            {canEditMutations && items.filter((it) => (it.status || 'confirmed') === 'pending').length > 0 && filters.status !== 'pending' && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm">
+                    <div className="flex items-center gap-3">
+                        <div className="rounded-xl bg-amber-200/80 p-2 text-amber-800">
+                            <Clock size={20} />
+                        </div>
+                        <div>
+                            <p className="font-semibold text-amber-950">
+                                Terdapat {items.filter((it) => (it.status || 'confirmed') === 'pending').length} transaksi berstatus Pending
+                            </p>
+                            <p className="text-xs text-amber-800">
+                                Transaksi ini (seperti biaya pemasangan dari teknisi) menunggu konfirmasi penerimaan kantor sebelum masuk ke kas resmi.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const newFilters = { ...filters, status: 'pending' };
+                            setFilters(newFilters);
+                            loadData(1, newFilters);
+                        }}
+                        className="shrink-0 rounded-xl border border-amber-400/60 bg-amber-200/80 px-3 py-1.5 text-xs font-bold text-amber-950 transition hover:bg-amber-300"
+                    >
+                        Filter Pending Saja
+                    </button>
+                </div>
+            )}
 
             <AdminConsoleSurface accent="violet" className="relative z-20 overflow-visible p-4">
             <form onSubmit={applyFilter}>
@@ -707,24 +772,51 @@ function MutasiPage() {
                     mobileActionBarClassName="border-slate-100 bg-slate-50 pt-3"
                     actionsHeaderClassName="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500"
                     actionsCellClassName="px-4 py-3 text-sm text-slate-700"
-                    actions={canEditMutations ? ((row) => (
-                        <div className="flex justify-end gap-2">
-                            <button
-                                type="button"
-                                className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-blue-600 transition hover:border-blue-300 hover:bg-blue-100"
-                                onClick={() => openEditModal(row)}
-                            >
-                                <Edit2 size={14} />
-                            </button>
-                            <button
-                                type="button"
-                                className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 transition hover:border-rose-300 hover:bg-rose-100"
-                                onClick={() => handleDelete(row)}
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    )) : null}
+                    actions={canEditMutations ? ((row) => {
+                        const isPending = (row.status || 'confirmed') === 'pending';
+                        return (
+                            <div className="flex justify-end items-center gap-1.5">
+                                {isPending && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            title="Konfirmasi / Terima Pembayaran"
+                                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:border-emerald-400"
+                                            onClick={() => setConfirmModalItem(row)}
+                                        >
+                                            <CheckCircle2 size={14} className="text-emerald-600" />
+                                            <span className="hidden xl:inline">Terima</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Tolak Pembayaran"
+                                            className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 hover:border-rose-400"
+                                            onClick={() => setRejectModalItem(row)}
+                                        >
+                                            <XCircle size={14} className="text-rose-600" />
+                                            <span className="hidden xl:inline">Tolak</span>
+                                        </button>
+                                    </>
+                                )}
+                                <button
+                                    type="button"
+                                    title="Edit Mutasi"
+                                    className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-blue-600 transition hover:border-blue-300 hover:bg-blue-100"
+                                    onClick={() => openEditModal(row)}
+                                >
+                                    <Edit2 size={14} />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Hapus Mutasi"
+                                    className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 transition hover:border-rose-300 hover:bg-rose-100"
+                                    onClick={() => handleDelete(row)}
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        );
+                    }) : null}
                 />
                 <div className="hidden border-t border-slate-200 bg-slate-50 px-4 py-3 md:block">
                     <div className={`grid ${canEditMutations ? 'grid-cols-9' : 'grid-cols-8'} gap-2 items-center text-sm`}>
@@ -891,6 +983,17 @@ function MutasiPage() {
                             required
                         />
                     </AdminConsoleField>
+                    <AdminConsoleField label="Status Mutasi">
+                        <select
+                            value={editForm.status}
+                            onChange={(e) => setEditForm((p) => ({ ...p, status: e.target.value }))}
+                            className={adminConsoleSelectClassName}
+                        >
+                            <option value="confirmed">Confirmed (Masuk Kas Resmi)</option>
+                            <option value="pending">Pending (Menunggu Konfirmasi)</option>
+                            <option value="rejected">Rejected (Ditolak)</option>
+                        </select>
+                    </AdminConsoleField>
                     <AdminConsoleField label="Penerimaan Via">
                         <select
                             value={editForm.payment_receipt_option_id}
@@ -931,6 +1034,110 @@ function MutasiPage() {
                         <Button type="submit" variant="primary" disabled={saving} className={adminConsoleButtonClassNames.primary}>{saving ? 'Menyimpan...' : 'Simpan'}</Button>
                     </AdminConsoleActionRow>
                 </form>
+            </Modal>
+
+            <Modal
+                isOpen={!!confirmModalItem}
+                onClose={() => !actionLoading && setConfirmModalItem(null)}
+                title="Konfirmasi Penerimaan Pembayaran"
+                theme="dashboard"
+            >
+                {confirmModalItem && (
+                    <div className="space-y-4 text-slate-100">
+                        <p className="text-sm text-slate-300">
+                            Konfirmasi bahwa uang pemasukan ini telah diterima secara sah oleh kantor. Mutasi akan diubah menjadi status <span className="font-semibold text-emerald-400">Confirmed</span> dan langsung masuk ke saldo kas resmi.
+                        </p>
+                        <div className="rounded-2xl border border-emerald-500/20 bg-slate-950/60 p-4 space-y-2">
+                            <div className="flex justify-between items-start gap-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Deskripsi:</span>
+                                <span className="text-sm font-semibold text-white text-right max-w-[240px]">{confirmModalItem.description || '-'}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Sumber:</span>
+                                <span className="text-sm text-slate-200">{confirmModalItem.source}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Penerimaan Via:</span>
+                                <span className="text-sm text-slate-200">{getReceivedViaName(confirmModalItem)}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Petugas / Teknisi:</span>
+                                <span className="text-sm text-slate-200">{confirmModalItem.creator?.name || 'Sistem'}</span>
+                            </div>
+                            <div className="flex justify-between items-center border-t border-slate-800 pt-2 mt-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Nominal:</span>
+                                <span className="text-lg font-bold text-emerald-400">{formatCurrency(confirmModalItem.amount)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={actionLoading}
+                                onClick={() => setConfirmModalItem(null)}
+                                className={adminConsoleButtonClassNames.secondary}
+                            >
+                                Batal
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="success"
+                                disabled={actionLoading}
+                                onClick={() => handleConfirmTransaction(confirmModalItem)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl px-5 py-2.5 transition"
+                            >
+                                {actionLoading ? 'Memproses...' : 'Ya, Konfirmasi Penerimaan'}
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            <Modal
+                isOpen={!!rejectModalItem}
+                onClose={() => !actionLoading && setRejectModalItem(null)}
+                title="Tolak Mutasi Keuangan"
+                theme="dashboard"
+            >
+                {rejectModalItem && (
+                    <div className="space-y-4 text-slate-100">
+                        <p className="text-sm text-slate-300">
+                            Apakah Anda yakin ingin menolak mutasi ini? Status mutasi akan diubah menjadi <span className="font-semibold text-rose-400">Rejected</span> dan tidak dimasukkan ke dalam saldo kas.
+                        </p>
+                        <div className="rounded-2xl border border-rose-500/20 bg-slate-950/60 p-4 space-y-2">
+                            <div className="flex justify-between items-start gap-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Deskripsi:</span>
+                                <span className="text-sm font-semibold text-white text-right max-w-[240px]">{rejectModalItem.description || '-'}</span>
+                            </div>
+                            <div className="flex justify-between items-center border-t border-slate-800 pt-2 mt-2">
+                                <span className="text-xs uppercase tracking-wider text-slate-400">Nominal:</span>
+                                <span className="text-lg font-bold text-rose-400">{formatCurrency(rejectModalItem.amount)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 pt-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={actionLoading}
+                                onClick={() => setRejectModalItem(null)}
+                                className={adminConsoleButtonClassNames.secondary}
+                            >
+                                Batal
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="danger"
+                                disabled={actionLoading}
+                                onClick={() => handleRejectTransaction(rejectModalItem)}
+                                className="bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-2xl px-5 py-2.5 transition"
+                            >
+                                {actionLoading ? 'Memproses...' : 'Ya, Tolak Mutasi'}
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </Modal>
         </div>
     );

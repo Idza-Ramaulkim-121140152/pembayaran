@@ -260,6 +260,7 @@ class FinancialTransactionController extends Controller
             'amount' => 'required|numeric|not_in:0',
             'transaction_date' => 'required|date',
             'category' => 'nullable|string|max:50',
+            'status' => 'nullable|string|in:pending,confirmed,rejected',
             'payment_receipt_option_id' => 'nullable',
             'payment_receiver_user_id' => $this->paymentReceiverRule(),
         ];
@@ -295,18 +296,84 @@ class FinancialTransactionController extends Controller
             $meta = $this->putPaymentReceiverMeta($meta, $receiver);
         }
 
-        $financialTransaction->update([
+        $updateData = [
             'description' => $validated['description'],
             'amount' => $validated['amount'],
             'transaction_date' => $validated['transaction_date'],
             'category' => $validated['category'] ?? $financialTransaction->category,
             'updated_by' => auth()->id(),
             'meta' => $meta !== [] ? $meta : null,
-        ]);
+        ];
+
+        if (!empty($validated['status'])) {
+            $updateData['status'] = $validated['status'];
+        }
+
+        $financialTransaction->update($updateData);
 
         return response()->json([
             'message' => 'Transaksi berhasil diperbarui.',
             'data' => $financialTransaction,
+        ]);
+    }
+
+    public function confirm(Request $request, FinancialTransaction $financialTransaction)
+    {
+        if (!$this->isLedgerReady()) {
+            return response()->json(['message' => 'Tabel financial_transactions belum tersedia. Jalankan migrasi terlebih dahulu.'], 503);
+        }
+
+        $this->ensureCanEditMutations();
+
+        $financialTransaction->update([
+            'status' => FinancialTransaction::STATUS_CONFIRMED,
+            'updated_by' => auth()->id(),
+        ]);
+
+        if (Schema::hasTable('payment_receiver_approval_requests')) {
+            \App\Models\PaymentReceiverApprovalRequest::query()
+                ->where('financial_transaction_id', $financialTransaction->id)
+                ->where('status', \App\Models\PaymentReceiverApprovalRequest::STATUS_PENDING)
+                ->update([
+                    'status' => \App\Models\PaymentReceiverApprovalRequest::STATUS_APPROVED,
+                    'decision_at' => now(),
+                    'decision_note' => 'Dikonfirmasi melalui halaman mutasi keuangan oleh ' . (auth()->user()?->name ?? 'Admin'),
+                ]);
+        }
+
+        return response()->json([
+            'message' => 'Transaksi berhasil dikonfirmasi dan masuk ke pembukuan resmi.',
+            'data' => $financialTransaction->fresh(['creator:id,name', 'updater:id,name']),
+        ]);
+    }
+
+    public function reject(Request $request, FinancialTransaction $financialTransaction)
+    {
+        if (!$this->isLedgerReady()) {
+            return response()->json(['message' => 'Tabel financial_transactions belum tersedia. Jalankan migrasi terlebih dahulu.'], 503);
+        }
+
+        $this->ensureCanEditMutations();
+
+        $financialTransaction->update([
+            'status' => FinancialTransaction::STATUS_REJECTED,
+            'updated_by' => auth()->id(),
+        ]);
+
+        if (Schema::hasTable('payment_receiver_approval_requests')) {
+            \App\Models\PaymentReceiverApprovalRequest::query()
+                ->where('financial_transaction_id', $financialTransaction->id)
+                ->where('status', \App\Models\PaymentReceiverApprovalRequest::STATUS_PENDING)
+                ->update([
+                    'status' => \App\Models\PaymentReceiverApprovalRequest::STATUS_REJECTED,
+                    'decision_at' => now(),
+                    'decision_note' => 'Ditolak melalui halaman mutasi keuangan oleh ' . (auth()->user()?->name ?? 'Admin'),
+                ]);
+        }
+
+        return response()->json([
+            'message' => 'Transaksi berhasil ditolak.',
+            'data' => $financialTransaction->fresh(['creator:id,name', 'updater:id,name']),
         ]);
     }
 
