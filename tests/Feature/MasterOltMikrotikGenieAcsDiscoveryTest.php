@@ -176,4 +176,98 @@ class MasterOltMikrotikGenieAcsDiscoveryTest extends TestCase
         $this->assertEquals($ponPort->id, $customer->pon_port_id);
         $this->assertEquals($onu->id, $customer->olt_onu_id);
     }
+
+    public function test_disambiguates_sapri_from_sugeng_using_single_last_char_offset_rule()
+    {
+        $genieService = Mockery::mock(GenieAcsService::class);
+        $telnetService = Mockery::mock(OltTelnetService::class);
+        $mikrotikService = Mockery::mock(MikroTikService::class);
+
+        $oltSnmpService = new OltSnmpService($genieService, $telnetService, $mikrotikService);
+
+        // Create Customers Sapri and Sugeng
+        $custSapri = Customer::create([
+            'name' => 'Sapri',
+            'pppoe_username' => 'KALMRKLBR-sapri529',
+            'phone' => '081234567891',
+            'is_active' => true,
+        ]);
+
+        $custSugeng = Customer::create([
+            'name' => 'Sugeng',
+            'pppoe_username' => 'KALTAMKBU-sugeng125',
+            'phone' => '081234567892',
+            'is_active' => true,
+        ]);
+
+        // MikroTik active connections where Sugeng is listed first
+        $mikrotikData = [
+            'reachable' => true,
+            'active' => [
+                [
+                    'name' => 'KALTAMKBU-sugeng125',
+                    'caller_id' => 'C4:CD:50:0A:70:6F',
+                    'clean_mac' => 'C4CD500A706F',
+                    'address' => '10.1.0.161',
+                    'service' => 'pppoe',
+                ],
+                [
+                    'name' => 'KALMRKLBR-sapri529',
+                    'caller_id' => 'C4:CD:50:0A:70:79',
+                    'clean_mac' => 'C4CD500A7079',
+                    'address' => '10.1.0.144',
+                    'service' => 'pppoe',
+                ],
+            ],
+            'secrets' => [],
+        ];
+
+        $custByPppoe = [
+            'kalmrklbr-sapri529' => $custSapri,
+            'kaltamkbu-sugeng125' => $custSugeng,
+        ];
+        $custByName = [
+            'sapri' => $custSapri,
+            'sugeng' => $custSugeng,
+        ];
+        $allCusts = [$custSapri, $custSugeng];
+
+        // 1. Match Sapri's OLT MAC: C4:CD:50:0A:70:77
+        $matchSapri = $oltSnmpService->matchOltOnuWithGenieAndMikrotik(
+            'C4:CD:50:0A:70:77',
+            [],
+            $mikrotikData,
+            $custByPppoe,
+            $custByName,
+            null,
+            null,
+            $allCusts
+        );
+
+        $this->assertTrue($matchSapri['matched']);
+        $this->assertNotNull($matchSapri['customer']);
+        $this->assertEquals('Sapri', $matchSapri['customer']->name);
+        $this->assertEquals('KALMRKLBR-sapri529', $matchSapri['pppoe_username']);
+        $this->assertEquals('C4:CD:50:0A:70:79', $matchSapri['mikrotik_caller_id']);
+        $this->assertEquals(2, $matchSapri['mac_offset']);
+
+        // 2. Match Sugeng's OLT MAC: C4:CD:50:0A:70:6D
+        $matchSugeng = $oltSnmpService->matchOltOnuWithGenieAndMikrotik(
+            'C4:CD:50:0A:70:6D',
+            [],
+            $mikrotikData,
+            $custByPppoe,
+            $custByName,
+            null,
+            null,
+            $allCusts
+        );
+
+        $this->assertTrue($matchSugeng['matched']);
+        $this->assertNotNull($matchSugeng['customer']);
+        $this->assertEquals('Sugeng', $matchSugeng['customer']->name);
+        $this->assertEquals('KALTAMKBU-sugeng125', $matchSugeng['pppoe_username']);
+        $this->assertEquals('C4:CD:50:0A:70:6F', $matchSugeng['mikrotik_caller_id']);
+        $this->assertEquals(2, $matchSugeng['mac_offset']);
+    }
 }

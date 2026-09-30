@@ -842,7 +842,7 @@ class OltSnmpService
         // Delete old ONUs and insert real ones in a single fast transaction
         $matchedCount = 0;
         try {
-            \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $mikrotikData, $custByPppoe, $custByName, &$matchedCount) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $mikrotikData, $custByPppoe, $custByName, $customers, &$matchedCount) {
                 $onuIds = OltOnu::where('olt_id', $olt->id)->pluck('id');
                 if ($onuIds->isNotEmpty()) {
                     \Illuminate\Support\Facades\DB::table('customers')->whereIn('olt_onu_id', $onuIds)->update([
@@ -866,7 +866,8 @@ class OltSnmpService
                         $custByPppoe,
                         $custByName,
                         'ONU-' . $cleanMac,
-                        'HiOSO EPON ONU'
+                        'HiOSO EPON ONU',
+                        $customers
                     );
 
                     $matchedCustomer = $matchRes['customer'];
@@ -1120,12 +1121,131 @@ class OltSnmpService
     }
 
     /**
+     * Score MAC match similarity between an OLT ONU and a candidate MAC address.
+     *
+     * Rules:
+     * - Exact 12-char MAC match: Score 1000, Offset 0
+     * - 11-char prefix match (first 11 hex characters are identical, only 12th char differs): Score 500 - abs(offset)
+     * - 10-char prefix match: Only if abs(offset) <= 2: Score 200 - abs(offset)
+     * - Otherwise: null (no match)
+     */
+    public function calculateMacMatchScore(string $cleanOnuMac, string $cleanCandMac): ?array
+    {
+        if (strlen($cleanOnuMac) !== 12 || strlen($cleanCandMac) !== 12) {
+            return null;
+        }
+
+        // Exact match
+        if ($cleanOnuMac === $cleanCandMac) {
+            return [
+                'score' => 1000,
+                'offset' => 0,
+                'tier' => 'Exact MAC',
+            ];
+        }
+
+        $onuPrefix11 = substr($cleanOnuMac, 0, 11);
+        $candPrefix11 = substr($cleanCandMac, 0, 11);
+
+        // 11-char match: only 12th character (last hex digit) differs
+        if ($onuPrefix11 === $candPrefix11) {
+            $onuLast = hexdec(substr($cleanOnuMac, 11, 1));
+            $candLast = hexdec(substr($cleanCandMac, 11, 1));
+            $offset = $candLast - $onuLast;
+            $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
+
+            return [
+                'score' => 500 - abs($offset),
+                'offset' => $offset,
+                'tier' => "MAC Offset {$offsetTag} (1-char diff)",
+            ];
+        }
+
+        // 10-char match: only accept tight offset <= 2 across nibble boundary
+        $onuPrefix10 = substr($cleanOnuMac, 0, 10);
+        $candPrefix10 = substr($cleanCandMac, 0, 10);
+        if ($onuPrefix10 === $candPrefix10) {
+            $onuByte = hexdec(substr($cleanOnuMac, 10, 2));
+            $candByte = hexdec(substr($cleanCandMac, 10, 2));
+            $offset = $candByte - $onuByte;
+            if (abs($offset) <= 2) {
+                $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
+                return [
+                    'score' => 200 - abs($offset),
+                    'offset' => $offset,
+                    'tier' => "MAC Offset {$offsetTag}",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve Customer record from PPPoE username, name tokens, and aliases.
+     */
+    public function resolveCustomerFromPppoe(?string $pppoeUsername, array $custByPppoe, array $custByName = [], $allCustomers = []): ?Customer
+    {
+        if (empty($pppoeUsername)) return null;
+        $cleanUser = strtolower(trim($pppoeUsername));
+        if (empty($cleanUser)) return null;
+
+        // 1. Direct exact PPPoE username match
+        if (isset($custByPppoe[$cleanUser])) {
+            return $custByPppoe[$cleanUser];
+        }
+
+        // 2. Strip area prefix if has hyphen or underscore (e.g. KALMRKLBR-sapri529 -> sapri529, KALTAMKBU-sugeng125 -> sugeng125, CJA-sapar -> sapar)
+        $nameWithoutPrefix = $cleanUser;
+        if (str_contains($cleanUser, '-')) {
+            $parts = explode('-', $cleanUser);
+            $nameWithoutPrefix = trim(end($parts));
+        } elseif (str_contains($cleanUser, '_')) {
+            $parts = explode('_', $cleanUser);
+            $nameWithoutPrefix = trim(end($parts));
+        }
+
+        if (isset($custByPppoe[$nameWithoutPrefix])) {
+            return $custByPppoe[$nameWithoutPrefix];
+        }
+        if (isset($custByName[$nameWithoutPrefix])) {
+            return $custByName[$nameWithoutPrefix];
+        }
+
+        // 3. Strip trailing digits (e.g. sapri529 -> sapri, sugeng125 -> sugeng)
+        $nameWithoutDigits = preg_replace('/\d+$/', '', $nameWithoutPrefix);
+        if (!empty($nameWithoutDigits)) {
+            if (isset($custByPppoe[$nameWithoutDigits])) {
+                return $custByPppoe[$nameWithoutDigits];
+            }
+            if (isset($custByName[$nameWithoutDigits])) {
+                return $custByName[$nameWithoutDigits];
+            }
+        }
+
+        // 4. Fuzzy fallback across all customers
+        foreach ($allCustomers as $c) {
+            $cName = strtolower(trim($c->name ?? ''));
+            $cPppoe = strtolower(trim($c->pppoe_username ?? ''));
+
+            if (!empty($cName)) {
+                if ($nameWithoutDigits && ($cName === $nameWithoutDigits || str_contains($nameWithoutPrefix, $cName) || str_contains($cName, $nameWithoutDigits))) {
+                    return $c;
+                }
+            }
+            if (!empty($cPppoe)) {
+                if ($cPppoe === $nameWithoutPrefix || $cPppoe === $nameWithoutDigits || str_contains($cleanUser, $cPppoe)) {
+                    return $c;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Match an OLT ONU against GenieACS devices, MikroTik active sessions/secrets, and billing customers.
-     * Supports:
-     * 1. Exact MAC match
-     * 2. MAC prefix + offset difference (e.g. OLT B4:64:15:B2:F4:83 vs MikroTik B4:64:15:B2:F4:89, offset +6)
-     * 3. GenieACS TR-069 serial number & Device ID mapping
-     * 4. PPPoE username matching (e.g. CJA-sapar -> Customer 'sapar' / 'CJA-sapar')
+     * Evaluates ALL candidates using multi-tier similarity scoring, picking the optimal candidate with minimum offset.
      */
     public function matchOltOnuWithGenieAndMikrotik(
         string $rawOnuMac,
@@ -1134,11 +1254,10 @@ class OltSnmpService
         array $custByPppoe,
         array $custByName = [],
         ?string $existingSerial = null,
-        ?string $existingModel = null
+        ?string $existingModel = null,
+        $allCustomers = []
     ): array {
         $cleanOnuMac = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', trim($rawOnuMac)));
-        $onuPrefix = strlen($cleanOnuMac) === 12 ? substr($cleanOnuMac, 0, 10) : '';
-        $onuLastByte = strlen($cleanOnuMac) === 12 ? hexdec(substr($cleanOnuMac, 10, 2)) : null;
 
         $matchedCustomer = null;
         $matchedGenie = null;
@@ -1167,101 +1286,67 @@ class OltSnmpService
             $matchTier = 'GenieACS TR-069';
         }
 
-        // 2. Check MikroTik Active Connections
+        // 2. Score all MikroTik candidates to find the BEST match
+        $bestMikrotikCandidate = null;
+        $bestMikrotikScore = -1;
+
         if (!empty($mikrotikData['active'])) {
-            // 2a. Exact MAC in MikroTik active
             foreach ($mikrotikData['active'] as $act) {
-                if (!empty($act['clean_mac']) && $act['clean_mac'] === $cleanOnuMac) {
-                    $matchedMikrotik = $act;
-                    $mikrotikCallerId = $act['caller_id'];
-                    $pppoeUsername = $pppoeUsername ?: $act['name'];
-                    $ipAddress = $act['address'] ?? $ipAddress;
-                    $macOffset = 0;
-                    $matchTier = $matchTier ? "{$matchTier} + MikroTik Active (Exact MAC)" : 'MikroTik Active (Exact MAC)';
-                    break;
-                }
-            }
-
-            // 2b. 5-Octet Prefix + Offset match (e.g. B46415B2F483 vs B46415B2F489, offset +6)
-            if (!$matchedMikrotik && $onuPrefix !== '' && $onuLastByte !== null) {
-                foreach ($mikrotikData['active'] as $act) {
-                    if (strlen($act['clean_mac']) === 12) {
-                        $actPrefix = substr($act['clean_mac'], 0, 10);
-                        $actLastByte = hexdec(substr($act['clean_mac'], 10, 2));
-                        $offset = $actLastByte - $onuLastByte;
-                        if ($actPrefix === $onuPrefix && abs($offset) <= 16) {
-                            $matchedMikrotik = $act;
-                            $mikrotikCallerId = $act['caller_id'];
-                            $pppoeUsername = $pppoeUsername ?: $act['name'];
-                            $ipAddress = $act['address'] ?? $ipAddress;
-                            $macOffset = $offset;
-                            $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
-                            $tierText = "MikroTik Active (MAC Offset {$offsetTag})";
-                            $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
-                            break;
+                if (!empty($act['clean_mac'])) {
+                    $scoreInfo = $this->calculateMacMatchScore($cleanOnuMac, $act['clean_mac']);
+                    if ($scoreInfo) {
+                        // Bonus +10 for active live sessions
+                        $totalScore = $scoreInfo['score'] + 10;
+                        if ($totalScore > $bestMikrotikScore) {
+                            $bestMikrotikScore = $totalScore;
+                            $bestMikrotikCandidate = [
+                                'item' => $act,
+                                'type' => 'active',
+                                'scoreInfo' => $scoreInfo,
+                            ];
                         }
                     }
                 }
             }
         }
 
-        // 3. Check MikroTik Secrets if not matched from active
-        if (!$matchedMikrotik && !empty($mikrotikData['secrets'])) {
-            // 3a. Exact caller-id in secret
+        if (!empty($mikrotikData['secrets'])) {
             foreach ($mikrotikData['secrets'] as $sec) {
-                if (!empty($sec['clean_mac']) && $sec['clean_mac'] === $cleanOnuMac) {
-                    $matchedMikrotik = $sec;
-                    $mikrotikCallerId = $sec['caller_id'];
-                    $pppoeUsername = $pppoeUsername ?: $sec['name'];
-                    $ipAddress = $sec['remote_address'] ?? $ipAddress;
-                    $macOffset = 0;
-                    $tierText = 'MikroTik Secret (Exact MAC)';
-                    $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
-                    break;
-                }
-            }
-
-            // 3b. 5-Octet Prefix + Offset match in secret
-            if (!$matchedMikrotik && $onuPrefix !== '' && $onuLastByte !== null) {
-                foreach ($mikrotikData['secrets'] as $sec) {
-                    if (strlen($sec['clean_mac']) === 12) {
-                        $secPrefix = substr($sec['clean_mac'], 0, 10);
-                        $secLastByte = hexdec(substr($sec['clean_mac'], 10, 2));
-                        $offset = $secLastByte - $onuLastByte;
-                        if ($secPrefix === $onuPrefix && abs($offset) <= 16) {
-                            $matchedMikrotik = $sec;
-                            $mikrotikCallerId = $sec['caller_id'];
-                            $pppoeUsername = $pppoeUsername ?: $sec['name'];
-                            $ipAddress = $sec['remote_address'] ?? $ipAddress;
-                            $macOffset = $offset;
-                            $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
-                            $tierText = "MikroTik Secret (MAC Offset {$offsetTag})";
-                            $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
-                            break;
+                if (!empty($sec['clean_mac'])) {
+                    $scoreInfo = $this->calculateMacMatchScore($cleanOnuMac, $sec['clean_mac']);
+                    if ($scoreInfo) {
+                        $totalScore = $scoreInfo['score'];
+                        if ($totalScore > $bestMikrotikScore) {
+                            $bestMikrotikScore = $totalScore;
+                            $bestMikrotikCandidate = [
+                                'item' => $sec,
+                                'type' => 'secret',
+                                'scoreInfo' => $scoreInfo,
+                            ];
                         }
                     }
                 }
             }
         }
 
-        // 4. Resolve Customer Database Record
+        if ($bestMikrotikCandidate) {
+            $item = $bestMikrotikCandidate['item'];
+            $scoreInfo = $bestMikrotikCandidate['scoreInfo'];
+            $type = $bestMikrotikCandidate['type'];
+
+            $matchedMikrotik = $item;
+            $mikrotikCallerId = $item['caller_id'];
+            $pppoeUsername = $item['name'] ?: $pppoeUsername;
+            $ipAddress = $item['address'] ?? ($item['remote_address'] ?? $ipAddress);
+            $macOffset = $scoreInfo['offset'];
+
+            $tierName = ($type === 'active' ? 'MikroTik Active' : 'MikroTik Secret') . ' (' . $scoreInfo['tier'] . ')';
+            $matchTier = $matchTier ? "{$matchTier} + {$tierName}" : $tierName;
+        }
+
+        // 3. Resolve Customer Database Record using robust customer resolver
         if ($pppoeUsername) {
-            $cleanUser = strtolower(trim($pppoeUsername));
-            $matchedCustomer = $custByPppoe[$cleanUser] ?? null;
-
-            // Try stripped prefix / suffix (e.g. CJA-sapar -> sapar)
-            if (!$matchedCustomer) {
-                $stripped = preg_replace('/^(cja[-_]?|cja)/i', '', $cleanUser);
-                $stripped = trim($stripped, '-_ ');
-                if (!empty($stripped)) {
-                    $matchedCustomer = $custByPppoe[$stripped] ?? ($custByName[$stripped] ?? null);
-                }
-            }
-
-            // Try customer name match
-            if (!$matchedCustomer && !empty($custByName[$cleanUser])) {
-                $matchedCustomer = $custByName[$cleanUser];
-            }
+            $matchedCustomer = $this->resolveCustomerFromPppoe($pppoeUsername, $custByPppoe, $custByName, $allCustomers);
         }
 
         // Determine sources
@@ -1327,7 +1412,8 @@ class OltSnmpService
                 $custByPppoe,
                 $custByName,
                 $onu->serial_number,
-                $onu->model
+                $onu->model,
+                $customers
             );
 
             if ($matchResult['matched']) {
