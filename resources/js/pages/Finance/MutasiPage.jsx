@@ -78,6 +78,10 @@ function MutasiPage() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
     const [confirmModalItem, setConfirmModalItem] = useState(null);
+    const [confirmForm, setConfirmForm] = useState({
+        payment_receiver_user_id: '',
+        payment_receipt_option_id: '',
+    });
     const [rejectModalItem, setRejectModalItem] = useState(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [selected, setSelected] = useState(null);
@@ -124,11 +128,6 @@ function MutasiPage() {
     };
 
     const loadPaymentReceivers = async () => {
-        if (!canChoosePaymentReceiver) {
-            setPaymentReceivers([]);
-            return;
-        }
-
         try {
             const res = await apiClient.get('/payment-receivers');
             setPaymentReceivers(Array.isArray(res.data?.data) ? res.data.data : []);
@@ -406,12 +405,34 @@ function MutasiPage() {
         }
     };
 
+    const openConfirmModal = (item) => {
+        setConfirmModalItem(item);
+        const defaultReceiver = item?.meta?.payment_receiver_user_id
+            ? String(item.meta.payment_receiver_user_id)
+            : (item?.created_by ? String(item.created_by) : '');
+        const defaultReceipt = item?.meta?.received_via_id
+            ? String(item.meta.received_via_id)
+            : '';
+        setConfirmForm({
+            payment_receiver_user_id: defaultReceiver,
+            payment_receipt_option_id: defaultReceipt,
+        });
+    };
+
     const handleConfirmTransaction = async (item) => {
         if (!item) return;
         try {
             setActionLoading(true);
-            await apiClient.post(`/finance/transactions/${item.id}/confirm`);
-            setSuccess(`Transaksi "${item.description || 'Pemasukan'}" berhasil dikonfirmasi dan masuk ke pembukuan kas resmi.`);
+            const payload = {
+                payment_receiver_user_id: confirmForm.payment_receiver_user_id
+                    ? Number(confirmForm.payment_receiver_user_id)
+                    : null,
+                payment_receipt_option_id: confirmForm.payment_receipt_option_id
+                    ? Number(confirmForm.payment_receipt_option_id)
+                    : null,
+            };
+            const response = await apiClient.post(`/finance/transactions/${item.id}/confirm`, payload);
+            setSuccess(response.data?.message || `Transaksi "${item.description || 'Pemasukan'}" berhasil dikonfirmasi.`);
             setConfirmModalItem(null);
             loadData(pageInfo.current);
         } catch (err) {
@@ -782,7 +803,7 @@ function MutasiPage() {
                                             type="button"
                                             title="Konfirmasi / Terima Pembayaran"
                                             className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:border-emerald-400"
-                                            onClick={() => setConfirmModalItem(row)}
+                                            onClick={() => openConfirmModal(row)}
                                         >
                                             <CheckCircle2 size={14} className="text-emerald-600" />
                                             <span className="hidden xl:inline">Terima</span>
@@ -933,20 +954,18 @@ function MutasiPage() {
                             ))}
                         </select>
                     </AdminConsoleField>
-                    {canChoosePaymentReceiver && (
-                        <AdminConsoleField label="Penerima Pembayaran">
-                            <select
-                                value={createForm.payment_receiver_user_id}
-                                onChange={(e) => setCreateForm((p) => ({ ...p, payment_receiver_user_id: e.target.value }))}
-                                className={adminConsoleSelectClassName}
-                            >
-                                <option value="">Akun saya (default)</option>
-                                {paymentReceivers.map((receiver) => (
-                                    <option key={receiver.id} value={receiver.id}>{getPaymentReceiverLabel(receiver)}</option>
-                                ))}
-                            </select>
-                        </AdminConsoleField>
-                    )}
+                    <AdminConsoleField label="Penerima Pembayaran">
+                        <select
+                            value={createForm.payment_receiver_user_id}
+                            onChange={(e) => setCreateForm((p) => ({ ...p, payment_receiver_user_id: e.target.value }))}
+                            className={adminConsoleSelectClassName}
+                        >
+                            <option value="">Akun saya (default)</option>
+                            {paymentReceivers.map((receiver) => (
+                                <option key={receiver.id} value={receiver.id}>{getPaymentReceiverLabel(receiver)}</option>
+                            ))}
+                        </select>
+                    </AdminConsoleField>
                     <AdminConsoleField label="Tanggal">
                         <input
                             type="date"
@@ -1006,20 +1025,18 @@ function MutasiPage() {
                             ))}
                         </select>
                     </AdminConsoleField>
-                    {canChoosePaymentReceiver && (
-                        <AdminConsoleField label="Penerima Pembayaran">
-                            <select
-                                value={editForm.payment_receiver_user_id}
-                                onChange={(e) => setEditForm((p) => ({ ...p, payment_receiver_user_id: e.target.value }))}
-                                className={adminConsoleSelectClassName}
-                            >
-                                <option value="">Akun saya (default)</option>
-                                {paymentReceivers.map((receiver) => (
-                                    <option key={receiver.id} value={receiver.id}>{getPaymentReceiverLabel(receiver)}</option>
-                                ))}
-                            </select>
-                        </AdminConsoleField>
-                    )}
+                    <AdminConsoleField label="Penerima Pembayaran">
+                        <select
+                            value={editForm.payment_receiver_user_id}
+                            onChange={(e) => setEditForm((p) => ({ ...p, payment_receiver_user_id: e.target.value }))}
+                            className={adminConsoleSelectClassName}
+                        >
+                            <option value="">Akun saya (default)</option>
+                            {paymentReceivers.map((receiver) => (
+                                <option key={receiver.id} value={receiver.id}>{getPaymentReceiverLabel(receiver)}</option>
+                            ))}
+                        </select>
+                    </AdminConsoleField>
                     <AdminConsoleField label="Tanggal">
                         <input
                             type="date"
@@ -1042,56 +1059,108 @@ function MutasiPage() {
                 title="Konfirmasi Penerimaan Pembayaran"
                 theme="dashboard"
             >
-                {confirmModalItem && (
-                    <div className="space-y-4 text-slate-100">
-                        <p className="text-sm text-slate-300">
-                            Konfirmasi bahwa uang pemasukan ini telah diterima secara sah oleh kantor. Mutasi akan diubah menjadi status <span className="font-semibold text-emerald-400">Confirmed</span> dan langsung masuk ke saldo kas resmi.
-                        </p>
-                        <div className="rounded-2xl border border-emerald-500/20 bg-slate-950/60 p-4 space-y-2">
-                            <div className="flex justify-between items-start gap-2">
-                                <span className="text-xs uppercase tracking-wider text-slate-400">Deskripsi:</span>
-                                <span className="text-sm font-semibold text-white text-right max-w-[240px]">{confirmModalItem.description || '-'}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs uppercase tracking-wider text-slate-400">Sumber:</span>
-                                <span className="text-sm text-slate-200">{confirmModalItem.source}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs uppercase tracking-wider text-slate-400">Penerimaan Via:</span>
-                                <span className="text-sm text-slate-200">{getReceivedViaName(confirmModalItem)}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                                <span className="text-xs uppercase tracking-wider text-slate-400">Petugas / Teknisi:</span>
-                                <span className="text-sm text-slate-200">{confirmModalItem.creator?.name || 'Sistem'}</span>
-                            </div>
-                            <div className="flex justify-between items-center border-t border-slate-800 pt-2 mt-2">
-                                <span className="text-xs uppercase tracking-wider text-slate-400">Nominal:</span>
-                                <span className="text-lg font-bold text-emerald-400">{formatCurrency(confirmModalItem.amount)}</span>
-                            </div>
-                        </div>
+                {confirmModalItem && (() => {
+                    const currentSelectedReceiver = paymentReceivers.find((r) => String(r.id) === String(confirmForm.payment_receiver_user_id)) || null;
+                    const isCompanyReceiver = !!currentSelectedReceiver?.is_company_finance_receiver;
 
-                        <div className="flex justify-end gap-3 pt-2">
-                            <Button
-                                type="button"
-                                variant="secondary"
-                                disabled={actionLoading}
-                                onClick={() => setConfirmModalItem(null)}
-                                className={adminConsoleButtonClassNames.secondary}
-                            >
-                                Batal
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="success"
-                                disabled={actionLoading}
-                                onClick={() => handleConfirmTransaction(confirmModalItem)}
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl px-5 py-2.5 transition"
-                            >
-                                {actionLoading ? 'Memproses...' : 'Ya, Konfirmasi Penerimaan'}
-                            </Button>
+                    return (
+                        <div className="space-y-4 text-slate-100">
+                            <p className="text-sm text-slate-300">
+                                Konfirmasi penerimaan pembayaran mutasi. Tentukan akun penerima yang memegang dana ini untuk sinkronisasi kas dan hutang.
+                            </p>
+
+                            <div className="rounded-2xl border border-emerald-500/20 bg-slate-950/60 p-4 space-y-2.5">
+                                <div className="flex justify-between items-start gap-2">
+                                    <span className="text-xs uppercase tracking-wider text-slate-400">Deskripsi:</span>
+                                    <span className="text-sm font-semibold text-white text-right max-w-[260px]">{confirmModalItem.description || '-'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs uppercase tracking-wider text-slate-400">Sumber:</span>
+                                    <span className="text-sm text-slate-200">{confirmModalItem.source}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-xs uppercase tracking-wider text-slate-400">Petugas / Teknisi Pencatat:</span>
+                                    <span className="text-sm text-slate-200">{confirmModalItem.creator?.name || 'Sistem'}</span>
+                                </div>
+                                <div className="flex justify-between items-center border-t border-slate-800 pt-2">
+                                    <span className="text-xs uppercase tracking-wider text-slate-400">Nominal:</span>
+                                    <span className="text-lg font-bold text-emerald-400">{formatCurrency(confirmModalItem.amount)}</span>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3 pt-1">
+                                <AdminConsoleField label="Penerima Pembayaran (Akun yang Menerima Uang)">
+                                    <select
+                                        value={confirmForm.payment_receiver_user_id}
+                                        onChange={(e) => setConfirmForm((p) => ({ ...p, payment_receiver_user_id: e.target.value }))}
+                                        className={adminConsoleSelectClassName}
+                                    >
+                                        <option value="">Pilih Penerima...</option>
+                                        {paymentReceivers.map((receiver) => (
+                                            <option key={receiver.id} value={receiver.id}>
+                                                {getPaymentReceiverLabel(receiver)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </AdminConsoleField>
+
+                                {currentSelectedReceiver ? (
+                                    isCompanyReceiver ? (
+                                        <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/40 p-3 text-xs text-emerald-300 flex items-start gap-2">
+                                            <CheckCircle2 size={16} className="text-emerald-400 shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="font-semibold text-emerald-200">Rekening Keuangan Perusahaan</p>
+                                                <p className="mt-0.5">Uang masuk langsung ke rekening/kas resmi perusahaan. <strong>Tidak membebankan hutang</strong> ke akun penerima.</p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl border border-amber-500/30 bg-amber-950/40 p-3 text-xs text-amber-300 flex items-start gap-2">
+                                            <AlertCircle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+                                            <div>
+                                                <p className="font-semibold text-amber-200">Akun Non-Perusahaan ({currentSelectedReceiver.name})</p>
+                                                <p className="mt-0.5">Uang dipegang oleh perorangan/teknisi. Setelah dikonfirmasi, otomatis <strong>dicatat sebagai pinjaman/hutang {currentSelectedReceiver.name}</strong> ke kantor sampai disetorkan.</p>
+                                            </div>
+                                        </div>
+                                    )
+                                ) : null}
+
+                                <AdminConsoleField label="Penerimaan Via / Rekening Tujuan">
+                                    <select
+                                        value={confirmForm.payment_receipt_option_id}
+                                        onChange={(e) => setConfirmForm((p) => ({ ...p, payment_receipt_option_id: e.target.value }))}
+                                        className={adminConsoleSelectClassName}
+                                    >
+                                        <option value="">Gunakan metode asal ({getReceivedViaName(confirmModalItem)})</option>
+                                        {paymentReceiptOptions.map((option) => (
+                                            <option key={option.id} value={option.id}>{option.name}</option>
+                                        ))}
+                                    </select>
+                                </AdminConsoleField>
+                            </div>
+
+                            <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    disabled={actionLoading}
+                                    onClick={() => setConfirmModalItem(null)}
+                                    className={adminConsoleButtonClassNames.secondary}
+                                >
+                                    Batal
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="success"
+                                    disabled={actionLoading}
+                                    onClick={() => handleConfirmTransaction(confirmModalItem)}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-2xl px-5 py-2.5 transition"
+                                >
+                                    {actionLoading ? 'Memproses...' : 'Ya, Konfirmasi Penerimaan'}
+                                </Button>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    );
+                })()}
             </Modal>
 
             <Modal

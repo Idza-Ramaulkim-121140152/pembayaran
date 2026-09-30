@@ -218,7 +218,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         ]);
     })->name('api.staff-users-lite');
     Route::get('/api/payment-receivers', function () {
-        if (!auth()->user()?->canChoosePaymentReceiver()) {
+        $user = auth()->user();
+        if (!$user?->canChoosePaymentReceiver() && !$user?->canEditMutations() && !$user?->isAdmin()) {
             return response()->json([
                 'message' => 'Anda tidak memiliki izin memilih penerima pembayaran. Hubungi superadmin.',
             ], 403);
@@ -226,7 +227,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
         return response()->json([
             'data' => app(PaymentReceiverService::class)
-                ->allowedReceivers(auth()->user())
+                ->allowedReceivers($user)
                 ->values(),
         ]);
     })->name('api.payment-receivers.index');
