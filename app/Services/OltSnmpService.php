@@ -52,7 +52,8 @@ class OltSnmpService
 
     public function __construct(
         protected GenieAcsService $genieAcsService,
-        protected OltTelnetService $telnetService
+        protected OltTelnetService $telnetService,
+        protected ?MikroTikService $mikrotikService = null
     ) {
     }
 
@@ -822,21 +823,26 @@ class OltSnmpService
             Log::warning("Customer reset warning during OLT sync: " . $e->getMessage());
         }
 
-        // 3. Fast Cross-Match with GenieACS and Customers
+        // 3. Fast Dual-Source Cross-Match with GenieACS and MikroTik
         $parsedGenie = $this->fetchGenieAcsLookupDevices();
+        $mikrotikData = $this->fetchMikroTikLookupData();
 
         $customers = Customer::all();
         $custByPppoe = [];
+        $custByName = [];
         foreach ($customers as $c) {
             if (!empty($c->pppoe_username)) {
                 $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
+            }
+            if (!empty($c->name)) {
+                $custByName[strtolower(trim($c->name))] = $c;
             }
         }
 
         // Delete old ONUs and insert real ones in a single fast transaction
         $matchedCount = 0;
         try {
-            \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $custByPppoe, &$matchedCount) {
+            \Illuminate\Support\Facades\DB::transaction(function () use ($olt, $parsedOnus, $savedPorts, $parsedGenie, $mikrotikData, $custByPppoe, $custByName, &$matchedCount) {
                 $onuIds = OltOnu::where('olt_id', $olt->id)->pluck('id');
                 if ($onuIds->isNotEmpty()) {
                     \Illuminate\Support\Facades\DB::table('customers')->whereIn('olt_onu_id', $onuIds)->update([
@@ -853,22 +859,19 @@ class OltSnmpService
                     $rawMac = $onuData['mac_address'];
                     $cleanMac = strtoupper(str_replace([':', '-', '.'], '', $rawMac));
 
-                    $matchedCustomer = null;
-                    $serial = 'ONU-' . $cleanMac;
-                    $model = 'HiOSO EPON ONU';
+                    $matchRes = $this->matchOltOnuWithGenieAndMikrotik(
+                        $rawMac,
+                        $parsedGenie,
+                        $mikrotikData,
+                        $custByPppoe,
+                        $custByName,
+                        'ONU-' . $cleanMac,
+                        'HiOSO EPON ONU'
+                    );
 
-                    $foundGenie = $this->matchGenieAcsDevice($rawMac, $parsedGenie);
-                    if ($foundGenie) {
-                        if (!empty($foundGenie['sn'])) {
-                            $serial = $foundGenie['sn'];
-                        }
-                        if (!empty($foundGenie['model'])) {
-                            $model = $foundGenie['model'] . ' ONT';
-                        }
-                        if (!empty($foundGenie['pppoe'])) {
-                            $matchedCustomer = $custByPppoe[strtolower(trim($foundGenie['pppoe']))] ?? null;
-                        }
-                    }
+                    $matchedCustomer = $matchRes['customer'];
+                    $serial = $matchRes['serial_number'] ?: ('ONU-' . $cleanMac);
+                    $model = $matchRes['model'] ?: 'HiOSO EPON ONU';
 
                     if ($matchedCustomer) {
                         $matchedCount++;
@@ -890,11 +893,15 @@ class OltSnmpService
                     ]);
 
                     if ($matchedCustomer) {
-                        \Illuminate\Support\Facades\DB::table('customers')->where('id', $matchedCustomer->id)->update([
+                        $custUpdates = [
                             'olt_id' => $olt->id,
                             'pon_port_id' => $portModel->id,
                             'olt_onu_id' => $onu->id,
-                        ]);
+                        ];
+                        if (empty($matchedCustomer->pppoe_username) && !empty($matchRes['pppoe_username'])) {
+                            $custUpdates['pppoe_username'] = $matchRes['pppoe_username'];
+                        }
+                        \Illuminate\Support\Facades\DB::table('customers')->where('id', $matchedCustomer->id)->update($custUpdates);
                     }
                 }
             });
@@ -1022,9 +1029,68 @@ class OltSnmpService
     }
 
     /**
+     * Fetch active PPPoE connections and secrets from MikroTik.
+     */
+    public function fetchMikroTikLookupData(): array
+    {
+        $result = [
+            'reachable' => false,
+            'active' => [],
+            'secrets' => [],
+        ];
+
+        try {
+            $mikrotik = $this->mikrotikService ?? app(MikroTikService::class);
+            $cleanMac = fn($m) => strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', trim((string)$m)));
+
+            try {
+                $active = $mikrotik->getActivePPPoEConnections(true);
+                if (is_array($active)) {
+                    foreach ($active as $item) {
+                        $rawCaller = $item['caller_id'] ?? $item['caller-id'] ?? '';
+                        $result['active'][] = [
+                            'name' => $item['name'] ?? '',
+                            'caller_id' => $rawCaller,
+                            'clean_mac' => $cleanMac($rawCaller),
+                            'address' => $item['address'] ?? null,
+                            'uptime' => $item['uptime'] ?? null,
+                            'service' => $item['service'] ?? 'pppoe',
+                        ];
+                    }
+                    $result['reachable'] = true;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('fetchMikroTikLookupData: getActivePPPoEConnections failed: ' . $e->getMessage());
+            }
+
+            try {
+                $secrets = $mikrotik->getAllPPPoESecrets(true);
+                if (is_array($secrets)) {
+                    foreach ($secrets as $username => $item) {
+                        $rawCaller = $item['caller_id'] ?? $item['caller-id'] ?? '';
+                        $result['secrets'][] = [
+                            'name' => is_string($username) ? $username : ($item['name'] ?? ''),
+                            'caller_id' => $rawCaller,
+                            'clean_mac' => $cleanMac($rawCaller),
+                            'remote_address' => $item['remote_address'] ?? $item['remote-address'] ?? null,
+                            'profile' => $item['profile'] ?? null,
+                        ];
+                    }
+                    $result['reachable'] = true;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('fetchMikroTikLookupData: getAllPPPoESecrets failed: ' . $e->getMessage());
+            }
+        } catch (\Throwable $e) {
+            Log::warning('fetchMikroTikLookupData error: ' . $e->getMessage());
+        }
+
+        return $result;
+    }
+
+    /**
      * Strictly match an OLT ONU's MAC address against the parsed GenieACS devices array.
      * Uses only exact MAC matching or exact 12-char MAC substring in Serial/DeviceID.
-     * Never uses loose prefix matching to prevent attaching wrong customer data.
      */
     public function matchGenieAcsDevice(string $rawOnuMac, array $parsedGenie): ?array
     {
@@ -1050,14 +1116,182 @@ class OltSnmpService
             }
         }
 
-        // Tier 3 prefix matching is intentionally omitted to avoid false positives on unmapped devices.
         return null;
     }
 
     /**
-     * Full reconciliation of OLT ONUs with GenieACS devices and billing customers.
+     * Match an OLT ONU against GenieACS devices, MikroTik active sessions/secrets, and billing customers.
+     * Supports:
+     * 1. Exact MAC match
+     * 2. MAC prefix + offset difference (e.g. OLT B4:64:15:B2:F4:83 vs MikroTik B4:64:15:B2:F4:89, offset +6)
+     * 3. GenieACS TR-069 serial number & Device ID mapping
+     * 4. PPPoE username matching (e.g. CJA-sapar -> Customer 'sapar' / 'CJA-sapar')
      */
-    public function syncOltWithGenieAcs(MasterOlt $olt): array
+    public function matchOltOnuWithGenieAndMikrotik(
+        string $rawOnuMac,
+        array $parsedGenie,
+        array $mikrotikData,
+        array $custByPppoe,
+        array $custByName = [],
+        ?string $existingSerial = null,
+        ?string $existingModel = null
+    ): array {
+        $cleanOnuMac = strtoupper(preg_replace('/[^0-9A-Fa-f]/', '', trim($rawOnuMac)));
+        $onuPrefix = strlen($cleanOnuMac) === 12 ? substr($cleanOnuMac, 0, 10) : '';
+        $onuLastByte = strlen($cleanOnuMac) === 12 ? hexdec(substr($cleanOnuMac, 10, 2)) : null;
+
+        $matchedCustomer = null;
+        $matchedGenie = null;
+        $matchedMikrotik = null;
+        $pppoeUsername = null;
+        $serial = $existingSerial ?: ($cleanOnuMac ? 'ONU-' . $cleanOnuMac : null);
+        $model = $existingModel ?: 'HiOSO EPON ONU';
+        $ipAddress = null;
+        $matchTier = null;
+        $macOffset = null;
+        $mikrotikCallerId = null;
+
+        // 1. Check GenieACS matching
+        $foundGenie = $this->matchGenieAcsDevice($rawOnuMac, $parsedGenie);
+        if ($foundGenie) {
+            $matchedGenie = $foundGenie;
+            if (!empty($foundGenie['sn'])) {
+                $serial = $foundGenie['sn'];
+            }
+            if (!empty($foundGenie['model'])) {
+                $model = $foundGenie['model'] . ' ONT';
+            }
+            if (!empty($foundGenie['pppoe'])) {
+                $pppoeUsername = trim($foundGenie['pppoe']);
+            }
+            $matchTier = 'GenieACS TR-069';
+        }
+
+        // 2. Check MikroTik Active Connections
+        if (!empty($mikrotikData['active'])) {
+            // 2a. Exact MAC in MikroTik active
+            foreach ($mikrotikData['active'] as $act) {
+                if (!empty($act['clean_mac']) && $act['clean_mac'] === $cleanOnuMac) {
+                    $matchedMikrotik = $act;
+                    $mikrotikCallerId = $act['caller_id'];
+                    $pppoeUsername = $pppoeUsername ?: $act['name'];
+                    $ipAddress = $act['address'] ?? $ipAddress;
+                    $macOffset = 0;
+                    $matchTier = $matchTier ? "{$matchTier} + MikroTik Active (Exact MAC)" : 'MikroTik Active (Exact MAC)';
+                    break;
+                }
+            }
+
+            // 2b. 5-Octet Prefix + Offset match (e.g. B46415B2F483 vs B46415B2F489, offset +6)
+            if (!$matchedMikrotik && $onuPrefix !== '' && $onuLastByte !== null) {
+                foreach ($mikrotikData['active'] as $act) {
+                    if (strlen($act['clean_mac']) === 12) {
+                        $actPrefix = substr($act['clean_mac'], 0, 10);
+                        $actLastByte = hexdec(substr($act['clean_mac'], 10, 2));
+                        $offset = $actLastByte - $onuLastByte;
+                        if ($actPrefix === $onuPrefix && abs($offset) <= 16) {
+                            $matchedMikrotik = $act;
+                            $mikrotikCallerId = $act['caller_id'];
+                            $pppoeUsername = $pppoeUsername ?: $act['name'];
+                            $ipAddress = $act['address'] ?? $ipAddress;
+                            $macOffset = $offset;
+                            $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
+                            $tierText = "MikroTik Active (MAC Offset {$offsetTag})";
+                            $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check MikroTik Secrets if not matched from active
+        if (!$matchedMikrotik && !empty($mikrotikData['secrets'])) {
+            // 3a. Exact caller-id in secret
+            foreach ($mikrotikData['secrets'] as $sec) {
+                if (!empty($sec['clean_mac']) && $sec['clean_mac'] === $cleanOnuMac) {
+                    $matchedMikrotik = $sec;
+                    $mikrotikCallerId = $sec['caller_id'];
+                    $pppoeUsername = $pppoeUsername ?: $sec['name'];
+                    $ipAddress = $sec['remote_address'] ?? $ipAddress;
+                    $macOffset = 0;
+                    $tierText = 'MikroTik Secret (Exact MAC)';
+                    $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
+                    break;
+                }
+            }
+
+            // 3b. 5-Octet Prefix + Offset match in secret
+            if (!$matchedMikrotik && $onuPrefix !== '' && $onuLastByte !== null) {
+                foreach ($mikrotikData['secrets'] as $sec) {
+                    if (strlen($sec['clean_mac']) === 12) {
+                        $secPrefix = substr($sec['clean_mac'], 0, 10);
+                        $secLastByte = hexdec(substr($sec['clean_mac'], 10, 2));
+                        $offset = $secLastByte - $onuLastByte;
+                        if ($secPrefix === $onuPrefix && abs($offset) <= 16) {
+                            $matchedMikrotik = $sec;
+                            $mikrotikCallerId = $sec['caller_id'];
+                            $pppoeUsername = $pppoeUsername ?: $sec['name'];
+                            $ipAddress = $sec['remote_address'] ?? $ipAddress;
+                            $macOffset = $offset;
+                            $offsetTag = ($offset >= 0 ? "+{$offset}" : (string)$offset);
+                            $tierText = "MikroTik Secret (MAC Offset {$offsetTag})";
+                            $matchTier = $matchTier ? "{$matchTier} + {$tierText}" : $tierText;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Resolve Customer Database Record
+        if ($pppoeUsername) {
+            $cleanUser = strtolower(trim($pppoeUsername));
+            $matchedCustomer = $custByPppoe[$cleanUser] ?? null;
+
+            // Try stripped prefix / suffix (e.g. CJA-sapar -> sapar)
+            if (!$matchedCustomer) {
+                $stripped = preg_replace('/^(cja[-_]?|cja)/i', '', $cleanUser);
+                $stripped = trim($stripped, '-_ ');
+                if (!empty($stripped)) {
+                    $matchedCustomer = $custByPppoe[$stripped] ?? ($custByName[$stripped] ?? null);
+                }
+            }
+
+            // Try customer name match
+            if (!$matchedCustomer && !empty($custByName[$cleanUser])) {
+                $matchedCustomer = $custByName[$cleanUser];
+            }
+        }
+
+        // Determine sources
+        $sources = [];
+        if ($matchedGenie) $sources[] = 'GenieACS';
+        if ($matchedMikrotik) $sources[] = 'MikroTik';
+        $sourceText = !empty($sources) ? implode(' & ', $sources) : 'OLT Direct';
+
+        return [
+            'matched' => ($matchedCustomer !== null || $matchedGenie !== null || $matchedMikrotik !== null),
+            'customer' => $matchedCustomer,
+            'customer_id' => $matchedCustomer?->id,
+            'customer_name' => $matchedCustomer?->name,
+            'pppoe_username' => $pppoeUsername ?: ($matchedCustomer?->pppoe_username ?? null),
+            'serial_number' => $serial,
+            'model' => $model,
+            'ip_address' => $ipAddress,
+            'source' => $sourceText,
+            'match_tier' => $matchTier ?: 'OLT Hardware',
+            'olt_mac' => $rawOnuMac,
+            'mikrotik_caller_id' => $mikrotikCallerId,
+            'mac_offset' => $macOffset,
+        ];
+    }
+
+    /**
+     * Full dual-source reconciliation of OLT ONUs using both GenieACS (TR-069) and MikroTik (RouterOS PPPoE/Secrets).
+     * Handles hardware MAC offset differences (e.g. OLT B4:64:15:B2:F4:83 vs MikroTik B4:64:15:B2:F4:89).
+     */
+    public function syncOltWithMikrotikAndGenieAcs(MasterOlt $olt): array
     {
         // 1. Try fetching 100% real live hardware data first if HiOSO
         $hiosoData = $this->fetchLiveHiosoData($olt);
@@ -1066,47 +1300,82 @@ class OltSnmpService
         }
 
         $parsedGenie = $this->fetchGenieAcsLookupDevices();
+        $mikrotikData = $this->fetchMikroTikLookupData();
 
         $customers = Customer::all();
         $custByPppoe = [];
+        $custByName = [];
         foreach ($customers as $c) {
             if (!empty($c->pppoe_username)) {
                 $custByPppoe[strtolower(trim($c->pppoe_username))] = $c;
             }
+            if (!empty($c->name)) {
+                $custByName[strtolower(trim($c->name))] = $c;
+            }
         }
 
-        $onus = OltOnu::where('olt_id', $olt->id)->get();
+        $onus = OltOnu::with(['customer', 'ponPort'])->where('olt_id', $olt->id)->get();
         $matchedOnusCount = 0;
         $matchedCustomersCount = 0;
+        $matchedDetails = [];
 
         foreach ($onus as $onu) {
-            $foundGenie = $this->matchGenieAcsDevice($onu->mac_address, $parsedGenie);
+            $matchResult = $this->matchOltOnuWithGenieAndMikrotik(
+                $onu->mac_address,
+                $parsedGenie,
+                $mikrotikData,
+                $custByPppoe,
+                $custByName,
+                $onu->serial_number,
+                $onu->model
+            );
 
-            if ($foundGenie) {
+            if ($matchResult['matched']) {
                 $matchedOnusCount++;
-                $matchedCust = !empty($foundGenie['pppoe']) ? ($custByPppoe[strtolower($foundGenie['pppoe'])] ?? null) : null;
-
                 $updates = [];
-                if (!empty($foundGenie['sn'])) {
-                    $updates['serial_number'] = $foundGenie['sn'];
+
+                if (!empty($matchResult['serial_number'])) {
+                    $updates['serial_number'] = $matchResult['serial_number'];
                 }
-                if (!empty($foundGenie['model'])) {
-                    $updates['model'] = $foundGenie['model'] . ' ONT';
+                if (!empty($matchResult['model'])) {
+                    $updates['model'] = $matchResult['model'];
                 }
+
+                $matchedCust = $matchResult['customer'];
                 if ($matchedCust) {
                     $updates['customer_id'] = $matchedCust->id;
                     $matchedCustomersCount++;
 
-                    $matchedCust->update([
+                    $custUpdates = [
                         'olt_id' => $olt->id,
                         'pon_port_id' => $onu->pon_port_id,
                         'olt_onu_id' => $onu->id,
-                    ]);
+                    ];
+                    if (empty($matchedCust->pppoe_username) && !empty($matchResult['pppoe_username'])) {
+                        $custUpdates['pppoe_username'] = $matchResult['pppoe_username'];
+                    }
+                    $matchedCust->update($custUpdates);
                 }
 
                 if (!empty($updates)) {
                     $onu->update($updates);
                 }
+
+                $matchedDetails[] = [
+                    'onu_id' => $onu->id,
+                    'pon_index' => $onu->ponPort?->pon_index ?? 1,
+                    'onu_index' => $onu->onu_index,
+                    'olt_mac' => $onu->mac_address,
+                    'mikrotik_mac' => $matchResult['mikrotik_caller_id'] ?? '-',
+                    'mac_offset' => $matchResult['mac_offset'],
+                    'pppoe_username' => $matchResult['pppoe_username'] ?? '-',
+                    'customer_name' => $matchedCust?->name ?? 'Belum Terdaftar',
+                    'customer_id' => $matchedCust?->id,
+                    'ip_address' => $matchResult['ip_address'] ?? '-',
+                    'source' => $matchResult['source'],
+                    'match_tier' => $matchResult['match_tier'],
+                    'status' => $onu->status,
+                ];
             }
         }
 
@@ -1114,9 +1383,20 @@ class OltSnmpService
             'success' => true,
             'total_onus' => $onus->count(),
             'genie_devices_count' => count($parsedGenie),
+            'mikrotik_active_count' => count($mikrotikData['active']),
+            'mikrotik_secrets_count' => count($mikrotikData['secrets']),
             'matched_onus' => $matchedOnusCount,
             'matched_customers' => $matchedCustomersCount,
+            'details' => $matchedDetails,
         ];
+    }
+
+    /**
+     * Backward compatibility wrapper for syncOltWithGenieAcs
+     */
+    public function syncOltWithGenieAcs(MasterOlt $olt): array
+    {
+        return $this->syncOltWithMikrotikAndGenieAcs($olt);
     }
 
     /**

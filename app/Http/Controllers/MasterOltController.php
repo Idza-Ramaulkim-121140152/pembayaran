@@ -547,4 +547,19 @@ class MasterOltController extends Controller
             'data' => $result,
         ]);
     }
+
+    /**
+     * POST /api/master-olts/{olt}/sync-mikrotik
+     * Discover & Synchronize OLT ONUs with MikroTik PPPoE active sessions & GenieACS TR-069
+     */
+    public function syncMikrotikGenieAcs(MasterOlt $olt)
+    {
+        $result = $this->oltSnmpService->syncOltWithMikrotikAndGenieAcs($olt);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Berhasil mencocokkan {$result['matched_customers']} ONT dari total {$result['total_onus']} ONU dengan MikroTik PPPoE dan GenieACS.",
+            'data' => $result,
+        ]);
+    }
 }

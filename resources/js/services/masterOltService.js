@@ -13,6 +13,7 @@ const masterOltService = {
     autoDiscover: (id) => apiClient.post(`/master-olts/${id}/auto-discover`),
     syncTopology: (id) => apiClient.post(`/master-olts/${id}/sync-topology`),
     syncGenieAcs: (oltId) => apiClient.post(`/master-olts/${oltId}/sync-genieacs`),
+    syncMikrotik: (oltId) => apiClient.post(`/master-olts/${oltId}/sync-mikrotik`),
     reassignOnu: (payload) => apiClient.post('/super-panel/reassign-onu', payload),
 };
 

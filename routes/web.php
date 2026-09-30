@@ -725,6 +725,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/master-olts/{olt}/auto-discover', [MasterOltController::class, 'autoDiscover'])->name('api.master-olts.auto-discover');
         Route::post('/api/master-olts/{olt}/sync-topology', [MasterOltController::class, 'syncTopology'])->name('api.master-olts.sync-topology');
         Route::post('/api/master-olts/{olt}/sync-genieacs', [MasterOltController::class, 'syncGenieAcs'])->name('api.master-olts.sync-genieacs');
+        Route::post('/api/master-olts/{olt}/sync-mikrotik', [MasterOltController::class, 'syncMikrotikGenieAcs'])->name('api.master-olts.sync-mikrotik');
 
         // Packages API
         Route::get('/api/packages', [PackageController::class, 'index'])->name('api.packages.index');

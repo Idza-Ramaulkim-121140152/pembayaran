@@ -90,9 +90,32 @@ function MasterOltPage() {
     const [onuStatusFilter, setOnuStatusFilter] = useState('all'); // 'all' | 'online' | 'offline'
     const [onuPage, setOnuPage] = useState(1);
     const [syncingGenieId, setSyncingGenieId] = useState(null);
+    const [syncingMikrotikId, setSyncingMikrotikId] = useState(null);
+    const [reconciliationResult, setReconciliationResult] = useState(null);
     const ONUS_PER_PAGE = 15;
 
     const isEdit = useMemo(() => !!form.id, [form.id]);
+
+    const handleSyncMikrotik = async (oltId) => {
+        try {
+            setSyncingMikrotikId(oltId);
+            setError(null);
+            setSuccess(null);
+            const res = await masterOltService.syncMikrotik(oltId);
+            if (res.data?.success) {
+                setSuccess(res.data.message || 'Discover MikroTik & GenieACS berhasil.');
+                setReconciliationResult(res.data.data || null);
+                await fetchOlts();
+                if (selectedPort?.oltId === oltId) {
+                    await handleRefreshPortDetails();
+                }
+            }
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal melakukan discover ke MikroTik & GenieACS.');
+        } finally {
+            setSyncingMikrotikId(null);
+        }
+    };
 
     const handleSyncGenieAcs = async (oltId) => {
         try {
@@ -102,6 +125,9 @@ function MasterOltPage() {
             const res = await masterOltService.syncGenieAcs(oltId);
             if (res.data?.success) {
                 setSuccess(res.data.message || 'Sinkronisasi GenieACS dan PPPoE pelanggan berhasil.');
+                if (res.data?.data?.details) {
+                    setReconciliationResult(res.data.data);
+                }
                 await fetchOlts();
                 if (selectedPort?.oltId === oltId) {
                     await handleRefreshPortDetails();
@@ -498,6 +524,16 @@ function MasterOltPage() {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <button
                                             type="button"
+                                            onClick={() => handleSyncMikrotik(olt.id)}
+                                            disabled={syncingMikrotikId === olt.id}
+                                            className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                                            title="Discover ke MikroTik & GenieACS untuk mencocokkan ONT, MAC address (termasuk toleransi offset), dan akun PPPoE"
+                                        >
+                                            <Search size={14} className={syncingMikrotikId === olt.id ? 'animate-spin text-cyan-200' : ''} />
+                                            {syncingMikrotikId === olt.id ? 'Mencocokkan...' : '🔍 Discover MikroTik & GenieACS'}
+                                        </button>
+                                        <button
+                                            type="button"
                                             onClick={() => handleAutoDiscover(olt)}
                                             disabled={discoveringId === olt.id}
                                             className="px-3 py-1.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
@@ -673,6 +709,16 @@ function MasterOltPage() {
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-2 self-end sm:self-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSyncMikrotik(olt.id)}
+                                                            disabled={syncingMikrotikId === olt.id}
+                                                            className="px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition disabled:opacity-50"
+                                                            title="Discover MikroTik & GenieACS untuk mencocokkan ONT dan akun PPPoE"
+                                                        >
+                                                            <Search size={13} className={syncingMikrotikId === olt.id ? 'animate-spin text-blue-600' : 'text-blue-600'} />
+                                                            {syncingMikrotikId === olt.id ? 'Mencocokkan...' : '🔍 Discover MikroTik'}
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             onClick={() => handleSyncGenieAcs(olt.id)}
@@ -1189,6 +1235,135 @@ function MasterOltPage() {
 
                         <div className="pt-2 flex justify-end">
                             <Button variant="secondary" onClick={() => setDiscoveryResult(null)}>
+                                Tutup
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* RECONCILIATION / DUAL DISCOVERY RESULT MODAL */}
+            {reconciliationResult && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-4xl w-full p-6 sm:p-7 space-y-5 shadow-2xl border border-gray-100 my-8">
+                        <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+                            <div>
+                                <h3 className="font-black text-lg text-gray-900 flex items-center gap-2">
+                                    <Zap className="text-blue-600" />
+                                    Hasil Discover &amp; Sinkronisasi Dual-Source (MikroTik + GenieACS)
+                                </h3>
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                    Pencocokan ONT OLT dengan Sesi PPPoE MikroTik &amp; Perangkat GenieACS (termasuk toleransi offset MAC hardware).
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setReconciliationResult(null)}
+                                className="text-gray-400 hover:text-gray-600 p-1 rounded-xl"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* KPI Summary Cards */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[11px] text-gray-500 font-medium">Total ONT OLT</span>
+                                <p className="text-xl font-bold text-gray-900 mt-0.5">{reconciliationResult.total_onus ?? 0}</p>
+                                <span className="text-[10px] text-gray-400">Unit terdeteksi di OLT</span>
+                            </div>
+                            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                <span className="text-[11px] text-emerald-800 font-medium">Pelanggan Cocok</span>
+                                <p className="text-xl font-bold text-emerald-700 mt-0.5">{reconciliationResult.matched_customers ?? 0}</p>
+                                <span className="text-[10px] text-emerald-600 font-semibold">Terkoneksi ke Database</span>
+                            </div>
+                            <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-200">
+                                <span className="text-[11px] text-blue-800 font-medium">PPPoE MikroTik</span>
+                                <p className="text-xl font-bold text-blue-700 mt-0.5">{reconciliationResult.mikrotik_active_count ?? 0} Aktif</p>
+                                <span className="text-[10px] text-blue-600">{reconciliationResult.mikrotik_secrets_count ?? 0} Secret Terdaftar</span>
+                            </div>
+                            <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200">
+                                <span className="text-[11px] text-indigo-800 font-medium">GenieACS TR-069</span>
+                                <p className="text-xl font-bold text-indigo-700 mt-0.5">{reconciliationResult.genie_devices_count ?? 0}</p>
+                                <span className="text-[10px] text-indigo-600">Perangkat Online/CPE</span>
+                            </div>
+                        </div>
+
+                        {/* Matched Details Table */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <h4 className="font-bold text-xs text-gray-700">
+                                    Detail Hasil Pencocokan ({reconciliationResult.details?.length || 0} Perangkat)
+                                </h4>
+                                <span className="text-[11px] text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full font-medium border border-indigo-200/60">
+                                    💡 Toleransi MAC Offset ±16 otomatis diselaraskan
+                                </span>
+                            </div>
+
+                            {(!reconciliationResult.details || reconciliationResult.details.length === 0) ? (
+                                <div className="p-6 text-center border border-dashed border-gray-200 rounded-2xl text-xs text-gray-500">
+                                    Belum ada detail ONT yang dicocokkan. Pastikan OLT dan MikroTik/GenieACS terhubung.
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto max-h-80 border border-gray-200 rounded-2xl">
+                                    <table className="w-full text-xs text-left">
+                                        <thead className="bg-gray-50 text-gray-700 font-bold border-b border-gray-200 sticky top-0">
+                                            <tr>
+                                                <th className="px-3 py-2">Port / Slot</th>
+                                                <th className="px-3 py-2">Pelanggan &amp; PPPoE</th>
+                                                <th className="px-3 py-2">MAC OLT (PON)</th>
+                                                <th className="px-3 py-2">MAC MikroTik (Caller-ID)</th>
+                                                <th className="px-3 py-2">Metode Match &amp; Sumber</th>
+                                                <th className="px-3 py-2">IP Address</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {reconciliationResult.details.map((item, idx) => (
+                                                <tr key={idx} className="hover:bg-blue-50/30 transition">
+                                                    <td className="px-3 py-2 font-mono font-bold text-gray-800">
+                                                        P{item.pon_index}:{item.onu_index}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        <p className="font-bold text-gray-900">{item.customer_name}</p>
+                                                        <p className="text-[11px] text-indigo-600 font-mono">
+                                                            {item.pppoe_username !== '-' ? `PPPoE: ${item.pppoe_username}` : '-'}
+                                                        </p>
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono text-gray-800 font-semibold">
+                                                        {item.olt_mac}
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono">
+                                                        <span className="text-gray-900 font-semibold">{item.mikrotik_mac}</span>
+                                                        {item.mac_offset !== null && item.mac_offset !== 0 && (
+                                                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                                                Offset {item.mac_offset > 0 ? `+${item.mac_offset}` : item.mac_offset}
+                                                            </span>
+                                                        )}
+                                                        {item.mac_offset === 0 && (
+                                                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                                                Exact MAC
+                                                            </span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-semibold">
+                                                            {item.source}
+                                                        </span>
+                                                        <p className="text-[10px] text-gray-500 mt-0.5 truncate max-w-xs">{item.match_tier}</p>
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono text-gray-700">
+                                                        {item.ip_address}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-2 flex justify-end">
+                            <Button variant="secondary" onClick={() => setReconciliationResult(null)}>
                                 Tutup
                             </Button>
                         </div>
