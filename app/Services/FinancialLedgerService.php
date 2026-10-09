@@ -9,6 +9,7 @@ use App\Models\Invoice;
 use App\Models\PayrollMemberPayment;
 use App\Models\Pengeluaran;
 use App\Models\User;
+use App\Services\CompanyFinanceReceiverService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
@@ -90,7 +91,9 @@ class FinancialLedgerService
                     'payment_receiver_is_company_finance' => $paymentReceiver
                         ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
                         : false,
-                    'qris_payment_time' => $invoice->qris_payment_time ? $invoice->qris_payment_time->toIso8601String() : null,
+                    'qris_payment_time' => $invoice->qris_payment_time
+                        ? ($invoice->qris_payment_time instanceof CarbonInterface ? $invoice->qris_payment_time->toIso8601String() : Carbon::parse($invoice->qris_payment_time)->toIso8601String())
+                        : null,
                     'qris_sender' => $invoice->qris_sender,
                     'qris_transaction_number' => $invoice->qris_transaction_number,
                 ],
