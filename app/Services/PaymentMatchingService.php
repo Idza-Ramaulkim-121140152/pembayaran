@@ -8,6 +8,7 @@ use App\Models\Invoice;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class PaymentMatchingService
 {
@@ -217,6 +218,41 @@ class PaymentMatchingService
             $query->whereDate('created_at', '<=', $filters['to_date']);
         }
 
+        if (!empty($filters['source']) && $filters['source'] !== 'all') {
+            $source = trim((string) $filters['source']);
+            if ($source === 'whatsapp') {
+                $query->where(function ($q) {
+                    $q->where('source', 'whatsapp')
+                        ->orWhere('source', 'like', 'wa_%');
+                });
+            } elseif ($source === 'web_public') {
+                $query->where(function ($q) {
+                    $q->where('source', 'web_public')
+                        ->orWhere('source', 'web')
+                        ->orWhere('source', 'public_invoice');
+                });
+            } elseif ($source === 'admin_upload') {
+                $query->where(function ($q) {
+                    $q->where('source', 'admin_upload')
+                        ->orWhere('source', 'dashboard')
+                        ->orWhere('source', 'manual_upload');
+                });
+            } else {
+                $query->where('source', $source);
+            }
+        }
+
+        if (!empty($filters['confidence_level']) && $filters['confidence_level'] !== 'all') {
+            $conf = trim((string) $filters['confidence_level']);
+            if ($conf === 'high') {
+                $query->where('match_confidence', '>=', 90);
+            } elseif ($conf === 'medium') {
+                $query->whereBetween('match_confidence', [70, 89.99]);
+            } elseif ($conf === 'low') {
+                $query->where('match_confidence', '<', 70);
+            }
+        }
+
         return $query->paginate($perPage);
     }
 
@@ -405,11 +441,55 @@ class PaymentMatchingService
         ?int $actorId = null
     ): void {
         DB::transaction(function () use ($capture, $invoice, $score, $autoApplied, $actorId): void {
+            $mediaPath = (string) data_get($capture->meta, 'media.path', '');
+            $paidDate = $capture->paid_date ? Carbon::parse($capture->paid_date) : now();
+            $paidTime = (string) data_get($capture->meta, 'analysis.paid_time', now()->format('H:i:s'));
+            $paidTimestamp = Carbon::parse($paidDate->toDateString() . ' ' . $paidTime);
+
             if ($invoice->status !== 'paid') {
-                $invoice->amount = (float) $capture->amount;
+                $invoice->amount = (float) $capture->amount > 0 ? (float) $capture->amount : (float) $invoice->amount;
                 $invoice->status = 'paid';
-                $invoice->paid_at = Carbon::parse($capture->paid_date)->setTimeFrom(now());
+                $invoice->paid_at = $paidTimestamp;
                 $invoice->tolak_info = null;
+
+                // Attach media proof if empty on invoice
+                if (empty($invoice->bukti_pembayaran) && !empty($mediaPath)) {
+                    $invoice->bukti_pembayaran = $mediaPath;
+                }
+
+                // Attach detected QRIS / Bank transaction metadata
+                $referenceCode = $capture->reference_code ?: (string) data_get($capture->meta, 'analysis.reference_code', '');
+                $sender = (string) data_get($capture->meta, 'analysis.destination_identity.name', data_get($capture->meta, 'source.sender_name', data_get($capture->meta, 'analysis.payment_channel', '')));
+                $channel = strtolower((string) data_get($capture->meta, 'analysis.payment_channel', ''));
+                $isQris = str_contains($channel, 'qris');
+
+                if (Schema::hasColumn('invoices', 'qris_transaction_number') && !empty($referenceCode)) {
+                    $invoice->qris_transaction_number = $referenceCode;
+                }
+                if (Schema::hasColumn('invoices', 'qris_sender') && !empty($sender)) {
+                    $invoice->qris_sender = $sender;
+                }
+                if (Schema::hasColumn('invoices', 'qris_payment_time')) {
+                    $invoice->qris_payment_time = $paidTimestamp;
+                }
+                if (Schema::hasColumn('invoices', 'include_in_mutation')) {
+                    $invoice->include_in_mutation = true;
+                }
+
+                // Match or set payment receipt option
+                if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id') && empty($invoice->received_via_payment_receipt_option_id)) {
+                    if (Schema::hasTable('payment_receipt_options')) {
+                        $keyword = $isQris ? 'qris' : 'transfer';
+                        $option = \App\Models\PaymentReceiptOption::query()
+                            ->where('is_active', true)
+                            ->where('name', 'like', "%{$keyword}%")
+                            ->first() ?: \App\Models\PaymentReceiptOption::query()->where('is_active', true)->first();
+                        if ($option) {
+                            $invoice->received_via_payment_receipt_option_id = $option->id;
+                        }
+                    }
+                }
+
                 $invoice->save();
             }
 
@@ -425,28 +505,51 @@ class PaymentMatchingService
             ]);
             $capture->save();
 
-            $this->ledgerService->syncInvoicePayment($invoice->fresh(), $actorId);
+            // Update customer due date & un-isolate service
+            $customer = $invoice->customer;
+            if ($customer) {
+                $isIsolated = (bool) ($customer->is_service_isolated ?? false);
+                if ($isIsolated) {
+                    $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
+                } elseif (!empty($customer->due_date)) {
+                    $customer->due_date = Carbon::parse((string) $customer->due_date)->startOfDay()->addDays(30)->toDateString();
+                } else {
+                    $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
+                }
 
-            // Auto-restore PPPoE isolation in MikroTik if customer was isolated
-            try {
-                $customer = $invoice->customer;
-                if ($customer && $customer->pppoe_username) {
-                    $mikrotik = app(\App\Services\MikroTikService::class);
-                    $package = $customer->package;
-                    $targetProfile = $customer->mikrotik_profile ?: ($package?->mikrotik_profile ?: $package?->name);
-                    if ($targetProfile) {
-                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                        $customer->is_service_isolated = false;
-                        $customer->service_isolated_at = null;
-                        $customer->save();
+                $customer->is_service_isolated = false;
+                $customer->service_isolated_at = null;
+                $customer->service_isolated_by = null;
+                $customer->isolation_restore_profile = null;
+                $customer->save();
+
+                // Reset usage snapshot
+                if (class_exists(\App\Services\CustomerUsageSnapshotService::class)) {
+                    try {
+                        app(\App\Services\CustomerUsageSnapshotService::class)->resetPeriodByCustomerId((int) $customer->id);
+                    } catch (\Throwable $snapEx) {
+                        // ignore
                     }
                 }
-            } catch (\Throwable $mikrotikEx) {
-                \Illuminate\Support\Facades\Log::warning('MikroTik un-isolation skipped or failed during payment capture approval', [
-                    'customer_id' => $invoice->customer_id,
-                    'error' => $mikrotikEx->getMessage(),
-                ]);
+
+                // MikroTik un-isolation
+                if ($customer->pppoe_username) {
+                    try {
+                        $mikrotik = app(\App\Services\MikroTikService::class);
+                        $package = $customer->package;
+                        $targetProfile = $customer->mikrotik_profile ?: ($package?->mikrotik_profile ?: $package?->name ?: 'default');
+                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
+                    } catch (\Throwable $mikrotikEx) {
+                        \Illuminate\Support\Facades\Log::warning('MikroTik un-isolation skipped or failed during payment capture approval', [
+                            'customer_id' => $invoice->customer_id,
+                            'error' => $mikrotikEx->getMessage(),
+                        ]);
+                    }
+                }
             }
+
+            // Sync with financial ledger / mutations
+            $this->ledgerService->syncInvoicePayment($invoice->fresh(), $actorId);
 
             // Dispatch customer payment confirmation
             try {

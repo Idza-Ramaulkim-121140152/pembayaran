@@ -226,6 +226,8 @@ class BillingAutomationController extends Controller
             'search' => 'nullable|string|max:100',
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
+            'source' => 'nullable|string|max:50',
+            'confidence_level' => 'nullable|string|in:high,medium,low,all',
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
 
@@ -379,6 +381,60 @@ class BillingAutomationController extends Controller
         return response()->json([
             'message' => 'Pelanggan berhasil ditautkan ke bukti pembayaran.',
             'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
+        ]);
+    }
+
+    public function bulkResolve(Request $request)
+    {
+        $validated = $request->validate([
+            'decision' => ['required', Rule::in(['approve', 'reject'])],
+            'min_confidence' => 'nullable|numeric|min:0|max:100',
+            'capture_ids' => 'nullable|array',
+            'capture_ids.*' => 'integer|exists:billing_payment_captures,id',
+        ]);
+
+        $decision = (string) $validated['decision'];
+        $minConfidence = isset($validated['min_confidence']) ? (float) $validated['min_confidence'] : 90.0;
+        $captureIds = $validated['capture_ids'] ?? null;
+
+        $query = BillingPaymentCapture::query()->where('match_status', 'needs_review');
+        if (!empty($captureIds)) {
+            $query->whereIn('id', $captureIds);
+        } else {
+            $query->where('match_confidence', '>=', $minConfidence);
+        }
+
+        $captures = $query->get();
+        $processed = 0;
+        $errors = 0;
+
+        foreach ($captures as $capture) {
+            try {
+                $candidate = $capture->matchReviews()->where('status', 'candidate')->orderByDesc('score')->first();
+                $candidateInvoiceId = $candidate ? (int) $candidate->candidate_invoice_id : (int) $capture->invoice_id;
+                $this->paymentMatchingService->resolve(
+                    $capture,
+                    $decision,
+                    $candidateInvoiceId ?: null,
+                    auth()->id()
+                );
+                $processed++;
+            } catch (\Throwable $e) {
+                $errors++;
+                \Illuminate\Support\Facades\Log::warning('Failed to bulk resolve payment capture', [
+                    'capture_id' => $capture->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json([
+            'message' => "Berhasil memproses {$processed} pembayaran." . ($errors > 0 ? " ({$errors} gagal/dilewati)" : ''),
+            'data' => [
+                'processed' => $processed,
+                'failed' => $errors,
+                'total_candidates' => $captures->count(),
+            ],
         ]);
     }
 }

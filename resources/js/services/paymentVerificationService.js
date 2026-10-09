@@ -9,6 +9,7 @@ const paymentVerificationService = {
         headers: { 'Content-Type': 'multipart/form-data' },
     }),
     resolveCapture: (captureId, payload) => apiClient.post(`/billing/payments/${captureId}/resolve`, payload),
+    bulkResolve: (payload) => apiClient.post('/billing/payments/bulk-resolve', payload),
     reanalyzeCapture: (captureId) => apiClient.post(`/billing/payments/${captureId}/reanalyze`),
     assignCustomer: (captureId, customerId) => apiClient.post(`/billing/payments/${captureId}/assign-customer`, { customer_id: customerId }),
     getCustomers: (params = {}) => apiClient.get('/customers', { params }),

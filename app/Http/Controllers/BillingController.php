@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\PaymentProofGuard;
 use App\Jobs\ProcessBillingAutoInvoiceJob;
 use App\Models\BillingAutoInvoiceJob;
+use App\Models\BillingPaymentCapture;
 use App\Models\Customer;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
@@ -497,6 +498,36 @@ class BillingController extends Controller
             }
         }
 
+        // AI Verification Captures pending review
+        $pendingAiCaptures = BillingPaymentCapture::query()
+            ->where('match_status', 'needs_review')
+            ->orderByDesc('id')
+            ->get();
+
+        $pendingAiCapturesCount = $pendingAiCaptures->count();
+        $pendingAiCaptureByCustomer = [];
+        $pendingAiCaptureByInvoice = [];
+        foreach ($pendingAiCaptures as $capture) {
+            $captureData = [
+                'id' => $capture->id,
+                'source' => $capture->source,
+                'amount' => (float) $capture->amount,
+                'match_confidence' => (float) $capture->match_confidence,
+                'reference_code' => $capture->reference_code,
+                'paid_date' => $capture->paid_date ? $capture->paid_date->format('Y-m-d') : null,
+                'media_path' => $capture->meta['media_path'] ?? null,
+                'media_url' => !empty($capture->meta['media_path']) ? asset('storage/' . $capture->meta['media_path']) : null,
+                'sender' => $capture->meta['sender'] ?? null,
+            ];
+
+            if ($capture->customer_id && !isset($pendingAiCaptureByCustomer[(int) $capture->customer_id])) {
+                $pendingAiCaptureByCustomer[(int) $capture->customer_id] = $captureData;
+            }
+            if ($capture->invoice_id && !isset($pendingAiCaptureByInvoice[(int) $capture->invoice_id])) {
+                $pendingAiCaptureByInvoice[(int) $capture->invoice_id] = $captureData;
+            }
+        }
+
         $paidThisMonthMap = Invoice::query()
             ->where('status', 'paid')
             ->whereNotNull('paid_at')
@@ -522,6 +553,10 @@ class BillingController extends Controller
             $this->appendPaymentProofAttributes($activeInvoice);
             $this->appendPaymentProofAttributes($pendingConfirmationInvoice);
 
+            $pendingAiCapture = $pendingAiCaptureByCustomer[(int) $customer->id]
+                ?? ($activeInvoice ? ($pendingAiCaptureByInvoice[(int) $activeInvoice->id] ?? null) : null)
+                ?? ($latestInvoice ? ($pendingAiCaptureByInvoice[(int) $latestInvoice->id] ?? null) : null);
+
             $dueDate = $customer->due_date ? Carbon::parse($customer->due_date)->startOfDay() : null;
             $isLate = $dueDate && $dueDate->lt($today);
             $isAlmostLate = $dueDate && $dueDate->gte($today) && $dueDate->lte($almostLateEndDate);
@@ -535,6 +570,7 @@ class BillingController extends Controller
                 'invoice' => $latestInvoice,
                 'active_invoice' => $activeInvoice,
                 'pending_confirmation_invoice' => $pendingConfirmationInvoice,
+                'pending_ai_capture' => $pendingAiCapture,
                 'has_active_invoice' => $hasActiveInvoice,
                 'can_create_invoice' => $canCreateInvoice,
                 'has_paid_this_month' => $hasPaidThisMonth,
@@ -568,6 +604,7 @@ class BillingController extends Controller
                 'others' => $others,
                 'paid' => $paid,
                 'isolationStatus' => $isolationStatus,
+                'pending_ai_captures_count' => $pendingAiCapturesCount,
             ]
         ]);
     }

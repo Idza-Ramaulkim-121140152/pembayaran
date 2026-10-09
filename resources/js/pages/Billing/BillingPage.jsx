@@ -27,6 +27,7 @@ function BillingPage() {
     const canEditInvoiceAmount = userRole === 'finance' || userRole === 'superadmin' || userRole === 'admin';
 
     const [customers, setCustomers] = useState({ late: [], almostLate: [], others: [], paid: [] });
+    const [pendingAiCapturesCount, setPendingAiCapturesCount] = useState(0);
     const [activePackages, setActivePackages] = useState([]);
     const [loadingActivePackages, setLoadingActivePackages] = useState(false);
     const [paymentReceiptOptions, setPaymentReceiptOptions] = useState([]);
@@ -331,6 +332,7 @@ function BillingPage() {
                 others: payload.others || [],
                 paid: payload.paid || [],
             });
+            setPendingAiCapturesCount(payload.pending_ai_captures_count || 0);
 
             setIsolationStatus({});
             fetchIsolationStatusBulk(payload.late || [], requestId);
@@ -1312,7 +1314,25 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             {
                 key: 'name',
                 label: 'Nama',
-                render: (item) => buildRowMeta(item).customer?.name || '-',
+                render: (item) => {
+                    const meta = buildRowMeta(item);
+                    const aiCapture = item?.pending_ai_capture;
+                    return (
+                        <div className="space-y-1">
+                            <div className="font-medium text-slate-900">{meta.customer?.name || '-'}</div>
+                            {aiCapture && (
+                                <a
+                                    href="/settings/payment-verification"
+                                    className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold rounded-md bg-violet-50 text-violet-700 border border-violet-200 hover:bg-violet-100 hover:border-violet-300 transition"
+                                    title={`Deteksi AI Bukti Transfer Rp ${Number(aiCapture.amount || 0).toLocaleString('id-ID')} (Skor: ${Math.round(aiCapture.match_confidence || 0)}%). Klik untuk review.`}
+                                >
+                                    <span className="w-2 h-2 rounded-full bg-violet-600 animate-pulse"></span>
+                                    <span>AI Bukti: Rp {Number(aiCapture.amount || 0).toLocaleString('id-ID')} ({Math.round(aiCapture.match_confidence || 0)}%)</span>
+                                </a>
+                            )}
+                        </div>
+                    );
+                },
             },
             {
                 key: 'pppoe',
@@ -1539,6 +1559,37 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                     {isSuperAdmin && <p className="text-xs text-amber-700 mt-1">Checklist Auto Off tersedia per pelanggan pada kolom Auto.</p>}
                 </div>
             </div>
+
+            {/* AI Verification Banner */}
+            {pendingAiCapturesCount > 0 && (
+                <div className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-700 p-4 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3.5">
+                        <div className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0 text-xl font-bold">
+                            ⚡
+                        </div>
+                        <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-bold text-base tracking-wide">Verifikasi Pembayaran AI</h3>
+                                <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-400 text-slate-900 shadow-sm animate-pulse">
+                                    {pendingAiCapturesCount} Menunggu Konfirmasi
+                                </span>
+                            </div>
+                            <p className="text-xs text-violet-100 mt-1 leading-relaxed">
+                                Terdapat bukti transfer/struk dari WhatsApp atau Web yang telah dianalisis AI dan siap dilunaskan secara otomatis.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <a
+                            href="/settings/payment-verification"
+                            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl bg-white text-violet-800 shadow-sm hover:bg-violet-50 transition transform hover:-translate-y-0.5 active:translate-y-0"
+                        >
+                            <span>Buka Verifikasi AI</span>
+                            <ExternalLink size={14} />
+                        </a>
+                    </div>
+                </div>
+            )}
 
             {/* Alerts */}
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}

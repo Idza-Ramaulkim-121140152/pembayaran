@@ -73,6 +73,10 @@ export default function PaymentVerificationPage() {
     const [toDate, setToDate] = useState('');
     const [datePreset, setDatePreset] = useState('all'); // 'all' | 'today' | 'last7' | 'thisMonth' | 'custom'
     const [currentPage, setCurrentPage] = useState(1);
+    const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | 'whatsapp' | 'web_public' | 'admin_upload'
+    const [confidenceFilter, setConfidenceFilter] = useState('all'); // 'all' | 'high' | 'medium' | 'low'
+    const [bulkLoading, setBulkLoading] = useState(false);
+    const [bulkConfirmModal, setBulkConfirmModal] = useState({ open: false, minConfidence: 90 });
 
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
@@ -116,7 +120,9 @@ export default function PaymentVerificationPage() {
         page = currentPage,
         search = searchQuery,
         startDate = fromDate,
-        endDate = toDate
+        endDate = toDate,
+        source = sourceFilter,
+        confidence = confidenceFilter
     ) => {
         try {
             setError('');
@@ -136,6 +142,8 @@ export default function PaymentVerificationPage() {
                     search: search.trim() || undefined,
                     from_date: startDate || undefined,
                     to_date: endDate || undefined,
+                    source: source !== 'all' ? source : undefined,
+                    confidence_level: confidence !== 'all' ? confidence : undefined,
                 }),
             ]);
 
@@ -155,13 +163,13 @@ export default function PaymentVerificationPage() {
     };
 
     useEffect(() => {
-        loadData(activeTab, 1, searchQuery, fromDate, toDate);
+        loadData(activeTab, 1, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
     }, [activeTab]);
 
     const handleSearch = (e) => {
         e.preventDefault();
         setCurrentPage(1);
-        loadData(activeTab, 1, searchQuery, fromDate, toDate);
+        loadData(activeTab, 1, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
     };
 
     const handleDatePresetChange = (preset) => {
@@ -195,12 +203,51 @@ export default function PaymentVerificationPage() {
 
         setFromDate(start);
         setToDate(end);
-        loadData(activeTab, 1, searchQuery, start, end);
+        loadData(activeTab, 1, searchQuery, start, end, sourceFilter, confidenceFilter);
     };
 
     const handlePageChange = (page) => {
         setCurrentPage(page);
-        loadData(activeTab, page, searchQuery, fromDate, toDate);
+        loadData(activeTab, page, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
+    };
+
+    const handleFilterChange = (newSource = sourceFilter, newConfidence = confidenceFilter) => {
+        setSourceFilter(newSource);
+        setConfidenceFilter(newConfidence);
+        setCurrentPage(1);
+        loadData(activeTab, 1, searchQuery, fromDate, toDate, newSource, newConfidence);
+    };
+
+    // Bulk Approve High Confidence Captures
+    const handleBulkApprove = async (minConfidence = 90) => {
+        try {
+            setBulkLoading(true);
+            setError('');
+            setMessage('');
+            const res = await paymentVerificationService.bulkResolve({ min_confidence: minConfidence });
+            const data = res.data?.data || {};
+            setMessage(res.data?.message || `Berhasil: ${data.approved_count || 0} pembayaran berhasil dikonfirmasi dan dilunaskan secara otomatis.`);
+            setBulkConfirmModal({ open: false, minConfidence: 90 });
+            await loadData(activeTab, 1, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal memproses auto-konfirmasi massal.');
+        } finally {
+            setBulkLoading(false);
+        }
+    };
+
+    // Direct WhatsApp Link Helper
+    const getCustomerWhatsAppUrl = (customer, capture) => {
+        const phone = customer?.phone || capture?.sender_phone;
+        if (!phone) return null;
+        let cleanPhone = String(phone).replace(/\D/g, '');
+        if (cleanPhone.startsWith('0')) {
+            cleanPhone = '62' + cleanPhone.substring(1);
+        }
+        const amountStr = capture?.amount ? `Rp ${Number(capture.amount).toLocaleString('id-ID')}` : '';
+        const custName = customer?.name || 'Pelanggan';
+        const text = `Halo Kak ${custName},\n\nTerima kasih, bukti transfer pembayaran internet Anda sebesar ${amountStr} telah berhasil kami verifikasi. Tagihan Anda telah lunas dan layanan aktif normal. 🙏`;
+        return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
     };
 
     // Save Configuration
@@ -254,7 +301,7 @@ export default function PaymentVerificationPage() {
             });
 
             setMessage(decision === 'approve' ? 'Pembayaran berhasil dikonfirmasi dan tagihan dilunaskan.' : 'Pembayaran ditolak.');
-            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal memproses verifikasi capture.');
         } finally {
@@ -270,7 +317,7 @@ export default function PaymentVerificationPage() {
             setMessage('');
             const res = await paymentVerificationService.reanalyzeCapture(captureId);
             setMessage(res.data?.message || `Capture #${captureId} berhasil dianalisis ulang.`);
-            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal menganalisis ulang bukti pembayaran.');
         } finally {
@@ -508,6 +555,18 @@ export default function PaymentVerificationPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
+                    {canManage && activeTab === 'needs_review' && (
+                        <button
+                            type="button"
+                            onClick={() => setBulkConfirmModal({ open: true, minConfidence: 90 })}
+                            disabled={refreshing || bulkLoading || pagination?.total === 0}
+                            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-md hover:from-violet-700 hover:to-indigo-700 disabled:opacity-60 transition transform hover:-translate-y-0.5 active:translate-y-0"
+                            title="Konfirmasi dan lunaskan semua capture yang memiliki skor AI minimal 90%"
+                        >
+                            <Sparkles size={16} className={bulkLoading ? 'animate-spin' : ''} />
+                            <span>{bulkLoading ? 'Memproses Massal...' : '⚡ Auto-Konfirmasi (Skor ≥ 90%)'}</span>
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => setIsUploadModalOpen(true)}
@@ -518,7 +577,7 @@ export default function PaymentVerificationPage() {
                     </button>
                     <button
                         type="button"
-                        onClick={() => loadData(activeTab, currentPage, searchQuery, fromDate, toDate)}
+                        onClick={() => loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter)}
                         disabled={refreshing}
                         className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
                     >
@@ -655,6 +714,63 @@ export default function PaymentVerificationPage() {
                             </div>
                         </div>
 
+                        {/* Secondary Filters: Source & AI Score */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs">
+                            <div className="flex flex-wrap items-center gap-4">
+                                {/* Source Filter */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-gray-500 font-medium">Sumber:</span>
+                                    <div className="flex items-center gap-1">
+                                        {[
+                                            { key: 'all', label: 'Semua' },
+                                            { key: 'whatsapp', label: '📱 WA' },
+                                            { key: 'web_public', label: '🌐 Web' },
+                                            { key: 'admin_upload', label: '📤 Admin' },
+                                        ].map((s) => (
+                                            <button
+                                                key={s.key}
+                                                type="button"
+                                                onClick={() => handleFilterChange(s.key, confidenceFilter)}
+                                                className={`rounded-md px-2 py-1 font-medium transition ${
+                                                    sourceFilter === s.key
+                                                        ? 'bg-slate-800 text-white font-semibold'
+                                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                }`}
+                                            >
+                                                {s.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Confidence Filter */}
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-gray-500 font-medium">Skor AI:</span>
+                                    <div className="flex items-center gap-1">
+                                        {[
+                                            { key: 'all', label: 'Semua' },
+                                            { key: 'high', label: '🟢 Tinggi (≥90%)' },
+                                            { key: 'medium', label: '🟡 Sedang (70-89%)' },
+                                            { key: 'low', label: '🔴 Rendah (<70%)' },
+                                        ].map((c) => (
+                                            <button
+                                                key={c.key}
+                                                type="button"
+                                                onClick={() => handleFilterChange(sourceFilter, c.key)}
+                                                className={`rounded-md px-2 py-1 font-medium transition ${
+                                                    confidenceFilter === c.key
+                                                        ? 'bg-violet-700 text-white font-semibold'
+                                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                                }`}
+                                            >
+                                                {c.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Date Range Inputs */}
                         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 text-xs">
                             <div className="flex flex-wrap items-center gap-2">
@@ -683,7 +799,7 @@ export default function PaymentVerificationPage() {
                                     type="button"
                                     onClick={() => {
                                         setCurrentPage(1);
-                                        loadData(activeTab, 1, searchQuery, fromDate, toDate);
+                                        loadData(activeTab, 1, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
                                     }}
                                     className="rounded-lg bg-emerald-50 px-3 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 transition"
                                 >
@@ -894,14 +1010,14 @@ export default function PaymentVerificationPage() {
                                                     <div className="mt-3 space-y-2.5">
                                                         {/* Customer Info Card */}
                                                         {capture.customer ? (
-                                                            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 border border-emerald-200">
-                                                                <div className="flex items-center gap-2.5 text-xs text-emerald-950">
+                                                            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 border border-emerald-200 gap-3 flex-wrap sm:flex-nowrap">
+                                                                <div className="flex items-center gap-2.5 text-xs text-emerald-950 min-w-0">
                                                                     <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
                                                                         <UserCheck size={18} />
                                                                     </div>
-                                                                    <div>
-                                                                        <p className="font-bold text-sm text-gray-900">{capture.customer.name}</p>
-                                                                        <p className="text-gray-600 text-[11px] flex items-center gap-2">
+                                                                    <div className="min-w-0">
+                                                                        <p className="font-bold text-sm text-gray-900 truncate">{capture.customer.name}</p>
+                                                                        <p className="text-gray-600 text-[11px] flex items-center gap-2 flex-wrap">
                                                                             <span>📱 WA: <strong>{capture.customer.phone || '-'}</strong></span>
                                                                             {capture.customer.pppoe_username && (
                                                                                 <span>· PPPoE: <strong className="font-mono text-emerald-700">{capture.customer.pppoe_username}</strong></span>
@@ -912,9 +1028,23 @@ export default function PaymentVerificationPage() {
                                                                         </p>
                                                                     </div>
                                                                 </div>
-                                                                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
-                                                                    Pelanggan Teridentifikasi
-                                                                </span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    {getCustomerWhatsAppUrl(capture.customer, capture) && (
+                                                                        <a
+                                                                            href={getCustomerWhatsAppUrl(capture.customer, capture)}
+                                                                            target="_blank"
+                                                                            rel="noreferrer"
+                                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition"
+                                                                            title="Kirim pesan konfirmasi langsung ke WhatsApp pelanggan"
+                                                                        >
+                                                                            <Phone size={13} />
+                                                                            <span>Chat WA</span>
+                                                                        </a>
+                                                                    )}
+                                                                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">
+                                                                        Pelanggan Teridentifikasi
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                         ) : (
                                                             <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 text-xs">
@@ -1042,6 +1172,7 @@ export default function PaymentVerificationPage() {
                                                                     const inv = rev.candidate_invoice || rev.candidateInvoice;
                                                                     if (!inv) return null;
                                                                     const isSelected = (selectedCandidate[capture.id] || candidateInvoices[0]?.candidate_invoice_id) === inv.id;
+                                                                    const isAlreadyPaid = inv.status === 'paid';
 
                                                                     return (
                                                                         <label
@@ -1061,10 +1192,19 @@ export default function PaymentVerificationPage() {
                                                                                     className="text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                                                                                 />
                                                                                 <div>
-                                                                                    <div className="flex items-center gap-2">
+                                                                                    <div className="flex items-center gap-2 flex-wrap">
                                                                                         <span className="font-bold font-mono text-gray-900">{inv.invoice_link}</span>
                                                                                         {inv.customer && (
                                                                                             <span className="text-gray-600">({inv.customer.name})</span>
+                                                                                        )}
+                                                                                        {isAlreadyPaid ? (
+                                                                                            <span className="rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 font-bold text-[10px]">
+                                                                                                Invoice Sudah Lunas
+                                                                                            </span>
+                                                                                        ) : (
+                                                                                            <span className="rounded-full bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 font-bold text-[10px]">
+                                                                                                Status: {inv.status}
+                                                                                            </span>
                                                                                         )}
                                                                                     </div>
                                                                                     <div className="text-[11px] text-gray-500 mt-0.5">
@@ -1597,6 +1737,60 @@ export default function PaymentVerificationPage() {
                     <div className="flex justify-end gap-2 pt-2">
                         <button type="button" onClick={() => setIsQrisModalOpen(false)} className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100">Batal</button>
                         <button type="button" onClick={handleSaveQris} className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700">Simpan</button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* MODAL: BULK APPROVE CONFIRMATION */}
+            <Modal
+                isOpen={bulkConfirmModal.open}
+                onClose={() => setBulkConfirmModal({ open: false, minConfidence: 90 })}
+                title="⚡ Konfirmasi Massal Pembayaran AI"
+            >
+                <div className="space-y-4">
+                    <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4 text-xs text-violet-900 space-y-2">
+                        <div className="flex items-center gap-2 font-bold text-sm text-violet-950">
+                            <Sparkles size={18} className="text-violet-600 shrink-0" />
+                            <span>Auto-Konfirmasi Pembayaran (Skor AI ≥ 90%)</span>
+                        </div>
+                        <p className="leading-relaxed">
+                            Sistem akan secara otomatis menyetujui seluruh capture bukti transfer yang berada di antrean review manual dengan skor AI minimal <strong>90%</strong>.
+                        </p>
+                        <ul className="list-disc pl-4 space-y-1 text-slate-700">
+                            <li>Tagihan kandidat akan diupdate menjadi <strong>Lunas (Paid)</strong>.</li>
+                            <li>Foto bukti transfer akan otomatis dilampirkan ke invoice.</li>
+                            <li>Tanggal jatuh tempo pelanggan akan diperpanjang <strong>+30 hari</strong>.</li>
+                            <li>Isolir MikroTik pelanggan akan dibuka otomatis.</li>
+                            <li>Transaksi dicatat ke buku kas (Financial Ledger) & notifikasi WA dikirimkan.</li>
+                        </ul>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => setBulkConfirmModal({ open: false, minConfidence: 90 })}
+                            className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100"
+                        >
+                            Batal
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleBulkApprove(bulkConfirmModal.minConfidence)}
+                            disabled={bulkLoading}
+                            className="px-4 py-2 text-xs font-bold text-white bg-gradient-to-r from-violet-600 to-indigo-600 rounded-xl hover:from-violet-700 hover:to-indigo-700 disabled:opacity-60 flex items-center gap-1.5 shadow-sm"
+                        >
+                            {bulkLoading ? (
+                                <>
+                                    <RefreshCw size={13} className="animate-spin" />
+                                    <span>Memproses...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Check size={14} />
+                                    <span>Ya, Konfirmasi Semua Sekarang</span>
+                                </>
+                            )}
+                        </button>
                     </div>
                 </div>
             </Modal>
