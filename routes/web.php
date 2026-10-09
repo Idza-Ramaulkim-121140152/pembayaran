@@ -427,6 +427,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/whatsapp/status', [WhatsAppController::class, 'status'])->name('api.whatsapp.status');
         Route::get('/api/whatsapp/qr', [WhatsAppController::class, 'qr'])->name('api.whatsapp.qr');
         Route::post('/api/whatsapp/restart', [WhatsAppController::class, 'restart'])->name('api.whatsapp.restart');
+        Route::post('/api/whatsapp/reset-session', [WhatsAppController::class, 'resetSession'])->name('api.whatsapp.reset-session');
         Route::post('/api/whatsapp/logout', [WhatsAppController::class, 'logout'])->name('api.whatsapp.logout');
         Route::post('/api/whatsapp/send-notification', [WhatsAppController::class, 'sendNotification'])->middleware('permission:master.wa_notification.manage')->name('api.whatsapp.send-notification');
         Route::post('/api/whatsapp/send-test', [WhatsAppController::class, 'sendTest'])->name('api.whatsapp.send-test');
@@ -635,6 +636,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/borrowers/{borrower}/settle', [BorrowerLoanController::class, 'settleBorrower'])->name('api.borrowers.settle');
         Route::get('/api/borrower-loans', [BorrowerLoanController::class, 'index'])->name('api.borrower-loans.index');
         Route::post('/api/borrower-loans', [BorrowerLoanController::class, 'store'])->name('api.borrower-loans.store');
+        Route::post('/api/borrower-loans/transfer', [BorrowerLoanController::class, 'transfer'])->name('api.borrower-loans.transfer');
         Route::put('/api/borrower-loans/{borrowerLoan}', [BorrowerLoanController::class, 'updateLoan'])->name('api.borrower-loans.update');
         Route::delete('/api/borrower-loans/{borrowerLoan}', [BorrowerLoanController::class, 'destroyLoan'])->name('api.borrower-loans.destroy');
         Route::post('/api/borrower-loans/{borrowerLoan}/settle', [BorrowerLoanController::class, 'settle'])->name('api.borrower-loans.settle');

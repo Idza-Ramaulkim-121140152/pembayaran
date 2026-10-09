@@ -46,6 +46,9 @@ export const billingService = {
             payment_receiver_user_id: paymentReceiverUserId,
             other_receiver_confirmed: options.otherReceiverConfirmed ?? false,
             receiver_conflict_resolution: options.receiverConflictResolution ?? null,
+            qris_payment_time: options.qrisPaymentTime ?? null,
+            qris_sender: options.qrisSender ?? null,
+            qris_transaction_number: options.qrisTransactionNumber ?? null,
         }),
 
     // Get selectable payment receivers

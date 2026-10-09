@@ -64,137 +64,231 @@ function findChromiumExecutable() {
     return null;
 }
 
-// Inisialisasi WhatsApp Client
-const chromiumPath = findChromiumExecutable();
-if (chromiumPath) {
-    console.log(`🌐 Menggunakan Chrome/Chromium: ${chromiumPath}`);
-} else {
-    console.log('🌐 Chrome/Chromium tidak ditemukan di path sistem, menggunakan bundled puppeteer.');
+let client = null;
+let isReinitializing = false;
+
+function cleanSessionFolder() {
+    try {
+        if (fs.existsSync(WWEBJS_CACHE_PATH)) {
+            fs.rmSync(WWEBJS_CACHE_PATH, { recursive: true, force: true });
+            console.log('🧹 Cache .wwebjs_cache dibersihkan.');
+        }
+        if (fs.existsSync(LOCAL_AUTH_DATA_PATH)) {
+            fs.rmSync(LOCAL_AUTH_DATA_PATH, { recursive: true, force: true });
+            console.log('🧹 Folder session LocalAuth dibersihkan.');
+        }
+    } catch (e) {
+        console.warn('⚠️ Gagal membersihkan folder session:', e.message);
+    }
 }
 
-const client = new Client({
-    authStrategy: new LocalAuth({
-        dataPath: './sessions'
-    }),
-    webVersionCache: {
-        type: 'none'
-    },
-    puppeteer: {
-        headless: true,
-        ...(chromiumPath ? { executablePath: chromiumPath } : {}),
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
+async function initWhatsAppClient(cleanSession = false) {
+    if (isReinitializing) {
+        console.log('⏳ Inisialisasi WhatsApp sedang berlangsung, abaikan pemanggilan berulang...');
+        return;
     }
-});
+    isReinitializing = true;
 
-
-// Event: QR Code
-client.on('qr', async (qr) => {
-    console.log('\n📱 SCAN QR CODE INI DENGAN WHATSAPP ANDA:');
-    qrcode.generate(qr, { small: true });
-    waStatus.qrGeneratedAt = new Date().toISOString();
-    
-    // Generate base64 QR untuk API
-    try {
-        waStatus.qrBase64 = await QRCode.toDataURL(qr);
-        waStatus.qr = qr;
-    } catch (err) {
-        console.error('Error generating QR:', err);
+    if (client) {
+        try {
+            console.log('🛑 Menghentikan instance WhatsApp client lama...');
+            await client.destroy();
+        } catch (e) {
+            console.warn('⚠️ client.destroy() warning:', e.message);
+        }
+        client = null;
     }
-});
 
-// Event: Ready
-client.on('ready', () => {
-    console.log('\n✅ WhatsApp Client siap!');
-    waStatus.ready = true;
-    waStatus.qr = null;
-    waStatus.qrBase64 = null;
-    waStatus.readyAt = new Date().toISOString();
-    waStatus.lastState = 'CONNECTED';
-    
-    // Ambil info nomor
-    const info = client.info;
-    if (info && info.wid) {
-        waStatus.phone = info.wid.user;
-        console.log(`📞 Terhubung sebagai: ${waStatus.phone}`);
+    if (cleanSession) {
+        cleanSessionFolder();
     }
-});
 
-// Event: Authenticated
-client.on('authenticated', () => {
-    console.log('🔐 Autentikasi berhasil!');
-    waStatus.error = null;
-    waStatus.lastErrorAt = null;
-});
+    resetRuntimeState();
 
-client.on('loading_screen', (percent, message) => {
-    console.log(`⏳ Loading WhatsApp ${percent}%: ${message}`);
-});
+    const chromiumPath = findChromiumExecutable();
+    if (chromiumPath) {
+        console.log(`🌐 Menggunakan Chrome/Chromium: ${chromiumPath}`);
+    } else {
+        console.log('🌐 Chrome/Chromium tidak ditemukan di path sistem, menggunakan bundled puppeteer.');
+    }
 
-// Event: Connection state change
-client.on('change_state', (state) => {
-    console.log(`🔄 State berubah: ${state}`);
-    waStatus.lastState = state;
+    client = new Client({
+        authStrategy: new LocalAuth({
+            dataPath: './sessions'
+        }),
+        webVersionCache: {
+            type: 'none'
+        },
+        puppeteer: {
+            headless: true,
+            ...(chromiumPath ? { executablePath: chromiumPath } : {}),
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu'
+            ]
+        }
+    });
 
-    if (state === 'CONNECTED') {
+    // Event: QR Code
+    client.on('qr', async (qr) => {
+        console.log('\n📱 SCAN QR CODE INI DENGAN WHATSAPP ANDA:');
+        qrcode.generate(qr, { small: true });
+        waStatus.qrGeneratedAt = new Date().toISOString();
+        waStatus.error = null;
+        
+        // Generate base64 QR untuk API
+        try {
+            waStatus.qrBase64 = await QRCode.toDataURL(qr);
+            waStatus.qr = qr;
+        } catch (err) {
+            console.error('Error generating QR:', err);
+        }
+    });
+
+    // Event: Ready
+    client.on('ready', () => {
+        console.log('\n✅ WhatsApp Client siap!');
         waStatus.ready = true;
+        waStatus.qr = null;
+        waStatus.qrBase64 = null;
+        waStatus.error = null;
+        waStatus.readyAt = new Date().toISOString();
+        waStatus.lastState = 'CONNECTED';
+        
+        // Ambil info nomor
+        const info = client.info;
+        if (info && info.wid) {
+            waStatus.phone = info.wid.user;
+            console.log(`📞 Terhubung sebagai: ${waStatus.phone}`);
+        }
+    });
+
+    // Event: Authenticated
+    client.on('authenticated', () => {
+        console.log('🔐 Autentikasi berhasil!');
         waStatus.error = null;
         waStatus.lastErrorAt = null;
-        waStatus.readyAt = new Date().toISOString();
+    });
 
-        if (client.info && client.info.wid) {
-            waStatus.phone = client.info.wid.user;
+    client.on('loading_screen', (percent, message) => {
+        console.log(`⏳ Loading WhatsApp ${percent}%: ${message}`);
+    });
+
+    // Event: Connection state change
+    client.on('change_state', (state) => {
+        console.log(`🔄 State berubah: ${state}`);
+        waStatus.lastState = state;
+
+        if (state === 'CONNECTED') {
+            waStatus.ready = true;
+            waStatus.error = null;
+            waStatus.lastErrorAt = null;
+            waStatus.readyAt = new Date().toISOString();
+
+            if (client.info && client.info.wid) {
+                waStatus.phone = client.info.wid.user;
+            }
+        } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
+            waStatus.ready = false;
+            waStatus.phone = null;
+            waStatus.readyAt = null;
         }
-    } else if (state === 'UNPAIRED' || state === 'UNPAIRED_IDLE') {
+    });
+
+    // Event: Auth Failure
+    client.on('auth_failure', async (msg) => {
+        console.error('❌ Autentikasi gagal (sesi tidak valid / kedaluwarsa):', msg);
+        waStatus.error = 'Authentication failed: ' + msg;
+        waStatus.ready = false;
+        waStatus.lastErrorAt = new Date().toISOString();
+
+        // Otomatis reset sesi lama & generate QR code baru tanpa perlu CLI
+        console.log('🔄 Otomatis membersihkan sesi kedaluwarsa & menyiapkan QR baru...');
+        setTimeout(() => {
+            isReinitializing = false;
+            initWhatsAppClient(true);
+        }, 3000);
+    });
+
+    // Event: Disconnected
+    client.on('disconnected', async (reason) => {
+        console.log('🔌 WhatsApp terputus:', reason);
         waStatus.ready = false;
         waStatus.phone = null;
+        waStatus.error = 'Disconnected: ' + reason;
+        waStatus.lastErrorAt = new Date().toISOString();
         waStatus.readyAt = null;
+
+        const reasonStr = String(reason || '').toUpperCase();
+        const isLoggedOut = reasonStr.includes('LOGOUT') ||
+                            reasonStr.includes('UNPAIRED') ||
+                            reasonStr.includes('CONFLICT') ||
+                            reasonStr.includes('NAVIGATION') ||
+                            reasonStr.includes('INTENTIONAL');
+
+        setTimeout(() => {
+            isReinitializing = false;
+            if (isLoggedOut) {
+                console.log('🧹 Status LOGOUT/UNPAIRED terdeteksi. Otomatis reset session agar QR code baru langsung tersedia.');
+                initWhatsAppClient(true);
+            } else {
+                console.log('🔄 Mencoba reconnect WhatsApp...');
+                initWhatsAppClient(false);
+            }
+        }, 3000);
+    });
+
+    // Tangkap pesan masuk
+    client.on('message', async (msg) => {
+        await handleInboundCandidate('message', msg);
+    });
+
+    client.on('message_create', async (msg) => {
+        await handleInboundCandidate('message_create', msg);
+    });
+
+    client.on('message_ciphertext', async (msg) => {
+        await handleCiphertextCandidate(msg);
+    });
+
+    try {
+        console.log('⏳ Menginisialisasi Puppeteer / WhatsApp Web...');
+        await client.initialize();
+    } catch (initErr) {
+        console.error('❌ Error client.initialize():', initErr.message);
+        waStatus.error = 'Init error: ' + initErr.message;
+        // Jika error saat inisialisasi session lama, coba bersihkan session
+        if (cleanSession === false) {
+            console.log('🔄 Mencoba ulang dengan pembersihan session...');
+            setTimeout(() => {
+                isReinitializing = false;
+                initWhatsAppClient(true);
+            }, 5000);
+            return;
+        }
+    } finally {
+        isReinitializing = false;
     }
-});
+}
 
-// Event: Auth Failure
-client.on('auth_failure', (msg) => {
-    console.error('❌ Autentikasi gagal:', msg);
-    waStatus.error = 'Authentication failed: ' + msg;
-    waStatus.ready = false;
-    waStatus.lastErrorAt = new Date().toISOString();
-});
-
-// Event: Disconnected
-client.on('disconnected', (reason) => {
-    console.log('🔌 WhatsApp terputus:', reason);
-    waStatus.ready = false;
-    waStatus.phone = null;
-    waStatus.error = 'Disconnected: ' + reason;
-    waStatus.lastErrorAt = new Date().toISOString();
-    waStatus.readyAt = null;
-    
-    // Reconnect
-    setTimeout(() => {
-        console.log('🔄 Mencoba reconnect...');
-        client.initialize();
-    }, 5000);
-});
-
-// Tangkap lebih dari satu event karena beberapa tipe media lebih konsisten muncul di message_create.
-client.on('message', async (msg) => {
-    await handleInboundCandidate('message', msg);
-});
-
-client.on('message_create', async (msg) => {
-    await handleInboundCandidate('message_create', msg);
-});
-
-client.on('message_ciphertext', async (msg) => {
-    await handleCiphertextCandidate(msg);
-});
+// Keep-Alive Heartbeat: Memastikan koneksi WhatsApp Web tetap aktif & tidak logout karena idle
+setInterval(async () => {
+    if (client && waStatus.ready) {
+        try {
+            const state = await client.getState();
+            if (state !== 'CONNECTED') {
+                console.log(`⚠️ Keep-alive check: status saat ini adalah ${state}`);
+            }
+        } catch (err) {
+            // Ignore temporary eval issues
+        }
+    }
+}, 3 * 60 * 1000);
 
 // Derive status from runtime state to avoid relying only on event timing.
 async function getRealtimeStatus() {
@@ -1192,39 +1286,20 @@ app.post('/send-bulk', async (req, res) => {
 // Restart WhatsApp
 app.post('/restart', async (req, res) => {
     console.log('🔄 Restart WhatsApp client...');
-    resetRuntimeState();
-
-    if (fs.existsSync(WWEBJS_CACHE_PATH)) {
-        try {
-            fs.rmSync(WWEBJS_CACHE_PATH, { recursive: true, force: true });
-            console.log('🧹 Menghapus cache .wwebjs_cache');
-        } catch (e) {
-            console.warn('⚠️ Gagal hapus .wwebjs_cache saat restart:', e.message);
-        }
-    }
-    
-    try {
-        await client.destroy();
-    } catch (error) {
-        console.warn('⚠️ client.destroy() saat restart warning:', error.message);
-    }
+    res.json({ success: true, message: 'WhatsApp sedang direstart' });
 
     setTimeout(() => {
-        try {
-            client.initialize();
-        } catch (initErr) {
-            console.error('❌ client.initialize() error saat restart:', initErr.message);
-        }
-    }, 2000);
-    
-    res.json({ success: true, message: 'WhatsApp sedang direstart' });
+        initWhatsAppClient(false);
+    }, 100);
 });
 
 // Logout
 app.post('/logout', async (req, res) => {
     console.log('🚪 Logout WhatsApp...');
     try {
-        await client.logout();
+        if (client) {
+            await client.logout();
+        }
         resetRuntimeState();
         res.json({ success: true, message: 'Berhasil logout' });
     } catch (error) {
@@ -1233,43 +1308,16 @@ app.post('/logout', async (req, res) => {
 });
 
 app.post('/reset-session', async (req, res) => {
-    console.log('🧹 Reset sesi WhatsApp...');
+    console.log('🧹 Reset sesi WhatsApp & siapkan QR baru...');
 
     res.json({
         success: true,
-        message: 'Reset sesi WhatsApp dimulai. Scan ulang QR mungkin diperlukan.',
+        message: 'Reset sesi WhatsApp dimulai. QR Code baru akan segera siap di-scan.',
     });
 
-    setTimeout(async () => {
-        try {
-            await client.destroy();
-        } catch (error) {
-            console.warn('⚠️ Client destroy saat reset-session gagal:', error.message);
-        }
-
-        resetRuntimeState();
-
-        if (fs.existsSync(WWEBJS_CACHE_PATH)) {
-            try {
-                fs.rmSync(WWEBJS_CACHE_PATH, { recursive: true, force: true });
-                console.log('🧹 Menghapus cache .wwebjs_cache saat reset-session');
-            } catch (e) {
-                console.warn('⚠️ Gagal hapus .wwebjs_cache:', e.message);
-            }
-        }
-
-        if (fs.existsSync(LOCAL_AUTH_DATA_PATH)) {
-            fs.rmSync(LOCAL_AUTH_DATA_PATH, { recursive: true, force: true });
-        }
-
-        setTimeout(() => {
-            try {
-                client.initialize();
-            } catch (initErr) {
-                console.error('❌ client.initialize() error saat reset-session:', initErr.message);
-            }
-        }, 2000);
-    }, 50);
+    setTimeout(() => {
+        initWhatsAppClient(true);
+    }, 100);
 });
 
 // ==================== START SERVER ====================
@@ -1291,7 +1339,7 @@ const server = app.listen(PORT, () => {
     console.log('\n⏳ Menginisialisasi WhatsApp Client...\n');
     
     // Initialize WhatsApp client
-    client.initialize();
+    initWhatsAppClient(false);
 });
 
 server.on('error', (error) => {

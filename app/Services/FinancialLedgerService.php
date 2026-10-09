@@ -90,6 +90,9 @@ class FinancialLedgerService
                     'payment_receiver_is_company_finance' => $paymentReceiver
                         ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
                         : false,
+                    'qris_payment_time' => $invoice->qris_payment_time ? $invoice->qris_payment_time->toIso8601String() : null,
+                    'qris_sender' => $invoice->qris_sender,
+                    'qris_transaction_number' => $invoice->qris_transaction_number,
                 ],
             ]
         );

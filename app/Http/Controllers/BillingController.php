@@ -1315,6 +1315,9 @@ class BillingController extends Controller
             'payment_receiver_user_id' => 'nullable',
             'other_receiver_confirmed' => 'nullable|boolean',
             'receiver_conflict_resolution' => 'nullable|in:debt,approval',
+            'qris_payment_time' => 'nullable|string',
+            'qris_sender' => 'nullable|string|max:100',
+            'qris_transaction_number' => 'nullable|string|max:150',
         ];
 
         if (Schema::hasTable('payment_receipt_options')) {
@@ -1364,6 +1367,31 @@ class BillingController extends Controller
         $selectingAnotherReceiver = $selectedReceiver && $currentUser && $selectedReceiver->id !== $currentUser->id;
         $receiverConflictResolution = $validated['receiver_conflict_resolution'] ?? null;
 
+        $receiptOption = $paymentReceiptOptionId ? PaymentReceiptOption::find($paymentReceiptOptionId) : null;
+        $isQris = $receiptOption && str_contains(strtolower($receiptOption->name), 'qris');
+
+        $qrisPaymentTime = $validated['qris_payment_time'] ?? null;
+        $qrisSender = $validated['qris_sender'] ?? null;
+        $qrisTransactionNumber = $validated['qris_transaction_number'] ?? null;
+
+        if ($isQris) {
+            if (empty($qrisPaymentTime)) {
+                throw ValidationException::withMessages([
+                    'qris_payment_time' => ['Waktu pembayaran (jam dan tanggal) wajib diisi untuk transaksi QRIS.'],
+                ]);
+            }
+            if (empty($qrisSender)) {
+                throw ValidationException::withMessages([
+                    'qris_sender' => ['Pengirim (Bank/E-Wallet) wajib dipilih untuk transaksi QRIS.'],
+                ]);
+            }
+            if (empty($qrisTransactionNumber)) {
+                throw ValidationException::withMessages([
+                    'qris_transaction_number' => ['No. Transaksi wajib diisi untuk transaksi QRIS.'],
+                ]);
+            }
+        }
+
         $borrower = null;
         $shouldCreateDebtForReceiver = false;
         $shouldCreatePendingApproval = false;
@@ -1402,11 +1430,25 @@ class BillingController extends Controller
             $invoice->payment_receiver_user_id = $paymentReceiverUserId ?: Auth::id();
         }
 
+        if (Schema::hasColumn('invoices', 'qris_payment_time')) {
+            $invoice->qris_payment_time = ($isQris && $qrisPaymentTime) ? Carbon::parse($qrisPaymentTime) : null;
+        }
+
+        if (Schema::hasColumn('invoices', 'qris_sender')) {
+            $invoice->qris_sender = $isQris ? $qrisSender : null;
+        }
+
+        if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
+            $invoice->qris_transaction_number = $isQris ? $qrisTransactionNumber : null;
+        }
+
+        $paidTimestamp = ($isQris && $qrisPaymentTime) ? Carbon::parse($qrisPaymentTime) : now();
+
         $invoice->status = 'paid';
-        $invoice->paid_at = now();
+        $invoice->paid_at = $paidTimestamp;
         $invoice->tolak_info = null;
 
-        $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, now());
+        $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, $paidTimestamp);
         $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
         if ($shouldCreatePendingApproval) {
             $mutationStatus = FinancialTransaction::STATUS_PENDING;

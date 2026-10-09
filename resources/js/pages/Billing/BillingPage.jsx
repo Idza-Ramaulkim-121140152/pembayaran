@@ -91,6 +91,29 @@ function BillingPage() {
     const [updatingCustomerAutomation, setUpdatingCustomerAutomation] = useState({});
     const autoPollingTimerRef = useRef(null);
 
+    // QRIS Mandatory Form states
+    const getCurrentLocalDateTimeString = () => {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = now.getFullYear();
+        const MM = pad(now.getMonth() + 1);
+        const dd = pad(now.getDate());
+        const hh = pad(now.getHours());
+        const mm = pad(now.getMinutes());
+        return `${yyyy}-${MM}-${dd}T${hh}:${mm}`;
+    };
+    const [qrisPaymentTime, setQrisPaymentTime] = useState(getCurrentLocalDateTimeString());
+    const [qrisSender, setQrisSender] = useState('');
+    const [qrisSenderOther, setQrisSenderOther] = useState('');
+    const [qrisTransactionNumber, setQrisTransactionNumber] = useState('');
+
+    const selectedPaymentReceiptOption = paymentReceiptOptions.find(
+        (option) => String(option.id) === String(paymentReceiptOptionId)
+    );
+    const isQrisPayment = selectedPaymentReceiptOption?.name
+        ? selectedPaymentReceiptOption.name.toLowerCase().includes('qris')
+        : false;
+
     // Collapsed sections
     const [collapsed, setCollapsed] = useState({ late: false, almostLate: false, others: true, paid: true });
 
@@ -213,6 +236,10 @@ function BillingPage() {
         setPaymentReceiptOptionId('');
         setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
         setIncludeInMutation(true);
+        setQrisPaymentTime(getCurrentLocalDateTimeString());
+        setQrisSender('');
+        setQrisSenderOther('');
+        setQrisTransactionNumber('');
         setOtherReceiverModal({ open: false, selectedReceiver: null });
         setReceiverConflictModal({ open: false, message: '' });
     };
@@ -240,6 +267,10 @@ function BillingPage() {
         setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
         setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
         setIncludeInMutation(true);
+        setQrisPaymentTime(getCurrentLocalDateTimeString());
+        setQrisSender('');
+        setQrisSenderOther('');
+        setQrisTransactionNumber('');
     };
 
     const fetchIsolationStatusBulk = async (lateItems, requestId) => {
@@ -708,6 +739,22 @@ function BillingPage() {
             return;
         }
 
+        if (isQrisPayment) {
+            if (!qrisPaymentTime) {
+                setError('Waktu pembayaran (jam dan tanggal) wajib diisi untuk transaksi QRIS.');
+                return;
+            }
+            const finalSender = qrisSender === 'Lainnya' ? qrisSenderOther.trim() : qrisSender;
+            if (!finalSender) {
+                setError('Pilih atau masukkan nama pengirim (bank/e-wallet) untuk transaksi QRIS.');
+                return;
+            }
+            if (!qrisTransactionNumber || !qrisTransactionNumber.trim()) {
+                setError('No. Transaksi wajib diisi untuk transaksi QRIS.');
+                return;
+            }
+        }
+
         const selectedPaymentReceiverUserId = paymentReceiverUserId ? parseInt(paymentReceiverUserId, 10) : null;
         const normalizedPaymentReceiverUserId = Number.isNaN(selectedPaymentReceiverUserId) ? null : selectedPaymentReceiverUserId;
         const selectedReceiver = paymentReceivers.find((receiver) => Number(receiver.id) === normalizedPaymentReceiverUserId) || null;
@@ -721,13 +768,22 @@ function BillingPage() {
             const selectedPaymentReceiptOptionId = paymentReceiptOptionId ? parseInt(paymentReceiptOptionId, 10) : null;
             const normalizedPaymentReceiptOptionId = Number.isNaN(selectedPaymentReceiptOptionId) ? null : selectedPaymentReceiptOptionId;
 
+            const finalQrisSender = isQrisPayment
+                ? (qrisSender === 'Lainnya' ? (qrisSenderOther.trim() ? `Lainnya (${qrisSenderOther.trim()})` : 'Lainnya') : qrisSender)
+                : null;
+
             const response = await billingService.confirmPayment(
                 confirmModal.invoice.id,
                 numericAmount,
                 normalizedPaymentReceiptOptionId,
                 includeInMutation,
                 normalizedPaymentReceiverUserId,
-                options
+                {
+                    ...options,
+                    qrisPaymentTime: isQrisPayment ? qrisPaymentTime : null,
+                    qrisSender: finalQrisSender,
+                    qrisTransactionNumber: isQrisPayment ? qrisTransactionNumber.trim() : null,
+                }
             );
 
             closeConfirmModal();
@@ -1931,6 +1987,75 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 <p className="mt-1 text-xs text-amber-600">Tambahkan atau aktifkan opsi penerimaan pembayaran di menu pengaturan terlebih dahulu.</p>
                             )}
                         </AdminConsoleField>
+
+                        {/* Rincian QRIS Wajib */}
+                        {isQrisPayment && (
+                            <div className="space-y-3 rounded-2xl border border-purple-200 bg-purple-50/60 p-4">
+                                <div className="flex items-center gap-2 border-b border-purple-200 pb-2">
+                                    <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-purple-600 text-xs font-bold text-white shadow-xs">
+                                        Q
+                                    </span>
+                                    <div>
+                                        <p className="text-xs font-bold uppercase tracking-wider text-purple-950">
+                                            Rincian Pembayaran QRIS <span className="text-red-500">*</span>
+                                        </p>
+                                        <p className="text-[11px] text-purple-700">
+                                            Lengkapi data transaksi QRIS sesuai struk / mutasi rekening.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <AdminConsoleField label="Waktu Transaksi (Tanggal & Jam)">
+                                    <input
+                                        type="datetime-local"
+                                        value={qrisPaymentTime}
+                                        onChange={(e) => setQrisPaymentTime(e.target.value)}
+                                        required
+                                        className={adminConsoleInputClassName}
+                                    />
+                                    <p className="mt-1 text-xs text-purple-700">Waktu transaksi berhasil sesuai mutasi atau notifikasi QRIS.</p>
+                                </AdminConsoleField>
+
+                                <AdminConsoleField label="Pengirim (Bank / E-Wallet)">
+                                    <select
+                                        value={qrisSender}
+                                        onChange={(e) => setQrisSender(e.target.value)}
+                                        required
+                                        className={adminConsoleSelectClassName}
+                                    >
+                                        <option value="">Pilih Bank / Pengirim</option>
+                                        <option value="BRI">BRI</option>
+                                        <option value="BNI">BNI</option>
+                                        <option value="BCA">BCA</option>
+                                        <option value="Lainnya">Lainnya</option>
+                                    </select>
+                                    {qrisSender === 'Lainnya' && (
+                                        <input
+                                            type="text"
+                                            placeholder="Tuliskan nama bank / e-wallet pengirim (contoh: Mandiri, DANA, GoPay, OVO, ShopeePay)"
+                                            value={qrisSenderOther}
+                                            onChange={(e) => setQrisSenderOther(e.target.value)}
+                                            required
+                                            className={`mt-2 ${adminConsoleInputClassName}`}
+                                        />
+                                    )}
+                                    <p className="mt-1 text-xs text-purple-700">Pilih bank pengirim atau e-wallet yang digunakan pelanggan.</p>
+                                </AdminConsoleField>
+
+                                <AdminConsoleField label="No. Transaksi (Ref / RRN / Trx ID)">
+                                    <input
+                                        type="text"
+                                        placeholder="Contoh: 20261009000123 / RRN / No. Referensi QRIS"
+                                        value={qrisTransactionNumber}
+                                        onChange={(e) => setQrisTransactionNumber(e.target.value)}
+                                        required
+                                        className={adminConsoleInputClassName}
+                                    />
+                                    <p className="mt-1 text-xs text-purple-700">Nomor referensi atau ID transaksi dari struk / mutasi QRIS.</p>
+                                </AdminConsoleField>
+                            </div>
+                        )}
+
                         {canChoosePaymentReceiver && (
                             <AdminConsoleField label="Penerima Pembayaran">
                                 <select

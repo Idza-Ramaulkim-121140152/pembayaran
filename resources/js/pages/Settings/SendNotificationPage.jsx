@@ -270,6 +270,7 @@ function SendNotificationPage() {
     const [showQRModal, setShowQRModal] = useState(false);
     const [qrData, setQrData] = useState(null);
     const [qrLoading, setQrLoading] = useState(false);
+    const [resettingSession, setResettingSession] = useState(false);
 
     const handleShowQR = async () => {
         setShowQRModal(true);
@@ -287,6 +288,31 @@ function SendNotificationPage() {
         }
     };
 
+    // Auto-polling QR code saat modal terbuka
+    useEffect(() => {
+        let timer = null;
+        if (showQRModal && !qrData?.phone) {
+            timer = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/whatsapp/qr', {
+                        headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+                    });
+                    const data = await res.json();
+                    if (data?.qr || data?.phone) {
+                        setQrData(data);
+                        setQrLoading(false);
+                        if (data?.phone) {
+                            checkWhatsAppStatus();
+                        }
+                    }
+                } catch (_) {}
+            }, 3000);
+        }
+        return () => {
+            if (timer) clearInterval(timer);
+        };
+    }, [showQRModal, qrData?.phone]);
+
     // Restart WA handler
     const handleRestart = async () => {
         try {
@@ -298,6 +324,30 @@ function SendNotificationPage() {
             setTimeout(checkWhatsAppStatus, 5000);
         } catch (err) {
             showAlert('Gagal restart WhatsApp');
+        }
+    };
+
+    // Reset Sesi WA handler (Menghapus sesi lama yang tersangkut / kedaluwarsa)
+    const handleResetSession = async () => {
+        if (!confirm('Apakah Anda yakin ingin mereset sesi WhatsApp? Data sesi lama yang kedaluwarsa/tersangkut akan dibersihkan dan QR Code baru akan dibuat secara otomatis.')) {
+            return;
+        }
+        setResettingSession(true);
+        setQrLoading(true);
+        setShowQRModal(true);
+        try {
+            const res = await fetch('/api/whatsapp/reset-session', {
+                method: 'POST',
+                headers: { 'Accept': 'application/json', 'X-CSRF-TOKEN': csrfToken() },
+            });
+            const data = await res.json();
+            showAlert(data.message || 'Sesi WhatsApp berhasil di-reset. Menyiapkan QR Code baru...');
+            setTimeout(handleShowQR, 3000);
+            setTimeout(checkWhatsAppStatus, 6000);
+        } catch (err) {
+            showAlert('Gagal reset sesi: ' + err.message);
+        } finally {
+            setResettingSession(false);
         }
     };
 
@@ -655,9 +705,17 @@ function SendNotificationPage() {
                         <button
                             onClick={handleRestart}
                             className="px-3 py-1.5 text-xs font-medium text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg border border-orange-200 transition"
-                            title="Restart WhatsApp"
+                            title="Restart WhatsApp service"
                         >
                             Restart
+                        </button>
+                        <button
+                            onClick={handleResetSession}
+                            disabled={resettingSession}
+                            className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition disabled:opacity-50"
+                            title="Reset sesi lama & buat QR baru tanpa buka CLI"
+                        >
+                            {resettingSession ? 'Mereset...' : 'Reset Sesi'}
                         </button>
                         <button
                             onClick={checkWhatsAppStatus}
@@ -669,16 +727,24 @@ function SendNotificationPage() {
                     </div>
                 </div>
                 {!waStatus?.connected && (
-                    <div className="mt-3 p-3 bg-white/50 rounded-lg">
+                    <div className="mt-3 p-3 bg-white/50 rounded-lg flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm text-red-700">
-                            Pastikan WhatsApp Gateway sudah berjalan dan scan QR code jika belum login.
+                            Pastikan WhatsApp Gateway sudah berjalan dan scan QR code jika belum login atau terputus.
                         </p>
-                        <button 
-                            onClick={handleShowQR}
-                            className="text-sm text-blue-600 hover:underline"
-                        >
-                            Lihat QR Code {'->'}
-                        </button>
+                        <div className="flex items-center gap-3">
+                            <button 
+                                onClick={handleShowQR}
+                                className="text-sm font-semibold text-blue-600 hover:underline"
+                            >
+                                Lihat QR Code {'->'}
+                            </button>
+                            <button 
+                                onClick={handleResetSession}
+                                className="text-xs font-semibold text-red-600 hover:underline"
+                            >
+                                (Atau Reset Sesi & QR Baru)
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
@@ -1164,12 +1230,25 @@ function SendNotificationPage() {
                                     <p className="text-sm text-gray-600">{qrData?.message || 'QR Code belum tersedia. Coba restart WhatsApp.'}</p>
                                 </div>
                             )}
-                            <button
-                                onClick={handleShowQR}
-                                className="w-full mt-4 px-4 py-2 text-sm text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl font-medium transition flex items-center justify-center gap-2"
-                            >
-                                <RefreshCw size={16} /> Refresh QR
-                            </button>
+                            <div className="mt-4 space-y-2">
+                                <button
+                                    onClick={handleShowQR}
+                                    disabled={qrLoading}
+                                    className="w-full px-4 py-2.5 text-sm text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-xl font-medium transition flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    <RefreshCw size={16} className={qrLoading ? 'animate-spin' : ''} /> Refresh QR
+                                </button>
+                                {!qrData?.phone && (
+                                    <button
+                                        onClick={handleResetSession}
+                                        disabled={resettingSession}
+                                        className="w-full px-4 py-2.5 text-xs text-red-600 bg-red-50 hover:bg-red-100 rounded-xl font-medium transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                                    >
+                                        <RefreshCw size={14} className={resettingSession ? 'animate-spin' : ''} />
+                                        {resettingSession ? 'Sedang Mereset Sesi...' : 'Reset Sesi & Buat QR Baru (Jika Macet)'}
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

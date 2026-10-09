@@ -298,7 +298,7 @@ class AreaOutageMonitorService
             ->where('is_service_isolated', false)
             ->whereNotNull('pppoe_username')
             ->where('pppoe_username', '!=', '')
-            ->get(['id', 'name', 'phone', 'pppoe_username', 'odp', 'address']);
+            ->get(['id', 'name', 'phone', 'pppoe_username', 'odp', 'address', 'latitude', 'longitude']);
 
         // 4. Kelompokkan pelanggan berdasarkan kode area
         // Skip pelanggan yang akun PPPoE-nya terdaftar sebagai isolir di MikroTik
@@ -330,7 +330,6 @@ class AreaOutageMonitorService
             $uname = strtolower(trim($c->pppoe_username));
             $isOnline = isset($activeMap[$uname]);
 
-
             $customerData = [
                 'id' => $c->id,
                 'name' => $c->name,
@@ -338,6 +337,8 @@ class AreaOutageMonitorService
                 'pppoe_username' => $c->pppoe_username,
                 'odp' => $c->odp,
                 'address' => $c->address,
+                'latitude' => $c->latitude !== null ? (float) $c->latitude : null,
+                'longitude' => $c->longitude !== null ? (float) $c->longitude : null,
                 'is_online' => $isOnline,
             ];
 
@@ -501,13 +502,148 @@ class AreaOutageMonitorService
     /**
      * Ambil data insiden berdasarkan token.
      */
-    public function getIncidentByToken(string $token): ?AreaOutageIncident
+    public function getIncidentByToken(string $token, bool $withRealtimeStatus = true): ?AreaOutageIncident
     {
         $this->ensureTableExists();
 
-        return AreaOutageIncident::with('networkNotice')
+        /** @var AreaOutageIncident|null $incident */
+        $incident = AreaOutageIncident::with('networkNotice')
             ->where('token', $token)
             ->first();
+
+        if (!$incident) {
+            return null;
+        }
+
+        if ($withRealtimeStatus) {
+            $this->enrichIncidentRealtimeStatus($incident);
+        }
+
+        return $incident;
+    }
+
+    /**
+     * Memperkaya data insiden dengan status koneksi MikroTik realtime dan koordinat GPS pelanggan terdampak.
+     */
+    public function enrichIncidentRealtimeStatus(AreaOutageIncident $incident): void
+    {
+        $recordedInactives = $incident->inactive_customers_data ?? [];
+        if (!is_array($recordedInactives)) {
+            $recordedInactives = [];
+        }
+
+        $customerIds = collect($recordedInactives)->pluck('id')->filter()->values()->all();
+        $usernames = collect($recordedInactives)->pluck('pppoe_username')->filter()->map(fn($u) => strtolower(trim((string) $u)))->values()->all();
+
+        $query = Customer::query();
+        if (!empty($customerIds)) {
+            $query->whereIn('id', $customerIds);
+        } elseif (!empty($usernames)) {
+            $query->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(pppoe_username)'), $usernames);
+        } else {
+            // Fallback jika tidak ada data snapshot
+            $query->where('is_active', true)
+                ->whereNotNull('pppoe_username')
+                ->where('pppoe_username', '!=', '');
+        }
+
+        $dbCustomers = $query->select(['id', 'name', 'phone', 'pppoe_username', 'odp', 'odp_id', 'address', 'latitude', 'longitude', 'is_active', 'is_service_isolated'])
+            ->get();
+
+        $dbCustomerById = $dbCustomers->keyBy('id');
+        $dbCustomerByUsername = $dbCustomers->keyBy(fn($c) => strtolower(trim((string) $c->pppoe_username)));
+
+        // Ambil sesi PPPoE aktif dari MikroTik
+        $activeMap = [];
+        try {
+            $router = MasterMikrotik::query()->where('is_active', true)->first();
+            if ($router) {
+                $mikrotik = new MikroTikService(
+                    $router->host,
+                    $router->username,
+                    $router->password_encrypted,
+                    $router->port,
+                    5
+                );
+                $activeConnections = $mikrotik->getActivePPPoEConnections(true) ?? [];
+                foreach ($activeConnections as $conn) {
+                    $u = strtolower(trim((string) ($conn['name'] ?? $conn['user'] ?? '')));
+                    if ($u !== '') {
+                        $activeMap[$u] = [
+                            'ip' => $conn['address'] ?? null,
+                            'uptime' => $conn['uptime'] ?? null,
+                        ];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("AreaOutageMonitorService enrich realtime check failed: " . $e->getMessage());
+        }
+
+        $realtimeCustomers = [];
+        $currentOnlineCount = 0;
+        $currentOfflineCount = 0;
+
+        // Jika recorded inactives kosong, fallback ke list dari database yang cocok kode areanya
+        $itemsToProcess = !empty($recordedInactives) ? $recordedInactives : $dbCustomers->toArray();
+
+        foreach ($itemsToProcess as $item) {
+            $id = $item['id'] ?? null;
+            $unameRaw = $item['pppoe_username'] ?? '';
+            $unameLower = strtolower(trim((string) $unameRaw));
+
+            $dbCust = null;
+            if ($id && isset($dbCustomerById[$id])) {
+                $dbCust = $dbCustomerById[$id];
+            } elseif ($unameLower && isset($dbCustomerByUsername[$unameLower])) {
+                $dbCust = $dbCustomerByUsername[$unameLower];
+            }
+
+            $finalUsername = $dbCust?->pppoe_username ?? $unameRaw;
+            $normUser = strtolower(trim((string) $finalUsername));
+            $isOnline = ($normUser !== '' && isset($activeMap[$normUser]));
+
+            $lat = $dbCust?->latitude !== null ? (float) $dbCust->latitude : (isset($item['latitude']) && $item['latitude'] !== null ? (float) $item['latitude'] : null);
+            $lng = $dbCust?->longitude !== null ? (float) $dbCust->longitude : (isset($item['longitude']) && $item['longitude'] !== null ? (float) $item['longitude'] : null);
+
+            $custData = [
+                'id' => $dbCust?->id ?? $id,
+                'name' => $dbCust?->name ?? $item['name'] ?? 'Pelanggan',
+                'phone' => $dbCust?->phone ?? $item['phone'] ?? '',
+                'pppoe_username' => $finalUsername,
+                'odp' => $dbCust?->odp ?? $item['odp'] ?? '',
+                'address' => $dbCust?->address ?? $item['address'] ?? '',
+                'latitude' => $lat,
+                'longitude' => $lng,
+                'is_online' => $isOnline,
+                'ip_address' => $isOnline ? ($activeMap[$normUser]['ip'] ?? null) : null,
+                'uptime' => $isOnline ? ($activeMap[$normUser]['uptime'] ?? null) : null,
+            ];
+
+            if ($isOnline) {
+                $currentOnlineCount++;
+            } else {
+                $currentOfflineCount++;
+            }
+
+            $realtimeCustomers[] = $custData;
+        }
+
+        $totalIncident = count($realtimeCustomers);
+        $recoveryPercent = $totalIncident > 0 ? round(($currentOnlineCount / $totalIncident) * 100, 1) : 0;
+
+        $realtimeSummary = [
+            'total_incident_customers' => $totalIncident,
+            'current_online_count' => $currentOnlineCount,
+            'current_offline_count' => $currentOfflineCount,
+            'recovery_rate_percent' => $recoveryPercent,
+            'last_checked_at' => now()->toIso8601String(),
+            'with_coordinates_count' => collect($realtimeCustomers)->filter(fn($c) => $c['latitude'] !== null && $c['longitude'] !== null)->count(),
+        ];
+
+        // Set dynamic attributes on incident
+        $incident->setAttribute('realtime_customers', $realtimeCustomers);
+        $incident->setAttribute('realtime_summary', $realtimeSummary);
     }
 
     /**

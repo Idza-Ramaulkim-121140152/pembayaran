@@ -43,6 +43,8 @@ function CustomerProspectsPage() {
                       : item.jenis_kelamin === 'P' ? 'Perempuan'
                       : item.jenis_kelamin || '';
 
+        const webDetailUrl = `${window.location.origin}/customer-verification/register?prospect_id=${item.id}`;
+
         const lines = [
             `📋 *DATA PEMASANGAN - ${item.registration_no}*`,
             ``,
@@ -57,7 +59,10 @@ function CustomerProspectsPage() {
             `📦 *Paket:* ${item.paket || item.paket_custom || 'Standar'}`,
             item.catatan    ? `📝 *Catatan:* ${item.catatan}` : null,
             (item.latitude && item.longitude)
-                            ? `🗺️ *Koordinat:* ${item.latitude}, ${item.longitude}` : null,
+                            ? `🗺️ *Koordinat:* https://www.google.com/maps?q=${item.latitude},${item.longitude}` : null,
+            ``,
+            `🌐 *Buka link ini untuk melihat foto dan detail pelanggan:*`,
+            `${webDetailUrl}`,
             ``,
             `📅 *Tgl Daftar:* ${tglDaftar}`,
         ].filter((l) => l !== null).join('\n');

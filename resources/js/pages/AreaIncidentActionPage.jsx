@@ -1,12 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
     AlertTriangle, Zap, Wrench, Send, CheckCircle2, AlertCircle,
     Users, Phone, MapPin, RefreshCw, Search, Check, Info, ArrowLeft,
-    ExternalLink, ShieldAlert, Sparkles, MessageSquare
+    ExternalLink, ShieldAlert, Sparkles, MessageSquare, Navigation,
+    Wifi, WifiOff, Layers, Compass, CheckCircle, Radio, Clock
 } from 'lucide-react';
+import { attachSatelliteLayerWithFallback } from '../utils/leafletTileFallback';
 
 const csrfToken = () => document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+const DEFAULT_CENTER = [-5.632727646, 105.548014641];
 
 export default function AreaIncidentActionPage() {
     const { token } = useParams();
@@ -14,6 +20,19 @@ export default function AreaIncidentActionPage() {
     const [loading, setLoading] = useState(true);
     const [incident, setIncident] = useState(null);
     const [error, setError] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
+    const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
+    const [autoRefresh, setAutoRefresh] = useState(true);
+
+    // Map States
+    const mapContainerRef = useRef(null);
+    const mapInstanceRef = useRef(null);
+    const markersMapRef = useRef(new Map());
+    const tileFallbackRef = useRef(null);
+    const [mapReady, setMapReady] = useState(false);
+    const [tileMode, setTileMode] = useState('satellite'); // 'satellite' | 'osm'
+    const [mapFilter, setMapFilter] = useState('all'); // 'all' | 'offline' | 'online'
+    const [focusedCustomerId, setFocusedCustomerId] = useState(null);
 
     // Opsi 1: Tandai Gangguan
     const [incidentType, setIncidentType] = useState('pemadaman_listrik');
@@ -31,14 +50,15 @@ export default function AreaIncidentActionPage() {
     const [confirmSendModal, setConfirmSendModal] = useState(false);
 
     const getTemplates = (areaCode = 'INI') => ({
-        listrik: `âš ï¸ *INFORMASI GANGGUAN JARINGAN (LISTRIK PADAM)* âš ï¸\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nSaat ini koneksi internet di wilayah Anda sedang mengalami gangguan karena adanya *Pemadaman Listrik (PLN)* pada perangkat transmisi / distribusi kami.\n\nPerangkat akan menyala kembali secara otomatis sesaat setelah aliran listrik PLN normal.\n\nMohon maaf atas ketidaknyamanan yang terjadi. Terima kasih atas pengertian dan kesabaran Anda. ðŸ™`,
-        maintenance: `ðŸ”§ *PEMBERITAHUAN MAINTENANCE / PERBAIKAN JARINGAN* ðŸ”§\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nSaat ini sedang berlangsung pekerjaan *Perbaikan / Pemeliharaan Jaringan Darurat* pada wilayah Anda (Area *${areaCode}*).\n\nTim teknisi kami sedang berada di lokasi untuk mempercepat pemulihan koneksi Anda.\n\nMohon maaf atas ketidaknyamanan ini. Kami akan berupaya agar koneksi segera kembali normal secepat mungkin. Terima kasih. ðŸ™`,
-        umum: `ðŸ“¢ *INFORMASI GANGGUAN JARINGAN INTERNET* ðŸ“¢\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nKami menginformasikan bahwa sistem mendeteksi adanya penurunan kualitas/putusnya koneksi di area *${areaCode}*.\n\nTim teknisi telah menerima laporan dan sedang melakukan investigasi serta perbaikan langsung.\n\nCek update status: https://rumahkitanet.site/status-jaringan\nTerima kasih atas kerja sama dan pengertiannya. ðŸ™`
+        listrik: `⚠️ *INFORMASI GANGGUAN JARINGAN (LISTRIK PADAM)* ⚠️\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nSaat ini koneksi internet di wilayah Anda sedang mengalami gangguan karena adanya *Pemadaman Listrik (PLN)* pada perangkat transmisi / distribusi kami.\n\nPerangkat akan menyala kembali secara otomatis sesaat setelah aliran listrik PLN normal.\n\nMohon maaf atas ketidaknyamanan yang terjadi. Terima kasih atas pengertian dan kesabaran Anda. 🙏`,
+        maintenance: `🔧 *PEMBERITAHUAN MAINTENANCE / PERBAIKAN JARINGAN* 🔧\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nSaat ini sedang berlangsung pekerjaan *Perbaikan / Pemeliharaan Jaringan Darurat* pada wilayah Anda (Area *${areaCode}*).\n\nTim teknisi kami sedang berada di lokasi untuk mempercepat pemulihan koneksi Anda.\n\nMohon maaf atas ketidaknyamanan ini. Kami akan berupaya agar koneksi segera kembali normal secepat mungkin. Terima kasih. 🙏`,
+        umum: `📢 *INFORMASI GANGGUAN JARINGAN INTERNET* 📢\n\nYth. Pelanggan RumahKitaNet di Area *${areaCode}*,\n\nKami menginformasikan bahwa sistem mendeteksi adanya penurunan kualitas/putusnya koneksi di area *${areaCode}*.\n\nTim teknisi telah menerima laporan dan sedang melakukan investigasi serta perbaikan langsung.\n\nCek update status: https://rumahkitanet.site/status-jaringan\nTerima kasih atas kerja sama dan pengertiannya. 🙏`
     });
 
-    const fetchIncident = async () => {
-        setLoading(true);
-        setError(null);
+    const fetchIncident = useCallback(async (isManualRefresh = false) => {
+        if (isManualRefresh) {
+            setRefreshing(true);
+        }
         try {
             const res = await fetch(`/api/area-incident/${token}`, {
                 headers: {
@@ -53,35 +73,256 @@ export default function AreaIncidentActionPage() {
 
             const inc = data.incident;
             setIncident(inc);
+            setLastRefreshedAt(new Date());
 
-            // Default template
-            const tpls = getTemplates(inc.area_code);
-            setMessageText(tpls.listrik);
+            // Default message template if not edited yet
+            if (!messageText) {
+                const tpls = getTemplates(inc.area_code);
+                setMessageText(tpls.listrik);
+            }
 
-            // Pre-select all inactive customers
-            const inactives = inc.inactive_customers_data || [];
-            setSelectedCustomerIds(inactives.map(c => c.id));
+            // If first load, default select customers that are STILL offline
+            const list = inc.realtime_customers || inc.inactive_customers_data || [];
+            if (selectedCustomerIds.length === 0 && list.length > 0) {
+                const offlineIds = list.filter(c => !c.is_online).map(c => c.id);
+                setSelectedCustomerIds(offlineIds.length > 0 ? offlineIds : list.map(c => c.id));
+            }
 
             // Populate existing values if already marked
-            if (inc.incident_type) {
+            if (inc.incident_type && !incidentType) {
                 setIncidentType(inc.incident_type);
             }
-            if (inc.incident_notes) {
+            if (inc.incident_notes && !incidentNotes) {
                 setIncidentNotes(inc.incident_notes);
             }
         } catch (err) {
             console.error('Fetch incident error:', err);
-            setError(err.message);
+            if (!incident) {
+                setError(err.message);
+            }
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
-    };
+    }, [token, messageText, incidentType, incidentNotes, selectedCustomerIds.length, incident]);
 
     useEffect(() => {
         if (token) {
             fetchIncident();
         }
     }, [token]);
+
+    // Auto-refresh interval (every 25 seconds if enabled)
+    useEffect(() => {
+        if (!autoRefresh || !token) return;
+        const interval = setInterval(() => {
+            fetchIncident(false);
+        }, 25000);
+        return () => clearInterval(interval);
+    }, [autoRefresh, token, fetchIncident]);
+
+    const affectedCustomers = useMemo(() => {
+        return incident?.realtime_customers || incident?.inactive_customers_data || [];
+    }, [incident]);
+
+    const onlineCustomersCount = useMemo(() => {
+        return incident?.realtime_summary?.current_online_count ?? affectedCustomers.filter(c => c.is_online).length;
+    }, [incident, affectedCustomers]);
+
+    const offlineCustomersCount = useMemo(() => {
+        return incident?.realtime_summary?.current_offline_count ?? affectedCustomers.filter(c => !c.is_online).length;
+    }, [incident, affectedCustomers]);
+
+    const totalCustomersCount = affectedCustomers.length;
+
+    const recoveryRate = totalCustomersCount > 0
+        ? Math.round((onlineCustomersCount / totalCustomersCount) * 100)
+        : 0;
+
+    const customersWithCoords = useMemo(() => {
+        return affectedCustomers.filter(c => c.latitude !== null && c.longitude !== null && !isNaN(Number(c.latitude)) && !isNaN(Number(c.longitude)));
+    }, [affectedCustomers]);
+
+    // Inisialisasi Peta Leaflet
+    useEffect(() => {
+        if (!mapContainerRef.current) return;
+
+        try {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.remove();
+                mapInstanceRef.current = null;
+            }
+
+            const initialCenter = customersWithCoords.length > 0
+                ? [Number(customersWithCoords[0].latitude), Number(customersWithCoords[0].longitude)]
+                : DEFAULT_CENTER;
+
+            const map = L.map(mapContainerRef.current, {
+                center: initialCenter,
+                zoom: 14,
+                zoomControl: true,
+                dragging: true,
+                scrollWheelZoom: true,
+            });
+
+            tileFallbackRef.current = attachSatelliteLayerWithFallback(L, map, {
+                onFallback: () => setTileMode('osm'),
+            });
+
+            mapInstanceRef.current = map;
+            setMapReady(true);
+
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 250);
+
+            return () => {
+                if (tileFallbackRef.current) {
+                    tileFallbackRef.current.cleanup();
+                    tileFallbackRef.current = null;
+                }
+                if (mapInstanceRef.current) {
+                    mapInstanceRef.current.remove();
+                    mapInstanceRef.current = null;
+                }
+                markersMapRef.current.clear();
+            };
+        } catch (err) {
+            console.error('Error initializing map:', err);
+        }
+    }, [customersWithCoords.length > 0]);
+
+    // Render Markers Pelanggan pada Peta
+    useEffect(() => {
+        if (!mapInstanceRef.current || !mapReady) return;
+
+        const map = mapInstanceRef.current;
+
+        // Hapus marker lama
+        markersMapRef.current.forEach((marker) => map.removeLayer(marker));
+        markersMapRef.current.clear();
+
+        const bounds = [];
+
+        customersWithCoords.forEach((c) => {
+            const isOnline = Boolean(c.is_online);
+
+            // Filter status jika dipilih
+            if (mapFilter === 'offline' && isOnline) return;
+            if (mapFilter === 'online' && !isOnline) return;
+
+            const lat = Number(c.latitude);
+            const lng = Number(c.longitude);
+            const latLng = [lat, lng];
+            bounds.push(latLng);
+
+            // Marker HTML Icon (Hijau untuk Online, Merah dengan pulse untuk Offline)
+            const iconHtml = isOnline
+                ? `
+                <div style="position:relative; width:30px; height:30px; display:flex; align-items:center; justify-content:center;">
+                    <div style="background-color:#16a34a; width:26px; height:26px; border-radius:9999px; display:flex; align-items:center; justify-content:center; border:2.5px solid #ffffff; box-shadow:0 3px 8px rgba(0,0,0,0.35); color:#ffffff;">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                </div>
+                `
+                : `
+                <div style="position:relative; width:34px; height:34px; display:flex; align-items:center; justify-content:center;">
+                    <span style="position:absolute; width:100%; height:100%; border-radius:9999px; background-color:#ef4444; opacity:0.65; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></span>
+                    <div style="position:relative; background-color:#dc2626; width:26px; height:26px; border-radius:9999px; display:flex; align-items:center; justify-content:center; border:2.5px solid #ffffff; box-shadow:0 3px 8px rgba(0,0,0,0.4); color:#ffffff; font-size:11px;">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </div>
+                </div>
+                `;
+
+            const marker = L.marker(latLng, {
+                icon: L.divIcon({
+                    className: 'custom-customer-incident-marker',
+                    html: iconHtml,
+                    iconSize: [34, 34],
+                    iconAnchor: [17, 17],
+                }),
+            }).addTo(map);
+
+            const waPhone = c.phone ? c.phone.replace(/^0/, '62').replace(/\D/g, '') : '';
+            const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+
+            const popupContent = `
+                <div style="min-width:240px; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; padding: 2px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px;">
+                        <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px;">
+                            ${c.odp ? 'ODP: ' + c.odp : 'AREA ' + (incident?.area_code || '')}
+                        </span>
+                        <span style="padding: 2px 7px; border-radius: 9999px; font-size: 10px; font-weight: 800; ${isOnline ? 'background:#dcfce7; color:#15803d; border: 1px solid #bbf7d0;' : 'background:#fee2e2; color:#b91c1c; border: 1px solid #fecaca;'}">
+                            ${isOnline ? '🟢 AKTIF (ONLINE)' : '🔴 GANGGUAN (OFFLINE)'}
+                        </span>
+                    </div>
+                    <div style="font-weight: 800; font-size: 14px; color: #0f172a; line-height: 1.3; margin-bottom: 3px;">
+                        ${c.name}
+                    </div>
+                    <div style="font-size: 12px; color: #475569; font-family: monospace; font-weight: 600; margin-bottom: 6px;">
+                        PPPoE: ${c.pppoe_username}
+                    </div>
+                    ${c.address ? `<div style="font-size: 11px; color: #64748b; margin-bottom: 6px; line-height: 1.3;">📍 ${c.address}</div>` : ''}
+                    ${isOnline && c.ip_address ? `
+                        <div style="font-size: 11px; color: #15803d; background: #f0fdf4; padding: 4px 6px; border-radius: 6px; margin-bottom: 8px; font-weight: 500;">
+                            🌐 IP: <span style="font-family:monospace; font-weight:700;">${c.ip_address}</span> ${c.uptime ? `(Uptime: ${c.uptime})` : ''}
+                        </div>
+                    ` : ''}
+                    <div style="display:flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f1f5f9;">
+                        ${waPhone ? `
+                            <a href="https://wa.me/${waPhone}" target="_blank" style="flex:1; background:#22c55e; color:#ffffff; font-size:11px; font-weight:700; text-align:center; padding: 6px 8px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                <span>💬 WhatsApp</span>
+                            </a>
+                        ` : ''}
+                        <a href="${gmapsUrl}" target="_blank" style="flex:1; background:#2563eb; color:#ffffff; font-size:11px; font-weight:700; text-align:center; padding: 6px 8px; border-radius: 8px; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 4px;">
+                            <span>🗺️ Buka Rute</span>
+                        </a>
+                    </div>
+                </div>
+            `;
+
+            marker.bindPopup(popupContent, { maxWidth: 280 });
+            markersMapRef.current.set(c.id, marker);
+        });
+
+        // Auto zoom fit bounds jika ada titik koordinat
+        if (bounds.length > 0 && !focusedCustomerId) {
+            map.fitBounds(L.latLngBounds(bounds), {
+                padding: [45, 45],
+                maxZoom: 16,
+            });
+        }
+    }, [mapReady, customersWithCoords, mapFilter, incident?.area_code]);
+
+    const handleFocusCustomerOnMap = (customer) => {
+        if (!customer.latitude || !customer.longitude || !mapInstanceRef.current) return;
+        setFocusedCustomerId(customer.id);
+        const map = mapInstanceRef.current;
+        const lat = Number(customer.latitude);
+        const lng = Number(customer.longitude);
+
+        map.flyTo([lat, lng], 17, { duration: 1.2 });
+
+        const marker = markersMapRef.current.get(customer.id);
+        if (marker) {
+            setTimeout(() => {
+                marker.openPopup();
+            }, 1200);
+        }
+
+        // Scroll to map container smoothly
+        mapContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+
+    const handleResetMapView = () => {
+        if (!mapInstanceRef.current || customersWithCoords.length === 0) return;
+        setFocusedCustomerId(null);
+        const bounds = customersWithCoords.map(c => [Number(c.latitude), Number(c.longitude)]);
+        mapInstanceRef.current.fitBounds(L.latLngBounds(bounds), {
+            padding: [45, 45],
+            maxZoom: 16,
+        });
+    };
 
     const handleSelectTemplate = (type) => {
         setSelectedTemplate(type);
@@ -167,12 +408,16 @@ export default function AreaIncidentActionPage() {
         }
     };
 
+    const selectOnlyOfflineCustomers = () => {
+        const offlineIds = affectedCustomers.filter(c => !c.is_online).map(c => c.id);
+        setSelectedCustomerIds(offlineIds);
+    };
+
     const toggleSelectAll = () => {
-        const inactives = incident?.inactive_customers_data || [];
-        if (selectedCustomerIds.length === inactives.length) {
+        if (selectedCustomerIds.length === affectedCustomers.length) {
             setSelectedCustomerIds([]);
         } else {
-            setSelectedCustomerIds(inactives.map(c => c.id));
+            setSelectedCustomerIds(affectedCustomers.map(c => c.id));
         }
     };
 
@@ -187,8 +432,8 @@ export default function AreaIncidentActionPage() {
             <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
                 <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 max-w-md w-full text-center">
                     <RefreshCw className="w-10 h-10 text-orange-500 animate-spin mx-auto mb-4" />
-                    <h2 className="text-lg font-bold text-slate-800">Memuat Data Insiden...</h2>
-                    <p className="text-sm text-slate-500 mt-1">Mengambil rincian area dan status pelanggan dari server</p>
+                    <h2 className="text-lg font-bold text-slate-800">Memeriksa Status Jaringan & Pelanggan...</h2>
+                    <p className="text-sm text-slate-500 mt-1">Mengambil koordinat dan status koneksi realtime dari MikroTik</p>
                 </div>
             </div>
         );
@@ -215,8 +460,7 @@ export default function AreaIncidentActionPage() {
         );
     }
 
-    const inactiveList = incident.inactive_customers_data || [];
-    const filteredInactive = inactiveList.filter(c => {
+    const filteredCustomers = affectedCustomers.filter(c => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
         return (
@@ -226,10 +470,6 @@ export default function AreaIncidentActionPage() {
             (c.odp && c.odp.toLowerCase().includes(q))
         );
     });
-
-    const inactivePercentage = incident.total_customers > 0
-        ? Math.round((incident.inactive_customers_count / incident.total_customers) * 100)
-        : 0;
 
     return (
         <div className="min-h-screen bg-slate-50 text-slate-800 pb-16">
@@ -247,14 +487,25 @@ export default function AreaIncidentActionPage() {
                             <p className="text-xs text-slate-500">RumahKitaNet NOC & Field Response</p>
                         </div>
                     </div>
-                    <Link
-                        to="/status-jaringan"
-                        target="_blank"
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
-                    >
-                        <span>Status Jaringan</span>
-                        <ExternalLink size={13} />
-                    </Link>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => fetchIncident(true)}
+                            disabled={refreshing}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition border border-blue-200"
+                        >
+                            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+                            <span>{refreshing ? 'Memeriksa...' : 'Cek Realtime'}</span>
+                        </button>
+                        <Link
+                            to="/status-jaringan"
+                            target="_blank"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+                        >
+                            <span>Status Jaringan</span>
+                            <ExternalLink size={13} />
+                        </Link>
+                    </div>
                 </div>
             </header>
 
@@ -270,7 +521,7 @@ export default function AreaIncidentActionPage() {
                                         <ShieldAlert size={13} />
                                         PERINGATAN GANGGUAN MASSAL
                                     </span>
-                                    <span className="text-xs text-slate-400">â€¢</span>
+                                    <span className="text-xs text-slate-400">•</span>
                                     <span className="text-xs text-slate-500 font-medium">
                                         {incident.alerted_at ? new Date(incident.alerted_at).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
                                     </span>
@@ -279,7 +530,7 @@ export default function AreaIncidentActionPage() {
                                     Area / Dusun: <span className="text-orange-600">{incident.area_code}</span>
                                 </h2>
                                 <p className="text-sm text-slate-600 mt-1">
-                                    Terdeteksi {incident.inactive_customers_count} dari total {incident.total_customers} pelanggan tidak aktif ({inactivePercentage}% offline).
+                                    Terdeteksi {totalCustomersCount} pelanggan masuk daftar gangguan area ini.
                                 </p>
                             </div>
 
@@ -290,30 +541,181 @@ export default function AreaIncidentActionPage() {
                                     incident.status === 'marked_notice' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
                                     'bg-amber-100 text-amber-800 border border-amber-200'
                                 }`}>
-                                    {incident.status === 'notified_customers' ? 'âœ“ Pesan Terkirim ke Pelanggan' :
-                                     incident.status === 'marked_notice' ? 'âœ“ Gangguan Ditandai' :
+                                    {incident.status === 'notified_customers' ? '✓ Pesan Terkirim ke Pelanggan' :
+                                     incident.status === 'marked_notice' ? '✓ Gangguan Ditandai' :
                                      'Menunggu Respon Teknisi'}
                                 </span>
                             </div>
                         </div>
 
+                        {/* Realtime Recovery Bar */}
+                        <div className="mt-5 p-4 rounded-xl bg-slate-900 text-white shadow-inner">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="relative flex h-2.5 w-2.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    </span>
+                                    <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                                        Status Pemulihan Realtime (MikroTik)
+                                    </span>
+                                </div>
+                                <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                                    <Clock size={12} />
+                                    <span>
+                                        {lastRefreshedAt ? `Diperbarui ${lastRefreshedAt.toLocaleTimeString('id-ID')}` : 'Live'}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAutoRefresh(!autoRefresh)}
+                                        className={`ml-1 text-[11px] px-2 py-0.5 rounded font-semibold transition ${
+                                            autoRefresh ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-slate-800 text-slate-400'
+                                        }`}
+                                    >
+                                        Auto: {autoRefresh ? 'ON' : 'OFF'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="w-full bg-slate-800 rounded-full h-3.5 overflow-hidden flex p-0.5 border border-slate-700">
+                                <div
+                                    className="bg-gradient-to-r from-emerald-500 to-green-400 h-full rounded-full transition-all duration-700 ease-out"
+                                    style={{ width: `${recoveryRate}%` }}
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs mt-2 text-slate-300 font-medium">
+                                <span>
+                                    <strong className="text-emerald-400 font-bold">{onlineCustomersCount}</strong> dari {totalCustomersCount} Pelanggan Sudah Nyala ({recoveryRate}%)
+                                </span>
+                                <span>
+                                    <strong className="text-red-400 font-bold">{offlineCustomersCount}</strong> Masih Padam / Gangguan
+                                </span>
+                            </div>
+                        </div>
+
                         {/* Metric Highlights */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-slate-100">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-2">
                             <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                <div className="text-xs text-slate-500 font-medium">Total Pelanggan</div>
-                                <div className="text-xl font-bold text-slate-800 mt-0.5">{incident.total_customers}</div>
+                                <div className="text-xs text-slate-500 font-medium">Total Terdampak</div>
+                                <div className="text-xl font-bold text-slate-800 mt-0.5">{totalCustomersCount}</div>
                             </div>
                             <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-100">
-                                <div className="text-xs text-emerald-700 font-medium">Pelanggan Aktif</div>
-                                <div className="text-xl font-bold text-emerald-700 mt-0.5">{incident.active_customers_count}</div>
+                                <div className="text-xs text-emerald-700 font-medium flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> Sudah Aktif (Online)
+                                </div>
+                                <div className="text-xl font-bold text-emerald-700 mt-0.5">{onlineCustomersCount}</div>
                             </div>
                             <div className="bg-red-50/70 rounded-xl p-3 border border-red-100">
-                                <div className="text-xs text-red-700 font-medium">Pelanggan Offline</div>
-                                <div className="text-xl font-bold text-red-700 mt-0.5">{incident.inactive_customers_count}</div>
+                                <div className="text-xs text-red-700 font-medium flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block"></span> Masih Offline
+                                </div>
+                                <div className="text-xl font-bold text-red-700 mt-0.5">{offlineCustomersCount}</div>
                             </div>
-                            <div className="bg-orange-50/70 rounded-xl p-3 border border-orange-100">
-                                <div className="text-xs text-orange-700 font-medium">Rasio Gangguan</div>
-                                <div className="text-xl font-bold text-orange-700 mt-0.5">{inactivePercentage}%</div>
+                            <div className="bg-blue-50/70 rounded-xl p-3 border border-blue-100">
+                                <div className="text-xs text-blue-700 font-medium">Titik Lokasi GPS</div>
+                                <div className="text-xl font-bold text-blue-700 mt-0.5">{customersWithCoords.length} Pelanggan</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 🗺️ MAPS PELANGGAN GANGGUAN REALTIME 🗺️ */}
+                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center font-bold text-base">
+                                <MapPin size={20} />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                                    <span>Peta Sebaran Pelanggan Terdampak</span>
+                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-800">
+                                        Realtime
+                                    </span>
+                                </h3>
+                                <p className="text-xs text-slate-500">
+                                    Hanya menampilkan pelanggan area {incident.area_code} yang masuk daftar insiden. Titik otomatis berubah hijau saat aktif.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Map Controls */}
+                        <div className="flex flex-wrap items-center gap-2">
+                            {/* Status Filter */}
+                            <div className="inline-flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                                <button
+                                    type="button"
+                                    onClick={() => setMapFilter('all')}
+                                    className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                                        mapFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                                    }`}
+                                >
+                                    Semua ({customersWithCoords.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMapFilter('offline')}
+                                    className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                                        mapFilter === 'offline' ? 'bg-red-600 text-white shadow-2xs' : 'text-red-700 hover:text-red-900'
+                                    }`}
+                                >
+                                    🔴 Offline ({customersWithCoords.filter(c => !c.is_online).length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setMapFilter('online')}
+                                    className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                                        mapFilter === 'online' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-emerald-700 hover:text-emerald-900'
+                                    }`}
+                                >
+                                    🟢 Online ({customersWithCoords.filter(c => c.is_online).length})
+                                </button>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={handleResetMapView}
+                                className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center gap-1"
+                                title="Fokuskan ke seluruh titik pelanggan"
+                            >
+                                <Compass size={14} />
+                                <span>Reset Zoom</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Leaflet Map Canvas */}
+                    <div className="relative">
+                        <div
+                            ref={mapContainerRef}
+                            className="w-full h-[420px] sm:h-[480px] bg-slate-900 z-10"
+                        />
+
+                        {customersWithCoords.length === 0 && (
+                            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-900/80 backdrop-blur-xs p-6 text-center text-white">
+                                <div className="max-w-md space-y-2">
+                                    <MapPin size={32} className="mx-auto text-orange-400 opacity-80" />
+                                    <p className="font-bold text-sm">Belum Ada Titik Koordinat GPS</p>
+                                    <p className="text-xs text-slate-300">
+                                        Pelanggan pada area {incident.area_code} belum diisi data koordinat latitude/longitude di Master Data Pelanggan.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Map Floating Legend */}
+                        <div className="absolute bottom-4 left-4 z-20 bg-white/95 backdrop-blur-xs p-3 rounded-xl border border-slate-200 shadow-md text-xs space-y-1.5">
+                            <div className="font-bold text-slate-800 text-[11px] uppercase tracking-wider mb-1">
+                                Keterangan Titik
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full bg-red-600 border border-white shadow-xs inline-block animate-pulse"></span>
+                                <span className="font-semibold text-slate-700">Padam / Offline ({offlineCustomersCount})</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full bg-emerald-600 border border-white shadow-xs inline-block"></span>
+                                <span className="font-semibold text-slate-700">Sudah Nyala / Online ({onlineCustomersCount})</span>
                             </div>
                         </div>
                     </div>
@@ -444,9 +846,9 @@ export default function AreaIncidentActionPage() {
                                 2
                             </div>
                             <div>
-                                <h3 className="text-lg font-bold text-slate-900">Kirim Pesan WhatsApp ke Pelanggan Tidak Aktif</h3>
+                                <h3 className="text-lg font-bold text-slate-900">Kirim Pesan WhatsApp ke Pelanggan</h3>
                                 <p className="text-xs text-slate-500">
-                                    Kirim notifikasi pesan langsung ke WhatsApp pelanggan yang terdeteksi offline pada area {incident.area_code}.
+                                    Kirim notifikasi pesan langsung ke WhatsApp pelanggan yang terdampak pada area {incident.area_code}.
                                 </p>
                             </div>
                         </div>
@@ -479,7 +881,7 @@ export default function AreaIncidentActionPage() {
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                âš¡ Template Listrik Padam
+                                ⚡ Template Listrik Padam
                             </button>
                             <button
                                 type="button"
@@ -490,7 +892,7 @@ export default function AreaIncidentActionPage() {
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                ðŸ”§ Template Maintenance
+                                🔧 Template Maintenance
                             </button>
                             <button
                                 type="button"
@@ -501,7 +903,7 @@ export default function AreaIncidentActionPage() {
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                ðŸ“¢ Template Gangguan Umum
+                                📢 Template Gangguan Umum
                             </button>
                         </div>
                     </div>
@@ -519,31 +921,38 @@ export default function AreaIncidentActionPage() {
                             onChange={(e) => setMessageText(e.target.value)}
                             rows={6}
                             className="w-full px-3.5 py-2.5 text-sm font-sans border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50/50"
-                            placeholder="Tulis pesan WhatsApp untuk pelanggan offline di area ini..."
+                            placeholder="Tulis pesan WhatsApp untuk pelanggan di area ini..."
                         />
                         <p className="text-xs text-slate-500 mt-1">
                             * Anda dapat mengubah, menambah keterangan teknis, atau mengedit teks di atas secara bebas sebelum dikirim.
                         </p>
                     </div>
 
-                    {/* Inactive Customers Selector */}
+                    {/* Customers Selector & Table */}
                     <div>
                         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                             <div>
                                 <h4 className="text-sm font-bold text-slate-900">
-                                    Daftar Pelanggan Offline ({inactiveList.length})
+                                    Daftar Pelanggan Area {incident.area_code} ({affectedCustomers.length})
                                 </h4>
                                 <p className="text-xs text-slate-500">
                                     {selectedCustomerIds.length} pelanggan dipilih untuk menerima pesan WhatsApp.
                                 </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={selectOnlyOfflineCustomers}
+                                    className="px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition"
+                                >
+                                    Pilih Hanya yang Offline ({offlineCustomersCount})
+                                </button>
                                 <button
                                     type="button"
                                     onClick={toggleSelectAll}
                                     className="px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
                                 >
-                                    {selectedCustomerIds.length === inactiveList.length ? 'Batal Pilih Semua' : 'Pilih Semua'}
+                                    {selectedCustomerIds.length === affectedCustomers.length ? 'Batal Pilih Semua' : 'Pilih Semua'}
                                 </button>
                             </div>
                         </div>
@@ -561,26 +970,29 @@ export default function AreaIncidentActionPage() {
                         </div>
 
                         {/* Customer List Table */}
-                        <div className="border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto divide-y divide-slate-100">
-                            {filteredInactive.length === 0 ? (
+                        <div className="border border-slate-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto divide-y divide-slate-100">
+                            {filteredCustomers.length === 0 ? (
                                 <div className="p-6 text-center text-xs text-slate-400">
                                     Tidak ada pelanggan yang cocok dengan pencarian.
                                 </div>
                             ) : (
-                                filteredInactive.map(c => {
+                                filteredCustomers.map(c => {
                                     const isSelected = selectedCustomerIds.includes(c.id);
                                     const hasValidPhone = c.phone && c.phone !== '0';
+                                    const isOnline = Boolean(c.is_online);
+                                    const hasCoords = Boolean(c.latitude && c.longitude);
 
                                     return (
                                         <div
                                             key={c.id}
-                                            onClick={() => hasValidPhone && toggleCustomer(c.id)}
-                                            className={`p-3 flex items-center justify-between gap-3 text-left transition cursor-pointer ${
-                                                !hasValidPhone ? 'opacity-50 bg-slate-50 cursor-not-allowed' :
+                                            className={`p-3 flex items-center justify-between gap-3 text-left transition ${
                                                 isSelected ? 'bg-emerald-50/40 hover:bg-emerald-50/60' : 'hover:bg-slate-50'
                                             }`}
                                         >
-                                            <div className="flex items-center gap-3 min-w-0">
+                                            <div
+                                                onClick={() => hasValidPhone && toggleCustomer(c.id)}
+                                                className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     checked={isSelected}
@@ -589,24 +1001,44 @@ export default function AreaIncidentActionPage() {
                                                     className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
                                                 />
                                                 <div className="min-w-0">
-                                                    <div className="text-sm font-semibold text-slate-900 truncate">
-                                                        {c.name || 'Tanpa Nama'}
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-sm font-bold text-slate-900 truncate">
+                                                            {c.name || 'Tanpa Nama'}
+                                                        </span>
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-2xs font-bold rounded-full ${
+                                                            isOnline ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-red-100 text-red-800 border border-red-200'
+                                                        }`}>
+                                                            {isOnline ? '🟢 Aktif' : '🔴 Padam'}
+                                                        </span>
                                                     </div>
-                                                    <div className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                                                    <div className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500 mt-0.5">
                                                         <span className="font-mono text-slate-600">{c.pppoe_username}</span>
-                                                        {c.odp && <span>â€¢ ODP: {c.odp}</span>}
+                                                        {c.odp && <span>• ODP: {c.odp}</span>}
+                                                        {isOnline && c.ip_address && (
+                                                            <span className="text-emerald-700 font-mono">• IP: {c.ip_address}</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <div className="text-right shrink-0">
-                                                <div className="text-xs font-mono font-medium text-slate-700 flex items-center justify-end gap-1">
-                                                    <Phone size={12} className="text-slate-400" />
-                                                    {c.phone || <span className="text-red-500 text-2xs">No Phone</span>}
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                {hasCoords && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleFocusCustomerOnMap(c)}
+                                                        className="px-2 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition border border-blue-200 flex items-center gap-1"
+                                                        title="Lihat titik di peta"
+                                                    >
+                                                        <Navigation size={12} />
+                                                        <span className="hidden sm:inline">Peta</span>
+                                                    </button>
+                                                )}
+                                                <div className="text-right">
+                                                    <div className="text-xs font-mono font-medium text-slate-700 flex items-center justify-end gap-1">
+                                                        <Phone size={12} className="text-slate-400" />
+                                                        {c.phone || <span className="text-red-500 text-2xs">No Phone</span>}
+                                                    </div>
                                                 </div>
-                                                <span className="inline-block px-1.5 py-0.5 text-2xs font-semibold rounded bg-red-100 text-red-700 mt-0.5">
-                                                    Offline
-                                                </span>
                                             </div>
                                         </div>
                                     );
@@ -653,7 +1085,7 @@ export default function AreaIncidentActionPage() {
                             Kirim Notifikasi Massal?
                         </h3>
                         <p className="text-xs text-slate-600 text-center mb-4 leading-relaxed">
-                            Pesan WhatsApp akan dikirim ke <span className="font-bold text-emerald-700">{selectedCustomerIds.length} pelanggan nonaktif</span> di area <strong>{incident.area_code}</strong> melalui WhatsApp Gateway.
+                            Pesan WhatsApp akan dikirim ke <span className="font-bold text-emerald-700">{selectedCustomerIds.length} pelanggan</span> di area <strong>{incident.area_code}</strong> melalui WhatsApp Gateway.
                         </p>
 
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs text-slate-700 max-h-36 overflow-y-auto mb-5 font-sans whitespace-pre-line">

@@ -346,6 +346,119 @@ class BorrowerLoanService
         });
     }
 
+    public function transferBorrowerLoan(
+        Borrower $fromBorrower,
+        Borrower $toBorrower,
+        int $amount,
+        string $transferDate,
+        ?User $actor,
+        ?string $notes = null
+    ): array {
+        if ($fromBorrower->id === $toBorrower->id) {
+            throw new RuntimeException('Peminjam asal dan peminjam tujuan tidak boleh sama.');
+        }
+
+        if ($amount <= 0) {
+            throw new RuntimeException('Nominal transfer pinjaman harus lebih dari 0.');
+        }
+
+        $loans = $fromBorrower->loans()
+            ->whereIn('status', [BorrowerLoan::STATUS_OUTSTANDING, BorrowerLoan::STATUS_REJECTED_BY_RECEIVER])
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get();
+
+        if ($loans->isEmpty()) {
+            throw new RuntimeException("Peminjam asal ({$fromBorrower->name}) tidak memiliki hutang outstanding untuk ditransfer.");
+        }
+
+        $totalOutstanding = (int) $loans->sum(fn (BorrowerLoan $loan) => max(0, (int) $loan->amount - (int) $loan->settled_amount));
+        if ($amount > $totalOutstanding) {
+            throw new RuntimeException("Nominal transfer melebihi total sisa hutang peminjam asal ({$fromBorrower->name}: Rp " . number_format($totalOutstanding, 0, ',', '.') . ').');
+        }
+
+        return DB::transaction(function () use ($fromBorrower, $toBorrower, $amount, $transferDate, $actor, $notes, $loans, $totalOutstanding) {
+            $transferGroupKey = (string) Str::uuid();
+            $settleNote = "Transfer pinjaman ke {$toBorrower->name}" . ($notes ? " ({$notes})" : '');
+            $remainingAllocation = $amount;
+            $allocations = [];
+
+            // 1. Settle pinjaman pada peminjam asal
+            foreach ($loans as $loan) {
+                if ($remainingAllocation <= 0) {
+                    break;
+                }
+
+                $remainingLoan = max(0, (int) $loan->amount - (int) $loan->settled_amount);
+                if ($remainingLoan <= 0) {
+                    continue;
+                }
+
+                $allocatedAmount = min($remainingAllocation, $remainingLoan);
+
+                BorrowerLoanPayment::query()->create([
+                    'borrower_loan_id' => $loan->id,
+                    'amount' => $allocatedAmount,
+                    'payment_date' => $transferDate,
+                    'action_group_key' => $transferGroupKey,
+                    'received_by_user_id' => $actor?->id,
+                    'financial_transaction_id' => null,
+                    'pengeluaran_id' => null,
+                    'notes' => $settleNote,
+                ]);
+
+                $loan->settled_amount = (int) $loan->settled_amount + $allocatedAmount;
+                $loan->status = (int) $loan->settled_amount >= (int) $loan->amount
+                    ? BorrowerLoan::STATUS_SETTLED
+                    : BorrowerLoan::STATUS_OUTSTANDING;
+                $loan->save();
+
+                $allocations[] = [
+                    'loan_id' => $loan->id,
+                    'allocated_amount' => $allocatedAmount,
+                ];
+
+                $remainingAllocation -= $allocatedAmount;
+            }
+
+            // 2. Buat pinjaman baru pada peminjam tujuan
+            $incomingLoanNote = "Terima transfer pinjaman dari {$fromBorrower->name}" . ($notes ? " ({$notes})" : '');
+            $newLoan = BorrowerLoan::query()->create([
+                'borrower_id' => $toBorrower->id,
+                'invoice_id' => null,
+                'confirmed_by_user_id' => $actor?->id,
+                'target_receiver_user_id' => null,
+                'actual_receiver_user_id' => null,
+                'amount' => $amount,
+                'settled_amount' => 0,
+                'status' => BorrowerLoan::STATUS_OUTSTANDING,
+                'source' => 'transfer_from_borrower',
+                'occurred_at' => $transferDate . ' ' . now()->format('H:i:s'),
+                'notes' => $incomingLoanNote,
+                'meta' => [
+                    'transfer_group_key' => $transferGroupKey,
+                    'source_borrower_id' => $fromBorrower->id,
+                    'source_borrower_name' => $fromBorrower->name,
+                    'target_borrower_id' => $toBorrower->id,
+                    'target_borrower_name' => $toBorrower->name,
+                    'transfer_notes' => $notes,
+                ],
+            ]);
+
+            return [
+                'transfer_group_key' => $transferGroupKey,
+                'from_borrower_id' => $fromBorrower->id,
+                'from_borrower_name' => $fromBorrower->name,
+                'to_borrower_id' => $toBorrower->id,
+                'to_borrower_name' => $toBorrower->name,
+                'amount' => $amount,
+                'transfer_date' => $transferDate,
+                'from_remaining_outstanding' => max(0, $totalOutstanding - $amount),
+                'new_loan' => $newLoan,
+            ];
+        });
+    }
+
     public function reverseSettlementActionGroup(string $actionGroupKey): int
     {
         if ($actionGroupKey === '') {

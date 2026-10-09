@@ -137,6 +137,54 @@ class WhatsAppController extends Controller
     }
 
     /**
+     * POST /api/whatsapp/reset-session
+     * Reset WhatsApp session data and generate a fresh QR code
+     */
+    public function resetSession()
+    {
+        // 1. Coba reset via HTTP ke Gateway
+        try {
+            $response = Http::timeout(5)->post($this->gatewayUrl() . '/reset-session');
+            if ($response->successful()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Sesi WhatsApp berhasil di-reset. QR Code baru sedang dibuat...',
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::warning('WhatsApp HTTP reset-session gagal, eksekusi pembersihan sistem: ' . $e->getMessage());
+        }
+
+        // 2. Fallback: Eksekusi pembersihan session di filesystem server
+        try {
+            @shell_exec('sudo /usr/bin/fuser -k 3001/tcp 2>/dev/null');
+
+            $sessionPath = base_path('fastapi/wa-gateway/sessions');
+            if (is_dir($sessionPath)) {
+                @shell_exec("rm -rf {$sessionPath} 2>/dev/null");
+            }
+            $cachePath = base_path('fastapi/wa-gateway/.wwebjs_cache');
+            if (is_dir($cachePath)) {
+                @shell_exec("rm -rf {$cachePath} 2>/dev/null");
+            }
+
+            $output = @shell_exec('sudo /usr/bin/supervisorctl restart pembayaran-wa:* 2>&1');
+            Log::info("Supervisor reset-session output: {$output}");
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Sesi WhatsApp berhasil di-reset via sistem server. Silakan buka QR Code dalam beberapa detik.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Reset session fallback failed: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal reset sesi WhatsApp: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * POST /api/whatsapp/send-notification
      * Send notification to customers via WhatsApp
      */

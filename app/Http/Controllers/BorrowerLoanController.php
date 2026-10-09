@@ -300,6 +300,45 @@ class BorrowerLoanController extends Controller
         ]);
     }
 
+    public function transfer(Request $request)
+    {
+        $this->ensureReady();
+
+        $validated = $request->validate([
+            'from_borrower_id' => 'required|integer|exists:borrowers,id',
+            'to_borrower_id' => 'required|integer|exists:borrowers,id|different:from_borrower_id',
+            'amount' => 'required|integer|min:1',
+            'transfer_date' => 'required|date',
+            'notes' => 'nullable|string|max:1000',
+        ], [
+            'to_borrower_id.different' => 'Peminjam tujuan tidak boleh sama dengan peminjam asal.',
+            'amount.min' => 'Nominal transfer pinjaman minimal Rp 1.',
+        ]);
+
+        $fromBorrower = Borrower::query()->findOrFail($validated['from_borrower_id']);
+        $toBorrower = Borrower::query()->findOrFail($validated['to_borrower_id']);
+
+        try {
+            $result = $this->borrowerLoanService->transferBorrowerLoan(
+                $fromBorrower,
+                $toBorrower,
+                (int) $validated['amount'],
+                $validated['transfer_date'],
+                $request->user(),
+                $validated['notes'] ?? null,
+            );
+        } catch (RuntimeException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => "Transfer pinjaman sebesar Rp " . number_format((int) $validated['amount'], 0, ',', '.') . " dari {$fromBorrower->name} ke {$toBorrower->name} berhasil dicatat.",
+            'data' => $result,
+        ], 201);
+    }
+
     public function settlementExpenseOptions(Request $request, Borrower $borrower)
     {
         $this->ensureReady();

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { 
     Calendar, ChevronLeft, ChevronRight, Clock, Wallet, 
     TrendingUp, TrendingDown, Layers, ListFilter, CheckCircle2, 
-    AlertCircle, Edit3, Trash2, Plus, RefreshCw, Eye
+    AlertCircle, Edit3, Trash2, Plus, RefreshCw, Eye, ArrowRightLeft
 } from 'lucide-react';
 import apiClient from '../services/api';
 import Alert from '../components/common/Alert';
@@ -91,16 +91,37 @@ function formatMonthShort(dateStr) {
     return '';
 }
 
+function isTransferItem(item) {
+    return item?.source === 'transfer_from_borrower' ||
+        String(item?.notes || '').includes('Transfer pinjaman') ||
+        String(item?.display_notes || '').includes('Transfer pinjaman') ||
+        String(item?.notes || '').includes('Terima transfer') ||
+        String(item?.display_notes || '').includes('Terima transfer');
+}
+
 function historyTypeLabel(item) {
+    if (isTransferItem(item)) {
+        return item.history_type === 'settlement' ? 'Transfer Keluar' : 'Transfer Masuk';
+    }
     return item.history_type === 'settlement' ? 'Pelunasan dicatat' : 'Pinjaman dibuat';
 }
 
 function HistoryTypeBadge({ item }) {
+    const isTransfer = isTransferItem(item);
     const isSettlement = item.history_type === 'settlement';
-    const palette = isSettlement
-        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-        : 'border-amber-200 bg-amber-50 text-amber-700';
-    const dot = isSettlement ? 'bg-emerald-500' : 'bg-amber-500';
+
+    let palette = 'border-amber-200 bg-amber-50 text-amber-700';
+    let dot = 'bg-amber-500';
+
+    if (isTransfer) {
+        palette = isSettlement
+            ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+            : 'border-purple-200 bg-purple-50 text-purple-700';
+        dot = isSettlement ? 'bg-indigo-500' : 'bg-purple-500';
+    } else if (isSettlement) {
+        palette = 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        dot = 'bg-emerald-500';
+    }
 
     return (
         <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${palette}`}>
@@ -157,14 +178,24 @@ function BorrowerLoansPage() {
     const dateStripRef = useRef(null);
 
     const [modal, setModal] = useState({ open: false, borrower: null });
+    const [transferModal, setTransferModal] = useState({ open: false, borrower: null });
     const [editHistoryModal, setEditHistoryModal] = useState({ open: false, item: null });
     const [savingHistory, setSavingHistory] = useState(false);
     const [creatingLoan, setCreatingLoan] = useState(false);
+    const [transferringLoan, setTransferringLoan] = useState(false);
     const [settlingLoan, setSettlingLoan] = useState(false);
+    const [formTab, setFormTab] = useState('create'); // 'create' | 'transfer'
     const [createLoanForm, setCreateLoanForm] = useState({
         borrower_id: '',
         amount: '',
         occurred_at: todayStr,
+        notes: '',
+    });
+    const [transferForm, setTransferForm] = useState({
+        from_borrower_id: '',
+        to_borrower_id: '',
+        amount: '',
+        transfer_date: todayStr,
         notes: '',
     });
     const [settleForm, setSettleForm] = useState({
@@ -338,6 +369,54 @@ function BorrowerLoansPage() {
             setError(err.response?.data?.message || 'Gagal menambah pinjaman manual.');
         } finally {
             setCreatingLoan(false);
+        }
+    };
+
+    const openTransferForBorrower = (borrower) => {
+        setTransferForm({
+            from_borrower_id: String(borrower.id),
+            to_borrower_id: '',
+            amount: '',
+            transfer_date: todayStr,
+            notes: '',
+        });
+        setTransferModal({ open: true, borrower });
+    };
+
+    const closeTransferModal = () => {
+        setTransferModal({ open: false, borrower: null });
+        setTransferForm({
+            from_borrower_id: '',
+            to_borrower_id: '',
+            amount: '',
+            transfer_date: todayStr,
+            notes: '',
+        });
+    };
+
+    const submitTransfer = async (e) => {
+        e.preventDefault();
+        try {
+            setTransferringLoan(true);
+            setError(null);
+            setSuccess(null);
+            const res = await apiClient.post('/borrower-loans/transfer', transferForm);
+            setSuccess(res.data?.message || 'Transfer pinjaman berhasil dicatat.');
+            setTransferForm({
+                from_borrower_id: '',
+                to_borrower_id: '',
+                amount: '',
+                transfer_date: todayStr,
+                notes: '',
+            });
+            if (transferModal.open) {
+                closeTransferModal();
+            }
+            await loadData();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal melakukan transfer pinjaman.');
+        } finally {
+            setTransferringLoan(false);
         }
     };
 
@@ -544,34 +623,161 @@ function BorrowerLoansPage() {
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <h2 className="text-lg font-semibold text-gray-900">Tambah Pinjaman Manual</h2>
-                    <p className="mt-1 text-sm text-gray-600">Buat pinjaman baru tanpa invoice pelanggan.</p>
-                    <form onSubmit={submitCreateLoan} className="mt-4 space-y-4">
+                    {/* Tab Selection */}
+                    <div className="flex border-b border-gray-100 pb-3 mb-4 gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setFormTab('create')}
+                            className={`flex-1 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                formTab === 'create'
+                                    ? 'bg-blue-50 text-blue-700 border border-blue-200 shadow-sm'
+                                    : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                        >
+                            <Plus size={14} /> Pinjaman Baru
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFormTab('transfer')}
+                            className={`flex-1 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 ${
+                                formTab === 'transfer'
+                                    ? 'bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm'
+                                    : 'text-gray-600 hover:bg-gray-100'
+                            }`}
+                        >
+                            <ArrowRightLeft size={14} /> Transfer Saldo
+                        </button>
+                    </div>
+
+                    {formTab === 'create' ? (
                         <div>
-                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Peminjam</label>
-                            <select className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" value={createLoanForm.borrower_id} onChange={(e) => setCreateLoanForm((p) => ({ ...p, borrower_id: e.target.value }))} required>
-                                <option value="">Pilih peminjam</option>
-                                {borrowers.map((borrower) => (
-                                    <option key={borrower.id} value={borrower.id}>{borrower.name}</option>
-                                ))}
-                            </select>
+                            <h2 className="text-base font-semibold text-gray-900">Tambah Pinjaman Manual</h2>
+                            <p className="mt-0.5 text-xs text-gray-500">Buat pinjaman baru tanpa invoice pelanggan.</p>
+                            <form onSubmit={submitCreateLoan} className="mt-4 space-y-3.5">
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Peminjam</label>
+                                    <select className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" value={createLoanForm.borrower_id} onChange={(e) => setCreateLoanForm((p) => ({ ...p, borrower_id: e.target.value }))} required>
+                                        <option value="">Pilih peminjam</option>
+                                        {borrowers.map((borrower) => (
+                                            <option key={borrower.id} value={borrower.id}>{borrower.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Nominal Pinjaman (Rp)</label>
+                                    <input className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" type="number" min="1" placeholder="Contoh: 500000" value={createLoanForm.amount} onChange={(e) => setCreateLoanForm((p) => ({ ...p, amount: e.target.value }))} required />
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Tanggal Pinjaman</label>
+                                    <input className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" type="date" value={createLoanForm.occurred_at} onChange={(e) => setCreateLoanForm((p) => ({ ...p, occurred_at: e.target.value }))} required />
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Catatan (Opsional)</label>
+                                    <textarea className="w-full rounded-xl border border-gray-300 px-3.5 py-2 text-sm" rows={2} placeholder="Keterangan pinjaman" value={createLoanForm.notes} onChange={(e) => setCreateLoanForm((p) => ({ ...p, notes: e.target.value }))} />
+                                </div>
+                                <Button type="submit" disabled={creatingLoan} className="w-full bg-blue-600 hover:bg-blue-700 py-2.5 font-semibold text-sm">
+                                    {creatingLoan ? 'Menyimpan...' : 'Simpan Pinjaman'}
+                                </Button>
+                            </form>
                         </div>
+                    ) : (
                         <div>
-                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Nominal Pinjaman (Rp)</label>
-                            <input className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" type="number" min="1" placeholder="Contoh: 500000" value={createLoanForm.amount} onChange={(e) => setCreateLoanForm((p) => ({ ...p, amount: e.target.value }))} required />
+                            <h2 className="text-base font-semibold text-gray-900">Transfer Saldo Pinjaman</h2>
+                            <p className="mt-0.5 text-xs text-gray-500">Pindahkan hutang dari satu peminjam ke peminjam lain.</p>
+                            <form onSubmit={submitTransfer} className="mt-4 space-y-3.5">
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Peminjam Asal (Dari)</label>
+                                    <select
+                                        className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm"
+                                        value={transferForm.from_borrower_id}
+                                        onChange={(e) => setTransferForm((p) => ({ ...p, from_borrower_id: e.target.value }))}
+                                        required
+                                    >
+                                        <option value="">Pilih peminjam asal</option>
+                                        {borrowers.map((borrower) => (
+                                            <option key={borrower.id} value={borrower.id}>
+                                                {borrower.name} (Hutang: {formatCurrency(borrower.total_outstanding || 0)})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Peminjam Tujuan (Ke)</label>
+                                    <select
+                                        className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm"
+                                        value={transferForm.to_borrower_id}
+                                        onChange={(e) => setTransferForm((p) => ({ ...p, to_borrower_id: e.target.value }))}
+                                        required
+                                    >
+                                        <option value="">Pilih peminjam tujuan</option>
+                                        {borrowers
+                                            .filter((b) => String(b.id) !== String(transferForm.from_borrower_id))
+                                            .map((borrower) => (
+                                                <option key={borrower.id} value={borrower.id}>
+                                                    {borrower.name}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-700">Nominal Transfer (Rp)</label>
+                                        {(() => {
+                                            const fromB = borrowers.find((b) => String(b.id) === String(transferForm.from_borrower_id));
+                                            if (fromB && Number(fromB.total_outstanding || 0) > 0) {
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTransferForm((p) => ({ ...p, amount: String(fromB.total_outstanding) }))}
+                                                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 underline"
+                                                    >
+                                                        Maks: {formatCurrency(fromB.total_outstanding)}
+                                                    </button>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
+                                    </div>
+                                    <input
+                                        className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm"
+                                        type="number"
+                                        min="1"
+                                        placeholder="Contoh: 500000"
+                                        value={transferForm.amount}
+                                        onChange={(e) => setTransferForm((p) => ({ ...p, amount: e.target.value }))}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Tanggal Transfer</label>
+                                    <input
+                                        className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm"
+                                        type="date"
+                                        value={transferForm.transfer_date}
+                                        onChange={(e) => setTransferForm((p) => ({ ...p, transfer_date: e.target.value }))}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Catatan (Opsional)</label>
+                                    <textarea
+                                        className="w-full rounded-xl border border-gray-300 px-3.5 py-2 text-sm"
+                                        rows={2}
+                                        placeholder="Keterangan pengalihan hutang"
+                                        value={transferForm.notes}
+                                        onChange={(e) => setTransferForm((p) => ({ ...p, notes: e.target.value }))}
+                                    />
+                                </div>
+                                <Button
+                                    type="submit"
+                                    disabled={transferringLoan}
+                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 font-semibold text-sm shadow-sm"
+                                >
+                                    {transferringLoan ? 'Memproses Transfer...' : 'Proses Transfer Pinjaman'}
+                                </Button>
+                            </form>
                         </div>
-                        <div>
-                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Tanggal Pinjaman</label>
-                            <input className="w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm" type="date" value={createLoanForm.occurred_at} onChange={(e) => setCreateLoanForm((p) => ({ ...p, occurred_at: e.target.value }))} required />
-                        </div>
-                        <div>
-                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-700">Catatan (Opsional)</label>
-                            <textarea className="w-full rounded-xl border border-gray-300 px-3.5 py-2 text-sm" rows={2} placeholder="Keterangan pinjaman" value={createLoanForm.notes} onChange={(e) => setCreateLoanForm((p) => ({ ...p, notes: e.target.value }))} />
-                        </div>
-                        <Button type="submit" disabled={creatingLoan} className="w-full bg-blue-600 hover:bg-blue-700 py-2.5 font-semibold">
-                            {creatingLoan ? 'Menyimpan...' : 'Simpan Pinjaman'}
-                        </Button>
-                    </form>
+                    )}
                 </div>
 
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-2">
@@ -581,24 +787,40 @@ function BorrowerLoansPage() {
                     </div>
                     <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                         {borrowers.map((borrower) => (
-                            <div key={borrower.id} className="rounded-xl border border-gray-200 p-4 transition hover:border-blue-300 bg-gray-50/50">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                        <p className="font-bold text-gray-900 text-sm">{borrower.name}</p>
-                                        <p className="text-xs text-gray-500">{borrower.mapped_user?.name || 'Tanpa akun user'}</p>
-                                        <p className="mt-2.5 text-base font-bold text-amber-700">
-                                            {formatCurrency(borrower.total_outstanding || 0)}
-                                        </p>
-                                        <p className="mt-0.5 text-xs text-gray-500">
-                                            {Number(borrower.outstanding_loans_count || 0)} pinjaman outstanding
-                                        </p>
+                            <div key={borrower.id} className="rounded-xl border border-gray-200 p-4 transition hover:border-blue-300 bg-gray-50/50 flex flex-col justify-between">
+                                <div>
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div>
+                                            <p className="font-bold text-gray-900 text-sm">{borrower.name}</p>
+                                            <p className="text-xs text-gray-500">{borrower.mapped_user?.name || 'Tanpa akun user'}</p>
+                                        </div>
                                     </div>
-                                    {Number(borrower.total_outstanding || 0) > 0 && (
-                                        <Button onClick={() => openSettleForBorrower(borrower)} className="text-xs py-1.5 px-3">
+                                    <p className="mt-2.5 text-base font-bold text-amber-700">
+                                        {formatCurrency(borrower.total_outstanding || 0)}
+                                    </p>
+                                    <p className="mt-0.5 text-xs text-gray-500">
+                                        {Number(borrower.outstanding_loans_count || 0)} pinjaman outstanding
+                                    </p>
+                                </div>
+
+                                {Number(borrower.total_outstanding || 0) > 0 && (
+                                    <div className="mt-3.5 flex items-center gap-2 pt-2 border-t border-gray-200/60">
+                                        <button
+                                            type="button"
+                                            onClick={() => openTransferForBorrower(borrower)}
+                                            className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition"
+                                        >
+                                            <ArrowRightLeft size={13} />
+                                            Transfer
+                                        </button>
+                                        <Button
+                                            onClick={() => openSettleForBorrower(borrower)}
+                                            className="flex-1 text-xs py-1.5 px-2.5 bg-blue-600 hover:bg-blue-700"
+                                        >
                                             Pelunasan
                                         </Button>
-                                    )}
-                                </div>
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -1134,6 +1356,97 @@ function BorrowerLoansPage() {
                     <div className="flex justify-end gap-2">
                         <Button type="button" variant="secondary" onClick={closeEditHistory}>Batal</Button>
                         <Button type="submit" disabled={savingHistory}>{savingHistory ? 'Menyimpan...' : 'Simpan Perubahan'}</Button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* Modal Transfer Saldo Pinjaman */}
+            <Modal isOpen={transferModal.open} onClose={closeTransferModal} title="Transfer Saldo Pinjaman">
+                <form onSubmit={submitTransfer} className="space-y-4">
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-950">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wider">Peminjam Asal (Dari)</span>
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-indigo-200/60 text-indigo-800">
+                                Sisa Hutang: {formatCurrency(transferModal.fromBorrower?.total_outstanding || 0)}
+                            </span>
+                        </div>
+                        <p className="mt-1 font-bold text-base text-gray-900">{transferModal.fromBorrower?.name || '-'}</p>
+                        <p className="mt-1 text-xs text-indigo-800 leading-relaxed">
+                            Saldo pinjaman dari peminjam ini akan dilunasi otomatis dan dialihkan menjadi pinjaman baru pada peminjam tujuan.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">Peminjam Tujuan (Ke)</label>
+                        <select
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            value={transferForm.to_borrower_id}
+                            onChange={(e) => setTransferForm((p) => ({ ...p, to_borrower_id: e.target.value }))}
+                            required
+                        >
+                            <option value="">Pilih peminjam tujuan</option>
+                            {borrowers
+                                .filter((b) => String(b.id) !== String(transferModal.fromBorrower?.id))
+                                .map((borrower) => (
+                                    <option key={borrower.id} value={borrower.id}>
+                                        {borrower.name} (Hutang saat ini: {formatCurrency(borrower.total_outstanding || 0)})
+                                    </option>
+                                ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-gray-700">Nominal Transfer (Rp)</label>
+                            {Number(transferModal.fromBorrower?.total_outstanding || 0) > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setTransferForm((p) => ({ ...p, amount: String(transferModal.fromBorrower.total_outstanding) }))}
+                                    className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline"
+                                >
+                                    Transfer Penuh ({formatCurrency(transferModal.fromBorrower.total_outstanding)})
+                                </button>
+                            )}
+                        </div>
+                        <input
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            type="number"
+                            min="1"
+                            max={transferModal.fromBorrower?.total_outstanding || undefined}
+                            placeholder="Contoh: 500000"
+                            value={transferForm.amount}
+                            onChange={(e) => setTransferForm((p) => ({ ...p, amount: e.target.value }))}
+                            required
+                        />
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">Tanggal Transfer</label>
+                        <input
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            type="date"
+                            value={transferForm.transfer_date}
+                            onChange={(e) => setTransferForm((p) => ({ ...p, transfer_date: e.target.value }))}
+                            required
+                        />
+                    </div>
+
+                    <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">Catatan (Opsional)</label>
+                        <textarea
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            rows={3}
+                            placeholder="Keterangan pengalihan hutang"
+                            value={transferForm.notes}
+                            onChange={(e) => setTransferForm((p) => ({ ...p, notes: e.target.value }))}
+                        />
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+                        <Button type="button" variant="secondary" onClick={closeTransferModal}>Batal</Button>
+                        <Button type="submit" disabled={transferringLoan} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">
+                            {transferringLoan ? 'Memproses Transfer...' : 'Proses Transfer'}
+                        </Button>
                     </div>
                 </form>
             </Modal>
