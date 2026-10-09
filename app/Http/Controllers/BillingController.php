@@ -1390,6 +1390,52 @@ class BillingController extends Controller
                     'qris_transaction_number' => ['No. Transaksi wajib diisi untuk transaksi QRIS.'],
                 ]);
             }
+
+            $trimmedTrxNumber = trim((string) $qrisTransactionNumber);
+
+            // Cek duplikasi di tabel invoices
+            if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
+                $duplicateInvoice = Invoice::where('id', '!=', $invoice->id)
+                    ->where('status', 'paid')
+                    ->where('qris_transaction_number', $trimmedTrxNumber)
+                    ->first();
+
+                if ($duplicateInvoice) {
+                    $custName = $duplicateInvoice->customer?->name ?? 'Pelanggan';
+                    $txTime = $duplicateInvoice->qris_payment_time
+                        ? Carbon::parse($duplicateInvoice->qris_payment_time)->translatedFormat('d F Y H:i')
+                        : ($duplicateInvoice->paid_at ? Carbon::parse($duplicateInvoice->paid_at)->translatedFormat('d F Y H:i') : '-');
+
+                    throw ValidationException::withMessages([
+                        'qris_transaction_number' => [
+                            "No. Transaksi '{$trimmedTrxNumber}' sudah pernah digunakan pada Invoice #{$duplicateInvoice->id} ({$custName}, Waktu: {$txTime}). Data tidak dapat disimpan ulang."
+                        ],
+                    ]);
+                }
+            }
+
+            // Cek duplikasi di tabel financial_transactions
+            if (Schema::hasTable('financial_transactions')) {
+                $duplicateTx = \App\Models\FinancialTransaction::where('source_type', 'invoice')
+                    ->where('source_id', '!=', $invoice->id)
+                    ->where(function ($query) use ($trimmedTrxNumber) {
+                        $query->where('meta->qris_transaction_number', $trimmedTrxNumber);
+                    })
+                    ->first();
+
+                if ($duplicateTx) {
+                    $meta = $duplicateTx->meta ?? [];
+                    $txTime = !empty($meta['qris_payment_time'])
+                        ? Carbon::parse($meta['qris_payment_time'])->translatedFormat('d F Y H:i')
+                        : '-';
+
+                    throw ValidationException::withMessages([
+                        'qris_transaction_number' => [
+                            "No. Transaksi '{$trimmedTrxNumber}' sudah pernah tercatat pada transaksi kas #{$duplicateTx->id} (Waktu: {$txTime}). Data tidak dapat disimpan ulang."
+                        ],
+                    ]);
+                }
+            }
         }
 
         $borrower = null;

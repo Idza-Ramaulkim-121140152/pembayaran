@@ -51,6 +51,8 @@ class CustomerPortalService
             ->filter(fn ($invoice) => !in_array(strtolower((string) $invoice->status), ['paid', 'cancelled'], true))
             ->values();
 
+        $genieAcsPortal = $this->buildGenieAcsPortalData($customer);
+
         $payload = [
             'customer' => $this->buildCustomerPayload($customer),
             'account_summary' => $this->buildAccountSummary($customer, $invoices),
@@ -63,6 +65,10 @@ class CustomerPortalService
             'payment_methods' => $paymentMethods,
             'open_invoices' => $openInvoices,
             'wifi_link_portal' => $this->buildWifiLinkPortal($request),
+            'genieacs_portal' => $genieAcsPortal,
+            'wifi' => $genieAcsPortal['wifi'] ?? [],
+            'capacity' => $genieAcsPortal['capacity'] ?? [],
+            'package_info' => $genieAcsPortal['package_info'] ?? [],
             'portal_meta' => [
                 'version' => 'v2',
                 'refreshed_at' => now()->toIso8601String(),
@@ -792,5 +798,171 @@ class CustomerPortalService
         }
 
         return null;
+    }
+
+    public function buildGenieAcsPortalData(Customer $customer): array
+    {
+        $pppoe = trim((string) ($customer->pppoe_username ?? ''));
+        $device = null;
+        $deviceId = null;
+        $isOnline = false;
+        $ssid = null;
+        $wifiPassword = null;
+        $lanHosts = [];
+        $blockedDevices = [];
+        $rxPower = null;
+        $productClass = null;
+        $serialNumber = null;
+        $lastInformAt = null;
+
+        if ($pppoe !== '') {
+            try {
+                $device = $this->genieAcsService->findDeviceByPppoe($pppoe);
+            } catch (\Throwable) {
+                $device = null;
+            }
+        }
+
+        if ($device) {
+            $deviceId = $device['_id'] ?? null;
+            $productClass = $device['DeviceID']['ProductClass']['_value']
+                ?? $device['InternetGatewayDevice']['DeviceInfo']['ProductClass']['_value']
+                ?? 'ONT Router';
+            $serialNumber = $device['DeviceID']['SerialNumber']['_value']
+                ?? $device['VirtualParameters']['getSerialNumber']['_value']
+                ?? $device['InternetGatewayDevice']['DeviceInfo']['SerialNumber']['_value']
+                ?? null;
+
+            $lastInform = $device['_lastInform']['_value'] ?? ($device['_lastInform'] ?? null);
+            if ($lastInform) {
+                try {
+                    $lastInformAt = Carbon::parse($lastInform)->setTimezone('Asia/Jakarta')->toIso8601String();
+                    $isOnline = Carbon::parse($lastInform)->greaterThanOrEqualTo(now()->subMinutes(15));
+                } catch (\Throwable) {
+                    $isOnline = false;
+                }
+            }
+
+            $ssid = $device['InternetGatewayDevice']['LANDevice']['1']['WLANConfiguration']['1']['SSID']['_value']
+                ?? $device['VirtualParameters']['WlanSSID']['_value']
+                ?? null;
+
+            $wifiPassword = $this->genieAcsService->resolveWifiPassword($device);
+            $lanHosts = $this->genieAcsService->resolveAllConnectedHosts($device);
+
+            $rxPower = $device['VirtualParameters']['RXPower']['_value'] ?? null;
+            if ($rxPower === 'N/A' || $rxPower === '') {
+                $rxPower = null;
+            }
+
+            if ($deviceId) {
+                $blockedDevices = $this->genieAcsService->getBlockedDevices($deviceId, $customer->id);
+            }
+        }
+
+        // Capacity & Package calculation
+        $pkg = $customer->package;
+        if (!$pkg && $customer->package_id) {
+            $pkg = \App\Models\Package::find($customer->package_id);
+        }
+        if (!$pkg && $customer->package_type) {
+            $rawType = trim((string) $customer->package_type);
+            $pkg = \App\Models\Package::where('name', $rawType)
+                ->orWhere('name', 'like', $rawType)
+                ->first();
+
+            if (!$pkg) {
+                $allPackages = \App\Models\Package::all();
+                foreach ($allPackages as $p) {
+                    if (strcasecmp(trim($p->name), $rawType) === 0 || str_contains(strtolower($rawType), strtolower(trim($p->name)))) {
+                        $pkg = $p;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!$pkg && $customer->mikrotik_profile) {
+            $pkg = \App\Models\Package::where('mikrotik_profile', $customer->mikrotik_profile)
+                ->orWhere('speed', 'like', "%{$customer->mikrotik_profile}%")
+                ->first();
+        }
+
+        $packageName = $pkg?->name ?? ($customer->package_type ?: 'Paket Internet');
+        $rawSpeed = $pkg?->speed ?? ($customer->mikrotik_profile ?: null);
+        if ($rawSpeed && is_numeric($rawSpeed)) {
+            $packageSpeed = $rawSpeed . ' Mbps';
+        } elseif ($rawSpeed) {
+            $packageSpeed = (string) $rawSpeed;
+            if (!str_contains(strtolower($packageSpeed), 'mbps') && !str_contains(strtolower($packageSpeed), 'kbps')) {
+                $packageSpeed .= ' Mbps';
+            }
+        } elseif (preg_match('/(\d+)\s*(?:mbps|mb|m)/i', $packageName, $m)) {
+            $packageSpeed = $m[1] . ' Mbps';
+        } else {
+            $packageSpeed = 'Sesuai Langganan';
+        }
+
+        $packagePrice = (int) ($pkg?->price ?? ($customer->custom_package ?? 0));
+        $maxDevices = $pkg && $pkg->device_count !== null && (int) $pkg->device_count > 0 ? (int) $pkg->device_count : null;
+        
+        // Count active clients
+        $activeClientsCount = count(array_filter($lanHosts, fn($h) => !empty($h['is_active'])));
+        if ($activeClientsCount === 0 && !empty($device['VirtualParameters']['activedevices']['_value'])) {
+            $activeClientsCount = (int) $device['VirtualParameters']['activedevices']['_value'];
+        }
+
+        $capacityStatus = 'no_limit';
+        $capacityLabel = 'Tanpa Batas';
+        $capacityDiff = 0;
+
+        if ($maxDevices !== null && $maxDevices > 0) {
+            if ($activeClientsCount <= $maxDevices) {
+                $capacityStatus = 'safe';
+                $capacityLabel = "Kapasitas Aman ({$activeClientsCount}/{$maxDevices})";
+                $capacityDiff = 0;
+            } elseif ($activeClientsCount === $maxDevices + 1) {
+                $capacityStatus = 'warning';
+                $capacityLabel = "Kapasitas Siaga (+1) ({$activeClientsCount}/{$maxDevices})";
+                $capacityDiff = 1;
+            } else {
+                $capacityStatus = 'critical';
+                $over = $activeClientsCount - $maxDevices;
+                $capacityLabel = "Kapasitas Kritis (+{$over}) ({$activeClientsCount}/{$maxDevices})";
+                $capacityDiff = $over;
+            }
+        }
+
+        return [
+            'wifi' => [
+                'has_router' => (bool) $device,
+                'device_id' => $deviceId,
+                'is_online' => $isOnline,
+                'last_inform_at' => $lastInformAt,
+                'model' => $productClass,
+                'serial_number' => $serialNumber,
+                'ssid' => $ssid,
+                'password' => $wifiPassword,
+                'rx_power' => $rxPower,
+                'connected_hosts' => $lanHosts,
+                'blocked_devices' => $blockedDevices,
+            ],
+            'capacity' => [
+                'status' => $capacityStatus,
+                'label' => $capacityLabel,
+                'diff' => $capacityDiff,
+                'connected_count' => $activeClientsCount,
+                'max_devices' => $maxDevices,
+                'max_devices_label' => $maxDevices ? "{$maxDevices} Perangkat" : 'Tanpa Batas',
+                'is_compliant' => $capacityStatus === 'safe' || $capacityStatus === 'no_limit',
+            ],
+            'package_info' => [
+                'name' => $packageName,
+                'speed' => $packageSpeed,
+                'price' => $packagePrice,
+                'max_devices' => $maxDevices,
+                'max_devices_label' => $maxDevices ? "{$maxDevices} Perangkat" : 'Tanpa Batas',
+                'active_status' => $customer->is_active ? 'Aktif' : 'Terisolir / Non-Aktif',
+            ],
+        ];
     }
 }

@@ -1,16 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Activity,
     AlertCircle,
+    AlertTriangle,
+    Ban,
     Calendar,
+    Check,
     CheckCircle,
+    CheckCircle2,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     ChevronUp,
     Clock,
+    Copy,
     CreditCard,
     Download,
     FileText,
     Home,
+    Info,
+    Laptop,
     Lock,
     LogOut,
     MapPin,
@@ -22,6 +32,12 @@ import {
     RefreshCw,
     Server,
     Send,
+    Shield,
+    ShieldAlert,
+    ShieldCheck,
+    Smartphone,
+    Sparkles,
+    Tv,
     Upload,
     User,
     Wifi,
@@ -314,6 +330,7 @@ function CustomerDashboard() {
         bukti_pembayaran: null,
     });
     const [showPaymentConfirmationForm, setShowPaymentConfirmationForm] = useState(false);
+    const [paymentHistoryPage, setPaymentHistoryPage] = useState(1);
     const [profileForm, setProfileForm] = useState({ phone: '' });
     const [passwordForm, setPasswordForm] = useState({
         current_password: '',
@@ -325,18 +342,21 @@ function CustomerDashboard() {
         new_password: false,
         new_password_confirmation: false,
     });
-    const [wifiPasswordForm, setWifiPasswordForm] = useState({
+    const [showCurrentWifiPassword, setShowCurrentWifiPassword] = useState(false);
+    const [copiedCurrentWifiPassword, setCopiedCurrentWifiPassword] = useState(false);
+    const [showChangeWifiModal, setShowChangeWifiModal] = useState(false);
+    const [wifiChangeForm, setWifiChangeForm] = useState({
+        ssid: '',
         password: '',
-        password_confirmation: '',
     });
-    const [wifiPanel, setWifiPanel] = useState({
-        checking: false,
-        submitting: false,
-        device: null,
-        verification: null,
-        visibleNewPasswordFields: {},
-        lookupError: null,
-    });
+    const [showNewWifiPassword, setShowNewWifiPassword] = useState(false);
+    const [savingWifiChange, setSavingWifiChange] = useState(false);
+    const [wifiActionSuccess, setWifiActionSuccess] = useState('');
+    const [wifiActionError, setWifiActionError] = useState('');
+    const [blockingMac, setBlockingMac] = useState(null);
+    const [blockModalTarget, setBlockModalTarget] = useState(null);
+    const [blockReason, setBlockReason] = useState('');
+    const [submittingBlock, setSubmittingBlock] = useState(false);
     const [autoMessageDisabled, setAutoMessageDisabled] = useState(false);
     const [showDisableAutoMessageModal, setShowDisableAutoMessageModal] = useState(false);
     const [submittingProfile, setSubmittingProfile] = useState(false);
@@ -992,6 +1012,112 @@ function CustomerDashboard() {
         }
     };
 
+    const handleSaveWifiCredentials = async (e) => {
+        e?.preventDefault?.();
+        if (!wifiChangeForm.ssid && !wifiChangeForm.password) {
+            setWifiActionError('Masukkan Nama SSID atau Password baru.');
+            return;
+        }
+        if (wifiChangeForm.password && wifiChangeForm.password.length < 8) {
+            setWifiActionError('Password WiFi minimal 8 karakter.');
+            return;
+        }
+
+        try {
+            setSavingWifiChange(true);
+            setWifiActionError('');
+            setWifiActionSuccess('');
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            const response = await fetch('/api/customer/wifi/update', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: JSON.stringify({
+                    ssid: wifiChangeForm.ssid || null,
+                    password: wifiChangeForm.password || null,
+                }),
+            });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.message || 'Gagal mengubah konfigurasi WiFi.');
+            }
+            setWifiActionSuccess(result.message || 'Perubahan WiFi berhasil dikirim ke router! Estimasi penerapan 2 - 3 menit.');
+            setShowChangeWifiModal(false);
+            setWifiChangeForm((p) => ({ ...p, password: '' }));
+            await fetchDashboard({ silent: true, withNotices: false });
+        } catch (err) {
+            setWifiActionError(err.message || 'Gagal mengubah konfigurasi WiFi.');
+        } finally {
+            setSavingWifiChange(false);
+        }
+    };
+
+    const handleConfirmBlockDevice = async (e) => {
+        e?.preventDefault?.();
+        if (!blockModalTarget?.mac_address) return;
+
+        try {
+            setSubmittingBlock(true);
+            setError(null);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            const response = await fetch('/api/customer/wifi/block-device', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: JSON.stringify({
+                    mac_address: blockModalTarget.mac_address,
+                    reason: blockReason || 'Diblokir oleh pemilik WiFi',
+                }),
+            });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.message || 'Gagal memblokir perangkat.');
+            }
+            setSuccessMessage(result.message || `Perangkat ${blockModalTarget.mac_address} berhasil diblokir.`);
+            setBlockModalTarget(null);
+            setBlockReason('');
+            await fetchDashboard({ silent: true, withNotices: false });
+        } catch (err) {
+            setError(err.message || 'Gagal memblokir perangkat.');
+        } finally {
+            setSubmittingBlock(false);
+        }
+    };
+
+    const handleUnblockDevice = async (mac) => {
+        if (!mac) return;
+        try {
+            setBlockingMac(mac);
+            setError(null);
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+            const response = await fetch('/api/customer/wifi/unblock-device', {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: JSON.stringify({ mac_address: mac }),
+            });
+            const result = await response.json();
+            if (!result.success) {
+                throw new Error(result.message || 'Gagal membuka blokir perangkat.');
+            }
+            setSuccessMessage(result.message || `Perangkat ${mac} berhasil dibuka blokirnya.`);
+            await fetchDashboard({ silent: true, withNotices: false });
+        } catch (err) {
+            setError(err.message || 'Gagal membuka blokir perangkat.');
+        } finally {
+            setBlockingMac(null);
+        }
+    };
+
     const customer = data?.customer || {};
     const invoices = data?.invoices || [];
     const openInvoices = data?.open_invoices || [];
@@ -999,6 +1125,13 @@ function CustomerDashboard() {
     const complaints = data?.complaints || [];
     const tickets = data?.tickets || complaints;
     const paymentHistory = data?.payment_history || invoices.filter((invoice) => invoice.status === 'paid');
+    const paymentHistoryPerPage = 5;
+    const totalPaymentHistory = paymentHistory.length;
+    const totalPaymentHistoryPages = Math.ceil(totalPaymentHistory / paymentHistoryPerPage) || 1;
+    const paginatedPaymentHistory = useMemo(() => {
+        const start = (paymentHistoryPage - 1) * paymentHistoryPerPage;
+        return paymentHistory.slice(start, start + paymentHistoryPerPage);
+    }, [paymentHistory, paymentHistoryPage]);
     const accountSummary = data?.account_summary || {};
     const connection = data?.connection || {};
     const usage = data?.usage || {};
@@ -1006,6 +1139,19 @@ function CustomerDashboard() {
     const billing = data?.billing || {};
     const portalMeta = data?.portal_meta || {};
     const portalSummary = portalMeta.summary || {};
+    const genieAcsPortal = data?.genieacs_portal || {};
+    const wifiData = data?.wifi || genieAcsPortal.wifi || {};
+    const capacityData = data?.capacity || genieAcsPortal.capacity || {};
+    const packageInfo = data?.package_info || genieAcsPortal.package_info || {};
+    const connectedHosts = Array.isArray(wifiData.connected_hosts) ? wifiData.connected_hosts : [];
+    const blockedDevices = Array.isArray(wifiData.blocked_devices) ? wifiData.blocked_devices : [];
+    const blockedMacSet = useMemo(() => new Set(blockedDevices.map((b) => (b.mac_address || '').toUpperCase())), [blockedDevices]);
+
+    useEffect(() => {
+        if (wifiData.ssid && !wifiChangeForm.ssid) {
+            setWifiChangeForm((prev) => ({ ...prev, ssid: wifiData.ssid }));
+        }
+    }, [wifiData.ssid]);
     const connectionStatus = getConnectionStatusConfig(connection.status);
     const connectionStatusTone = connection.status === 'online'
         ? 'green'
@@ -1164,8 +1310,7 @@ function CustomerDashboard() {
                 <nav className="flex gap-2 overflow-x-auto rounded-2xl bg-white p-2 shadow-sm">
                     {[
                         ['#ringkasan', 'Ringkasan'],
-                        showUsageTrafficSection ? ['#perangkat-rumah', 'Perangkat Rumah'] : null,
-                        showConnectedWifiSection ? ['#wifi-rumah', 'Perangkat WiFi'] : null,
+                        ['#perangkat-rumah', 'Perangkat & WiFi'],
                         ['#tagihan', 'Tagihan'],
                         ['#histori-pembayaran', 'Histori Pembayaran'],
                         ['#tiket-saya', 'Tiket Saya'],
@@ -1324,200 +1469,464 @@ function CustomerDashboard() {
                     </div>
                 </section>
 
-                {showUsageTrafficSection && (
-                <section id="perangkat-rumah" className="scroll-mt-24 grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
-                    <div className="rounded-3xl bg-white p-6 shadow-lg">
-                        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-orange-500">
-                                    Perangkat Rumah
-                                </p>
-                                <h2 className="mt-2 text-2xl font-bold text-gray-900">Informasi perangkat rumah</h2>
+                {/* GENIEACS ROUTER, WIFI & CONNECTED DEVICES PORTAL */}
+                <section id="perangkat-rumah" className="scroll-mt-24 space-y-6">
+                    {/* ACTION MESSAGE BANNER */}
+                    {wifiActionSuccess && (
+                        <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800 shadow-sm">
+                            <div className="flex items-center gap-2.5">
+                                <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+                                <span className="text-sm font-medium">{wifiActionSuccess}</span>
                             </div>
-                            {statusAvailable && (
-                                <span className={`rounded-full px-3 py-1 text-sm font-semibold ${connectionStatus.badge}`}>
-                                    {connection.status_label}
-                                </span>
-                            )}
+                            <button
+                                type="button"
+                                onClick={() => setWifiActionSuccess('')}
+                                className="text-emerald-700 hover:text-emerald-900 font-bold text-xs ml-2"
+                            >
+                                ✕
+                            </button>
                         </div>
+                    )}
 
-                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                            {(connection.pppoe_username || customer.user_pppoe) && (
-                                <DetailCard
-                                    icon={User}
-                                    label="ID Internet"
-                                    value={connection.pppoe_username || customer.user_pppoe}
-                                    helper="ID layanan internet rumah Anda"
-                                />
-                            )}
-                            {deviceModel && (
-                                <DetailCard
-                                    icon={Wifi}
-                                    label="Perangkat Router"
-                                    value={deviceModel}
-                                    helper={deviceSerial || 'Model router rumah yang terbaca'}
-                                />
-                            )}
-                            {lastSeenAt && (
-                                <DetailCard
-                                    icon={Clock}
-                                    label="Update Perangkat Terakhir"
-                                    value={formatDateTime(lastSeenAt)}
-                                    helper="Pembaruan terakhir dari perangkat rumah"
-                                />
-                            )}
-                            {uptimeLabel && (
-                                <DetailCard
-                                    icon={Activity}
-                                    label="Uptime Koneksi"
-                                    value={uptimeLabel}
-                                    helper="Durasi koneksi internet rumah"
-                                />
-                            )}
+                    {wifiActionError && (
+                        <div className="flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800 shadow-sm">
+                            <div className="flex items-center gap-2.5">
+                                <AlertTriangle size={18} className="text-rose-600 shrink-0" />
+                                <span className="text-sm font-medium">{wifiActionError}</span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setWifiActionError('')}
+                                className="text-rose-700 hover:text-rose-900 font-bold text-xs ml-2"
+                            >
+                                ✕
+                            </button>
                         </div>
+                    )}
 
-                        {hasConnectedDeviceCount && (
-                            <div className="mt-5 rounded-2xl border border-orange-100 bg-orange-50 p-4">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div>
-                                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-orange-500">
-                                            Perangkat Rumah
-                                        </p>
-                                        <h3 className="mt-1 text-lg font-bold text-gray-900">
-                                            {connectedDeviceCount} perangkat terhubung
-                                        </h3>
-                                    </div>
-                                    <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-                                        Data perangkat tersedia
-                                    </span>
+                    {/* 1. WIFI & KATA SANDI CARD */}
+                    <div className="rounded-3xl bg-white p-6 shadow-lg space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600">
+                                    <Wifi size={22} />
                                 </div>
-                                {wifiManagementNote && <p className="mt-4 text-sm text-gray-700">{wifiManagementNote}</p>}
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">Pengaturan WiFi & Sandi</h3>
+                                    <p className="text-xs text-gray-500">Informasi nama WiFi dan kata sandi router rumah Anda</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <span
+                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                                        !wifiData.has_router
+                                            ? 'bg-amber-100 text-amber-700'
+                                            : wifiData.is_online
+                                            ? 'bg-emerald-100 text-emerald-700'
+                                            : 'bg-rose-100 text-rose-700'
+                                    }`}
+                                >
+                                    <span
+                                        className={`w-2 h-2 rounded-full ${
+                                            !wifiData.has_router ? 'bg-amber-500' : wifiData.is_online ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                                        }`}
+                                    />
+                                    {!wifiData.has_router ? 'Router Belum Tertaut' : wifiData.is_online ? 'Router Online' : 'Router Offline'}
+                                </span>
+
+                                {wifiData.has_router && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowChangeWifiModal((p) => !p)}
+                                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700"
+                                    >
+                                        <Lock size={14} />
+                                        {showChangeWifiModal ? 'Tutup Form' : 'Ganti Sandi WiFi'}
+                                        {showChangeWifiModal ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* WIFI CREDENTIALS BOX */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                            {/* SSID */}
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-4">
+                                <p className="text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+                                    <Wifi size={14} className="text-emerald-600" />
+                                    Nama Jaringan WiFi (SSID):
+                                </p>
+                                <p className="text-base font-bold text-gray-900 mt-1 font-mono break-all">
+                                    {wifiData.ssid || 'Rumah Kita Net WiFi'}
+                                </p>
+                            </div>
+
+                            {/* Password */}
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-4">
+                                <p className="text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+                                    <Lock size={14} className="text-emerald-600" />
+                                    Kata Sandi WiFi Saat Ini:
+                                </p>
+                                {wifiData.password ? (
+                                    <div className="flex items-center justify-between mt-1">
+                                        <span className="font-mono text-base font-bold text-emerald-700 tracking-wider select-all">
+                                            {showCurrentWifiPassword ? wifiData.password : '••••••••••••'}
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowCurrentWifiPassword((p) => !p)}
+                                                className="p-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition shadow-2xs"
+                                                title={showCurrentWifiPassword ? 'Sembunyikan' : 'Lihat kata sandi'}
+                                            >
+                                                {showCurrentWifiPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(wifiData.password);
+                                                    setCopiedCurrentWifiPassword(true);
+                                                    setTimeout(() => setCopiedCurrentWifiPassword(false), 2000);
+                                                }}
+                                                className="p-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-100 transition flex items-center gap-1 text-xs shadow-2xs"
+                                                title="Salin kata sandi"
+                                            >
+                                                {copiedCurrentWifiPassword ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                                                <span>{copiedCurrentWifiPassword ? 'Tersalin' : 'Salin'}</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-amber-700 mt-1">
+                                        Kata sandi terenkripsi internal router. Gunakan tombol <strong>Ganti Sandi WiFi</strong> untuk memperbarui.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* COLLAPSIBLE GANTI PASSWORD FORM */}
+                        {showChangeWifiModal && (
+                            <form onSubmit={handleSaveWifiCredentials} className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 space-y-4 transition-all">
+                                <h4 className="text-sm font-bold text-emerald-900 flex items-center gap-2">
+                                    <Lock size={16} className="text-emerald-600" />
+                                    Formulir Penggantian Kata Sandi & Nama WiFi
+                                </h4>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                            Nama SSID WiFi (Opsional)
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={wifiChangeForm.ssid}
+                                            onChange={(e) => setWifiChangeForm((p) => ({ ...p, ssid: e.target.value }))}
+                                            placeholder="Nama WiFi..."
+                                            className="w-full rounded-xl border border-gray-300 bg-white p-2.5 text-gray-900 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                            Kata Sandi Baru (Min. 8 Karakter) <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                type={showNewWifiPassword ? 'text' : 'password'}
+                                                value={wifiChangeForm.password}
+                                                onChange={(e) => setWifiChangeForm((p) => ({ ...p, password: e.target.value }))}
+                                                placeholder="Minimal 8 karakter..."
+                                                required
+                                                className="w-full rounded-xl border border-gray-300 bg-white pr-10 p-2.5 font-mono text-gray-900 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowNewWifiPassword((p) => !p)}
+                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                                            >
+                                                {showNewWifiPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                                    <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                                        <Clock size={14} className="text-emerald-600" />
+                                        <span>Estimasi proses pembaruan router: 2 - 3 Menit</span>
+                                    </p>
+
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowChangeWifiModal(false)}
+                                            className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                                        >
+                                            Batal
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            disabled={savingWifiChange}
+                                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 disabled:opacity-50"
+                                        >
+                                            {savingWifiChange ? (
+                                                <>
+                                                    <RefreshCw size={13} className="animate-spin" />
+                                                    Menerapkan ke Router...
+                                                </>
+                                            ) : (
+                                                'Simpan Sandi Baru'
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        )}
+                    </div>
+
+                    {/* 2. STATUS KAPASITAS & PAKET INTERNET CARD */}
+                    <div className="rounded-3xl bg-white p-6 shadow-lg space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
+                                    <Shield size={22} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">Kapasitas & Layanan Paket</h3>
+                                    <p className="text-xs text-gray-500">Status penggunaan perangkat dan batas kuota langganan</p>
+                                </div>
+                            </div>
+
+                            <span
+                                className={`rounded-full px-3 py-1 text-xs font-bold border ${
+                                    capacityData.status === 'safe'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                        : capacityData.status === 'warning'
+                                        ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                        : capacityData.status === 'critical'
+                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                        : 'bg-gray-100 text-gray-700 border-gray-200'
+                                }`}
+                            >
+                                {capacityData.label || 'Kapasitas Aman'}
+                            </span>
+                        </div>
+
+                        {/* 4 STATS GRID */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3.5">
+                                <p className="text-[11px] font-semibold text-gray-500">Perangkat Terhubung</p>
+                                <p className="text-lg font-bold text-gray-900 mt-0.5">
+                                    {capacityData.connected_count ?? connectedHosts.length} <span className="text-xs font-normal text-gray-500">Unit</span>
+                                </p>
+                            </div>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3.5">
+                                <p className="text-[11px] font-semibold text-gray-500">Batas Maksimal Paket</p>
+                                <p className="text-lg font-bold text-emerald-600 mt-0.5">
+                                    {capacityData.max_devices ? `${capacityData.max_devices} Perangkat` : (capacityData.max_devices_label || 'Tanpa Batas')}
+                                </p>
+                            </div>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3.5">
+                                <p className="text-[11px] font-semibold text-gray-500">Kecepatan Paket</p>
+                                <p className="text-lg font-bold text-cyan-600 mt-0.5">
+                                    {packageInfo.speed || customer.paket || '20 Mbps'}
+                                </p>
+                            </div>
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-3.5">
+                                <p className="text-[11px] font-semibold text-gray-500">Status Langganan</p>
+                                <p className="text-lg font-bold text-emerald-600 mt-0.5">
+                                    {packageInfo.active_status || 'Aktif'}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* EXPLANATION ALERT */}
+                        {capacityData.status === 'safe' && (
+                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-800 flex items-center gap-2">
+                                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                                <span>Perangkat yang terhubung saat ini sesuai dengan kapasitas paket langganan Anda.</span>
+                            </div>
+                        )}
+                        {capacityData.status === 'warning' && (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 flex items-center gap-2">
+                                <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                                <span>Jumlah perangkat terhubung melebihi kuota 1 unit. Pertimbangkan untuk upgrade paket jika koneksi melambat.</span>
+                            </div>
+                        )}
+                        {capacityData.status === 'critical' && (
+                            <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3.5 text-xs text-rose-800 flex items-center gap-2">
+                                <ShieldAlert size={16} className="text-rose-600 shrink-0" />
+                                <span>Jumlah perangkat terhubung melebihi batas kuota paket (+{capacityData.diff} perangkat). Blokir perangkat yang tidak dikenal di bawah ini.</span>
                             </div>
                         )}
                     </div>
 
-                    <div className="rounded-3xl bg-white p-6 shadow-lg">
-                        <div>
-                            <p className="text-sm font-semibold uppercase tracking-[0.22em] text-orange-500">
-                                Aktivitas Rumah
-                            </p>
-                            <h2 className="mt-2 text-2xl font-bold text-gray-900">Pemakaian internet dan perangkat</h2>
-                            {(usage.note || wifiManagementNote) && (
-                                <p className="mt-2 text-sm text-gray-600">{usage.note || wifiManagementNote}</p>
-                            )}
-                        </div>
-
-                        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                            {usage.download_bytes !== null && (
-                                <SummaryCard
-                                    icon={Download}
-                                    tone="blue"
-                                    label="Download"
-                                    value={usage.download_label || formatBytes(usage.download_bytes)}
-                                    helper="Pemakaian download dari perangkat rumah"
-                                />
-                            )}
-                            {usage.upload_bytes !== null && (
-                                <SummaryCard
-                                    icon={Upload}
-                                    tone="orange"
-                                    label="Upload"
-                                    value={usage.upload_label || formatBytes(usage.upload_bytes)}
-                                    helper="Pemakaian upload dari perangkat rumah"
-                                />
-                            )}
-                            {usage.total_bytes !== null && (
-                                <SummaryCard
-                                    icon={Activity}
-                                    tone="green"
-                                    label="Total Traffic"
-                                    value={usage.total_label || formatBytes(usage.total_bytes)}
-                                    helper="Akumulasi upload dan download yang terbaca dari perangkat rumah"
-                                />
-                            )}
-                            {hasConnectedDeviceCount && (
-                                <SummaryCard
-                                    icon={Home}
-                                    tone="green"
-                                    label="Perangkat Terhubung"
-                                    value={String(connectedDeviceCount)}
-                                    helper={wifiManagementNote}
-                                />
-                            )}
-                            {lastSeenAt && (
-                                <SummaryCard
-                                    icon={Clock}
-                                    tone="blue"
-                                    label="Update Terakhir"
-                                    value={formatDateTime(lastSeenAt)}
-                                    helper="Pembaruan terakhir dari perangkat rumah"
-                                />
-                            )}
-                        </div>
-                    </div>
-                </section>
-                )}
-
-                {showConnectedWifiSection && (
-                    <section id="wifi-rumah" className="scroll-mt-24 rounded-3xl bg-white p-6 shadow-lg">
-                        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-orange-500">
-                                    Perangkat WiFi
-                                </p>
-                                <h2 className="mt-2 text-2xl font-bold text-gray-900">Perangkat WiFi Tersambung</h2>
-                                <p className="mt-2 text-sm text-gray-600">
-                                    Lihat perangkat yang sedang tersambung ke WiFi rumah Anda, dikelompokkan per nama WiFi.
-                                </p>
+                    {/* 3. DAFTAR PERANGKAT TERHUBUNG & FITUR BLOKIR */}
+                    <div className="rounded-3xl bg-white p-6 shadow-lg space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-purple-100 text-purple-600">
+                                    <Smartphone size={22} />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900">Daftar Perangkat Terhubung</h3>
+                                    <p className="text-xs text-gray-500">HP, Laptop, atau Smart TV yang menggunakan WiFi Anda</p>
+                                </div>
                             </div>
-                            {hasConnectedDeviceCount && (
-                                <span className="rounded-full bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700">
-                                    {connectedDeviceCount} perangkat aktif
-                                </span>
-                            )}
+
+                            <span className="rounded-full bg-purple-50 px-3 py-1 text-xs font-bold text-purple-700 border border-purple-200">
+                                {connectedHosts.length} Perangkat
+                            </span>
                         </div>
 
-                        <div className="grid gap-4 lg:grid-cols-2">
-                            {connectedWifiSsids.map((group, groupIndex) => (
-                                <div key={`${group.ssid || 'ssid'}-${groupIndex}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                                        <div>
-                                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">SSID</p>
-                                            <h3 className="mt-1 text-lg font-bold text-gray-900">{group.ssid || `WiFi ${groupIndex + 1}`}</h3>
-                                        </div>
-                                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-gray-700">
-                                            {(group.devices || []).length} perangkat
-                                        </span>
-                                    </div>
+                        {connectedHosts.length > 0 ? (
+                            <div className="divide-y divide-gray-100 rounded-2xl border border-gray-200 overflow-hidden">
+                                {connectedHosts.map((h, idx) => {
+                                    const isBlocked = blockedMacSet.has((h.mac_address || '').toUpperCase());
+                                    const isLan = h.type?.toLowerCase().includes('lan');
 
-                                    <div className="space-y-3">
-                                        {(group.devices || []).map((device, deviceIndex) => (
-                                            <div
-                                                key={`${group.ssid || 'ssid'}-${device.mac_address || deviceIndex}`}
-                                                className="rounded-xl border border-gray-200 bg-white px-4 py-3"
-                                            >
-                                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                                    <div className="min-w-0">
-                                                        <p className="truncate font-semibold text-gray-900">{device.name || `Perangkat ${deviceIndex + 1}`}</p>
-                                                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
-                                                            {device.ip_address && <span>IP: {device.ip_address}</span>}
-                                                            {device.mac_address && <span>MAC: {String(device.mac_address).toUpperCase()}</span>}
-                                                        </div>
+                                    return (
+                                        <div
+                                            key={idx}
+                                            className={`p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs transition ${
+                                                h.is_active ? 'bg-emerald-50/30 hover:bg-emerald-50/60' : 'hover:bg-gray-50'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div
+                                                    className={`p-2.5 rounded-xl shrink-0 ${
+                                                        h.is_active
+                                                            ? 'bg-emerald-100 text-emerald-700'
+                                                            : 'bg-gray-100 text-gray-500'
+                                                    }`}
+                                                >
+                                                    {isLan ? <Laptop size={18} /> : <Smartphone size={18} />}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="font-bold text-gray-900 text-sm truncate">
+                                                            {h.name || `Perangkat ${idx + 1}`}
+                                                        </p>
+                                                        {h.is_active && (
+                                                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                                                Aktif
+                                                            </span>
+                                                        )}
+                                                        {isBlocked && (
+                                                            <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-full">
+                                                                Diblokir
+                                                            </span>
+                                                        )}
                                                     </div>
-                                                    {device.type && (
-                                                        <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700">
-                                                            {device.type}
-                                                        </span>
-                                                    )}
+                                                    <p className="text-xs font-mono text-gray-500 mt-1">
+                                                        IP: <strong className="text-gray-700">{h.ip_address || '-'}</strong> · MAC:{' '}
+                                                        <strong className="text-gray-700">{h.mac_address || '-'}</strong>
+                                                    </p>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
+
+                                            <div className="flex items-center justify-between sm:justify-end gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100">
+                                                <span className="text-[11px] font-semibold text-gray-600 bg-gray-100 px-2.5 py-1 rounded-lg">
+                                                    {h.type || 'WiFi'}
+                                                </span>
+
+                                                {h.mac_address && !isBlocked && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setBlockModalTarget(h)}
+                                                        disabled={blockingMac === h.mac_address}
+                                                        className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs transition flex items-center gap-1.5"
+                                                    >
+                                                        <Ban size={13} />
+                                                        Blokir
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="rounded-2xl border border-dashed border-gray-200 p-8 text-center text-xs text-gray-500 bg-gray-50 space-y-1">
+                                <Smartphone size={28} className="mx-auto text-gray-400 mb-2" />
+                                <p className="font-semibold text-gray-700">Belum ada rincian perangkat terhubung yang dilaporkan router.</p>
+                                <p className="text-[11px]">Perangkat Anda akan muncul otomatis saat aktif tersambung ke jaringan WiFi rumah.</p>
+                            </div>
+                        )}
+
+                        {/* BLOCKED DEVICES LIST */}
+                        {blockedDevices.length > 0 && (
+                            <div className="pt-3 border-t border-gray-100 space-y-2">
+                                <h4 className="text-xs font-bold text-rose-700 flex items-center gap-1.5">
+                                    <Ban size={14} />
+                                    Perangkat yang Sedang Diblokir ({blockedDevices.length}):
+                                </h4>
+                                <div className="rounded-2xl border border-rose-200 bg-rose-50/50 divide-y divide-rose-100 overflow-hidden">
+                                    {blockedDevices.map((b, bIdx) => (
+                                        <div key={bIdx} className="p-3.5 flex items-center justify-between text-xs">
+                                            <div>
+                                                <p className="font-mono font-bold text-rose-900">{b.mac_address}</p>
+                                                <p className="text-[11px] text-gray-500">{b.reason || 'Diblokir oleh pemilik WiFi'}</p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleUnblockDevice(b.mac_address)}
+                                                disabled={blockingMac === b.mac_address}
+                                                className="px-3 py-1.5 rounded-xl bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-bold text-xs transition shadow-2xs"
+                                            >
+                                                {blockingMac === b.mac_address ? 'Membuka...' : 'Buka Blokir'}
+                                            </button>
+                                        </div>
+                                    ))}
                                 </div>
-                            ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* TRAFFIC ACTIVITY CARD */}
+                    {(usage.download_bytes !== null || usage.upload_bytes !== null || usage.total_bytes !== null) && (
+                        <div className="rounded-3xl bg-white p-6 shadow-lg">
+                            <div>
+                                <p className="text-sm font-semibold uppercase tracking-[0.22em] text-orange-500">
+                                    Aktivitas Penggunaan
+                                </p>
+                                <h3 className="mt-2 text-xl font-bold text-gray-900">Pemakaian Kuota & Trafik Internet</h3>
+                            </div>
+
+                            <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                                {usage.download_bytes !== null && (
+                                    <SummaryCard
+                                        icon={Download}
+                                        tone="blue"
+                                        label="Download"
+                                        value={usage.download_label || formatBytes(usage.download_bytes)}
+                                        helper="Pemakaian download dari router rumah"
+                                    />
+                                )}
+                                {usage.upload_bytes !== null && (
+                                    <SummaryCard
+                                        icon={Upload}
+                                        tone="orange"
+                                        label="Upload"
+                                        value={usage.upload_label || formatBytes(usage.upload_bytes)}
+                                        helper="Pemakaian upload dari router rumah"
+                                    />
+                                )}
+                                {usage.total_bytes !== null && (
+                                    <SummaryCard
+                                        icon={Activity}
+                                        tone="green"
+                                        label="Total Traffic"
+                                        value={usage.total_label || formatBytes(usage.total_bytes)}
+                                        helper="Akumulasi trafik dari router rumah"
+                                    />
+                                )}
+                            </div>
                         </div>
-                    </section>
-                )}
+                    )}
+                </section>
 
                 <section className="grid gap-6 lg:grid-cols-2">
                     <div className="rounded-3xl bg-white p-6 shadow-lg">
@@ -1586,55 +1995,116 @@ function CustomerDashboard() {
                 </section>
 
                 <section id="histori-pembayaran" className="scroll-mt-24 rounded-3xl bg-white p-6 shadow-lg">
-                    <div className="mb-6 flex items-center justify-between">
-                        <h2 className="flex items-center gap-2 text-lg font-bold text-gray-900">
+                    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
                             <CreditCard size={20} className="text-orange-500" />
-                            Riwayat Pembayaran
-                        </h2>
+                            <h2 className="text-lg font-bold text-gray-900">
+                                Riwayat Pembayaran
+                            </h2>
+                            {totalPaymentHistory > 0 && (
+                                <span className="rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-semibold text-orange-700">
+                                    {totalPaymentHistory} Data
+                                </span>
+                            )}
+                        </div>
+                        {totalPaymentHistoryPages > 1 && (
+                            <p className="text-xs text-gray-500">
+                                Halaman <span className="font-bold text-gray-700">{paymentHistoryPage}</span> dari {totalPaymentHistoryPages}
+                            </p>
+                        )}
                     </div>
 
-                    {paymentHistory.length > 0 ? (
-                        <div className="space-y-3">
-                            {paymentHistory.map((invoice) => {
-                                const status = getInvoiceStatusConfig(invoice.status);
-                                const StatusIcon = status.icon;
+                    {totalPaymentHistory > 0 ? (
+                        <>
+                            <div className="space-y-3">
+                                {paginatedPaymentHistory.map((invoice) => {
+                                    const status = getInvoiceStatusConfig(invoice.status);
+                                    const StatusIcon = status.icon;
 
-                                return (
-                                    <div
-                                        key={invoice.id}
-                                        className="flex flex-col gap-4 rounded-2xl bg-gray-50 p-4 transition hover:bg-gray-100 sm:flex-row sm:items-center sm:justify-between"
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
-                                                <FileText size={20} className="text-gray-400" />
+                                    return (
+                                        <div
+                                            key={invoice.id}
+                                            className="flex flex-col gap-4 rounded-2xl bg-gray-50 p-4 transition hover:bg-gray-100 sm:flex-row sm:items-center sm:justify-between"
+                                        >
+                                            <div className="flex items-center gap-4">
+                                                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
+                                                    <FileText size={20} className="text-gray-400" />
+                                                </div>
+                                                <div>
+                                                    <p className="font-medium text-gray-900">
+                                                        Tagihan{' '}
+                                                        {new Date(invoice.invoice_date || invoice.created_at).toLocaleDateString('id-ID', {
+                                                            month: 'long',
+                                                            year: 'numeric',
+                                                        })}
+                                                    </p>
+                                                    <p className="text-sm text-gray-500">
+                                                        Rp {formatPrice(invoice.amount || 0)}
+                                                    </p>
+                                                </div>
                                             </div>
-                                            <div>
-                                                <p className="font-medium text-gray-900">
-                                                    Tagihan{' '}
-                                                    {new Date(invoice.invoice_date || invoice.created_at).toLocaleDateString('id-ID', {
-                                                        month: 'long',
-                                                        year: 'numeric',
-                                                    })}
-                                                </p>
-                                                <p className="text-sm text-gray-500">
-                                                    Rp {formatPrice(invoice.amount || 0)}
+
+                                            <div className="text-left sm:text-right">
+                                                <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${status.color}`}>
+                                                    <StatusIcon size={12} />
+                                                    {status.text}
+                                                </span>
+                                                <p className="mt-2 text-xs text-gray-500">
+                                                    Dibayar: {formatDate(invoice.paid_at)}
                                                 </p>
                                             </div>
                                         </div>
+                                    );
+                                })}
+                            </div>
 
-                                        <div className="text-left sm:text-right">
-                                            <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${status.color}`}>
-                                                <StatusIcon size={12} />
-                                                {status.text}
-                                            </span>
-                                            <p className="mt-2 text-xs text-gray-500">
-                                                Dibayar: {formatDate(invoice.paid_at)}
-                                            </p>
+                            {/* Pagination Controls */}
+                            {totalPaymentHistoryPages > 1 && (
+                                <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+                                    <p className="text-xs text-gray-500">
+                                        Menampilkan <span className="font-semibold text-gray-700">{((paymentHistoryPage - 1) * paymentHistoryPerPage) + 1}</span> - <span className="font-semibold text-gray-700">{Math.min(paymentHistoryPage * paymentHistoryPerPage, totalPaymentHistory)}</span> dari <span className="font-semibold text-gray-700">{totalPaymentHistory}</span> data
+                                    </p>
+                                    <div className="flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPaymentHistoryPage((p) => Math.max(1, p - 1))}
+                                            disabled={paymentHistoryPage === 1}
+                                            className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-2xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 transition"
+                                        >
+                                            <ChevronLeft size={14} />
+                                            Sebelumnya
+                                        </button>
+
+                                        <div className="flex items-center gap-1">
+                                            {Array.from({ length: totalPaymentHistoryPages }, (_, idx) => idx + 1).map((page) => (
+                                                <button
+                                                    key={page}
+                                                    type="button"
+                                                    onClick={() => setPaymentHistoryPage(page)}
+                                                    className={`h-8 w-8 rounded-xl text-xs font-bold transition ${
+                                                        paymentHistoryPage === page
+                                                            ? 'bg-orange-500 text-white shadow-xs'
+                                                            : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                                                    }`}
+                                                >
+                                                    {page}
+                                                </button>
+                                            ))}
                                         </div>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => setPaymentHistoryPage((p) => Math.min(totalPaymentHistoryPages, p + 1))}
+                                            disabled={paymentHistoryPage === totalPaymentHistoryPages}
+                                            className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-2xs hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 transition"
+                                        >
+                                            Berikutnya
+                                            <ChevronRight size={14} />
+                                        </button>
                                     </div>
-                                );
-                            })}
-                        </div>
+                                </div>
+                            )}
+                        </>
                     ) : (
                         <div className="py-12 text-center text-gray-500">
                             <CreditCard size={48} className="mx-auto mb-4 text-gray-300" />
@@ -2006,6 +2476,79 @@ function CustomerDashboard() {
                                     {savingAutoMessage ? 'Menyimpan...' : 'Tetap Nonaktifkan'}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* MODAL KONFIRMASI BLOKIR PERANGKAT */}
+                {blockModalTarget && (
+                    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 px-4 py-6">
+                        <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl space-y-4">
+                            <div className="flex items-start gap-3">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
+                                    <Ban size={22} />
+                                </div>
+                                <div className="min-w-0">
+                                    <h3 className="text-lg font-bold text-gray-900">Blokir Perangkat WiFi?</h3>
+                                    <p className="mt-1 text-sm text-gray-600">
+                                        Perangkat dengan MAC Address ini akan diputus dan dilarang terhubung kembali ke router WiFi rumah Anda.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-xs">
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500 font-medium">Nama Perangkat:</span>
+                                    <span className="font-bold text-gray-900">{blockModalTarget.name || 'Perangkat Tanpa Nama'}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500 font-medium">MAC Address:</span>
+                                    <span className="font-mono font-bold text-rose-700">{blockModalTarget.mac_address}</span>
+                                </div>
+                                {blockModalTarget.ip_address && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500 font-medium">IP Address:</span>
+                                        <span className="font-mono text-gray-700">{blockModalTarget.ip_address}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <form onSubmit={handleConfirmBlockDevice} className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                        Alasan Pemblokiran (Opsional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={blockReason}
+                                        onChange={(e) => setBlockReason(e.target.value)}
+                                        placeholder="Contoh: Perangkat tidak dikenal / HP tetangga"
+                                        className="w-full rounded-xl border border-gray-300 bg-white p-2.5 text-xs text-gray-900 focus:border-rose-500 focus:ring-2 focus:ring-rose-500"
+                                    />
+                                </div>
+
+                                <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setBlockModalTarget(null);
+                                            setBlockReason('');
+                                        }}
+                                        disabled={submittingBlock}
+                                        className="rounded-xl border border-gray-300 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={submittingBlock}
+                                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-bold text-white shadow-xs hover:bg-rose-700 disabled:opacity-60"
+                                    >
+                                        <Ban size={14} />
+                                        {submittingBlock ? 'Memproses Blokir...' : 'Ya, Blokir Sekarang'}
+                                    </button>
+                                </div>
+                            </form>
                         </div>
                     </div>
                 )}

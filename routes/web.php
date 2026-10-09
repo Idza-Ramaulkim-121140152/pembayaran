@@ -174,6 +174,9 @@ Route::patch('/api/customer/profile', [CustomerAuthController::class, 'updatePro
 Route::patch('/api/customer/password', [CustomerAuthController::class, 'updatePassword'])->name('api.customer.password.update');
 Route::get('/api/customer/wifi/device', [CustomerAuthController::class, 'wifiDevice'])->name('api.customer.wifi.device');
 Route::post('/api/customer/wifi/password', [CustomerAuthController::class, 'updateWifiPassword'])->name('api.customer.wifi.password.update');
+Route::post('/api/customer/wifi/update', [CustomerAuthController::class, 'updateWifi'])->name('api.customer.wifi.update');
+Route::post('/api/customer/wifi/block-device', [CustomerAuthController::class, 'blockDevice'])->name('api.customer.wifi.block-device');
+Route::post('/api/customer/wifi/unblock-device', [CustomerAuthController::class, 'unblockDevice'])->name('api.customer.wifi.unblock-device');
 Route::get('/api/customer/wifi/password-verifications/{verificationId}', [CustomerAuthController::class, 'wifiPasswordVerification'])->name('api.customer.wifi.password.verification');
 Route::patch('/api/customer/auto-message', [CustomerAuthController::class, 'updateAutoMessage'])->name('api.customer.auto-message.update');
 Route::post('/api/whatsapp/webhooks/payments', [WhatsAppPaymentWebhookController::class, 'store'])

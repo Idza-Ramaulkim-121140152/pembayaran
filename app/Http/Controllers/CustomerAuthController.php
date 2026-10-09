@@ -598,4 +598,179 @@ class CustomerAuthController extends Controller
                 ->all(),
         ];
     }
+
+    /**
+     * Update WiFi SSID Name or Password from Customer Dashboard
+     */
+    public function updateWifi(
+        Request $request,
+        GenieAcsService $genieAcsService,
+        \App\Services\AuditLogService $auditLogService
+    ): JsonResponse {
+        $customerId = Session::get('customer_id');
+        if (!$customerId) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer tidak ditemukan.'], 404);
+        }
+
+        $validated = $request->validate([
+            'ssid' => ['nullable', 'string', 'min:1', 'max:32'],
+            'password' => ['nullable', 'string', 'min:8', 'max:63'],
+        ], [
+            'password.min' => 'Password WiFi baru minimal 8 karakter.',
+            'password.max' => 'Password WiFi baru maksimal 63 karakter.',
+            'ssid.max' => 'Nama SSID WiFi maksimal 32 karakter.',
+        ]);
+
+        if (empty($validated['ssid']) && empty($validated['password'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Masukkan Nama SSID atau Password baru yang ingin diperbarui.',
+            ], 422);
+        }
+
+        $pppoe = trim((string) $customer->pppoe_username);
+        if ($pppoe === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Akun pelanggan belum memiliki router PPPoE yang tertaut.',
+            ], 422);
+        }
+
+        try {
+            $device = $genieAcsService->findDeviceByPppoe($pppoe);
+            if (!$device) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Router pelanggan sedang offline atau belum terdeteksi di server.',
+                ], 404);
+            }
+
+            $deviceId = $device['_id'];
+            $result = $genieAcsService->updateDeviceWifi($deviceId, $validated);
+
+            $auditLogService->log('customer_portal.wifi_updated', $customer, [
+                'customer_id' => $customer->id,
+                'device_id' => $deviceId,
+                'ssid_changed' => !empty($validated['ssid']),
+                'password_changed' => !empty($validated['password']),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Kata sandi / SSID WiFi baru berhasil dikirim ke router Anda!',
+                'data' => $result,
+            ]);
+        } catch (GenieAcsException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->status());
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memperbarui konfigurasi WiFi: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Block a device MAC address from the customer's WiFi
+     */
+    public function blockDevice(
+        Request $request,
+        GenieAcsService $genieAcsService,
+        \App\Services\AuditLogService $auditLogService
+    ): JsonResponse {
+        $customerId = Session::get('customer_id');
+        if (!$customerId) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer tidak ditemukan.'], 404);
+        }
+
+        $validated = $request->validate([
+            'mac_address' => ['required', 'string', 'regex:/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/'],
+            'reason' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $pppoe = trim((string) $customer->pppoe_username);
+        $device = $pppoe ? $genieAcsService->findDeviceByPppoe($pppoe) : null;
+
+        if (!$device) {
+            return response()->json(['success' => false, 'message' => 'Router pelanggan tidak ditemukan.'], 404);
+        }
+
+        try {
+            $result = $genieAcsService->blockDeviceMac($device['_id'], $validated['mac_address'], $customer->id, $validated['reason'] ?? null);
+
+            $auditLogService->log('customer_portal.device_blocked', $customer, [
+                'customer_id' => $customer->id,
+                'mac_address' => $validated['mac_address'],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Perangkat dengan MAC {$validated['mac_address']} berhasil diblokir dari WiFi Anda.",
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Gagal memblokir perangkat: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Unblock a device MAC address from the customer's WiFi
+     */
+    public function unblockDevice(
+        Request $request,
+        GenieAcsService $genieAcsService,
+        \App\Services\AuditLogService $auditLogService
+    ): JsonResponse {
+        $customerId = Session::get('customer_id');
+        if (!$customerId) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+        }
+
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Customer tidak ditemukan.'], 404);
+        }
+
+        $validated = $request->validate([
+            'mac_address' => ['required', 'string', 'regex:/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/'],
+        ]);
+
+        $pppoe = trim((string) $customer->pppoe_username);
+        $device = $pppoe ? $genieAcsService->findDeviceByPppoe($pppoe) : null;
+
+        if (!$device) {
+            return response()->json(['success' => false, 'message' => 'Router pelanggan tidak ditemukan.'], 404);
+        }
+
+        try {
+            $result = $genieAcsService->unblockDeviceMac($device['_id'], $validated['mac_address'], $customer->id);
+
+            $auditLogService->log('customer_portal.device_unblocked', $customer, [
+                'customer_id' => $customer->id,
+                'mac_address' => $validated['mac_address'],
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Perangkat dengan MAC {$validated['mac_address']} berhasil dibuka blokirnya.",
+                'data' => $result,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Gagal membuka blokir perangkat: ' . $e->getMessage()], 500);
+        }
+    }
 }

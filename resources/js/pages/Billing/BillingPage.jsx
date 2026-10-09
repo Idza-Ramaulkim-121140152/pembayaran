@@ -259,6 +259,7 @@ function BillingPage() {
     };
 
     const openConfirmModal = (invoice, customer) => {
+        setError(null);
         setConfirmModal({ open: true, invoice, customer });
 
         // Parse amount dari invoice (handle decimal dari database)
@@ -792,7 +793,16 @@ function BillingPage() {
             fetchBillingData(search);
         } catch (err) {
             const status = err.response?.status;
-            const message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
+            const validationErrors = err.response?.data?.errors;
+            let message = err.response?.data?.message || err.response?.data?.error || 'Gagal mengkonfirmasi pembayaran';
+
+            if (validationErrors && typeof validationErrors === 'object') {
+                const firstKey = Object.keys(validationErrors)[0];
+                if (firstKey && Array.isArray(validationErrors[firstKey]) && validationErrors[firstKey][0]) {
+                    message = validationErrors[firstKey][0];
+                }
+            }
+
             const actionRequired = err.response?.data?.action_required;
 
             if (status === 403) {
@@ -1910,6 +1920,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
             >
                 {confirmModal.invoice && (
                     <form onSubmit={handleConfirmPayment} className="space-y-4">
+                        {error && (
+                            <AdminConsoleNotice tone="danger" title="Peringatan Validasi">
+                                <p>{error}</p>
+                            </AdminConsoleNotice>
+                        )}
                         {(() => {
                             const actionState = resolveInvoiceActionState(confirmModal.invoice);
                             const modalProofUrl = actionState.canPreviewProof ? resolvePaymentProofUrl(confirmModal.invoice) : '';
