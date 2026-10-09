@@ -1055,6 +1055,203 @@ class GenieAcsService
         }
     }
 
+    public function getProvisionPresets(): array
+    {
+        return [
+            [
+                'id' => 'zte_f609',
+                'name' => 'ZTE F609 / F670 (GPON)',
+                'vendor' => 'ZTE',
+                'wan_path' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1',
+                'wifi_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                'vlan_supported' => true,
+                'vlan_param' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANEthernetInterfaceConfig.VLANIDMark',
+            ],
+            [
+                'id' => 'huawei_hg8245',
+                'name' => 'Huawei HG8245H / HG8546M (GPON/EPON)',
+                'vendor' => 'Huawei',
+                'wan_path' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1',
+                'wifi_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                'vlan_supported' => true,
+                'vlan_param' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.X_HW_VLAN',
+            ],
+            [
+                'id' => 'fiberhome_an5506',
+                'name' => 'Fiberhome AN5506 / HG680',
+                'vendor' => 'Fiberhome',
+                'wan_path' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1',
+                'wifi_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                'vlan_supported' => true,
+                'vlan_param' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANEthernetInterfaceConfig.VLANIDMark',
+            ],
+            [
+                'id' => 'vsol_xpon',
+                'name' => 'VSOL / GM220-S / XPON Generic',
+                'vendor' => 'VSOL / Generic',
+                'wan_path' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1',
+                'wifi_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                'vlan_supported' => true,
+                'vlan_param' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANEthernetInterfaceConfig.VLANIDMark',
+            ],
+            [
+                'id' => 'generic_tr069',
+                'name' => 'Generic TR-069 (Auto-Detect Path)',
+                'vendor' => 'Universal',
+                'wan_path' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1',
+                'wifi_path' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1',
+                'vlan_supported' => false,
+                'vlan_param' => null,
+            ],
+        ];
+    }
+
+    /**
+     * Execute Zero-Touch Auto Provisioning on ONT via GenieACS TR-069
+     */
+    public function autoProvisionDevice(array $data, ?int $userId = null): array
+    {
+        $deviceId = trim((string) ($data['device_id'] ?? ''));
+        $customerId = isset($data['customer_id']) && $data['customer_id'] !== '' ? (int) $data['customer_id'] : null;
+        $pppoeUser = trim((string) ($data['pppoe_username'] ?? ''));
+        $pppoePassword = (string) ($data['pppoe_password'] ?? '');
+        $wifiSsid = trim((string) ($data['wifi_ssid'] ?? ''));
+        $wifiPassword = (string) ($data['wifi_password'] ?? '');
+        $vlanId = isset($data['vlan_id']) && $data['vlan_id'] !== '' ? (int) $data['vlan_id'] : null;
+        $presetId = trim((string) ($data['preset'] ?? 'generic_tr069'));
+        $rebootAfter = (bool) ($data['reboot_after'] ?? false);
+
+        if ($deviceId === '') {
+            throw new GenieAcsException('Device ID TR-069 wajib diisi.', 422);
+        }
+
+        $device = $this->getDeviceRaw($deviceId);
+        if (!$device) {
+            throw new GenieAcsException('Perangkat TR-069 tidak ditemukan di server GenieACS.', 404);
+        }
+
+        $parameterValues = [];
+        $pushedDetails = [];
+
+        // 1. Configure WAN PPPoE
+        if ($pppoeUser !== '') {
+            $parameterValues[] = ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Enable', true, 'xsd:boolean'];
+            $parameterValues[] = ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ConnectionType', 'IP_Routed', 'xsd:string'];
+            $parameterValues[] = ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username', $pppoeUser, 'xsd:string'];
+            if ($pppoePassword !== '') {
+                $parameterValues[] = ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password', $pppoePassword, 'xsd:string'];
+            }
+            $parameterValues[] = ['InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.NATEnabled', true, 'xsd:boolean'];
+            $pushedDetails['pppoe_username'] = $pppoeUser;
+        }
+
+        // 2. Configure VLAN if provided
+        if ($vlanId && $vlanId > 0) {
+            $presets = collect($this->getProvisionPresets())->keyBy('id');
+            $selectedPreset = $presets->get($presetId);
+            $vlanParam = $selectedPreset['vlan_param'] ?? 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANEthernetInterfaceConfig.VLANIDMark';
+            if ($vlanParam) {
+                $parameterValues[] = [$vlanParam, (string) $vlanId, 'xsd:unsignedInt'];
+                $pushedDetails['vlan_id'] = $vlanId;
+            }
+        }
+
+        // 3. Configure WiFi SSID & Password
+        if ($wifiSsid !== '') {
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.Enable', true, 'xsd:boolean'];
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID', $wifiSsid, 'xsd:string'];
+            $pushedDetails['wifi_ssid'] = $wifiSsid;
+        }
+
+        if ($wifiPassword !== '') {
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BeaconType', '11i', 'xsd:string'];
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase', $wifiPassword, 'xsd:string'];
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.KeyPassphrase', $wifiPassword, 'xsd:string'];
+            $parameterValues[] = ['InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.IEEE11iEncryptionModes', 'AESEncryption', 'xsd:string'];
+            $pushedDetails['wifi_password_set'] = true;
+        }
+
+        // Push tasks to GenieACS
+        $taskId = null;
+        if (!empty($parameterValues)) {
+            $taskResult = $this->postTask($deviceId, [
+                'name' => 'setParameterValues',
+                'parameterValues' => $parameterValues,
+            ], true, true, 8000);
+            $taskId = $taskResult['_id'] ?? null;
+        }
+
+        // Refresh WAN and WLAN objects
+        try {
+            $this->postTask($deviceId, [
+                'name' => 'refreshObject',
+                'objectName' => 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.',
+            ], false);
+            $this->postTask($deviceId, [
+                'name' => 'refreshObject',
+                'objectName' => 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.',
+            ], false);
+        } catch (\Throwable) {}
+
+        if ($rebootAfter) {
+            try {
+                $this->postTask($deviceId, ['name' => 'reboot'], false);
+                $pushedDetails['reboot_requested'] = true;
+            } catch (\Throwable) {}
+        }
+
+        // Update Customer Record if customer_id is provided
+        $customer = null;
+        if ($customerId) {
+            $customer = Customer::find($customerId);
+            if ($customer) {
+                if ($pppoeUser !== '') {
+                    $customer->pppoe_username = $pppoeUser;
+                }
+                $customer->home_router_type = 'genieacs';
+                $customer->home_router_host = $deviceId;
+                $customer->home_router_monitoring_enabled = true;
+                $customer->enable_home_router = true;
+                $customer->save();
+            }
+        }
+
+        Cache::forget(self::SUMMARY_CACHE_KEY);
+
+        return [
+            'success' => true,
+            'device_id' => $deviceId,
+            'customer_id' => $customer?->id,
+            'customer_name' => $customer?->name,
+            'task_id' => $taskId,
+            'parameters_pushed' => count($parameterValues),
+            'details' => $pushedDetails,
+            'message' => "Auto-provisioning TR-069 berhasil dikirim ke ONT ({$deviceId}). Router sedang menerapkan konfigurasi PPPoE, WiFi, dan Jaringan.",
+        ];
+    }
+
+    /**
+     * Get newly registered or unprovisioned devices in GenieACS
+     */
+    public function getUnprovisionedDevices(): array
+    {
+        $allSummary = $this->getAllDevicesSummary(false);
+        $devices = $allSummary['devices'] ?? [];
+
+        $unprovisioned = [];
+        foreach ($devices as $d) {
+            $isUnassigned = !empty($d['is_unassigned']) || empty($d['customer']);
+            $pppoe = trim((string) ($d['pppoe_username'] ?? ''));
+            $isDefaultPppoe = $pppoe === '' || in_array(strtolower($pppoe), ['user', 'admin', 'zte', 'huawei', 'test', 'default', 'cpe']);
+
+            if ($isUnassigned || $isDefaultPppoe) {
+                $unprovisioned[] = $d;
+            }
+        }
+
+        return $unprovisioned;
+    }
+
     public function summarizeDevice(array $device): array
     {
         return [

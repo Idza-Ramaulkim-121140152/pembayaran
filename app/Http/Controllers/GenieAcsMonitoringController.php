@@ -430,4 +430,83 @@ class GenieAcsMonitoringController extends Controller
             ], 503);
         }
     }
+
+    /**
+     * Get available ONT vendor presets for TR-069
+     */
+    public function provisionPresets()
+    {
+        return response()->json([
+            'data' => $this->genieAcsService->getProvisionPresets(),
+        ]);
+    }
+
+    /**
+     * Get list of unprovisioned / unconfigured ONTs
+     */
+    public function unprovisionedDevices()
+    {
+        try {
+            $devices = $this->genieAcsService->getUnprovisionedDevices();
+            return response()->json([
+                'data' => $devices,
+                'total' => count($devices),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Gagal memuat perangkat unprovisioned: ' . $e->getMessage(),
+                'data' => [],
+            ], 500);
+        }
+    }
+
+    /**
+     * Execute Auto-Provisioning on ONT
+     */
+    public function autoProvision(Request $request)
+    {
+        $validated = $request->validate([
+            'device_id' => 'required|string|max:255',
+            'customer_id' => 'nullable|integer|exists:customers,id',
+            'pppoe_username' => 'nullable|string|max:100',
+            'pppoe_password' => 'nullable|string|max:100',
+            'wifi_ssid' => 'nullable|string|max:100',
+            'wifi_password' => 'nullable|string|min:8|max:64',
+            'vlan_id' => 'nullable|integer|min:1|max:4094',
+            'preset' => 'nullable|string|max:50',
+            'reboot_after' => 'nullable|boolean',
+        ]);
+
+        try {
+            $result = $this->genieAcsService->autoProvisionDevice($validated, auth()->id());
+
+            if (!empty($validated['customer_id'])) {
+                $customer = Customer::find($validated['customer_id']);
+                if ($customer) {
+                    $this->auditLogService->log('genieacs.auto_provisioned', $customer, [
+                        'device_id' => $validated['device_id'],
+                        'pppoe_username' => $validated['pppoe_username'] ?? null,
+                        'wifi_ssid' => $validated['wifi_ssid'] ?? null,
+                        'preset' => $validated['preset'] ?? null,
+                    ], auth()->id());
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => $result,
+            ]);
+        } catch (GenieAcsException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() >= 400 && $e->getCode() <= 500 ? $e->getCode() : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menjalankan auto provisioning: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

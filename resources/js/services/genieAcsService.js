@@ -8,6 +8,9 @@ const genieAcsService = {
     refreshDevice: (deviceId) => apiClient.post(`/genieacs/devices/${encodeURIComponent(deviceId)}/refresh`),
     assignCustomer: (deviceId, customerId) => apiClient.post(`/genieacs/devices/${encodeURIComponent(deviceId)}/assign-customer`, { customer_id: customerId }),
     sendPortalLinkWa: (payload) => apiClient.post('/genieacs/send-portal-link', payload),
+    getPresets: () => apiClient.get('/genieacs/presets'),
+    getUnprovisioned: () => apiClient.get('/genieacs/unprovisioned'),
+    autoProvision: (payload) => apiClient.post('/genieacs/auto-provision', payload),
     getCustomers: (params = {}) => apiClient.get('/customers', { params }),
 };
 

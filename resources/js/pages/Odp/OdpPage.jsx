@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin, QrCode } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -629,12 +630,21 @@ function OdpPage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Manajemen ODP</h1>
-                    <p className="text-gray-600 mt-1">Kelola Optical Distribution Point</p>
+                    <p className="text-gray-600 mt-1">Kelola Optical Distribution Point & Port Kabel</p>
                 </div>
-                <Button variant="primary" onClick={() => { resetForm(); setCreateModal(true); }} className={adminConsoleButtonClassNames.primary}>
-                    <Plus size={20} className="mr-2" />
-                    Tambah ODP
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Link
+                        to="/odp-scanner"
+                        className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-cyan-500 transition"
+                    >
+                        <QrCode size={18} />
+                        Scanner Port ODP
+                    </Link>
+                    <Button variant="primary" onClick={() => { resetForm(); setCreateModal(true); }} className={adminConsoleButtonClassNames.primary}>
+                        <Plus size={20} className="mr-2" />
+                        Tambah ODP
+                    </Button>
+                </div>
             </div>
 
             {/* Alerts */}
@@ -711,6 +721,13 @@ function OdpPage() {
                                     >
                                         <Eye size={14} className="mr-1" /> Detail
                                     </Button>
+                                    <Link
+                                        to={`/odp-scanner?id=${odp.id}`}
+                                        className="p-2 rounded-xl bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 border border-cyan-500/20 transition grid place-items-center"
+                                        title="Buka Scanner Port & Stiker QR"
+                                    >
+                                        <QrCode size={15} />
+                                    </Link>
                                     <Button 
                                         size="sm" 
                                         variant="primary"

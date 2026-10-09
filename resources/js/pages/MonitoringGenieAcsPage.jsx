@@ -36,6 +36,7 @@ import {
     Filter,
     Layers,
     ExternalLink,
+    Zap,
 } from 'lucide-react';
 import Modal from '../components/common/Modal';
 import genieAcsService from '../services/genieAcsService';
@@ -137,6 +138,151 @@ export default function MonitoringGenieAcsPage() {
     const [selectedDeviceId, setSelectedDeviceId] = useState('');
     const [linkingRouter, setLinkingRouter] = useState(false);
 
+    // Modal: Auto-Provisioning ONT Baru (Zero-Touch)
+    const [provisionModalOpen, setProvisionModalOpen] = useState(false);
+    const [unprovisionedDevices, setUnprovisionedDevices] = useState([]);
+    const [provisionPresets, setProvisionPresets] = useState([]);
+    const [provisioningSubmitting, setProvisioningSubmitting] = useState(false);
+    const [provisionResult, setProvisionResult] = useState(null);
+    const [provisionForm, setProvisionForm] = useState({
+        device_id: '',
+        customer_id: '',
+        preset: 'zte',
+        pppoe_username: '',
+        pppoe_password: '',
+        vlan_id: '100',
+        wifi_ssid: '',
+        wifi_password: '',
+    });
+    const [provCustomerQuery, setProvCustomerQuery] = useState('');
+    const [provCustomerResults, setProvCustomerResults] = useState([]);
+    const [searchingProvCustomer, setSearchingProvCustomer] = useState(false);
+    const [selectedProvCustomer, setSelectedProvCustomer] = useState(null);
+
+    const loadUnprovisionedAndPresets = async () => {
+        try {
+            const [unprovRes, presetsRes] = await Promise.all([
+                genieAcsService.getUnprovisioned(),
+                genieAcsService.getPresets(),
+            ]);
+            setUnprovisionedDevices(unprovRes.data?.data || []);
+            setProvisionPresets(presetsRes.data?.data || []);
+        } catch (err) {
+            console.error('Failed to fetch unprovisioned/presets', err);
+        }
+    };
+
+    const handleOpenProvisionModal = (device = null) => {
+        setProvisionModalOpen(true);
+        setProvisionResult(null);
+        setSelectedProvCustomer(null);
+        setProvCustomerQuery('');
+        setProvCustomerResults([]);
+
+        let devId = '';
+        let detectedPreset = 'zte';
+
+        if (device?.device_id) {
+            devId = device.device_id;
+            const vendor = (device.manufacturer || device.product_class || '').toLowerCase();
+            if (vendor.includes('huawei')) detectedPreset = 'huawei';
+            else if (vendor.includes('fiberhome')) detectedPreset = 'fiberhome';
+            else if (vendor.includes('vsol') || vendor.includes('xpon')) detectedPreset = 'vsol_xpon';
+        } else if (unprovisionedDevices.length > 0) {
+            devId = unprovisionedDevices[0].device_id;
+            const vendor = (unprovisionedDevices[0].manufacturer || unprovisionedDevices[0].product_class || '').toLowerCase();
+            if (vendor.includes('huawei')) detectedPreset = 'huawei';
+            else if (vendor.includes('fiberhome')) detectedPreset = 'fiberhome';
+            else if (vendor.includes('vsol') || vendor.includes('xpon')) detectedPreset = 'vsol_xpon';
+        }
+
+        setProvisionForm({
+            device_id: devId,
+            customer_id: '',
+            preset: detectedPreset,
+            pppoe_username: '',
+            pppoe_password: '',
+            vlan_id: '100',
+            wifi_ssid: '',
+            wifi_password: '',
+        });
+
+        loadUnprovisionedAndPresets();
+    };
+
+    const handleSearchProvCustomers = async (q) => {
+        setProvCustomerQuery(q);
+        if (!q || q.trim().length < 2) {
+            setProvCustomerResults([]);
+            return;
+        }
+
+        try {
+            setSearchingProvCustomer(true);
+            const res = await genieAcsService.getCustomers({ search: q.trim(), per_page: 8 });
+            const list = res.data?.data || res.data || [];
+            setProvCustomerResults(Array.isArray(list) ? list : (list.data || []));
+        } catch (err) {
+            console.error('Customer search error', err);
+        } finally {
+            setSearchingProvCustomer(false);
+        }
+    };
+
+    const handleSelectProvCustomer = (cust) => {
+        setSelectedProvCustomer(cust);
+        setProvCustomerResults([]);
+        setProvCustomerQuery(cust.name);
+
+        const cleanName = (cust.name || 'User').replace(/[^a-zA-Z0-9]/g, '_');
+        setProvisionForm((prev) => ({
+            ...prev,
+            customer_id: cust.id,
+            pppoe_username: cust.pppoe_username || cleanName.toLowerCase(),
+            pppoe_password: prev.pppoe_password || '12345678',
+            wifi_ssid: prev.wifi_ssid || `RumahKita_${cleanName}`,
+            wifi_password: prev.wifi_password || '12345678',
+        }));
+    };
+
+    const handleExecuteAutoProvision = async (e) => {
+        e.preventDefault();
+        if (!provisionForm.device_id) {
+            setError('Pilih atau masukkan Device ID ONT terlebih dahulu.');
+            return;
+        }
+        if (!provisionForm.pppoe_username || !provisionForm.pppoe_password) {
+            setError('Username dan Password PPPoE wajib diisi.');
+            return;
+        }
+
+        try {
+            setProvisioningSubmitting(true);
+            setError('');
+            setMessage('');
+            setProvisionResult(null);
+
+            const res = await genieAcsService.autoProvision(provisionForm);
+            setProvisionResult({
+                success: true,
+                message: res.data?.message || 'Auto-Provisioning berhasil dikirimkan ke ONT!',
+                details: res.data?.tasks_queued || [],
+            });
+            setMessage('Auto-Provisioning ONT berhasil dieksekusi via GenieACS!');
+            loadDevices(true);
+            loadUnprovisionedAndPresets();
+        } catch (err) {
+            const errMsg = err.response?.data?.message || err.message || 'Gagal mengeksekusi auto-provisioning ONT.';
+            setError(errMsg);
+            setProvisionResult({
+                success: false,
+                message: errMsg,
+            });
+        } finally {
+            setProvisioningSubmitting(false);
+        }
+    };
+
     // Handle Kirim Link Portal via API WhatsApp
     const handleSendPortalLinkWa = async () => {
         if (!portalModalDevice) return;
@@ -213,6 +359,7 @@ export default function MonitoringGenieAcsPage() {
 
     useEffect(() => {
         loadDevices(false);
+        loadUnprovisionedAndPresets();
     }, [statusFilter, capacityFilter, packageFilter]);
 
     // Client-side instantaneous filtering & safety net against any race conditions
@@ -495,6 +642,19 @@ export default function MonitoringGenieAcsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
+                        onClick={() => handleOpenProvisionModal()}
+                        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:from-amber-600 hover:to-orange-700 transition relative"
+                    >
+                        <Zap size={16} />
+                        <span>Auto-Provisioning ONT</span>
+                        {unprovisionedDevices.length > 0 && (
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] font-black text-amber-700 shadow-sm">
+                                {unprovisionedDevices.length}
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => loadDevices(true)}
                         disabled={syncing || refreshing}
                         className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 transition"
@@ -504,7 +664,10 @@ export default function MonitoringGenieAcsPage() {
                     </button>
                     <button
                         type="button"
-                        onClick={() => loadDevices(false)}
+                        onClick={() => {
+                            loadDevices(false);
+                            loadUnprovisionedAndPresets();
+                        }}
                         disabled={refreshing || syncing}
                         className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
                     >
@@ -513,6 +676,33 @@ export default function MonitoringGenieAcsPage() {
                     </button>
                 </div>
             </div>
+
+            {/* Unprovisioned Devices Banner */}
+            {unprovisionedDevices.length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 p-4 shadow-sm">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-sm">
+                            <Sparkles size={20} />
+                        </div>
+                        <div>
+                            <p className="font-bold text-amber-950 text-sm">
+                                Ditemukan {unprovisionedDevices.length} ONT Baru di Server GenieACS!
+                            </p>
+                            <p className="text-xs text-amber-800">
+                                Perangkat siap di-provisioning otomatis (WAN PPPoE, VLAN ID, dan SSID WiFi) tanpa setup manual di lokasi pelanggan.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => handleOpenProvisionModal()}
+                        className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-amber-700 transition shrink-0"
+                    >
+                        <Zap size={14} />
+                        Provisioning Sekarang
+                    </button>
+                </div>
+            )}
 
             {/* Alert Messages */}
             {message && (
@@ -1755,6 +1945,297 @@ export default function MonitoringGenieAcsPage() {
                         </div>
                     </div>
                 )}
+            </Modal>
+
+            {/* MODAL 7: ZERO-TOUCH AUTO-PROVISIONING ONT BARU */}
+            <Modal
+                isOpen={provisionModalOpen}
+                onClose={() => setProvisionModalOpen(false)}
+                title="⚡ Zero-Touch Auto-Provisioning ONT Baru (GenieACS)"
+                size="lg"
+            >
+                <form onSubmit={handleExecuteAutoProvision} className="space-y-4 text-left">
+                    {/* Intro Alert */}
+                    <div className="rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 p-3.5 text-xs text-amber-950 space-y-1">
+                        <div className="flex items-center gap-2 font-bold text-amber-900">
+                            <Sparkles size={16} className="text-amber-600" />
+                            <span>Registrasi & Konfigurasi Modem Otomatis Tanpa Setup Manual</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800 leading-relaxed">
+                            Sistem akan secara otomatis mendorong konfigurasi WAN PPPoE, VLAN ID, dan SSID WiFi ke modem ONT melalui protokol TR-069 GenieACS serta menautkan perangkat ke database pelanggan secara real-time.
+                        </p>
+                    </div>
+
+                    {/* Result Notification */}
+                    {provisionResult && (
+                        <div className={`p-4 rounded-2xl border text-xs ${provisionResult.success ? 'bg-emerald-50 border-emerald-300 text-emerald-950' : 'bg-rose-50 border-rose-300 text-rose-950'} space-y-2`}>
+                            <div className="flex items-start gap-2.5">
+                                {provisionResult.success ? (
+                                    <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                                ) : (
+                                    <AlertTriangle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+                                )}
+                                <div>
+                                    <p className="font-bold">{provisionResult.message}</p>
+                                    {provisionResult.success && (
+                                        <p className="text-[11px] text-emerald-800 mt-1">
+                                            Perangkat modem ONT sekarang sudah terkonfigurasi dan online dengan kredensial pelanggan.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                            {provisionResult.details && provisionResult.details.length > 0 && (
+                                <div className="p-2.5 rounded-xl bg-white/70 border border-emerald-200 font-mono text-[10px] space-y-1 text-slate-700">
+                                    <p className="font-bold text-slate-900 font-sans">Task GenieACS Terkirim:</p>
+                                    {provisionResult.details.map((t, idx) => (
+                                        <p key={idx} className="flex items-center gap-1.5">
+                                            <span className="text-emerald-600">✓</span> {t.parameter} = <span className="text-blue-600">{t.value}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Form Step 1: Perangkat ONT */}
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-3">
+                        <label className="block text-xs font-bold text-gray-800 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                                <Router size={14} className="text-emerald-600" />
+                                1. Pilih Perangkat ONT Baru / Masukkan Device ID:
+                            </span>
+                            {unprovisionedDevices.length > 0 && (
+                                <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                                    {unprovisionedDevices.length} ONT Siap Dikonfigurasi
+                                </span>
+                            )}
+                        </label>
+
+                        {unprovisionedDevices.length > 0 ? (
+                            <div className="space-y-2">
+                                <select
+                                    value={provisionForm.device_id}
+                                    onChange={(e) => {
+                                        const devId = e.target.value;
+                                        const dev = unprovisionedDevices.find((d) => d.device_id === devId);
+                                        let detectedPreset = provisionForm.preset;
+                                        if (dev) {
+                                            const vendor = (dev.manufacturer || dev.product_class || '').toLowerCase();
+                                            if (vendor.includes('huawei')) detectedPreset = 'huawei';
+                                            else if (vendor.includes('fiberhome')) detectedPreset = 'fiberhome';
+                                            else if (vendor.includes('vsol') || vendor.includes('xpon')) detectedPreset = 'vsol_xpon';
+                                            else if (vendor.includes('zte')) detectedPreset = 'zte';
+                                        }
+                                        setProvisionForm((p) => ({ ...p, device_id: devId, preset: detectedPreset }));
+                                    }}
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                >
+                                    <option value="">-- Pilih dari ONT yang Baru Terdeteksi --</option>
+                                    {unprovisionedDevices.map((d) => (
+                                        <option key={d.device_id} value={d.device_id}>
+                                            {d.manufacturer || 'ONT'} {d.product_class} — SN: {d.serial_number || d.device_id} (IP: {d.ip_address || '-'})
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-[11px] text-gray-400">Atau masukkan ID manual di bawah jika ONT belum muncul di daftar dropdown.</p>
+                            </div>
+                        ) : null}
+
+                        <input
+                            type="text"
+                            value={provisionForm.device_id}
+                            onChange={(e) => setProvisionForm((p) => ({ ...p, device_id: e.target.value.trim() }))}
+                            placeholder="Contoh: 202BC1-F670L-ZTEGC86B1234 atau Device ID GenieACS"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                            required
+                        />
+                    </div>
+
+                    {/* Form Step 2: Pilih Pelanggan */}
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-3">
+                        <label className="block text-xs font-bold text-gray-800 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                                <User size={14} className="text-emerald-600" />
+                                2. Pilih Pelanggan (Otomatis Isi Username PPPoE & WiFi):
+                            </span>
+                            {selectedProvCustomer && (
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                                    ✓ Terpilih: {selectedProvCustomer.name}
+                                </span>
+                            )}
+                        </label>
+
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                            <input
+                                type="text"
+                                value={provCustomerQuery}
+                                onChange={(e) => handleSearchProvCustomers(e.target.value)}
+                                placeholder="Ketik nama atau no HP pelanggan untuk mencari..."
+                                className="w-full text-xs rounded-xl border border-gray-300 pl-9 pr-4 py-2.5 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                            />
+                            {searchingProvCustomer && (
+                                <RefreshCw className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 animate-spin" size={14} />
+                            )}
+                        </div>
+
+                        {provCustomerResults.length > 0 && (
+                            <div className="max-h-40 overflow-y-auto divide-y divide-gray-100 rounded-xl border border-emerald-200 bg-white shadow-md">
+                                {provCustomerResults.map((c) => (
+                                    <button
+                                        type="button"
+                                        key={c.id}
+                                        onClick={() => handleSelectProvCustomer(c)}
+                                        className="w-full flex items-center justify-between p-2.5 text-xs text-left hover:bg-emerald-50 transition"
+                                    >
+                                        <div>
+                                            <p className="font-bold text-gray-900">{c.name}</p>
+                                            <p className="text-[11px] text-gray-500">
+                                                📱 {c.phone || '-'} · PPPoE: <span className="font-mono">{c.pppoe_username || '-'}</span> · Paket: {c.package?.name || '-'}
+                                            </p>
+                                        </div>
+                                        <span className="px-2.5 py-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 rounded-lg">
+                                            Pilih
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Form Step 3: Preset Profil Vendor */}
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-3">
+                        <label className="block text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                            <Layers size={14} className="text-emerald-600" />
+                            3. Profil Preset Vendor ONT:
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {[
+                                { key: 'zte', label: 'ZTE F609 / F670 / F660', sub: 'Standard ZTE TR-069' },
+                                { key: 'huawei', label: 'Huawei HG8245 / EG8145', sub: 'Huawei Standard' },
+                                { key: 'fiberhome', label: 'Fiberhome AN5506 / HG6243', sub: 'Fiberhome WAN' },
+                                { key: 'vsol_xpon', label: 'VSOL / XPON Generic', sub: 'XPON Bridge/Route' },
+                                { key: 'tr069_universal', label: 'Universal TR-069', sub: 'Standard IGD / WAN' },
+                            ].map((item) => {
+                                const isSelected = provisionForm.preset === item.key;
+                                return (
+                                    <button
+                                        type="button"
+                                        key={item.key}
+                                        onClick={() => setProvisionForm((p) => ({ ...p, preset: item.key }))}
+                                        className={`p-2.5 rounded-xl border text-left transition ${
+                                            isSelected
+                                                ? 'border-emerald-500 bg-emerald-50/90 shadow-sm text-emerald-950 font-bold'
+                                                : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700'
+                                        }`}
+                                    >
+                                        <p className="text-xs">{item.label}</p>
+                                        <p className="text-[10px] text-gray-400 font-normal">{item.sub}</p>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Form Step 4: Kredensial WAN PPPoE & WiFi */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* WAN PPPoE */}
+                        <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-2.5">
+                            <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                <Activity size={14} className="text-emerald-600" />
+                                Konfigurasi WAN PPPoE
+                            </p>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-gray-600 mb-1">Username PPPoE *</label>
+                                <input
+                                    type="text"
+                                    value={provisionForm.pppoe_username}
+                                    onChange={(e) => setProvisionForm((p) => ({ ...p, pppoe_username: e.target.value }))}
+                                    placeholder="Contoh: user_hasan"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-gray-600 mb-1">Password PPPoE *</label>
+                                <input
+                                    type="text"
+                                    value={provisionForm.pppoe_password}
+                                    onChange={(e) => setProvisionForm((p) => ({ ...p, pppoe_password: e.target.value }))}
+                                    placeholder="Password PPPoE..."
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-gray-600 mb-1">VLAN ID (Opsional)</label>
+                                <input
+                                    type="number"
+                                    value={provisionForm.vlan_id}
+                                    onChange={(e) => setProvisionForm((p) => ({ ...p, vlan_id: e.target.value }))}
+                                    placeholder="100 / 200"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                />
+                            </div>
+                        </div>
+
+                        {/* WLAN WiFi */}
+                        <div className="rounded-2xl border border-gray-200 bg-gray-50/60 p-3.5 space-y-2.5">
+                            <p className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                                <Wifi size={14} className="text-emerald-600" />
+                                Konfigurasi WiFi 2.4GHz
+                            </p>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-gray-600 mb-1">Nama SSID WiFi</label>
+                                <input
+                                    type="text"
+                                    value={provisionForm.wifi_ssid}
+                                    onChange={(e) => setProvisionForm((p) => ({ ...p, wifi_ssid: e.target.value }))}
+                                    placeholder="Contoh: RumahKita_Hasan"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2 bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-semibold text-gray-600 mb-1">Password WiFi (WPA2-PSK)</label>
+                                <input
+                                    type="text"
+                                    value={provisionForm.wifi_password}
+                                    onChange={(e) => setProvisionForm((p) => ({ ...p, wifi_password: e.target.value }))}
+                                    placeholder="Minimal 8 karakter (contoh: 12345678)"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2 font-mono bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+                        <button
+                            type="button"
+                            onClick={() => setProvisionModalOpen(false)}
+                            className="px-4 py-2.5 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100 transition"
+                        >
+                            Batal
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={provisioningSubmitting}
+                            className="px-5 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-xl hover:from-amber-600 hover:to-orange-700 disabled:opacity-60 flex items-center gap-2 shadow-md shadow-orange-900/20 transition"
+                        >
+                            {provisioningSubmitting ? (
+                                <>
+                                    <RefreshCw size={14} className="animate-spin" />
+                                    Mengeksekusi Provisioning...
+                                </>
+                            ) : (
+                                <>
+                                    <Zap size={14} />
+                                    Eksekusi Auto-Provisioning Sekarang
+                                </>
+                            )}
+                        </button>
+                    </div>
+                </form>
             </Modal>
         </div>
     );

@@ -59,6 +59,7 @@ const Monitoring = lazy(() => import('./pages/Monitoring'));
 const SuperPanelPage = lazy(() => import('./pages/SuperPanel/SuperPanelPage'));
 const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
 const RemoteOntPage = lazy(() => import('./pages/RemoteOnt/RemoteOntPage'));
+const OdpPortScannerPage = lazy(() => import('./pages/Odp/OdpPortScannerPage'));
 const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
 const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
@@ -422,6 +423,8 @@ function App() {
                     {/* ODP */}
                     <Route path="/odp" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage />} />} />
                     <Route path="/odp-mapping" element={<GuardedRoute permissionKey="odp.mapping.view" element={<OdpMappingPage />} />} />
+                    <Route path="/odp-scanner" element={<GuardedRoute permissionKey="odp.view" element={<OdpPortScannerPage />} />} />
+                    <Route path="/odp-scanner/:id" element={<GuardedRoute permissionKey="odp.view" element={<OdpPortScannerPage />} />} />
                     
                     {/* Pengeluaran */}
                     <Route path="/pengeluaran" element={<GuardedRoute permissionKey="finance.expense.manage" element={<PengeluaranPage />} />} />

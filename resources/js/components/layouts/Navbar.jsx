@@ -31,6 +31,7 @@ import {
     Server,
     Router,
     UserCheck,
+    QrCode,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -61,6 +62,7 @@ const ACCESS = {
     pinjaman: ['superadmin', 'admin', 'finance'],
     odp: ['superadmin', 'admin', 'teknisi'],
     odpMapping: ['superadmin', 'admin', 'teknisi'],
+    odpScanner: ['superadmin', 'admin', 'teknisi'],
     distributionRoute: ['superadmin', 'admin', 'teknisi'],
     installation: ['superadmin', 'admin', 'teknisi'],
     incidents: ['superadmin', 'admin', 'teknisi'],
@@ -120,6 +122,7 @@ const MENU_PERMISSION_MAP = {
     pinjaman: 'finance.mutation.view',
     odp: 'odp.view',
     odpMapping: 'odp.mapping.view',
+    odpScanner: 'odp.view',
     distributionRoute: 'odp.mapping.view',
     installation: 'installation.view',
     incidents: 'incident.view',
@@ -165,7 +168,8 @@ const MENU_GROUPS = [
             { key: 'pelanggan', label: 'Pelanggan', to: '/customers', icon: Users, match: (p) => p.startsWith('/customers') || p.startsWith('/pelanggan') },
             { key: 'verifikasi', label: 'Verifikasi', to: '/customer-verification', icon: ClipboardList, match: (p) => p.startsWith('/customer-verification') || p.startsWith('/customer-prospects') },
             { key: 'odpMapping', label: 'Pemetaan ODP', to: '/odp-mapping', icon: MapPin, match: (p) => p.startsWith('/odp-mapping') },
-            { key: 'odp', label: 'Kelola ODP', to: '/odp', icon: FolderKanban, match: (p) => p.startsWith('/odp') && !p.startsWith('/odp-mapping') },
+            { key: 'odp', label: 'Kelola ODP', to: '/odp', icon: FolderKanban, match: (p) => p.startsWith('/odp') && !p.startsWith('/odp-mapping') && !p.startsWith('/odp-scanner') },
+            { key: 'odpScanner', label: 'Scanner Port ODP', to: '/odp-scanner', icon: QrCode, match: (p) => p.startsWith('/odp-scanner') },
             { key: 'distributionRoute', label: 'Jalur Distribusi', to: '/jalur-distribusi', icon: GitBranch, match: (p) => p.startsWith('/jalur-distribusi') },
             { key: 'installation', label: 'Instalasi', to: '/instalasi', icon: Settings2, match: (p) => p.startsWith('/instalasi') },
             { key: 'complaints', label: 'Aduan', to: '/complaints', icon: MessageSquare, match: (p) => p.startsWith('/complaints') || p.startsWith('/aduan') },

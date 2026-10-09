@@ -375,4 +375,268 @@ class OdpController extends Controller
         $odp->delete();
         return response()->json(['message' => 'ODP berhasil dihapus']);
     }
+
+    /**
+     * Get visual port breakdown for ODP box (1..N) with customer mapping & optical RX
+     */
+    public function apiPortsSummary(Odp $odp)
+    {
+        $odp->load(['kecamatan:id,name,code', 'desa:id,name,code', 'dusun:id,name,code', 'olt:id,name', 'ponPort:id,name,port_index']);
+        
+        $capacity = $odp->port_capacity;
+        $customers = \App\Models\Customer::query()
+            ->where(function ($q) use ($odp) {
+                $q->where('odp_id', $odp->id)
+                  ->orWhere('odp', $odp->nama);
+            })
+            ->with(['package:id,name,price'])
+            ->get();
+
+        // Customer indexed by port number
+        $customerByPort = [];
+        $unallocatedCustomers = [];
+
+        foreach ($customers as $c) {
+            $portNum = (int) ($c->odp_port_number ?? 0);
+            if ($portNum >= 1 && $portNum <= $capacity) {
+                $customerByPort[$portNum] = $c;
+            } else {
+                $unallocatedCustomers[] = $c;
+            }
+        }
+
+        // Fill unallocated into first available ports if any
+        $ports = [];
+        for ($p = 1; $p <= $capacity; $p++) {
+            $cust = $customerByPort[$p] ?? null;
+
+            $portStatus = 'available';
+            if ($cust) {
+                $portStatus = !empty($cust->is_service_isolated) ? 'isolated' : 'occupied';
+            }
+
+            $ports[] = [
+                'port_number' => $p,
+                'status' => $portStatus,
+                'customer' => $cust ? [
+                    'id' => $cust->id,
+                    'name' => $cust->name,
+                    'phone' => $cust->phone,
+                    'pppoe_username' => $cust->pppoe_username,
+                    'address' => $cust->address,
+                    'package_name' => $cust->package?->name ?? $cust->package_type ?? '-',
+                    'dropcore_cable_length_meters' => $cust->dropcore_cable_length_meters,
+                    'is_service_isolated' => (bool) $cust->is_service_isolated,
+                    'home_router_type' => $cust->home_router_type,
+                    'home_router_host' => $cust->home_router_host,
+                    'olt_onu_id' => $cust->olt_onu_id,
+                ] : null,
+            ];
+        }
+
+        $occupiedCount = count(array_filter($ports, fn($port) => $port['status'] !== 'available'));
+        $availableCount = $capacity - $occupiedCount;
+
+        return response()->json([
+            'data' => [
+                'odp' => [
+                    'id' => $odp->id,
+                    'nama' => $odp->nama,
+                    'device_type' => $odp->device_type ?? 'odp',
+                    'total_ports' => $capacity,
+                    'occupied_ports' => $occupiedCount,
+                    'available_ports' => $availableCount,
+                    'occupancy_percentage' => $capacity > 0 ? round(($occupiedCount / $capacity) * 100, 1) : 0,
+                    'rasio_distribusi' => $odp->rasio_distribusi,
+                    'rasio_spesial' => $odp->rasio_spesial,
+                    'latitude' => $odp->latitude,
+                    'longitude' => $odp->longitude,
+                    'alamat_detail' => $odp->alamat_detail,
+                    'wilayah' => [
+                        'kecamatan' => $odp->kecamatan?->name,
+                        'desa' => $odp->desa?->name,
+                        'dusun' => $odp->dusun?->name,
+                    ],
+                    'olt' => $odp->olt?->name,
+                    'pon_port' => $odp->ponPort?->name,
+                    'qr_payload' => url("/odp-scanner?odp_id={$odp->id}"),
+                    'qr_code_string' => "ODP:{$odp->id}:{$odp->nama}",
+                ],
+                'ports' => $ports,
+                'unallocated_customers' => collect($unallocatedCustomers)->map(fn($c) => [
+                    'id' => $c->id,
+                    'name' => $c->name,
+                    'phone' => $c->phone,
+                    'pppoe_username' => $c->pppoe_username,
+                ]),
+            ]
+        ]);
+    }
+
+    /**
+     * Fast Lookup ODP by QR Code content, ODP ID, or Name
+     */
+    public function apiLookupByCode(Request $request, string $code)
+    {
+        $rawCode = trim($code);
+        $searchId = null;
+        $searchName = $rawCode;
+
+        // Parse format "ODP:12:NAMA_ODP" or URL containing odp_id=12
+        if (preg_match('/ODP:(\d+)/i', $rawCode, $matches)) {
+            $searchId = (int) $matches[1];
+        } elseif (preg_match('/[?&]odp_id=(\d+)/i', $rawCode, $matches)) {
+            $searchId = (int) $matches[1];
+        } elseif (is_numeric($rawCode)) {
+            $searchId = (int) $rawCode;
+        }
+
+        $odp = null;
+        if ($searchId) {
+            $odp = Odp::find($searchId);
+        }
+
+        if (!$odp) {
+            $odp = Odp::where('nama', $searchName)
+                ->orWhere('nama', 'like', "%{$searchName}%")
+                ->first();
+        }
+
+        if (!$odp) {
+            return response()->json([
+                'message' => 'ODP tidak ditemukan untuk kode QR ini.',
+            ], 404);
+        }
+
+        return $this->apiPortsSummary($odp);
+    }
+
+    /**
+     * Assign / Plug dropcore cable from customer to a specific ODP port
+     */
+    public function apiAssignPort(Request $request, Odp $odp)
+    {
+        $validated = $request->validate([
+            'customer_id' => 'required|integer|exists:customers,id',
+            'port_number' => 'required|integer|min:1|max:' . $odp->port_capacity,
+            'dropcore_cable_length_meters' => 'nullable|integer|min:1|max:2000',
+        ]);
+
+        $portNumber = (int) $validated['port_number'];
+        $customerId = (int) $validated['customer_id'];
+
+        // Check if port is already used by another customer on this ODP
+        $existingCustomerOnPort = \App\Models\Customer::where('odp_id', $odp->id)
+            ->where('odp_port_number', $portNumber)
+            ->where('id', '!=', $customerId)
+            ->first();
+
+        if ($existingCustomerOnPort) {
+            // Free up the old customer port
+            $existingCustomerOnPort->odp_port_number = null;
+            $existingCustomerOnPort->save();
+        }
+
+        $customer = \App\Models\Customer::findOrFail($customerId);
+        $oldOdpId = $customer->odp_id;
+        $oldPort = $customer->odp_port_number;
+
+        $customer->odp_id = $odp->id;
+        $customer->odp = $odp->nama;
+        $customer->odp_port_number = $portNumber;
+        if (isset($validated['dropcore_cable_length_meters'])) {
+            $customer->dropcore_cable_length_meters = $validated['dropcore_cable_length_meters'];
+        }
+        $customer->save();
+
+        $this->auditLogService->log('odp.port_assigned', $customer, [
+            'odp_id' => $odp->id,
+            'odp_nama' => $odp->nama,
+            'port_number' => $portNumber,
+            'old_odp_id' => $oldOdpId,
+            'old_port' => $oldPort,
+            'dropcore_meters' => $customer->dropcore_cable_length_meters,
+        ], auth()->id());
+
+        return response()->json([
+            'message' => "Pelanggan {$customer->name} berhasil ditautkan ke Port #{$portNumber} ODP {$odp->nama}.",
+            'data' => $customer,
+        ]);
+    }
+
+    /**
+     * Unassign / Unplug cable from an ODP port
+     */
+    public function apiUnassignPort(Request $request, Odp $odp)
+    {
+        $validated = $request->validate([
+            'port_number' => 'required|integer|min:1|max:' . $odp->port_capacity,
+        ]);
+
+        $portNumber = (int) $validated['port_number'];
+
+        $customer = \App\Models\Customer::where('odp_id', $odp->id)
+            ->where('odp_port_number', $portNumber)
+            ->first();
+
+        if ($customer) {
+            $customer->odp_id = null;
+            $customer->odp = null;
+            $customer->odp_port_number = null;
+            $customer->save();
+
+            $this->auditLogService->log('odp.port_unassigned', $customer, [
+                'odp_id' => $odp->id,
+                'odp_nama' => $odp->nama,
+                'port_number' => $portNumber,
+            ], auth()->id());
+        }
+
+        return response()->json([
+            'message' => "Port #{$portNumber} ODP {$odp->nama} berhasil dikosongkan.",
+        ]);
+    }
+
+    /**
+     * Swap customer cable between two ports
+     */
+    public function apiSwapPort(Request $request, Odp $odp)
+    {
+        $validated = $request->validate([
+            'from_port' => 'required|integer|min:1|max:' . $odp->port_capacity,
+            'to_port' => 'required|integer|min:1|max:' . $odp->port_capacity,
+        ]);
+
+        $fromPort = (int) $validated['from_port'];
+        $toPort = (int) $validated['to_port'];
+
+        if ($fromPort === $toPort) {
+            return response()->json(['message' => 'Port asal dan tujuan sama.'], 422);
+        }
+
+        $custFrom = \App\Models\Customer::where('odp_id', $odp->id)->where('odp_port_number', $fromPort)->first();
+        $custTo = \App\Models\Customer::where('odp_id', $odp->id)->where('odp_port_number', $toPort)->first();
+
+        if ($custFrom) {
+            $custFrom->odp_port_number = $toPort;
+            $custFrom->save();
+        }
+
+        if ($custTo) {
+            $custTo->odp_port_number = $fromPort;
+            $custTo->save();
+        }
+
+        $this->auditLogService->log('odp.port_swapped', $odp, [
+            'odp_id' => $odp->id,
+            'from_port' => $fromPort,
+            'to_port' => $toPort,
+            'customer_from_id' => $custFrom?->id,
+            'customer_to_id' => $custTo?->id,
+        ], auth()->id());
+
+        return response()->json([
+            'message' => "Kabel Port #{$fromPort} dan Port #{$toPort} berhasil dipindahkan/ditukar.",
+        ]);
+    }
 }

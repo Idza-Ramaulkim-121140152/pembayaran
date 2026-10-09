@@ -252,6 +252,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::get('/monitoring', fn() => view('app'))->name('monitoring');
     Route::get('/monitoring-maps', fn() => view('app'))->name('monitoring.maps');
     Route::get('/monitoring-genieacs', fn() => view('app'))->name('monitoring.genieacs');
+    Route::get('/odp-scanner', fn() => view('app'))->name('odp.scanner');
     Route::get('/remote-ont', fn() => view('app'))->name('remote-ont');
     Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
     Route::get('/settings/expense-categories', fn() => view('app'))->name('settings.expense-categories');
@@ -375,6 +376,11 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/odp/{odp}/customers', [OdpController::class, 'apiCustomers'])->name('api.odp.customers');
         Route::post('/api/odp/{odp}/customers', [OdpController::class, 'apiAttachCustomer'])->name('api.odp.customers.attach');
         Route::delete('/api/odp/{odp}/customers', [OdpController::class, 'apiDetachCustomer'])->name('api.odp.customers.detach');
+        Route::get('/api/odp/{odp}/ports-summary', [OdpController::class, 'apiPortsSummary'])->name('api.odp.ports-summary');
+        Route::get('/api/odp/lookup-code/{code}', [OdpController::class, 'apiLookupByCode'])->name('api.odp.lookup-code');
+        Route::post('/api/odp/{odp}/ports/assign', [OdpController::class, 'apiAssignPort'])->name('api.odp.ports.assign');
+        Route::post('/api/odp/{odp}/ports/unassign', [OdpController::class, 'apiUnassignPort'])->name('api.odp.ports.unassign');
+        Route::post('/api/odp/{odp}/ports/swap', [OdpController::class, 'apiSwapPort'])->name('api.odp.ports.swap');
 
         // ODP Mapping v2 API
         Route::get('/api/odp-mapping/customers', [OdpMappingController::class, 'customers'])->middleware('permission:odp.mapping.view')->name('api.odp-mapping.customers');
@@ -419,6 +425,9 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
         // GenieACS Monitoring & TR-069 Management API
         Route::get('/api/genieacs/devices', [GenieAcsMonitoringController::class, 'devices'])->name('api.genieacs.devices');
+        Route::get('/api/genieacs/presets', [GenieAcsMonitoringController::class, 'provisionPresets'])->name('api.genieacs.presets');
+        Route::get('/api/genieacs/unprovisioned', [GenieAcsMonitoringController::class, 'unprovisionedDevices'])->name('api.genieacs.unprovisioned');
+        Route::post('/api/genieacs/auto-provision', [GenieAcsMonitoringController::class, 'autoProvision'])->name('api.genieacs.auto-provision');
         Route::get('/api/genieacs/devices/{deviceId}', [GenieAcsMonitoringController::class, 'show'])->name('api.genieacs.show');
         Route::post('/api/genieacs/devices/{deviceId}/wifi', [GenieAcsMonitoringController::class, 'updateWifi'])->name('api.genieacs.wifi.update');
         Route::post('/api/genieacs/devices/{deviceId}/reboot', [GenieAcsMonitoringController::class, 'reboot'])->name('api.genieacs.reboot');
