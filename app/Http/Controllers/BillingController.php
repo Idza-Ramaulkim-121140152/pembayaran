@@ -27,6 +27,7 @@ use App\Services\FinancialLedgerService;
 use App\Services\MikroTikService;
 use App\Services\PaymentReceiverService;
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -1442,8 +1443,8 @@ class BillingController extends Controller
                 if ($duplicateInvoice) {
                     $custName = $duplicateInvoice->customer?->name ?? 'Pelanggan';
                     $txTime = $duplicateInvoice->qris_payment_time
-                        ? Carbon::parse($duplicateInvoice->qris_payment_time)->translatedFormat('d F Y H:i')
-                        : ($duplicateInvoice->paid_at ? Carbon::parse($duplicateInvoice->paid_at)->translatedFormat('d F Y H:i') : '-');
+                        ? ($this->parseSafeDateTime($duplicateInvoice->qris_payment_time)?->translatedFormat('d F Y H:i') ?? '-')
+                        : ($duplicateInvoice->paid_at ? ($this->parseSafeDateTime($duplicateInvoice->paid_at)?->translatedFormat('d F Y H:i') ?? '-') : '-');
 
                     throw ValidationException::withMessages([
                         'qris_transaction_number' => [
@@ -1455,17 +1456,18 @@ class BillingController extends Controller
 
             // Cek duplikasi di tabel financial_transactions
             if (Schema::hasTable('financial_transactions')) {
-                $duplicateTx = \App\Models\FinancialTransaction::where('source_type', 'invoice')
-                    ->where('source_id', '!=', $invoice->id)
-                    ->where(function ($query) use ($trimmedTrxNumber) {
-                        $query->where('meta->qris_transaction_number', $trimmedTrxNumber);
+                $duplicateTx = FinancialTransaction::where(function ($query) use ($invoice) {
+                        $query->where('reference_type', '!=', Invoice::class)
+                            ->orWhere('reference_id', '!=', $invoice->id)
+                            ->orWhereNull('reference_type');
                     })
+                    ->where('meta->qris_transaction_number', $trimmedTrxNumber)
                     ->first();
 
                 if ($duplicateTx) {
                     $meta = $duplicateTx->meta ?? [];
                     $txTime = !empty($meta['qris_payment_time'])
-                        ? Carbon::parse($meta['qris_payment_time'])->translatedFormat('d F Y H:i')
+                        ? ($this->parseSafeDateTime($meta['qris_payment_time'])?->translatedFormat('d F Y H:i') ?? '-')
                         : '-';
 
                     throw ValidationException::withMessages([
@@ -1516,7 +1518,7 @@ class BillingController extends Controller
         }
 
         if (Schema::hasColumn('invoices', 'qris_payment_time')) {
-            $invoice->qris_payment_time = ($isQris && $qrisPaymentTime) ? Carbon::parse($qrisPaymentTime) : null;
+            $invoice->qris_payment_time = ($isQris && $qrisPaymentTime) ? $this->parseSafeDateTime($qrisPaymentTime) : null;
         }
 
         if (Schema::hasColumn('invoices', 'qris_sender')) {
@@ -1527,7 +1529,7 @@ class BillingController extends Controller
             $invoice->qris_transaction_number = $isQris ? $qrisTransactionNumber : null;
         }
 
-        $paidTimestamp = ($isQris && $qrisPaymentTime) ? Carbon::parse($qrisPaymentTime) : now();
+        $paidTimestamp = ($isQris && $qrisPaymentTime) ? ($this->parseSafeDateTime($qrisPaymentTime) ?? now()) : now();
 
         $invoice->status = 'paid';
         $invoice->paid_at = $paidTimestamp;
@@ -1974,5 +1976,34 @@ class BillingController extends Controller
         $this->ledgerService->syncInvoicePayment($invoice, Auth::id());
 
         return response()->json(['message' => 'Pembayaran ditolak', 'data' => $invoice]);
+    }
+
+    private function parseSafeDateTime($value): ?Carbon
+    {
+        if (!$value) {
+            return null;
+        }
+
+        if ($value instanceof CarbonInterface) {
+            return Carbon::instance($value);
+        }
+
+        $str = trim((string) $value);
+        if ($str === '') {
+            return null;
+        }
+
+        // Replace dot with colon in time component (e.g. 18.55 -> 18:55)
+        $normalized = preg_replace('/(\d{1,2})\.(\d{2})(?:\.(\d{2}))?/', '$1:$2$3', $str);
+
+        try {
+            return Carbon::parse($normalized);
+        } catch (\Throwable $e) {
+            try {
+                return Carbon::parse($str);
+            } catch (\Throwable $e2) {
+                return now();
+            }
+        }
     }
 }

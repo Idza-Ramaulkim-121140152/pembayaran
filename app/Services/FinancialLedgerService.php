@@ -91,9 +91,7 @@ class FinancialLedgerService
                     'payment_receiver_is_company_finance' => $paymentReceiver
                         ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
                         : false,
-                    'qris_payment_time' => $invoice->qris_payment_time
-                        ? ($invoice->qris_payment_time instanceof CarbonInterface ? $invoice->qris_payment_time->toIso8601String() : Carbon::parse($invoice->qris_payment_time)->toIso8601String())
-                        : null,
+                    'qris_payment_time' => $this->formatSafeIsoDateTime($invoice->qris_payment_time),
                     'qris_sender' => $invoice->qris_sender,
                     'qris_transaction_number' => $invoice->qris_transaction_number,
                 ],
@@ -368,5 +366,33 @@ class FinancialLedgerService
     public function getSummaryAsOfToday(): array
     {
         return $this->getSummaryAsOfDate(Carbon::today());
+    }
+
+    private function formatSafeIsoDateTime($value): ?string
+    {
+        if (!$value) {
+            return null;
+        }
+
+        if ($value instanceof CarbonInterface) {
+            return $value->toIso8601String();
+        }
+
+        $str = trim((string) $value);
+        if ($str === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/(\d{1,2})\.(\d{2})(?:\.(\d{2}))?/', '$1:$2$3', $str);
+
+        try {
+            return Carbon::parse($normalized)->toIso8601String();
+        } catch (\Throwable $e) {
+            try {
+                return Carbon::parse($str)->toIso8601String();
+            } catch (\Throwable $e2) {
+                return now()->toIso8601String();
+            }
+        }
     }
 }
