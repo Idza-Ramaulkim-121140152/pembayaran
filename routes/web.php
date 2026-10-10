@@ -377,7 +377,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/odp/{odp}/customers', [OdpController::class, 'apiAttachCustomer'])->name('api.odp.customers.attach');
         Route::delete('/api/odp/{odp}/customers', [OdpController::class, 'apiDetachCustomer'])->name('api.odp.customers.detach');
         Route::get('/api/odp/{odp}/ports-summary', [OdpController::class, 'apiPortsSummary'])->name('api.odp.ports-summary');
-        Route::get('/api/odp/lookup-code/{code}', [OdpController::class, 'apiLookupByCode'])->name('api.odp.lookup-code');
+        Route::get('/api/odp/lookup-code/{code?}', [OdpController::class, 'apiLookupByCode'])->name('api.odp.lookup-code');
         Route::post('/api/odp/{odp}/ports/assign', [OdpController::class, 'apiAssignPort'])->name('api.odp.ports.assign');
         Route::post('/api/odp/{odp}/ports/unassign', [OdpController::class, 'apiUnassignPort'])->name('api.odp.ports.unassign');
         Route::post('/api/odp/{odp}/ports/swap', [OdpController::class, 'apiSwapPort'])->name('api.odp.ports.swap');

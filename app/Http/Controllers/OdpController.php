@@ -381,7 +381,21 @@ class OdpController extends Controller
      */
     public function apiPortsSummary(Odp $odp)
     {
-        $odp->load(['kecamatan:id,name,code', 'desa:id,name,code', 'dusun:id,name,code', 'olt:id,name', 'ponPort:id,name,port_index']);
+        try {
+            $odp->load([
+                'kecamatan:id,name,code',
+                'desa:id,name,code',
+                'dusun:id,name,code',
+                'olt:id,name',
+                'ponPort:id,name,pon_index',
+            ]);
+        } catch (\Throwable $e) {
+            try {
+                $odp->load(['kecamatan', 'desa', 'dusun']);
+            } catch (\Throwable $e2) {
+                // Ignore fallback load error
+            }
+        }
         
         $capacity = $odp->port_capacity;
         $customers = \App\Models\Customer::query()
@@ -476,9 +490,9 @@ class OdpController extends Controller
     /**
      * Fast Lookup ODP by QR Code content, ODP ID, or Name
      */
-    public function apiLookupByCode(Request $request, string $code)
+    public function apiLookupByCode(Request $request, ?string $code = null)
     {
-        $rawCode = trim($code);
+        $rawCode = trim((string) ($code ?: $request->query('code', '')));
         $searchId = null;
         $searchName = $rawCode;
 
