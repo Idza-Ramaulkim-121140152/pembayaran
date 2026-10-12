@@ -658,6 +658,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/borrower-loans/{borrowerLoan}/settle', [BorrowerLoanController::class, 'settle'])->name('api.borrower-loans.settle');
         Route::put('/api/borrower-loan-settlements/{actionGroupKey}', [BorrowerLoanController::class, 'updateSettlementGroup'])->name('api.borrower-loan-settlements.update');
         Route::delete('/api/borrower-loan-settlements/{actionGroupKey}', [BorrowerLoanController::class, 'destroySettlementGroup'])->name('api.borrower-loan-settlements.destroy');
+        Route::put('/api/borrower-loan-settlement-groups/{actionGroupKey}', [BorrowerLoanController::class, 'updateSettlementGroup'])->name('api.borrower-loan-settlement-groups.update');
+        Route::delete('/api/borrower-loan-settlement-groups/{actionGroupKey}', [BorrowerLoanController::class, 'destroySettlementGroup'])->name('api.borrower-loan-settlement-groups.destroy');
         Route::get('/api/company-finance-receivers', [CompanyFinanceReceiverController::class, 'index'])->name('api.company-finance-receivers.index');
         Route::post('/api/company-finance-receivers', [CompanyFinanceReceiverController::class, 'store'])->name('api.company-finance-receivers.store');
         Route::delete('/api/company-finance-receivers/{user}', [CompanyFinanceReceiverController::class, 'destroy'])->name('api.company-finance-receivers.destroy');

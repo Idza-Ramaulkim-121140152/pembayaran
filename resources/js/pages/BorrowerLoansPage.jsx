@@ -477,7 +477,7 @@ function BorrowerLoansPage() {
                     notes: editHistoryForm.notes,
                 });
             } else {
-                await apiClient.put(`/borrower-loan-settlement-groups/${item.action_group_key || item.id}`, {
+                await apiClient.put(`/borrower-loan-settlements/${item.action_group_key || item.id}`, {
                     amount: editHistoryForm.amount,
                     payment_date: editHistoryForm.event_date,
                     notes: editHistoryForm.notes,
@@ -507,7 +507,7 @@ function BorrowerLoansPage() {
             if (item.history_type === 'loan') {
                 await apiClient.delete(`/borrower-loans/${item.loan_id}`);
             } else {
-                await apiClient.delete(`/borrower-loan-settlement-groups/${item.action_group_key || item.id}`);
+                await apiClient.delete(`/borrower-loan-settlements/${item.action_group_key || item.id}`);
             }
 
             setSuccess('Histori pinjaman berhasil dihapus.');
