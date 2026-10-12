@@ -935,8 +935,26 @@ class BillingController extends Controller
      */
     private function sendInvoiceViaWhatsAppGateway(Customer $customer, string $message): array
     {
+        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+
+        // 1. Coba kirim single /send terlebih dahulu
         try {
-            $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+            $response = Http::timeout(25)->post($gatewayUrl . '/send', [
+                'phone' => (string) $customer->phone,
+                'name' => (string) ($customer->name ?? 'Pelanggan'),
+                'message' => $message,
+            ]);
+
+            if ($response->successful()) {
+                $payload = $response->json();
+                if (!is_array($payload) || ($payload['success'] ?? true)) {
+                    return [true, null];
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        // 2. Fallback coba /send-bulk
+        try {
             $response = Http::timeout(60)->post($gatewayUrl . '/send-bulk', [
                 'recipients' => [[
                     'phone' => (string) $customer->phone,
@@ -1818,6 +1836,95 @@ class BillingController extends Controller
             'result' => $result,
             'data' => $invoice->fresh(['customer:id,name,pppoe_username,phone']),
         ], $result['success'] ? 200 : 422);
+    }
+
+    public function sendInvoiceWhatsApp(
+        Invoice $invoice,
+        Request $request,
+        InvoiceWhatsAppService $whatsAppService
+    ) {
+        $invoice->loadMissing('customer:id,name,pppoe_username,phone,address,package_type,installation_fee,package_id');
+        $customer = $invoice->customer;
+
+        if (!$customer || empty($customer->phone)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nomor WhatsApp pelanggan belum diisi atau tidak valid.',
+            ], 422);
+        }
+
+        $cleanedPhone = preg_replace('/\D/', '', (string) $customer->phone);
+        if (strlen($cleanedPhone) < 10 || strlen($cleanedPhone) > 15) {
+            return response()->json([
+                'success' => false,
+                'message' => "Nomor WhatsApp pelanggan ('{$customer->phone}') tidak valid (minimal 10 digit).",
+            ], 422);
+        }
+
+        // 1. Coba kirim via InvoiceWhatsAppService (PDF media beserta pesan)
+        try {
+            $result = $whatsAppService->send($invoice);
+            if (!empty($result['success'])) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Pesan penagihan & invoice berhasil dikirim ke WhatsApp {$customer->name} ({$customer->phone}).",
+                    'data' => $invoice->fresh(['customer:id,name,pppoe_username,phone']),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('sendInvoiceWhatsApp PDF attempt failed, fallback to text', [
+                'invoice_id' => $invoice->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        // 2. Fallback kirim pesan penagihan teks melalui WhatsApp Gateway
+        $invoiceUrl = url('/invoice/' . $invoice->invoice_link);
+        $amount = (float) $invoice->amount;
+        $dueDate = optional($invoice->due_date)->format('d/m/Y');
+        $textMessage = $request->input('message') ?: $this->billingMessageTemplateService->buildBillingReminderMessage(
+            $customer,
+            $invoiceUrl,
+            $amount,
+            $dueDate,
+            true
+        );
+
+        [$textSuccess, $textError] = $this->sendInvoiceViaWhatsAppGateway($customer, $textMessage);
+        if ($textSuccess) {
+            $invoice->forceFill([
+                'whatsapp_status' => 'sent',
+                'whatsapp_error' => null,
+                'whatsapp_sent_at' => now(),
+            ])->save();
+
+            try {
+                NotificationLog::create([
+                    'customer_id' => $customer->id,
+                    'phone' => $customer->phone,
+                    'message' => mb_substr($textMessage, 0, 2000),
+                    'status' => 'sent',
+                    'meta' => [
+                        'channel' => 'whatsapp',
+                        'type' => 'invoice_text_gateway',
+                        'invoice_id' => $invoice->id,
+                        'invoice_link' => $invoice->invoice_link,
+                    ],
+                    'sent_at' => now(),
+                ]);
+            } catch (\Throwable $e) {}
+
+            return response()->json([
+                'success' => true,
+                'message' => "Pesan penagihan berhasil dikirim ke WhatsApp {$customer->name} ({$customer->phone}).",
+                'data' => $invoice->fresh(['customer:id,name,pppoe_username,phone']),
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal mengirim pesan penagihan ke WhatsApp: ' . ($textError ?: 'Gateway WhatsApp tidak merespons.'),
+        ], 422);
     }
 
     public function isolateCustomer($customerId)

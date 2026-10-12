@@ -126,6 +126,51 @@ class BillingPaymentMutationChoiceTest extends TestCase
             ->assertJsonValidationErrors(['qris_transaction_number']);
     }
 
+    public function test_send_invoice_whatsapp_validates_phone_and_handles_request(): void
+    {
+        $user = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+        ]);
+
+        // Customer with invalid phone
+        $customerInvalid = Customer::create([
+            'name' => 'Invalid Phone Customer',
+            'phone' => '123',
+            'is_active' => true,
+        ]);
+        $invoiceInvalid = Invoice::create([
+            'customer_id' => $customerInvalid->id,
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->toDateString(),
+            'amount' => 100000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-invalid-phone',
+        ]);
+
+        $this->actingAs($user)
+            ->postJson('/api/billing/invoice/' . $invoiceInvalid->id . '/send-whatsapp')
+            ->assertStatus(422)
+            ->assertJsonPath('success', false);
+
+        // Customer with valid phone, mock HTTP gateway to succeed
+        \Illuminate\Support\Facades\Http::fake([
+            '*/send-media' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+            '*/send*' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+
+        $invoiceValid = $this->createInvoice(amount: 250000);
+
+        $response = $this->actingAs($user)
+            ->postJson('/api/billing/invoice/' . $invoiceValid->id . '/send-whatsapp');
+
+        $response->assertOk()
+            ->assertJsonPath('success', true);
+
+        $invoiceValid->refresh();
+        $this->assertEquals('sent', $invoiceValid->whatsapp_status);
+        $this->assertNotNull($invoiceValid->whatsapp_sent_at);
+    }
+
     private function createInvoice(int $amount): Invoice
     {
         $customer = Customer::create([

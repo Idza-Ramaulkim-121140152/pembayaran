@@ -74,6 +74,9 @@ export const billingService = {
         apiClient.get(`/billing/invoice/${invoiceId}/payment-proof/preview`),
 
 
+    sendInvoiceWhatsApp: (invoiceId, payload = {}) =>
+        apiClient.post(`/billing/invoice/${invoiceId}/send-whatsapp`, payload),
+
     sendManagedInvoiceWhatsApp: (invoiceId) =>
         apiClient.post(`/billing/invoice-management/${invoiceId}/send-whatsapp`),
     // Superadmin invoice management

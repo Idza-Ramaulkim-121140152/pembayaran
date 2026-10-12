@@ -520,6 +520,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/billing/customer/{customer}/isolation-status', [BillingController::class, 'checkIsolationStatus'])->name('api.billing.isolation-status');
         Route::post('/api/billing/isolation-status-bulk', [BillingController::class, 'isolationStatusBulk'])->name('api.billing.isolation-status-bulk');
         Route::get('/api/invoices/{invoice}', [InvoiceItemController::class, 'show'])->name('api.invoices.show');
+        Route::post('/api/billing/invoice/{invoice}/send-whatsapp', [BillingController::class, 'sendInvoiceWhatsApp'])->name('api.billing.invoice.send-whatsapp');
     });
 
     Route::middleware('permission:billing.invoice.create')->group(function () {

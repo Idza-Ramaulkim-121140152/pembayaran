@@ -90,6 +90,7 @@ function BillingPage() {
     const [updatingCustomerService, setUpdatingCustomerService] = useState(false);
     const [autoSubmitting, setAutoSubmitting] = useState(false);
     const [updatingCustomerAutomation, setUpdatingCustomerAutomation] = useState({});
+    const [sendingInvoiceId, setSendingInvoiceId] = useState(null);
     const autoPollingTimerRef = useRef(null);
 
     // QRIS Mandatory Form states
@@ -849,6 +850,31 @@ function BillingPage() {
         }
     };
 
+    const handleSendInvoiceWhatsApp = async (invoice, customer) => {
+        if (!invoice?.id) return;
+
+        const rawPhone = customer?.phone?.toString() || '';
+        const phoneDigits = rawPhone.replace(/[^0-9]/g, '');
+        if (!phoneDigits || phoneDigits.length < 10) {
+            setError(`Nomor WhatsApp pelanggan ${customer?.name || ''} tidak valid atau belum diisi (minimal 10 digit).`);
+            return;
+        }
+
+        try {
+            setSendingInvoiceId(invoice.id);
+            setError(null);
+            setSuccess(null);
+
+            const response = await billingService.sendInvoiceWhatsApp(invoice.id);
+            setSuccess(response.data?.message || `Pesan penagihan berhasil dikirim ke WhatsApp ${customer?.name || ''}.`);
+        } catch (err) {
+            const errorMsg = err.response?.data?.message || err.response?.data?.error || 'Gagal mengirim pesan penagihan ke WhatsApp.';
+            setError(errorMsg);
+        } finally {
+            setSendingInvoiceId(null);
+        }
+    };
+
     const handleUpdateInvoiceAmount = async (e) => {
         e.preventDefault();
 
@@ -1466,10 +1492,11 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                     <Button
                                                         size="sm"
                                                         variant="success"
-                                                        onClick={() => setLinkModal({ open: true, invoice: invoiceToUse, customer })}
+                                                        disabled={sendingInvoiceId === invoiceToUse.id}
+                                                        onClick={() => handleSendInvoiceWhatsApp(invoiceToUse, customer)}
                                                     >
                                                         <Send size={14} className="mr-1" />
-                                                        <span>Kirim</span>
+                                                        <span>{sendingInvoiceId === invoiceToUse.id ? 'Mengirim...' : 'Kirim'}</span>
                                                     </Button>
                                                     <Button
                                                         size="sm"
@@ -1485,12 +1512,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                                 size="sm"
                                                 variant="secondary"
                                                 className={secondaryActionClassName}
-                                                onClick={() => {
-                                                    const invoiceUrl = resolveInvoiceUrl(invoiceToUse);
-                                                    if (invoiceUrl) {
-                                                        window.open(invoiceUrl, '_blank');
-                                                    }
-                                                }}
+                                                onClick={() => setLinkModal({ open: true, invoice: invoiceToUse, customer })}
                                             >
                                                 <Eye size={14} className="mr-1" />
                                                 <span>Lihat</span>
@@ -1940,7 +1962,31 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 className={adminConsoleReadOnlyClassName}
                             />
                         </AdminConsoleField>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap items-center gap-2 pt-2">
+                            <Button
+                                type="button"
+                                variant="success"
+                                disabled={sendingInvoiceId === linkModal.invoice.id}
+                                onClick={async () => {
+                                    await handleSendInvoiceWhatsApp(linkModal.invoice, linkModal.customer);
+                                }}
+                            >
+                                <Send size={16} className="mr-1" />
+                                {sendingInvoiceId === linkModal.invoice.id ? 'Mengirim via API WA...' : 'Kirim via API WA'}
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => {
+                                    const invoiceUrl = resolveInvoiceUrl(linkModal.invoice);
+                                    if (invoiceUrl) {
+                                        window.open(invoiceUrl, '_blank');
+                                    }
+                                }}
+                                className={adminConsoleButtonClassNames.secondary}
+                            >
+                                <ExternalLink size={16} className="mr-1" /> Buka Link
+                            </Button>
                             <Button
                                 type="button"
                                 variant="secondary"
@@ -1955,7 +2001,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                 rel="noopener noreferrer"
                                 className="inline-flex items-center rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-white shadow-sm transition hover:bg-emerald-700"
                             >
-                                <ExternalLink size={16} className="mr-1" /> Kirim via WhatsApp
+                                <ExternalLink size={16} className="mr-1" /> Kirim via WhatsApp Web
                             </a>
                         </div>
                     </div>
@@ -2442,13 +2488,26 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                             />
                         </AdminConsoleField>
                         <AdminConsoleActionRow className="border-t-0 pt-0 flex-wrap justify-end">
+                            {resultModal.data?.id && (
+                                <Button
+                                    type="button"
+                                    variant="success"
+                                    disabled={sendingInvoiceId === resultModal.data.id}
+                                    onClick={async () => {
+                                        await handleSendInvoiceWhatsApp(resultModal.data, resultModal.data.customer);
+                                    }}
+                                >
+                                    <Send size={16} className="mr-1" />
+                                    {sendingInvoiceId === resultModal.data.id ? 'Mengirim via API WA...' : 'Kirim via API WA'}
+                                </Button>
+                            )}
                             <a
                                 href={resultModal.data.customer ? getWhatsAppLink(resultModal.data.customer, resultModal.data.invoice_link) : '#'}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className={`inline-flex items-center rounded-xl px-4 py-2 font-medium transition ${resultModal.data.customer ? 'border border-emerald-200 bg-emerald-600 text-white shadow-sm hover:bg-emerald-700' : 'pointer-events-none bg-slate-100 text-slate-400'}`}
                             >
-                                <Send size={16} className="mr-1" /> Kirim ke WhatsApp
+                                <ExternalLink size={16} className="mr-1" /> Kirim via WhatsApp Web
                             </a>
                             <Button type="button" variant="secondary" onClick={() => setResultModal({ open: false, data: null })} className={adminConsoleButtonClassNames.secondary}>
                                 Tutup
