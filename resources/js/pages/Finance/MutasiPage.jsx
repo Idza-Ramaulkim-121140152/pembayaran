@@ -1277,8 +1277,7 @@ function MutasiPage() {
                 isOpen={!!detailModalItem}
                 onClose={() => setDetailModalItem(null)}
                 title="Detail Mutasi Keuangan"
-                theme="dashboard"
-                maxWidth="max-w-3xl"
+                size="2xl"
             >
                 {detailModalItem && (() => {
                     const item = detailModalItem;
@@ -1288,18 +1287,6 @@ function MutasiPage() {
                     const status = item.status || 'confirmed';
                     const isPending = status === 'pending';
                     const isRejected = status === 'rejected';
-
-                    const statusPalette = isPending
-                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-                        : isRejected
-                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
-                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400';
-
-                    const typePalette = isIncome
-                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                        : isExpense
-                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
-                            : 'border-amber-500/30 bg-amber-500/10 text-amber-400';
 
                     const invoice = item.reference_type?.includes('Invoice') ? item.reference : null;
                     const customer = invoice?.customer || (item.reference_type?.includes('Customer') ? item.reference : null);
@@ -1312,104 +1299,116 @@ function MutasiPage() {
                     const hasQrisMeta = item.meta?.qris_transaction_number || invoice?.qris_transaction_number;
 
                     return (
-                        <div className="space-y-4 text-slate-100">
+                        <div className="space-y-4 text-slate-800">
                             {detailLoading && (
-                                <div className="rounded-xl bg-blue-950/40 border border-blue-500/30 p-2.5 text-xs text-blue-300 flex items-center justify-between">
+                                <div className="rounded-xl bg-blue-50 border border-blue-200 p-2.5 text-xs text-blue-700 flex items-center justify-between">
                                     <span>Memperbarui rincian transaksi terbaru...</span>
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
                                 </div>
                             )}
 
                             {/* Highlight Card */}
-                            <div className="rounded-2xl border border-slate-700/60 bg-slate-900/80 p-4 sm:p-5 space-y-3">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3">
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                     <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-mono font-medium text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg">
+                                        <span className="text-xs font-mono font-semibold text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-lg shadow-xs">
                                             #TX-{item.id}
                                         </span>
-                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${statusPalette}`}>
-                                            {isPending && <Clock size={12} />}
-                                            {status === 'confirmed' && <CheckCircle2 size={12} />}
-                                            {isRejected && <XCircle size={12} />}
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                                            isPending
+                                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                : isRejected
+                                                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                                    : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                        }`}>
+                                            {isPending && <Clock size={12} className="text-amber-600" />}
+                                            {status === 'confirmed' && <CheckCircle2 size={12} className="text-emerald-600" />}
+                                            {isRejected && <XCircle size={12} className="text-rose-600" />}
                                             <span className="capitalize">{status}</span>
                                         </span>
-                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${typePalette}`}>
-                                            {isIncome ? <ArrowDownLeft size={12} /> : <ArrowUpRight size={12} />}
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+                                            isIncome
+                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                : isExpense
+                                                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                                    : 'border-amber-200 bg-amber-50 text-amber-700'
+                                        }`}>
+                                            {isIncome ? <ArrowDownLeft size={12} className="text-emerald-600" /> : <ArrowUpRight size={12} className="text-rose-600" />}
                                             <span className="capitalize">{item.type}</span>
                                         </span>
-                                        <span className="text-xs font-medium text-slate-300 bg-slate-800/80 px-2.5 py-0.5 rounded-full border border-slate-700">
+                                        <span className="text-xs font-medium text-slate-700 bg-white px-2.5 py-0.5 rounded-full border border-slate-200">
                                             {item.source}
                                         </span>
                                     </div>
                                     <div className="text-right">
-                                        <p className="text-[11px] text-slate-400 uppercase tracking-wider">Nominal Transaksi</p>
-                                        <p className={`text-2xl font-bold ${isIncome ? 'text-emerald-400' : isExpense ? 'text-rose-400' : 'text-amber-400'}`}>
+                                        <p className="text-[11px] text-slate-500 uppercase tracking-wider font-semibold">Nominal Transaksi</p>
+                                        <p className={`text-2xl sm:text-3xl font-extrabold ${isIncome ? 'text-emerald-600' : isExpense ? 'text-rose-600' : 'text-amber-600'}`}>
                                             {isIncome ? '+' : isExpense ? '-' : ''}{formatCurrency(Math.abs(amount))}
                                         </p>
                                     </div>
                                 </div>
 
-                                <div className="border-t border-slate-800 pt-3">
-                                    <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Deskripsi</p>
-                                    <p className="text-base font-semibold text-white break-words">{item.description || '-'}</p>
+                                <div className="border-t border-slate-200 pt-3">
+                                    <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-1">Deskripsi</p>
+                                    <p className="text-base font-bold text-slate-900 break-words">{item.description || '-'}</p>
                                 </div>
                             </div>
 
                             {/* Detail Grid */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
-                                        <Calendar size={14} className="text-blue-400" /> Waktu & Pelaksanaan
+                                <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-xs">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                                        <Calendar size={14} className="text-blue-600" /> Waktu & Pelaksanaan
                                     </p>
                                     <div className="space-y-2 text-sm">
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Tanggal Transaksi:</span>
-                                            <span className="font-medium text-slate-200 text-right">{item.transaction_date || '-'}</span>
+                                            <span className="text-slate-500 text-xs font-medium">Tanggal Transaksi:</span>
+                                            <span className="font-semibold text-slate-800 text-right">{item.transaction_date || '-'}</span>
                                         </div>
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Dicatat Pada:</span>
-                                            <span className="font-medium text-slate-200 text-right">{formatDateTime(item.created_at)}</span>
+                                            <span className="text-slate-500 text-xs font-medium">Dicatat Pada:</span>
+                                            <span className="font-semibold text-slate-800 text-right">{formatDateTime(item.created_at)}</span>
                                         </div>
                                         {item.updated_at && item.updated_at !== item.created_at && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-slate-400 text-xs">Terakhir Diubah:</span>
-                                                <span className="font-medium text-slate-200 text-right">{formatDateTime(item.updated_at)}</span>
+                                                <span className="text-slate-500 text-xs font-medium">Terakhir Diubah:</span>
+                                                <span className="font-semibold text-slate-800 text-right">{formatDateTime(item.updated_at)}</span>
                                             </div>
                                         )}
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Kategori:</span>
-                                            <span className="font-medium text-slate-200 text-right">{item.category || '-'}</span>
+                                            <span className="text-slate-500 text-xs font-medium">Kategori:</span>
+                                            <span className="font-semibold text-slate-800 text-right">{item.category || '-'}</span>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
-                                        <User size={14} className="text-indigo-400" /> Penanggung Jawab & Penerimaan
+                                <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-xs">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                                        <User size={14} className="text-indigo-600" /> Penanggung Jawab & Penerimaan
                                     </p>
                                     <div className="space-y-2 text-sm">
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Penerimaan Via:</span>
-                                            <span className="font-medium text-slate-200 text-right">{getReceivedViaName(item)}</span>
+                                            <span className="text-slate-500 text-xs font-medium">Penerimaan Via:</span>
+                                            <span className="font-semibold text-slate-800 text-right">{getReceivedViaName(item)}</span>
                                         </div>
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Penanggung Jawab:</span>
-                                            <span className="font-medium text-slate-200 text-right">
+                                            <span className="text-slate-500 text-xs font-medium">Penanggung Jawab:</span>
+                                            <span className="font-semibold text-slate-800 text-right">
                                                 {item.creator?.name || item.meta?.payment_receiver_name || 'Sistem'}
                                             </span>
                                         </div>
                                         {item.meta?.payment_receiver_name && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-slate-400 text-xs">Akun Pemegang Kas:</span>
-                                                <span className="font-medium text-slate-200 text-right">
+                                                <span className="text-slate-500 text-xs font-medium">Akun Pemegang Kas:</span>
+                                                <span className="font-semibold text-slate-800 text-right">
                                                     {item.meta.payment_receiver_name}
                                                     {item.meta?.payment_receiver_is_company_finance ? ' (Kas Perusahaan)' : ' (Titipan)'}
                                                 </span>
                                             </div>
                                         )}
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-slate-400 text-xs">Petugas Input:</span>
-                                            <span className="font-medium text-slate-200 text-right">{item.creator?.name || 'Sistem'}</span>
+                                            <span className="text-slate-500 text-xs font-medium">Petugas Input:</span>
+                                            <span className="font-semibold text-slate-800 text-right">{item.creator?.name || 'Sistem'}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1417,17 +1416,17 @@ function MutasiPage() {
 
                             {/* Contextual Box: Invoice Payment */}
                             {(item.source === 'invoice_payment' || invoice) && (
-                                <div className="rounded-2xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-xs font-semibold uppercase tracking-wider text-blue-300 flex items-center gap-1.5">
-                                            <FileText size={14} className="text-blue-400" /> Detail Tagihan / Invoice
+                                <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+                                    <div className="flex items-center justify-between border-b border-blue-100 pb-2">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-blue-900 flex items-center gap-1.5">
+                                            <FileText size={14} className="text-blue-600" /> Detail Tagihan / Invoice
                                         </p>
                                         {(item.meta?.invoice_link || invoice?.invoice_link) && (
                                             <a
                                                 href={`/public/invoice/${item.meta?.invoice_link || invoice?.invoice_link}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                                                className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
                                             >
                                                 <span>Buka Invoice Publik</span>
                                                 <ExternalLink size={12} />
@@ -1438,17 +1437,19 @@ function MutasiPage() {
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                                         <div className="space-y-1.5">
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">Pelanggan:</span>
-                                                <span className="font-medium text-white text-right">{customer?.name || item.meta?.customer_name || '-'}</span>
+                                                <span className="text-xs text-slate-600 font-medium">Pelanggan:</span>
+                                                <span className="font-semibold text-slate-900 text-right">{customer?.name || item.meta?.customer_name || '-'}</span>
                                             </div>
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">PPPoE Username:</span>
-                                                <span className="font-mono text-xs font-semibold text-amber-300 text-right">{customer?.pppoe_username || item.meta?.pppoe_username || '-'}</span>
+                                                <span className="text-xs text-slate-600 font-medium">PPPoE Username:</span>
+                                                <span className="font-mono text-xs font-bold text-blue-700 bg-white border border-blue-200 px-2 py-0.5 rounded text-right">
+                                                    {customer?.pppoe_username || item.meta?.pppoe_username || '-'}
+                                                </span>
                                             </div>
                                             {customer?.phone && (
                                                 <div className="flex justify-between items-start gap-2">
-                                                    <span className="text-xs text-slate-400">No. WhatsApp:</span>
-                                                    <span className="font-medium text-slate-200 text-right">{customer.phone}</span>
+                                                    <span className="text-xs text-slate-600 font-medium">No. WhatsApp:</span>
+                                                    <span className="font-semibold text-slate-800 text-right">{customer.phone}</span>
                                                 </div>
                                             )}
                                         </div>
@@ -1457,20 +1458,20 @@ function MutasiPage() {
                                             {hasQrisMeta && (
                                                 <>
                                                     <div className="flex justify-between items-start gap-2">
-                                                        <span className="text-xs text-slate-400">No. Referensi / Trx:</span>
-                                                        <span className="font-mono text-xs font-semibold text-emerald-300 text-right">
+                                                        <span className="text-xs text-slate-600 font-medium">No. Referensi / Trx:</span>
+                                                        <span className="font-mono text-xs font-bold text-slate-900 text-right">
                                                             {item.meta?.qris_transaction_number || invoice?.qris_transaction_number || '-'}
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between items-start gap-2">
-                                                        <span className="text-xs text-slate-400">Pengirim Struk:</span>
-                                                        <span className="font-medium text-slate-200 text-right">
+                                                        <span className="text-xs text-slate-600 font-medium">Pengirim Struk:</span>
+                                                        <span className="font-semibold text-slate-800 text-right">
                                                             {item.meta?.qris_sender || invoice?.qris_sender || '-'}
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between items-start gap-2">
-                                                        <span className="text-xs text-slate-400">Jam Bayar Struk:</span>
-                                                        <span className="font-medium text-slate-200 text-right">
+                                                        <span className="text-xs text-slate-600 font-medium">Jam Bayar Struk:</span>
+                                                        <span className="font-semibold text-slate-800 text-right">
                                                             {formatDateTime(item.meta?.qris_payment_time || invoice?.qris_payment_time)}
                                                         </span>
                                                     </div>
@@ -1481,13 +1482,13 @@ function MutasiPage() {
 
                                     {/* Struk / Bukti Transfer */}
                                     {proofUrl && (
-                                        <div className="mt-2 pt-3 border-t border-blue-900/50">
-                                            <p className="text-xs font-medium text-slate-300 mb-2 flex items-center gap-1.5">
-                                                <ImageIcon size={14} className="text-blue-400" /> Foto Bukti Pembayaran / Struk:
+                                        <div className="mt-2 pt-3 border-t border-blue-100">
+                                            <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+                                                <ImageIcon size={14} className="text-blue-600" /> Foto Bukti Pembayaran / Struk:
                                             </p>
                                             <div className="flex items-center gap-3">
                                                 <div
-                                                    className="h-24 w-24 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 cursor-pointer transition hover:opacity-90 flex items-center justify-center shrink-0"
+                                                    className="h-24 w-24 overflow-hidden rounded-xl border border-blue-200 bg-white cursor-pointer transition hover:opacity-90 flex items-center justify-center shrink-0 shadow-xs"
                                                     onClick={() => setPreviewImage(proofUrl)}
                                                 >
                                                     <img
@@ -1500,7 +1501,7 @@ function MutasiPage() {
                                                 <button
                                                     type="button"
                                                     onClick={() => setPreviewImage(proofUrl)}
-                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
+                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition shadow-xs"
                                                 >
                                                     <Eye size={14} /> Lihat Foto Struk Penuh
                                                 </button>
@@ -1512,25 +1513,25 @@ function MutasiPage() {
 
                             {/* Contextual Box: Installation Income */}
                             {item.source === 'installation_income' && (
-                                <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/20 p-4 space-y-2 text-sm">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 border-b border-cyan-900/50 pb-2">
-                                        <FileText size={14} className="text-cyan-400" /> Rincian Pemasangan Baru
+                                <div className="rounded-2xl border border-cyan-200 bg-cyan-50/50 p-4 space-y-2 text-sm">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-cyan-900 flex items-center gap-1.5 border-b border-cyan-100 pb-2">
+                                        <FileText size={14} className="text-cyan-600" /> Rincian Pemasangan Baru
                                     </p>
                                     <div className="space-y-1.5 pt-1">
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-xs text-slate-400">Pelanggan:</span>
-                                            <span className="font-medium text-white">{customer?.name || item.meta?.customer_name || '-'}</span>
+                                            <span className="text-xs text-slate-600 font-medium">Pelanggan:</span>
+                                            <span className="font-semibold text-slate-900">{customer?.name || item.meta?.customer_name || '-'}</span>
                                         </div>
                                         {customer?.phone && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">No. WhatsApp:</span>
-                                                <span className="font-medium text-slate-200">{customer.phone}</span>
+                                                <span className="text-xs text-slate-600 font-medium">No. WhatsApp:</span>
+                                                <span className="font-semibold text-slate-800">{customer.phone}</span>
                                             </div>
                                         )}
                                         {customer?.package?.name && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">Paket Internet:</span>
-                                                <span className="font-medium text-cyan-300">{customer.package.name}</span>
+                                                <span className="text-xs text-slate-600 font-medium">Paket Internet:</span>
+                                                <span className="font-semibold text-cyan-800">{customer.package.name}</span>
                                             </div>
                                         )}
                                     </div>
@@ -1539,29 +1540,29 @@ function MutasiPage() {
 
                             {/* Contextual Box: Pengeluaran */}
                             {(item.source === 'pengeluaran' || pengeluaran) && (
-                                <div className="rounded-2xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-2 text-sm">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-rose-300 flex items-center gap-1.5 border-b border-rose-900/50 pb-2">
-                                        <FileText size={14} className="text-rose-400" /> Rincian Pengeluaran Operasional
+                                <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4 space-y-2 text-sm">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-rose-900 flex items-center gap-1.5 border-b border-rose-100 pb-2">
+                                        <FileText size={14} className="text-rose-600" /> Rincian Pengeluaran Operasional
                                     </p>
                                     <div className="space-y-1.5 pt-1">
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-xs text-slate-400">Kategori:</span>
-                                            <span className="font-medium text-rose-300">{pengeluaran?.kategori || item.category || '-'}</span>
+                                            <span className="text-xs text-slate-600 font-medium">Kategori:</span>
+                                            <span className="font-semibold text-rose-800">{pengeluaran?.kategori || item.category || '-'}</span>
                                         </div>
                                         <div className="flex justify-between items-start gap-2">
-                                            <span className="text-xs text-slate-400">Rincian Pengeluaran:</span>
-                                            <span className="font-medium text-white text-right max-w-[300px]">{pengeluaran?.detail || item.description || '-'}</span>
+                                            <span className="text-xs text-slate-600 font-medium">Rincian Pengeluaran:</span>
+                                            <span className="font-semibold text-slate-900 text-right max-w-[300px]">{pengeluaran?.detail || item.description || '-'}</span>
                                         </div>
                                         {pengeluaran?.payment_source && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">Sumber Dana:</span>
-                                                <span className="font-medium text-slate-200">{pengeluaran.payment_source}</span>
+                                                <span className="text-xs text-slate-600 font-medium">Sumber Dana:</span>
+                                                <span className="font-semibold text-slate-800">{pengeluaran.payment_source}</span>
                                             </div>
                                         )}
                                         {pengeluaran?.user?.name && (
                                             <div className="flex justify-between items-start gap-2">
-                                                <span className="text-xs text-slate-400">Diajukan Oleh:</span>
-                                                <span className="font-medium text-slate-200">{pengeluaran.user.name}</span>
+                                                <span className="text-xs text-slate-600 font-medium">Diajukan Oleh:</span>
+                                                <span className="font-semibold text-slate-800">{pengeluaran.user.name}</span>
                                             </div>
                                         )}
                                     </div>
@@ -1569,7 +1570,7 @@ function MutasiPage() {
                             )}
 
                             {/* Modal Footer Actions */}
-                            <div className="flex flex-wrap justify-between items-center gap-3 pt-3 border-t border-slate-800">
+                            <div className="flex flex-wrap justify-between items-center gap-3 pt-3 border-t border-slate-200">
                                 <div className="flex items-center gap-2 flex-wrap">
                                     {canEditMutations && (
                                         <button
@@ -1578,7 +1579,7 @@ function MutasiPage() {
                                                 setDetailModalItem(null);
                                                 openEditModal(item);
                                             }}
-                                            className="inline-flex items-center gap-1.5 rounded-xl border border-blue-500/40 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-900/60 transition"
+                                            className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition"
                                         >
                                             <Edit2 size={13} /> Edit Mutasi
                                         </button>
@@ -1591,7 +1592,7 @@ function MutasiPage() {
                                                     setDetailModalItem(null);
                                                     openConfirmModal(item);
                                                 }}
-                                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/60 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-900/60 transition"
+                                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition shadow-xs"
                                             >
                                                 <CheckCircle2 size={13} /> Terima
                                             </button>
@@ -1601,21 +1602,20 @@ function MutasiPage() {
                                                     setDetailModalItem(null);
                                                     setRejectModalItem(item);
                                                 }}
-                                                className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-950/60 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-900/60 transition"
+                                                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-rose-700 transition shadow-xs"
                                             >
                                                 <XCircle size={13} /> Tolak
                                             </button>
                                         </>
                                     )}
                                 </div>
-                                <Button
+                                <button
                                     type="button"
-                                    variant="secondary"
                                     onClick={() => setDetailModalItem(null)}
-                                    className={adminConsoleButtonClassNames.secondary}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
                                 >
                                     Tutup
-                                </Button>
+                                </button>
                             </div>
                         </div>
                     );
@@ -1628,7 +1628,7 @@ function MutasiPage() {
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
                     onClick={() => setPreviewImage(null)}
                 >
-                    <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-slate-900 p-2 shadow-2xl">
+                    <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-white p-2 shadow-2xl">
                         <button
                             type="button"
                             onClick={() => setPreviewImage(null)}
