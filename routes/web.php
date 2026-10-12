@@ -637,6 +637,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
         // Unified finance transactions
         Route::get('/api/finance/transactions', [FinancialTransactionController::class, 'index'])->name('api.finance.transactions.index');
+        Route::get('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'show'])->name('api.finance.transactions.show');
         Route::post('/api/finance/manual-income', [FinancialTransactionController::class, 'storeManualIncome'])->name('api.finance.manual-income.store');
         Route::post('/api/finance/balance-adjustments', [FinancialTransactionController::class, 'adjustBalance'])->name('api.finance.adjustments.store');
         Route::put('/api/finance/transactions/{financialTransaction}', [FinancialTransactionController::class, 'update'])->name('api.finance.transactions.update');

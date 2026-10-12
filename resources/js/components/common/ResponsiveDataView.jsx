@@ -16,6 +16,7 @@ export function ResponsiveDataView({
     columns = [],
     keyField = 'id',
     actions = null,
+    onRowClick = null,
     priorityFields = [],
     emptyMessage = 'Data belum tersedia.',
     desktopWrapperClassName = 'overflow-x-auto',
@@ -48,6 +49,7 @@ export function ResponsiveDataView({
                             row={row}
                             columns={columns}
                             actions={actions}
+                            onCardClick={onRowClick ? () => onRowClick(row, index) : null}
                             priorityFields={priorityFields}
                             cardClassName={mobileCardClassName}
                             labelClassName={mobileLabelClassName}
@@ -83,7 +85,12 @@ export function ResponsiveDataView({
                             rows.map((row, index) => (
                                 <tr
                                     key={keyForRow(row, index)}
-                                    className={`${typeof rowClassName === 'function' ? (rowClassName(row, index) || '') : (rowClassName || '')} ${rowHoverClassName} transition-colors`}
+                                    onClick={(e) => {
+                                        if (typeof onRowClick === 'function' && !e.target.closest('button, a, input, select, textarea, [data-prevent-row-click="true"]')) {
+                                            onRowClick(row, index);
+                                        }
+                                    }}
+                                    className={`${typeof rowClassName === 'function' ? (rowClassName(row, index) || '') : (rowClassName || '')} ${rowHoverClassName} ${onRowClick ? 'cursor-pointer' : ''} transition-colors`}
                                 >
                                     {columns.map((column) => {
                                         const content = typeof column.render === 'function'

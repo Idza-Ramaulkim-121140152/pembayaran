@@ -203,4 +203,55 @@ class FinancialTransactionConfirmationTest extends TestCase
         // No borrower debt created
         $this->assertDatabaseCount('borrower_loans', 0);
     }
+
+    public function test_user_can_view_financial_transaction_detail_with_reference(): void
+    {
+        $admin = User::factory()->create([
+            'role' => User::ROLE_ADMIN,
+            'can_edit_mutations' => true,
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'pppoe_username' => 'budi99',
+            'is_active' => true,
+        ]);
+
+        $invoice = \App\Models\Invoice::create([
+            'customer_id' => $customer->id,
+            'amount' => 150000,
+            'status' => 'paid',
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->toDateString(),
+            'invoice_link' => 'inv-budi-test',
+            'qris_transaction_number' => 'QRIS-BUDI-123',
+        ]);
+
+        $transaction = FinancialTransaction::create([
+            'type' => 'income',
+            'source' => 'invoice_payment',
+            'category' => 'pembayaran',
+            'description' => 'Pembayaran PPPoE budi99',
+            'amount' => 150000,
+            'transaction_date' => now()->toDateString(),
+            'reference_type' => \App\Models\Invoice::class,
+            'reference_id' => $invoice->id,
+            'created_by' => $admin->id,
+            'status' => FinancialTransaction::STATUS_CONFIRMED,
+            'meta' => [
+                'invoice_link' => 'inv-budi-test',
+                'qris_transaction_number' => 'QRIS-BUDI-123',
+            ],
+        ]);
+
+        $response = $this->actingAs($admin)
+            ->getJson("/api/finance/transactions/{$transaction->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $transaction->id)
+            ->assertJsonPath('data.description', 'Pembayaran PPPoE budi99')
+            ->assertJsonPath('data.reference.id', $invoice->id)
+            ->assertJsonPath('data.reference.customer.name', 'Budi Santoso');
+    }
 }

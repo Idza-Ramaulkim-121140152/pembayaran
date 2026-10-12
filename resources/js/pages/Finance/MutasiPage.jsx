@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Edit2, Trash2, Plus, CheckCircle2, XCircle, AlertCircle, Clock } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Edit2, Trash2, Plus, CheckCircle2, XCircle, AlertCircle, Clock, Eye, ExternalLink, FileText, User, ArrowUpRight, ArrowDownLeft, Image as ImageIcon } from 'lucide-react';
 import apiClient from '../../services/api';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -83,6 +83,9 @@ function MutasiPage() {
         payment_receipt_option_id: '',
     });
     const [rejectModalItem, setRejectModalItem] = useState(null);
+    const [detailModalItem, setDetailModalItem] = useState(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+    const [previewImage, setPreviewImage] = useState(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [selected, setSelected] = useState(null);
     const [pageSize, setPageSize] = useState(50);
@@ -251,6 +254,23 @@ function MutasiPage() {
         });
     };
 
+    const openDetailModal = async (item) => {
+        if (!item) return;
+        setDetailModalItem(item);
+        if (!item.id) return;
+        try {
+            setDetailLoading(true);
+            const res = await apiClient.get(`/finance/transactions/${item.id}`);
+            if (res.data?.data) {
+                setDetailModalItem(res.data.data);
+            }
+        } catch (err) {
+            console.error('Failed to load transaction detail:', err);
+        } finally {
+            setDetailLoading(false);
+        }
+    };
+
     const mutationColumns = [
         {
             key: 'created_at',
@@ -291,7 +311,22 @@ function MutasiPage() {
             ),
         },
         { key: 'source', label: 'Sumber' },
-        { key: 'description', label: 'Deskripsi', render: (row) => row.description || '-' },
+        {
+            key: 'description',
+            label: 'Deskripsi',
+            render: (row) => (
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        openDetailModal(row);
+                    }}
+                    className="text-left font-medium text-slate-800 hover:text-blue-600 hover:underline transition-colors"
+                >
+                    {row.description || '-'}
+                </button>
+            ),
+        },
         { key: 'received_via', label: 'Penerimaan Via', render: (row) => getReceivedViaName(row) },
         { key: 'creator_name', label: 'Penanggung Jawab', render: (row) => row.creator?.name || 'Sistem' },
         {
@@ -779,6 +814,7 @@ function MutasiPage() {
                     rows={visibleItems}
                     columns={themedMutationColumns}
                     keyField="id"
+                    onRowClick={(row) => openDetailModal(row)}
                     priorityFields={['created_at', 'type', 'source', 'income', 'expense']}
                     emptyMessage="Belum ada mutasi."
                     tableClassName="w-full text-sm md:min-w-[1180px]"
@@ -793,17 +829,31 @@ function MutasiPage() {
                     mobileActionBarClassName="border-slate-100 bg-slate-50 pt-3"
                     actionsHeaderClassName="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500"
                     actionsCellClassName="px-4 py-3 text-sm text-slate-700"
-                    actions={canEditMutations ? ((row) => {
+                    actions={(row) => {
                         const isPending = (row.status || 'confirmed') === 'pending';
                         return (
-                            <div className="flex justify-end items-center gap-1.5">
-                                {isPending && (
+                            <div className="flex justify-end items-center gap-1.5" data-prevent-row-click="true">
+                                <button
+                                    type="button"
+                                    title="Lihat Detail Mutasi"
+                                    className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-slate-700 transition hover:border-slate-300 hover:bg-slate-100 hover:text-blue-600"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        openDetailModal(row);
+                                    }}
+                                >
+                                    <Eye size={14} />
+                                </button>
+                                {canEditMutations && isPending && (
                                     <>
                                         <button
                                             type="button"
                                             title="Konfirmasi / Terima Pembayaran"
                                             className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 hover:border-emerald-400"
-                                            onClick={() => openConfirmModal(row)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                openConfirmModal(row);
+                                            }}
                                         >
                                             <CheckCircle2 size={14} className="text-emerald-600" />
                                             <span className="hidden xl:inline">Terima</span>
@@ -812,32 +862,45 @@ function MutasiPage() {
                                             type="button"
                                             title="Tolak Pembayaran"
                                             className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 hover:border-rose-400"
-                                            onClick={() => setRejectModalItem(row)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setRejectModalItem(row);
+                                            }}
                                         >
                                             <XCircle size={14} className="text-rose-600" />
                                             <span className="hidden xl:inline">Tolak</span>
                                         </button>
                                     </>
                                 )}
-                                <button
-                                    type="button"
-                                    title="Edit Mutasi"
-                                    className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-blue-600 transition hover:border-blue-300 hover:bg-blue-100"
-                                    onClick={() => openEditModal(row)}
-                                >
-                                    <Edit2 size={14} />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Hapus Mutasi"
-                                    className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 transition hover:border-rose-300 hover:bg-rose-100"
-                                    onClick={() => handleDelete(row)}
-                                >
-                                    <Trash2 size={14} />
-                                </button>
+                                {canEditMutations && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            title="Edit Mutasi"
+                                            className="rounded-lg border border-blue-200 bg-blue-50 p-1.5 text-blue-600 transition hover:border-blue-300 hover:bg-blue-100"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                openEditModal(row);
+                                            }}
+                                        >
+                                            <Edit2 size={14} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            title="Hapus Mutasi"
+                                            className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-600 transition hover:border-rose-300 hover:bg-rose-100"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDelete(row);
+                                            }}
+                                        >
+                                            <Trash2 size={14} />
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         );
-                    }) : null}
+                    }}
                 />
                 <div className="hidden border-t border-slate-200 bg-slate-50 px-4 py-3 md:block">
                     <div className={`grid ${canEditMutations ? 'grid-cols-9' : 'grid-cols-8'} gap-2 items-center text-sm`}>
@@ -1208,6 +1271,379 @@ function MutasiPage() {
                     </div>
                 )}
             </Modal>
+
+            {/* Detail Mutasi Modal */}
+            <Modal
+                isOpen={!!detailModalItem}
+                onClose={() => setDetailModalItem(null)}
+                title="Detail Mutasi Keuangan"
+                theme="dashboard"
+                maxWidth="max-w-3xl"
+            >
+                {detailModalItem && (() => {
+                    const item = detailModalItem;
+                    const amount = Number(item.amount || 0);
+                    const isIncome = item.type === 'income' || (item.type === 'adjustment' && amount > 0);
+                    const isExpense = item.type === 'expense' || (item.type === 'adjustment' && amount < 0);
+                    const status = item.status || 'confirmed';
+                    const isPending = status === 'pending';
+                    const isRejected = status === 'rejected';
+
+                    const statusPalette = isPending
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                        : isRejected
+                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                            : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400';
+
+                    const typePalette = isIncome
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                        : isExpense
+                            ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
+                            : 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+
+                    const invoice = item.reference_type?.includes('Invoice') ? item.reference : null;
+                    const customer = invoice?.customer || (item.reference_type?.includes('Customer') ? item.reference : null);
+                    const pengeluaran = item.reference_type?.includes('Pengeluaran') ? item.reference : null;
+
+                    const proofUrl = invoice?.id
+                        ? `/billing/invoice/${invoice.id}/payment-proof`
+                        : (item.meta?.media?.path ? (item.meta.media.path.startsWith('http') ? item.meta.media.path : `/storage/${item.meta.media.path.replace(/^\/+/, '')}`) : null);
+
+                    const hasQrisMeta = item.meta?.qris_transaction_number || invoice?.qris_transaction_number;
+
+                    return (
+                        <div className="space-y-4 text-slate-100">
+                            {detailLoading && (
+                                <div className="rounded-xl bg-blue-950/40 border border-blue-500/30 p-2.5 text-xs text-blue-300 flex items-center justify-between">
+                                    <span>Memperbarui rincian transaksi terbaru...</span>
+                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                                </div>
+                            )}
+
+                            {/* Highlight Card */}
+                            <div className="rounded-2xl border border-slate-700/60 bg-slate-900/80 p-4 sm:p-5 space-y-3">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="text-xs font-mono font-medium text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg">
+                                            #TX-{item.id}
+                                        </span>
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${statusPalette}`}>
+                                            {isPending && <Clock size={12} />}
+                                            {status === 'confirmed' && <CheckCircle2 size={12} />}
+                                            {isRejected && <XCircle size={12} />}
+                                            <span className="capitalize">{status}</span>
+                                        </span>
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${typePalette}`}>
+                                            {isIncome ? <ArrowDownLeft size={12} /> : <ArrowUpRight size={12} />}
+                                            <span className="capitalize">{item.type}</span>
+                                        </span>
+                                        <span className="text-xs font-medium text-slate-300 bg-slate-800/80 px-2.5 py-0.5 rounded-full border border-slate-700">
+                                            {item.source}
+                                        </span>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-[11px] text-slate-400 uppercase tracking-wider">Nominal Transaksi</p>
+                                        <p className={`text-2xl font-bold ${isIncome ? 'text-emerald-400' : isExpense ? 'text-rose-400' : 'text-amber-400'}`}>
+                                            {isIncome ? '+' : isExpense ? '-' : ''}{formatCurrency(Math.abs(amount))}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="border-t border-slate-800 pt-3">
+                                    <p className="text-xs uppercase tracking-wider text-slate-400 mb-1">Deskripsi</p>
+                                    <p className="text-base font-semibold text-white break-words">{item.description || '-'}</p>
+                                </div>
+                            </div>
+
+                            {/* Detail Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
+                                        <Calendar size={14} className="text-blue-400" /> Waktu & Pelaksanaan
+                                    </p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Tanggal Transaksi:</span>
+                                            <span className="font-medium text-slate-200 text-right">{item.transaction_date || '-'}</span>
+                                        </div>
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Dicatat Pada:</span>
+                                            <span className="font-medium text-slate-200 text-right">{formatDateTime(item.created_at)}</span>
+                                        </div>
+                                        {item.updated_at && item.updated_at !== item.created_at && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-slate-400 text-xs">Terakhir Diubah:</span>
+                                                <span className="font-medium text-slate-200 text-right">{formatDateTime(item.updated_at)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Kategori:</span>
+                                            <span className="font-medium text-slate-200 text-right">{item.category || '-'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 space-y-2.5">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800/80 pb-2">
+                                        <User size={14} className="text-indigo-400" /> Penanggung Jawab & Penerimaan
+                                    </p>
+                                    <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Penerimaan Via:</span>
+                                            <span className="font-medium text-slate-200 text-right">{getReceivedViaName(item)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Penanggung Jawab:</span>
+                                            <span className="font-medium text-slate-200 text-right">
+                                                {item.creator?.name || item.meta?.payment_receiver_name || 'Sistem'}
+                                            </span>
+                                        </div>
+                                        {item.meta?.payment_receiver_name && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-slate-400 text-xs">Akun Pemegang Kas:</span>
+                                                <span className="font-medium text-slate-200 text-right">
+                                                    {item.meta.payment_receiver_name}
+                                                    {item.meta?.payment_receiver_is_company_finance ? ' (Kas Perusahaan)' : ' (Titipan)'}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-400 text-xs">Petugas Input:</span>
+                                            <span className="font-medium text-slate-200 text-right">{item.creator?.name || 'Sistem'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Contextual Box: Invoice Payment */}
+                            {(item.source === 'invoice_payment' || invoice) && (
+                                <div className="rounded-2xl border border-blue-500/30 bg-blue-950/20 p-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs font-semibold uppercase tracking-wider text-blue-300 flex items-center gap-1.5">
+                                            <FileText size={14} className="text-blue-400" /> Detail Tagihan / Invoice
+                                        </p>
+                                        {(item.meta?.invoice_link || invoice?.invoice_link) && (
+                                            <a
+                                                href={`/public/invoice/${item.meta?.invoice_link || invoice?.invoice_link}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 hover:underline"
+                                            >
+                                                <span>Buka Invoice Publik</span>
+                                                <ExternalLink size={12} />
+                                            </a>
+                                        )}
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">Pelanggan:</span>
+                                                <span className="font-medium text-white text-right">{customer?.name || item.meta?.customer_name || '-'}</span>
+                                            </div>
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">PPPoE Username:</span>
+                                                <span className="font-mono text-xs font-semibold text-amber-300 text-right">{customer?.pppoe_username || item.meta?.pppoe_username || '-'}</span>
+                                            </div>
+                                            {customer?.phone && (
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <span className="text-xs text-slate-400">No. WhatsApp:</span>
+                                                    <span className="font-medium text-slate-200 text-right">{customer.phone}</span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="space-y-1.5">
+                                            {hasQrisMeta && (
+                                                <>
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <span className="text-xs text-slate-400">No. Referensi / Trx:</span>
+                                                        <span className="font-mono text-xs font-semibold text-emerald-300 text-right">
+                                                            {item.meta?.qris_transaction_number || invoice?.qris_transaction_number || '-'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <span className="text-xs text-slate-400">Pengirim Struk:</span>
+                                                        <span className="font-medium text-slate-200 text-right">
+                                                            {item.meta?.qris_sender || invoice?.qris_sender || '-'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <span className="text-xs text-slate-400">Jam Bayar Struk:</span>
+                                                        <span className="font-medium text-slate-200 text-right">
+                                                            {formatDateTime(item.meta?.qris_payment_time || invoice?.qris_payment_time)}
+                                                        </span>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Struk / Bukti Transfer */}
+                                    {proofUrl && (
+                                        <div className="mt-2 pt-3 border-t border-blue-900/50">
+                                            <p className="text-xs font-medium text-slate-300 mb-2 flex items-center gap-1.5">
+                                                <ImageIcon size={14} className="text-blue-400" /> Foto Bukti Pembayaran / Struk:
+                                            </p>
+                                            <div className="flex items-center gap-3">
+                                                <div
+                                                    className="h-24 w-24 overflow-hidden rounded-xl border border-slate-700 bg-slate-900 cursor-pointer transition hover:opacity-90 flex items-center justify-center shrink-0"
+                                                    onClick={() => setPreviewImage(proofUrl)}
+                                                >
+                                                    <img
+                                                        src={proofUrl}
+                                                        alt="Bukti Transfer"
+                                                        className="h-full w-full object-cover"
+                                                        onError={(e) => { e.target.style.display = 'none'; }}
+                                                    />
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPreviewImage(proofUrl)}
+                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
+                                                >
+                                                    <Eye size={14} /> Lihat Foto Struk Penuh
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Contextual Box: Installation Income */}
+                            {item.source === 'installation_income' && (
+                                <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/20 p-4 space-y-2 text-sm">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 border-b border-cyan-900/50 pb-2">
+                                        <FileText size={14} className="text-cyan-400" /> Rincian Pemasangan Baru
+                                    </p>
+                                    <div className="space-y-1.5 pt-1">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-xs text-slate-400">Pelanggan:</span>
+                                            <span className="font-medium text-white">{customer?.name || item.meta?.customer_name || '-'}</span>
+                                        </div>
+                                        {customer?.phone && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">No. WhatsApp:</span>
+                                                <span className="font-medium text-slate-200">{customer.phone}</span>
+                                            </div>
+                                        )}
+                                        {customer?.package?.name && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">Paket Internet:</span>
+                                                <span className="font-medium text-cyan-300">{customer.package.name}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Contextual Box: Pengeluaran */}
+                            {(item.source === 'pengeluaran' || pengeluaran) && (
+                                <div className="rounded-2xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-2 text-sm">
+                                    <p className="text-xs font-semibold uppercase tracking-wider text-rose-300 flex items-center gap-1.5 border-b border-rose-900/50 pb-2">
+                                        <FileText size={14} className="text-rose-400" /> Rincian Pengeluaran Operasional
+                                    </p>
+                                    <div className="space-y-1.5 pt-1">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-xs text-slate-400">Kategori:</span>
+                                            <span className="font-medium text-rose-300">{pengeluaran?.kategori || item.category || '-'}</span>
+                                        </div>
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-xs text-slate-400">Rincian Pengeluaran:</span>
+                                            <span className="font-medium text-white text-right max-w-[300px]">{pengeluaran?.detail || item.description || '-'}</span>
+                                        </div>
+                                        {pengeluaran?.payment_source && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">Sumber Dana:</span>
+                                                <span className="font-medium text-slate-200">{pengeluaran.payment_source}</span>
+                                            </div>
+                                        )}
+                                        {pengeluaran?.user?.name && (
+                                            <div className="flex justify-between items-start gap-2">
+                                                <span className="text-xs text-slate-400">Diajukan Oleh:</span>
+                                                <span className="font-medium text-slate-200">{pengeluaran.user.name}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Modal Footer Actions */}
+                            <div className="flex flex-wrap justify-between items-center gap-3 pt-3 border-t border-slate-800">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    {canEditMutations && (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setDetailModalItem(null);
+                                                openEditModal(item);
+                                            }}
+                                            className="inline-flex items-center gap-1.5 rounded-xl border border-blue-500/40 bg-blue-950/60 px-3 py-2 text-xs font-semibold text-blue-300 hover:bg-blue-900/60 transition"
+                                        >
+                                            <Edit2 size={13} /> Edit Mutasi
+                                        </button>
+                                    )}
+                                    {canEditMutations && isPending && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setDetailModalItem(null);
+                                                    openConfirmModal(item);
+                                                }}
+                                                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/60 px-3 py-2 text-xs font-semibold text-emerald-300 hover:bg-emerald-900/60 transition"
+                                            >
+                                                <CheckCircle2 size={13} /> Terima
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setDetailModalItem(null);
+                                                    setRejectModalItem(item);
+                                                }}
+                                                className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-950/60 px-3 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-900/60 transition"
+                                            >
+                                                <XCircle size={13} /> Tolak
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() => setDetailModalItem(null)}
+                                    className={adminConsoleButtonClassNames.secondary}
+                                >
+                                    Tutup
+                                </Button>
+                            </div>
+                        </div>
+                    );
+                })()}
+            </Modal>
+
+            {/* Lightbox / Preview Image Modal */}
+            {previewImage && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+                    onClick={() => setPreviewImage(null)}
+                >
+                    <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-slate-900 p-2 shadow-2xl">
+                        <button
+                            type="button"
+                            onClick={() => setPreviewImage(null)}
+                            className="absolute top-4 right-4 z-10 rounded-full bg-black/70 p-2 text-white hover:bg-black transition"
+                        >
+                            <XCircle size={20} />
+                        </button>
+                        <img
+                            src={previewImage}
+                            alt="Bukti Transfer Penuh"
+                            className="max-h-[85vh] max-w-[85vw] object-contain rounded-xl"
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

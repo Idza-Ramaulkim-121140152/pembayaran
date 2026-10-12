@@ -14,6 +14,7 @@ export function MobileRowCard({
     row,
     columns = [],
     actions = null,
+    onCardClick = null,
     priorityFields = [],
     cardClassName = '',
     labelClassName = '',
@@ -30,7 +31,14 @@ export function MobileRowCard({
     const resolvedValueClassName = valueClassName || 'text-slate-800';
 
     return (
-        <article className={`mobile-section ${cardClassName}`}>
+        <article
+            onClick={(e) => {
+                if (typeof onCardClick === 'function' && !e.target.closest('button, a, input, select, textarea')) {
+                    onCardClick(row);
+                }
+            }}
+            className={`mobile-section ${cardClassName} ${onCardClick ? 'cursor-pointer' : ''}`}
+        >
             <dl className="space-y-2">
                 {orderedColumns.map((column) => {
                     const content = typeof column.renderMobile === 'function'

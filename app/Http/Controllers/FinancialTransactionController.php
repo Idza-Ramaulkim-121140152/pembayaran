@@ -138,7 +138,17 @@ class FinancialTransactionController extends Controller
         $summaryExpense = (float) ($summaryRow->expense ?? 0);
 
         $transactions = (clone $baseQuery)
-            ->with(['creator:id,name', 'updater:id,name'])
+            ->with([
+                'creator:id,name',
+                'updater:id,name',
+                'reference' => function (\Illuminate\Database\Eloquent\Relations\MorphTo $morphTo) {
+                    $morphTo->morphWith([
+                        \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username'],
+                        \App\Models\Pengeluaran::class => ['user:id,name', 'expenseCategory:id,name'],
+                        \App\Models\Customer::class => ['package:id,name'],
+                    ]);
+                },
+            ])
             ->orderByDesc('transaction_date')
             ->orderByDesc('id')
             ->paginate($perPage);
@@ -150,6 +160,29 @@ class FinancialTransactionController extends Controller
                 'expense' => $summaryExpense,
                 'net' => $summaryIncome - $summaryExpense,
             ],
+        ]);
+    }
+
+    public function show(FinancialTransaction $financialTransaction)
+    {
+        if (!$this->isLedgerReady()) {
+            return response()->json(['message' => 'Tabel financial_transactions belum tersedia.'], 503);
+        }
+
+        $financialTransaction->load([
+            'creator:id,name',
+            'updater:id,name',
+            'reference' => function (\Illuminate\Database\Eloquent\Relations\MorphTo $morphTo) {
+                $morphTo->morphWith([
+                    \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username'],
+                    \App\Models\Pengeluaran::class => ['user:id,name', 'expenseCategory:id,name'],
+                    \App\Models\Customer::class => ['package:id,name'],
+                ]);
+            },
+        ]);
+
+        return response()->json([
+            'data' => $financialTransaction,
         ]);
     }
 
