@@ -219,20 +219,29 @@ class BillingController extends Controller
         // Pipe into Payment Verification AI pipeline
         if ($invoice->status !== 'paid' && $invoice->bukti_pembayaran) {
             try {
+                $fileHash = null;
+                if (Storage::disk('public')->exists($invoice->bukti_pembayaran)) {
+                    $fullProofPath = Storage::disk('public')->path($invoice->bukti_pembayaran);
+                    if (file_exists($fullProofPath)) {
+                        $fileHash = hash_file('sha256', $fullProofPath);
+                    }
+                }
+
                 $capture = \App\Models\BillingPaymentCapture::create([
                     'source' => 'web_public',
                     'invoice_id' => $invoice->id,
                     'customer_id' => $invoice->customer_id,
                     'amount' => (float) $invoice->amount,
                     'paid_date' => now()->toDateString(),
-                    'reference_code' => $invoice->invoice_link,
-                    'fingerprint' => hash('sha256', 'web_public:' . $invoice->id . ':' . $invoice->bukti_pembayaran . ':' . microtime(true)),
+                    'reference_code' => null, // Diekstrak dari bukti struk asli, jangan gunakan invoice_link sistem
+                    'fingerprint' => hash('sha256', 'web_public:' . $invoice->id . ':' . ($fileHash ?: $invoice->bukti_pembayaran) . ':' . microtime(true)),
                     'match_status' => 'pending',
                     'meta' => [
                         'media' => [
                             'path' => $invoice->bukti_pembayaran,
                             'mime_type' => isset($file) ? $file->getMimeType() : 'image/jpeg',
                             'file_name' => isset($file) ? $file->getClientOriginalName() : basename($invoice->bukti_pembayaran),
+                            'file_hash' => $fileHash,
                         ],
                         'source' => [
                             'type' => 'web_public_invoice',

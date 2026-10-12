@@ -46,7 +46,7 @@ class WhatsAppPaymentIntakeService
             'customer_id' => $customer?->id,
             'amount' => 0,
             'paid_date' => $normalized['sent_at']->toDateString(),
-            'reference_code' => $normalized['message_id'],
+            'reference_code' => null, // Diekstrak dari struk asli oleh AI/OCR, bukan message_id WhatsApp
             'fingerprint' => $normalized['fingerprint'],
             'match_status' => 'pending',
             'meta' => [
@@ -132,13 +132,16 @@ class WhatsAppPaymentIntakeService
             }
 
             Storage::disk('public')->put($path, $binary);
+            $fileHash = hash('sha256', $binary);
         } elseif ($normalized['media_url'] !== '') {
             $response = Http::timeout(60)->get($normalized['media_url']);
             if (!$response->successful()) {
                 throw new \RuntimeException('Gagal mengunduh media WhatsApp.');
             }
 
-            Storage::disk('public')->put($path, $response->body());
+            $body = $response->body();
+            Storage::disk('public')->put($path, $body);
+            $fileHash = hash('sha256', $body);
         } else {
             throw new \InvalidArgumentException('Media pembayaran wajib berisi media_url atau media_base64.');
         }
@@ -147,6 +150,7 @@ class WhatsAppPaymentIntakeService
             'path' => $path,
             'mime_type' => $mimeType,
             'original_url' => $normalized['media_url'] ?: null,
+            'file_hash' => $fileHash,
         ];
     }
 

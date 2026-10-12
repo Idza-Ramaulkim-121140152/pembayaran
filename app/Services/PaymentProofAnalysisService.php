@@ -73,6 +73,8 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
 Pedoman:
 - is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
 - success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
+- reference_code: Cari dan ekstrak nomor transaksi asli atau nomor unik bukti pembayaran yang tercetak pada gambar struk (contoh: No. Referensi, Nomor Transaksi, ID Transaksi, RRN / Retrieval Reference Number, No. Resi, Nomor Jurnal, Kode Transaksi, STAN, Approval Code).
+- PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...' atau nomor tagihan). Ekstrak HANYA nomor unik transaksi dari bukti bayar/struk. Jika tidak ada nomor unik transaksi dari bank/e-wallet/QRIS yang tertera pada struk, isi null.
 - confidence memakai skala angka 0 s.d 100.
 PROMPT;
 
@@ -253,7 +255,13 @@ PROMPT;
         $isPaymentProof = $parsed['is_payment_proof'] || $activeInvoice !== null || $customer !== null;
         $successStatus = $parsed['success_status'] || $activeInvoice !== null;
         $channel = $parsed['payment_channel'] ?: ($activeInvoice ? 'Transfer Bank / QRIS' : 'Transfer Bank');
-        $referenceCode = $parsed['reference_code'] ?: ($activeInvoice?->invoice_link ?: data_get($capture->meta, 'source.message_id'));
+        $referenceCode = $parsed['reference_code'] ?: null;
+        if ($referenceCode !== null) {
+            $refLower = strtolower($referenceCode);
+            if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || ($activeInvoice && $refLower === strtolower((string) $activeInvoice->invoice_link))) {
+                $referenceCode = null;
+            }
+        }
 
         $confidence = 50.0;
         if ($customer) {
@@ -400,10 +408,28 @@ PROMPT;
             }
         }
 
-        // 2. Reference Code / Transaction ID
+        // 2. Reference Code / Transaction ID / RRN / Receipt No
         $ref = null;
-        if (preg_match('/(?:no\.?\s*referensi|nomor\s*transaksi|id\s*transaksi|ref\.?\s*id|reference|no\.?\s*resi|nomor\s*resi|r[rn]\s*id|transaksi|ref)\s*[:#]?\s*([a-zA-Z0-9\-_]{5,40})/i', $text, $m)) {
-            $ref = trim($m[1]);
+        $patterns = [
+            '/(?:no\.?\s*referensi|nomor\s*referensi|no\.?\s*ref\b|reference\s*(?:no|number|id)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:nomor\s*transaksi|no\.?\s*transaksi|id\s*transaksi|transaction\s*id|trx\s*id|kode\s*transaksi)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:r[rn]\b|kode\s*rrn|retrieval\s*reference\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:no\.?\s*resi|nomor\s*resi|receipt\s*(?:no|number)?|no\.?\s*struk|nomor\s*struk)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:nomor\s*jurnal|no\.?\s*jurnal|journal\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:id\s*pesanan|nomor\s*pesanan|order\s*id)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
+            '/(?:approval\s*code|kode\s*persetujuan|stan)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,30})/i',
+            '/(?:ref\.?\s*id|ref)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})/i',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $text, $m)) {
+                $candidate = trim($m[1]);
+                $candLower = strtolower($candidate);
+                if (!str_starts_with($candLower, 'inv_') && !str_starts_with($candLower, 'invoice') && $candLower !== 'tagihan') {
+                    $ref = $candidate;
+                    break;
+                }
+            }
         }
 
         // 3. Payment Channel
@@ -529,12 +555,20 @@ PROMPT;
 
     private function normalizeResult(array $decoded): array
     {
+        $rawRef = $this->stringOrNull($decoded['reference_code'] ?? null);
+        if ($rawRef !== null) {
+            $lower = strtolower($rawRef);
+            if (str_starts_with($lower, 'inv_') || str_starts_with($lower, 'invoice') || $lower === 'null' || $lower === 'none' || $lower === '-') {
+                $rawRef = null;
+            }
+        }
+
         return [
             'is_payment_proof' => (bool) ($decoded['is_payment_proof'] ?? false),
             'amount' => isset($decoded['amount']) && is_numeric($decoded['amount']) ? round((float) $decoded['amount'], 2) : null,
             'paid_date' => $this->stringOrNull($decoded['paid_date'] ?? null),
             'paid_time' => $this->stringOrNull($decoded['paid_time'] ?? null),
-            'reference_code' => $this->stringOrNull($decoded['reference_code'] ?? null),
+            'reference_code' => $rawRef,
             'payment_channel' => $this->stringOrNull($decoded['payment_channel'] ?? null),
             'destination_identity' => [
                 'name' => $this->stringOrNull(data_get($decoded, 'destination_identity.name')),

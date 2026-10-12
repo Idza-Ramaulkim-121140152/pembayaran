@@ -115,7 +115,12 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
 
         $capture->amount = max(0, (float) ($validation['normalized']['amount'] ?? 0));
         $capture->paid_date = (string) ($validation['normalized']['paid_date'] ?? now()->toDateString());
-        $capture->reference_code = (string) ($validation['normalized']['reference_code'] ?? $capture->reference_code);
+        $validRef = $validation['normalized']['reference_code'] ?? null;
+        if ($validRef && !str_starts_with(strtolower($validRef), 'inv_') && !str_starts_with(strtolower($validRef), 'invoice')) {
+            $capture->reference_code = $validRef;
+        } else {
+            $capture->reference_code = null;
+        }
         $capture->match_confidence = (float) ($analysis['confidence_overall'] ?? 0);
         $capture->meta = $meta;
 

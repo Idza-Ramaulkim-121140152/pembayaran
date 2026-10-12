@@ -25,24 +25,71 @@ class PaymentProofValidationService
         );
 
         $refCode = trim((string) ($analysis['reference_code'] ?? ''));
+        if ($refCode !== '') {
+            $refLower = strtolower($refCode);
+            if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || ($invoice && $refLower === strtolower((string) $invoice->invoice_link))) {
+                $refCode = '';
+            }
+        }
+
         $isDuplicateRef = false;
-        if ($refCode !== '' && strlen($refCode) >= 5) {
+        if ($refCode !== '' && strlen($refCode) >= 4) {
             $isDuplicateCapture = BillingPaymentCapture::query()
                 ->where('id', '!=', $capture->id)
                 ->where('match_status', 'approved')
-                ->where('reference_code', $refCode)
+                ->whereRaw('LOWER(reference_code) = ?', [strtolower($refCode)])
                 ->exists();
 
             $isDuplicateInvoice = Invoice::query()
                 ->when($invoice, fn ($q) => $q->where('id', '!=', $invoice->id))
                 ->where('status', 'paid')
                 ->where(function ($q) use ($refCode) {
-                    $q->where('qris_transaction_number', $refCode);
+                    $q->whereRaw('LOWER(qris_transaction_number) = ?', [strtolower($refCode)]);
                 })
                 ->exists();
 
-            $isDuplicateRef = $isDuplicateCapture || $isDuplicateInvoice;
+            $isDuplicateTx = false;
+            if (\Illuminate\Support\Facades\Schema::hasTable('financial_transactions')) {
+                $isDuplicateTx = \App\Models\FinancialTransaction::query()
+                    ->where(function ($query) use ($invoice) {
+                        if ($invoice) {
+                            $query->where('reference_type', '!=', Invoice::class)
+                                ->orWhere('reference_id', '!=', $invoice->id)
+                                ->orWhereNull('reference_type');
+                        }
+                    })
+                    ->where('meta->qris_transaction_number', $refCode)
+                    ->exists();
+            }
+
+            $isDuplicateRef = $isDuplicateCapture || $isDuplicateInvoice || $isDuplicateTx;
         }
+
+        // Pengecekan duplikasi file gambar (image hash) untuk mendeteksi kecurangan upload ulang bukti struk yang sama persis
+        $fileHash = data_get($capture->meta, 'media.file_hash');
+        if (!$fileHash) {
+            $mediaPath = (string) data_get($capture->meta, 'media.path', '');
+            if ($mediaPath !== '' && \Illuminate\Support\Facades\Storage::disk('public')->exists($mediaPath)) {
+                $absPath = \Illuminate\Support\Facades\Storage::disk('public')->path($mediaPath);
+                if (file_exists($absPath)) {
+                    $fileHash = hash_file('sha256', $absPath);
+                }
+            }
+        }
+
+        $isDuplicateImage = false;
+        if ($fileHash) {
+            $isDuplicateImage = BillingPaymentCapture::query()
+                ->where('id', '!=', $capture->id)
+                ->where('match_status', 'approved')
+                ->where(function ($q) use ($fileHash) {
+                    $q->where('meta->media->file_hash', $fileHash)
+                      ->orWhere('meta->file_hash', $fileHash);
+                })
+                ->exists();
+        }
+
+        $isDuplicate = $isDuplicateRef || $isDuplicateImage;
 
         $amountMatchesInvoice = $invoice && isset($analysis['amount'])
             ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
@@ -75,7 +122,7 @@ class PaymentProofValidationService
             'success_status' => (bool) ($analysis['success_status'] ?? false),
             'amount_matches_invoice' => $amountMatchesInvoice,
             'destination_whitelisted' => $isDestinationTrusted,
-            'is_duplicate_reference' => $isDuplicateRef,
+            'is_duplicate_reference' => $isDuplicate,
             'confidence_meets_auto_approve' => (float) ($analysis['confidence_overall'] ?? 0) >= $autoThreshold,
             'confidence_meets_manual_review' => (float) ($analysis['confidence_overall'] ?? 0) >= $reviewThreshold,
         ];
@@ -119,7 +166,7 @@ class PaymentProofValidationService
             'normalized' => [
                 'amount' => isset($analysis['amount']) ? round((float) $analysis['amount'], 2) : 0,
                 'paid_date' => $analysis['paid_date'] ?: now()->toDateString(),
-                'reference_code' => $analysis['reference_code'] ?? data_get($capture->meta, 'source.message_id'),
+                'reference_code' => $refCode !== '' ? $refCode : null,
                 'payment_channel' => $analysis['payment_channel'] ?? null,
                 'transaction_time' => $analysis['paid_time'] ?? null,
             ],

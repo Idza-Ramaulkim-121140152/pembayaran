@@ -22,6 +22,14 @@ class BillingPaymentCapturePresenter
             }
         }
 
+        $cleanRefCode = $capture->reference_code;
+        if ($cleanRefCode) {
+            $refLower = strtolower($cleanRefCode);
+            if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || ($capture->invoice && $refLower === strtolower((string) $capture->invoice->invoice_link))) {
+                $cleanRefCode = null;
+            }
+        }
+
         return [
             'id' => $capture->id,
             'source' => $capture->source,
@@ -30,7 +38,7 @@ class BillingPaymentCapturePresenter
             'amount' => (float) $capture->amount,
             'paid_date' => optional($capture->paid_date)->toDateString(),
             'paid_date_display' => $capture->paid_date ? \Carbon\Carbon::parse($capture->paid_date)->translatedFormat('d M Y') : null,
-            'reference_code' => $capture->reference_code,
+            'reference_code' => $cleanRefCode,
             'match_status' => !empty(data_get($meta, 'cancelled')) ? 'cancelled' : $capture->match_status,
             'match_confidence' => $capture->match_confidence !== null ? (float) $capture->match_confidence : null,
             'reviewed_at' => optional($capture->reviewed_at)->toISOString(),

@@ -270,20 +270,29 @@ class CustomerAuthController extends Controller
 
         if ($invoice->bukti_pembayaran) {
             try {
+                $fileHash = null;
+                if (\Illuminate\Support\Facades\Storage::disk('public')->exists($invoice->bukti_pembayaran)) {
+                    $fullProofPath = \Illuminate\Support\Facades\Storage::disk('public')->path($invoice->bukti_pembayaran);
+                    if (file_exists($fullProofPath)) {
+                        $fileHash = hash_file('sha256', $fullProofPath);
+                    }
+                }
+
                 $capture = \App\Models\BillingPaymentCapture::create([
                     'source' => 'customer_app',
                     'invoice_id' => $invoice->id,
                     'customer_id' => $invoice->customer_id,
                     'amount' => (float) $invoice->amount,
                     'paid_date' => now()->toDateString(),
-                    'reference_code' => $invoice->invoice_link,
-                    'fingerprint' => hash('sha256', 'customer_app:' . $invoice->id . ':' . $invoice->bukti_pembayaran . ':' . microtime(true)),
+                    'reference_code' => null, // Diekstrak dari bukti struk asli, jangan gunakan invoice_link sistem
+                    'fingerprint' => hash('sha256', 'customer_app:' . $invoice->id . ':' . ($fileHash ?: $invoice->bukti_pembayaran) . ':' . microtime(true)),
                     'match_status' => 'pending',
                     'meta' => [
                         'media' => [
                             'path' => $invoice->bukti_pembayaran,
                             'mime_type' => $request->hasFile('bukti_pembayaran') ? $request->file('bukti_pembayaran')->getMimeType() : 'image/jpeg',
                             'file_name' => $request->hasFile('bukti_pembayaran') ? $request->file('bukti_pembayaran')->getClientOriginalName() : basename($invoice->bukti_pembayaran),
+                            'file_hash' => $fileHash,
                         ],
                         'source' => [
                             'type' => 'customer_portal_app',

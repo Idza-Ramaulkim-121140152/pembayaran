@@ -297,35 +297,57 @@ class PaymentMatchingService
             );
 
             if ($canAutoApply) {
-                // Check duplicate reference code to prevent double-applying receipt
+                // Check duplicate reference code and duplicate image hash to prevent double-applying receipt
                 $refCode = trim((string) ($capture->reference_code ?: data_get($capture->meta, 'analysis.reference_code', '')));
-                if ($refCode !== '' && strlen($refCode) >= 5) {
+                if ($refCode !== '') {
+                    $refLower = strtolower($refCode);
+                    if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || ($top['invoice'] && $refLower === strtolower((string) $top['invoice']->invoice_link))) {
+                        $refCode = '';
+                    }
+                }
+
+                $dupCapture = false;
+                $dupInvoice = false;
+                if ($refCode !== '' && strlen($refCode) >= 4) {
                     $dupCapture = BillingPaymentCapture::query()
                         ->where('id', '!=', $capture->id)
                         ->where('match_status', 'approved')
-                        ->where('reference_code', $refCode)
+                        ->whereRaw('LOWER(reference_code) = ?', [strtolower($refCode)])
                         ->exists();
 
                     $dupInvoice = Invoice::query()
                         ->where('id', '!=', $top['invoice']->id)
                         ->where('status', 'paid')
                         ->where(function ($q) use ($refCode) {
-                            $q->where('qris_transaction_number', $refCode);
+                            $q->whereRaw('LOWER(qris_transaction_number) = ?', [strtolower($refCode)]);
                         })
                         ->exists();
+                }
 
-                    if ($dupCapture || $dupInvoice) {
-                        $capture->match_status = 'needs_review';
-                        $capture->match_confidence = $topScore;
-                        $capture->meta = array_merge((array) $capture->meta, [
-                            'duplicate_receipt_detected' => true,
-                            'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
-                                'failure_reason' => 'duplicate_reference_code',
-                            ]),
-                        ]);
-                        $capture->save();
-                        return;
-                    }
+                $fileHash = data_get($capture->meta, 'media.file_hash');
+                $dupImage = false;
+                if ($fileHash) {
+                    $dupImage = BillingPaymentCapture::query()
+                        ->where('id', '!=', $capture->id)
+                        ->where('match_status', 'approved')
+                        ->where(function ($q) use ($fileHash) {
+                            $q->where('meta->media->file_hash', $fileHash)
+                              ->orWhere('meta->file_hash', $fileHash);
+                        })
+                        ->exists();
+                }
+
+                if ($dupCapture || $dupInvoice || $dupImage) {
+                    $capture->match_status = 'needs_review';
+                    $capture->match_confidence = $topScore;
+                    $capture->meta = array_merge((array) $capture->meta, [
+                        'duplicate_receipt_detected' => true,
+                        'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
+                            'failure_reason' => 'duplicate_reference_code',
+                        ]),
+                    ]);
+                    $capture->save();
+                    return;
                 }
 
                 $isAutoDisabled = (bool) ($top['invoice']->customer?->billing_auto_disabled ?? false);
@@ -544,6 +566,12 @@ class PaymentMatchingService
 
                 // Attach detected QRIS / Bank transaction metadata
                 $referenceCode = $capture->reference_code ?: (string) data_get($capture->meta, 'analysis.reference_code', '');
+                if ($referenceCode !== '') {
+                    $refLower = strtolower($referenceCode);
+                    if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || $refLower === strtolower((string) $invoice->invoice_link)) {
+                        $referenceCode = '';
+                    }
+                }
                 $sender = (string) data_get($capture->meta, 'analysis.destination_identity.name', data_get($capture->meta, 'source.sender_name', data_get($capture->meta, 'analysis.payment_channel', '')));
                 $channel = strtolower((string) data_get($capture->meta, 'analysis.payment_channel', ''));
                 $isQris = str_contains($channel, 'qris');

@@ -444,6 +444,147 @@ class WhatsAppPaymentVerificationTest extends TestCase
         ]);
     }
 
+    public function test_duplicate_reference_code_from_receipt_is_flagged_and_prevents_auto_approval(): void
+    {
+        Storage::fake('public');
+
+        [$customer1, $invoice1] = $this->makeCustomerInvoice();
+        [$customer2, $invoice2] = $this->makeCustomerInvoice();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [[
+                    'name' => 'Rumah Kita Network',
+                    'merchant_id' => 'G141935892',
+                    'aliases' => ['rumahkitanetwork'],
+                    'active' => true,
+                ]],
+                'transfer_bank' => [],
+            ],
+        ]);
+
+        $realTrxId = '202610120725091234';
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => json_encode([
+                                'is_payment_proof' => true,
+                                'amount' => 200000,
+                                'paid_date' => '2026-07-01',
+                                'paid_time' => '10:15:00',
+                                'reference_code' => $realTrxId,
+                                'payment_channel' => 'QRIS',
+                                'destination_identity' => [
+                                    'name' => 'Rumah Kita Network',
+                                    'merchant_id' => 'G141935892',
+                                ],
+                                'success_status' => true,
+                                'confidence_overall' => 95,
+                                'confidence_by_field' => [
+                                    'payment_proof' => 95,
+                                    'amount' => 95,
+                                    'date' => 95,
+                                    'time' => 95,
+                                    'destination' => 95,
+                                    'success_status' => 95,
+                                ],
+                            ]),
+                        ]],
+                    ],
+                ]],
+            ]),
+        ]);
+
+        // First payment for customer 1
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-first',
+            'sender_phone' => $customer1->phone,
+            'sent_at' => '2026-07-01T10:15:00+07:00',
+            'media_base64' => base64_encode('fake-image-first'),
+            'caption' => 'Pembayaran tagihan 1',
+            'mime_type' => 'image/png',
+        ])->assertStatus(202);
+
+        $capture1 = BillingPaymentCapture::latest('id')->first();
+        $this->assertSame('approved', $capture1->match_status);
+        $this->assertSame($realTrxId, $capture1->reference_code);
+        $this->assertSame('paid', $invoice1->fresh()->status);
+        $this->assertSame($realTrxId, $invoice1->fresh()->qris_transaction_number);
+
+        // Fraudulent reuse of the same receipt transaction ID for customer 2
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-second-fraud',
+            'sender_phone' => $customer2->phone,
+            'sent_at' => '2026-07-01T11:00:00+07:00',
+            'media_base64' => base64_encode('fake-image-second'),
+            'caption' => 'Pembayaran tagihan 2 pakai bukti yang sama',
+            'mime_type' => 'image/png',
+        ])->assertStatus(202);
+
+        $capture2 = BillingPaymentCapture::latest('id')->first();
+        $this->assertNotSame('approved', $capture2->match_status);
+        $this->assertSame('needs_review', $capture2->match_status);
+        $this->assertSame('duplicate_reference_code', data_get($capture2->meta, 'validation.failure_reason'));
+        $this->assertSame('unpaid', $invoice2->fresh()->status);
+    }
+
+    public function test_reference_code_never_defaults_to_system_invoice_link(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        // AI returns no reference_code on the receipt
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => json_encode([
+                                'is_payment_proof' => true,
+                                'amount' => 200000,
+                                'paid_date' => '2026-07-01',
+                                'paid_time' => '10:15:00',
+                                'reference_code' => null,
+                                'payment_channel' => 'QRIS',
+                                'destination_identity' => [
+                                    'name' => 'Rumah Kita Network',
+                                    'merchant_id' => 'G141935892',
+                                ],
+                                'success_status' => true,
+                                'confidence_overall' => 90,
+                                'confidence_by_field' => [
+                                    'payment_proof' => 90,
+                                    'amount' => 90,
+                                    'date' => 90,
+                                    'time' => 90,
+                                    'destination' => 90,
+                                    'success_status' => 90,
+                                ],
+                            ]),
+                        ]],
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-no-ref',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-07-01T10:15:00+07:00',
+            'media_base64' => base64_encode('fake-image-no-ref'),
+            'caption' => 'Bukti bayar',
+            'mime_type' => 'image/png',
+        ])->assertStatus(202);
+
+        $capture = BillingPaymentCapture::latest('id')->first();
+        $this->assertNull($capture->reference_code);
+        $this->assertNotSame($invoice->invoice_link, $capture->reference_code);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

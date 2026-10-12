@@ -516,7 +516,12 @@ export default function AutoConfirmationHistoryPage() {
                                                     </strong>
                                                 </div>
                                                 <div className="text-gray-500 truncate">
-                                                    Ref: <span className="font-mono text-gray-700">{capture.reference_code || '-'}</span>
+                                                    No. Ref Struk:{' '}
+                                                    <span className="font-mono font-semibold text-gray-800">
+                                                        {capture.reference_code && !capture.reference_code.toLowerCase().startsWith('inv_')
+                                                            ? capture.reference_code
+                                                            : '-'}
+                                                    </span>
                                                 </div>
                                             </div>
 
