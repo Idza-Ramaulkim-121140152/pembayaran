@@ -874,20 +874,42 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         ->where('path', '.*')
         ->name('remote-ont.proxy');
 
-    // ONT Gateway Fallback Route for Root-Relative Assets & Endpoints (js, css, img, fonts, boaform, cgi-bin, etc.)
+    // ONT Gateway Fallback Route for Root-Relative Assets & Endpoints (js, css, img, images, fonts, boaform, cgi-bin, etc.)
     Route::any('/{any}', [OntProxyController::class, 'fallbackProxy'])
-        ->where('any', '^(js|css|img|images|fonts|static|boaform|cgi-bin|web_login|favicon\.ico).*$')
+        ->where('any', '^(js|css|img|images|image|pic|media|fonts|static|assets|res|resource|theme|skin|boaform|cgi-bin|cgi|web_login|login\.cgi|login\.asp|formLogin|getpage\.gch|favicon\.ico).*$')
         ->name('remote-ont.fallback');
 
     // Serve React app untuk semua routes yang tidak dimulai dengan /api
-    Route::get('{any}', function (\Illuminate\Http\Request $request) {
-        // If request originated from an ONT gateway session via Referer, proxy it instead of showing blank/React HTML!
+    Route::any('{any}', function (\Illuminate\Http\Request $request) {
+        $path = $request->path();
+
+        // 1. If request originated from an ONT gateway session via Referer, proxy it!
         $referer = (string) $request->header('referer', '');
+        $ontIp = null;
         if (preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
             $ontIp = $matches[1];
-            return app(OntProxyController::class)->proxy($request, $ontIp, $request->path());
         }
 
-        return view('app');
+        // 2. Fallback to active ONT session or cookie if path looks like an ONT asset or endpoint
+        if (!$ontIp) {
+            $candidateIp = session('active_ont_ip') ?? $request->cookie('active_ont_gateway_ip');
+            if ($candidateIp && filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                $ext = strtolower(pathinfo(parse_url($path, PHP_URL_PATH) ?? '', PATHINFO_EXTENSION));
+                $ontExts = ['html', 'htm', 'asp', 'cgi', 'gch', 'php', 'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg', 'js', 'css', 'woff', 'woff2', 'ttf', 'bin'];
+                if (in_array($ext, $ontExts) || $request->isMethod('POST') || str_starts_with($path, 'boaform') || str_starts_with($path, 'cgi-bin')) {
+                    $ontIp = $candidateIp;
+                }
+            }
+        }
+
+        if ($ontIp) {
+            return app(OntProxyController::class)->proxy($request, $ontIp, $path);
+        }
+
+        if ($request->isMethod('GET')) {
+            return view('app');
+        }
+
+        abort(404);
     })->where('any', '^(?!api).*$')->name('react.app');
 });

@@ -19,6 +19,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/customer/*',
             'api/ipaymu/*',
             'ont-gateway/*',
+            'boaform/*',
+            'cgi-bin/*',
+            'web_login/*',
+            'login.cgi',
+            'login.asp',
+            'formLogin',
+            'getpage.gch',
         ]);
         $middleware->redirectGuestsTo('/login');
         $middleware->redirectUsersTo('/dashboard');
