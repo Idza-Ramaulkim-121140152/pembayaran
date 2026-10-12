@@ -16,6 +16,9 @@ class PaymentVerificationConfigService
         $storedConfig = is_array($decoded) ? $decoded : [];
 
         $config = array_replace_recursive($this->defaults(), $storedConfig);
+        if ((float) data_get($config, 'confidence_thresholds.auto_approve', 80) > 80) {
+            $config['confidence_thresholds']['auto_approve'] = 80;
+        }
         $config['notification_recipients'] = $this->normalizeNotificationRecipients(
             is_array($config['notification_recipients'] ?? null) ? $config['notification_recipients'] : []
         );
@@ -83,7 +86,7 @@ class PaymentVerificationConfigService
             'openai_model' => (string) env('OPENAI_PAYMENT_VISION_MODEL', 'gpt-4o-mini'),
             'auto_approve_enabled' => true,
             'confidence_thresholds' => [
-                'auto_approve' => 95,
+                'auto_approve' => 80,
                 'manual_review' => 70,
             ],
             'allowed_source_mime_types' => [

@@ -32,6 +32,7 @@ import {
     Router,
     UserCheck,
     QrCode,
+    CheckCircle2,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -148,6 +149,7 @@ const MENU_PERMISSION_MAP = {
     userManagement: 'user.manage',
     invoiceManagement: 'billing.invoice.manage',
     paymentVerification: 'billing.payment_capture.review',
+    autoConfirmationHistory: 'billing.payment_capture.review',
     financialTargets: 'financial_target.manage',
     accessPolicyMaster: 'access_policy.manage',
     systemLogs: 'access_policy.manage',
@@ -242,6 +244,7 @@ const MENU_GROUPS = [
             { key: 'attendanceManagement', label: 'Manajemen Absensi', to: '/settings/attendance', icon: UserCheck, match: (p) => p === '/settings/attendance' },
             { key: 'invoiceManagement', label: 'Manajemen Invoice', to: '/settings/invoice-management', icon: FileText, match: (p) => p === '/settings/invoice-management' },
             { key: 'paymentVerification', label: 'Verifikasi Pembayaran AI', to: '/settings/payment-verification', icon: Brain, match: (p) => p === '/settings/payment-verification' },
+            { key: 'autoConfirmationHistory', label: 'Riwayat Konfirmasi Auto', to: '/settings/payment-verification/auto-history', icon: CheckCircle2, match: (p) => p.startsWith('/settings/payment-verification/auto-history') },
             { key: 'financialTargets', label: 'Target Keuangan', to: '/settings/financial-targets', icon: Target, match: (p) => p === '/settings/financial-targets' },
             { key: 'accessPolicyMaster', label: 'Akses & Policy', to: '/settings/access-policy', icon: Shield, match: (p) => p === '/settings/access-policy' },
             { key: 'systemLogs', label: 'Log Aktivitas', to: '/settings/system-logs', icon: Activity, match: (p) => p === '/settings/system-logs' },

@@ -54,6 +54,7 @@ const CustomerAccountsPage = lazy(() => import('./pages/Settings/CustomerAccount
 const SystemHealthPage = lazy(() => import('./pages/Settings/SystemHealthPage'));
 const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivityLogsPage'));
 const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
+const AutoConfirmationHistoryPage = lazy(() => import('./pages/Settings/AutoConfirmationHistoryPage'));
 const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
 const Monitoring = lazy(() => import('./pages/Monitoring'));
 const SuperPanelPage = lazy(() => import('./pages/SuperPanel/SuperPanelPage'));
@@ -445,6 +446,7 @@ function App() {
                     <Route path="/settings/users" element={<GuardedRoute permissionKey="user.manage" element={<UserManagementPage />} />} />
                     <Route path="/settings/invoice-management" element={<GuardedRoute permissionKey="billing.invoice.manage" element={<InvoiceManagementPage />} />} />
                     <Route path="/settings/payment-verification" element={<GuardedRoute permissionKey="billing.payment_capture.review" element={<PaymentVerificationPage />} />} />
+                    <Route path="/settings/payment-verification/auto-history" element={<GuardedRoute permissionKey="billing.payment_capture.review" element={<AutoConfirmationHistoryPage />} />} />
                     <Route path="/settings/financial-targets" element={<GuardedRoute permissionKey="financial_target.manage" element={<FinancialTargetsPage />} />} />
                     <Route path="/settings/installation-pricing" element={<GuardedRoute permissionKey="inventory.master.manage" element={<InstallationPricingPage />} />} />
                     <Route path="/settings/promo" element={<GuardedRoute permissionKey="master.promo.manage" element={<PromoManagementPage />} />} />

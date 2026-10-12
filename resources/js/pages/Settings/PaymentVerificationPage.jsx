@@ -34,6 +34,7 @@ import {
     Eye,
     EyeOff,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Modal from '../../components/common/Modal';
 import paymentVerificationService from '../../services/paymentVerificationService';
 
@@ -669,6 +670,14 @@ export default function PaymentVerificationPage() {
                     <Sliders size={16} />
                     Pengaturan Rekening & Notifikasi
                 </button>
+
+                <Link
+                    to="/settings/payment-verification/auto-history"
+                    className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 shadow-sm"
+                >
+                    <CheckCircle2 size={16} className="text-emerald-600" />
+                    Riwayat Konfirmasi Auto
+                </Link>
             </div>
 
             {/* TAB CONTENT */}

@@ -16,13 +16,33 @@ class PaymentProofValidationService
     public function validate(BillingPaymentCapture $capture, array $analysis, ?Customer $customer, ?Invoice $invoice): array
     {
         $config = $this->configService->getConfig();
-        $autoThreshold = (float) data_get($config, 'confidence_thresholds.auto_approve', 95);
+        $autoThreshold = (float) data_get($config, 'confidence_thresholds.auto_approve', 80);
         $reviewThreshold = (float) data_get($config, 'confidence_thresholds.manual_review', 70);
         $destinationMatch = $this->matchDestinationWhitelist(
             (string) ($analysis['payment_channel'] ?? ''),
             (array) ($analysis['destination_identity'] ?? []),
             (array) ($config['destination_whitelist'] ?? [])
         );
+
+        $refCode = trim((string) ($analysis['reference_code'] ?? ''));
+        $isDuplicateRef = false;
+        if ($refCode !== '' && strlen($refCode) >= 5) {
+            $isDuplicateCapture = BillingPaymentCapture::query()
+                ->where('id', '!=', $capture->id)
+                ->where('match_status', 'approved')
+                ->where('reference_code', $refCode)
+                ->exists();
+
+            $isDuplicateInvoice = Invoice::query()
+                ->when($invoice, fn ($q) => $q->where('id', '!=', $invoice->id))
+                ->where('status', 'paid')
+                ->where(function ($q) use ($refCode) {
+                    $q->where('qris_transaction_number', $refCode);
+                })
+                ->exists();
+
+            $isDuplicateRef = $isDuplicateCapture || $isDuplicateInvoice;
+        }
 
         $flags = [
             'customer_identified' => (bool) $customer,
@@ -33,6 +53,7 @@ class PaymentProofValidationService
                 ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
                 : false,
             'destination_whitelisted' => $destinationMatch['matched'],
+            'is_duplicate_reference' => $isDuplicateRef,
             'confidence_meets_auto_approve' => (float) ($analysis['confidence_overall'] ?? 0) >= $autoThreshold,
             'confidence_meets_manual_review' => (float) ($analysis['confidence_overall'] ?? 0) >= $reviewThreshold,
         ];
@@ -40,7 +61,10 @@ class PaymentProofValidationService
         $failureReason = null;
         $status = 'needs_review';
 
-        if (!$flags['customer_identified']) {
+        if ($flags['is_duplicate_reference']) {
+            $failureReason = 'duplicate_reference_code';
+            $status = 'needs_review';
+        } elseif (!$flags['customer_identified']) {
             $failureReason = 'unknown_customer';
             $status = 'needs_review';
         } elseif (!$flags['active_invoice_found']) {

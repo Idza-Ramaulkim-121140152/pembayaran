@@ -7,6 +7,9 @@ const path = require('path');
 
 const app = express();
 loadEnvFile(path.resolve(__dirname, '../../.env'));
+loadEnvFile(path.resolve(__dirname, '../.env'));
+loadEnvFile(path.resolve(__dirname, '.env'));
+loadEnvFile(path.resolve(process.cwd(), '.env'));
 
 app.use(express.json({ limit: '25mb' }));
 
@@ -31,7 +34,7 @@ let waStatus = {
     lastErrorAt: null,
 };
 
-const PAYMENT_WEBHOOK_URL = process.env.WA_PAYMENT_WEBHOOK_URL || '';
+const PAYMENT_WEBHOOK_URL = process.env.WA_PAYMENT_WEBHOOK_URL || ((process.env.APP_URL || 'http://localhost').replace(/\/+$/, '') + '/api/whatsapp/webhooks/payments');
 const PAYMENT_WEBHOOK_SECRET = process.env.WA_PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_FORWARD_ENABLED = String(process.env.WA_PAYMENT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
 const SUPPORTED_PAYMENT_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];

@@ -437,4 +437,31 @@ class BillingAutomationController extends Controller
             ],
         ]);
     }
+
+    public function autoConfirmations(Request $request)
+    {
+        $validated = $request->validate([
+            'status' => 'nullable|string|in:approved,cancelled,all',
+            'search' => 'nullable|string|max:100',
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+            'per_page' => 'nullable|integer|min:1|max:200',
+        ]);
+
+        $paginator = $this->paymentMatchingService->autoConfirmations($validated, (int) ($validated['per_page'] ?? 20));
+
+        return response()->json([
+            'data' => $this->capturePresenter->presentPaginator($paginator),
+        ]);
+    }
+
+    public function cancelAutoConfirmation(BillingPaymentCapture $capture)
+    {
+        $result = $this->paymentMatchingService->cancelAutoConfirmation($capture, auth()->id());
+
+        return response()->json([
+            'message' => $result['message'],
+            'data' => $this->capturePresenter->present($result['capture']),
+        ]);
+    }
 }

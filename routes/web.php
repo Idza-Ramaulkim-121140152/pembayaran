@@ -567,6 +567,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/billing/payment-verification/config', [BillingAutomationController::class, 'paymentVerificationConfig'])->name('api.billing.payment-verification.config');
         Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
         Route::match(['get', 'post'], '/api/billing/payments/captures', [BillingAutomationController::class, 'captures'])->name('api.billing.payments.captures');
+        Route::get('/api/billing/payment-verification/auto-confirmations', [BillingAutomationController::class, 'autoConfirmations'])->name('api.billing.payment-verification.auto-confirmations');
+        Route::post('/api/billing/payment-verification/auto-confirmations/{capture}/cancel', [BillingAutomationController::class, 'cancelAutoConfirmation'])->name('api.billing.payment-verification.auto-confirmations.cancel');
         Route::post('/api/billing/payments/bulk-resolve', [BillingAutomationController::class, 'bulkResolve'])->name('api.billing.payments.bulk-resolve');
         Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
         Route::post('/api/billing/payments/{capture}/assign-customer', [BillingAutomationController::class, 'assignCustomer'])->name('api.billing.payments.assign-customer');
@@ -784,6 +786,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::middleware('role:superadmin')->group(function () {
         Route::get('/settings/invoice-management', fn() => view('app'))->name('invoice.management');
         Route::get('/settings/payment-verification', fn() => view('app'))->name('payment-verification.settings');
+        Route::get('/settings/payment-verification/auto-history', fn() => view('app'))->name('payment-verification.auto-history');
         Route::get('/settings/financial-targets', fn() => view('app'))->name('financial-targets.settings');
         Route::get('/settings/access-policy', fn() => view('app'))->name('access-policy.settings');
         Route::get('/settings/customer-accounts', fn() => view('app'))->name('customer-accounts.settings');

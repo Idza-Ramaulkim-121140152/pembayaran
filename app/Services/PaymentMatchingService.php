@@ -287,7 +287,40 @@ class PaymentMatchingService
                 ]);
             }
 
-            if ($autoApply && $candidates->count() === 1 && $topScore >= 95) {
+            $autoThreshold = (float) data_get(app(PaymentVerificationConfigService::class)->getConfig(), 'confidence_thresholds.auto_approve', 80);
+
+            if ($autoApply && $candidates->count() === 1 && $topScore >= $autoThreshold) {
+                // Check duplicate reference code to prevent double-applying receipt
+                $refCode = trim((string) ($capture->reference_code ?: data_get($capture->meta, 'analysis.reference_code', '')));
+                if ($refCode !== '' && strlen($refCode) >= 5) {
+                    $dupCapture = BillingPaymentCapture::query()
+                        ->where('id', '!=', $capture->id)
+                        ->where('match_status', 'approved')
+                        ->where('reference_code', $refCode)
+                        ->exists();
+
+                    $dupInvoice = Invoice::query()
+                        ->where('id', '!=', $top['invoice']->id)
+                        ->where('status', 'paid')
+                        ->where(function ($q) use ($refCode) {
+                            $q->where('qris_transaction_number', $refCode);
+                        })
+                        ->exists();
+
+                    if ($dupCapture || $dupInvoice) {
+                        $capture->match_status = 'needs_review';
+                        $capture->match_confidence = $topScore;
+                        $capture->meta = array_merge((array) $capture->meta, [
+                            'duplicate_receipt_detected' => true,
+                            'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
+                                'failure_reason' => 'duplicate_reference_code',
+                            ]),
+                        ]);
+                        $capture->save();
+                        return;
+                    }
+                }
+
                 $isAutoDisabled = (bool) ($top['invoice']->customer?->billing_auto_disabled ?? false);
                 if ($isAutoDisabled) {
                     $capture->match_status = 'needs_review';
@@ -342,7 +375,7 @@ class PaymentMatchingService
         // 1. If customer is identified, query active unpaid invoices for this customer
         if ($capture->customer_id) {
             $customerInvoices = Invoice::query()
-                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled')
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
                 ->where('customer_id', $capture->customer_id)
                 ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
                 ->orderBy('due_date')
@@ -395,7 +428,7 @@ class PaymentMatchingService
         // 2. Query invoices matching exact amount if more candidates needed or customer not identified
         if ($amount > 0 && $candidates->count() < 10) {
             $query = Invoice::query()
-                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled')
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
                 ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
                 ->whereBetween('amount', [$amount - 0.01, $amount + 0.01]);
 
@@ -444,13 +477,43 @@ class PaymentMatchingService
             $mediaPath = (string) data_get($capture->meta, 'media.path', '');
             $paidDate = $capture->paid_date ? Carbon::parse($capture->paid_date) : now();
             $paidTime = (string) data_get($capture->meta, 'analysis.paid_time', now()->format('H:i:s'));
-            $paidTimestamp = Carbon::parse($paidDate->toDateString() . ' ' . $paidTime);
+            if (strlen($paidTime) === 5) {
+                $paidTime .= ':00';
+            }
+            try {
+                $paidTimestamp = Carbon::parse($paidDate->toDateString() . ' ' . $paidTime);
+            } catch (\Throwable) {
+                $paidTimestamp = now();
+            }
+
+            // Resolve Admin Finance receiver (Keuangan Perusahaan)
+            $financeUserId = null;
+            try {
+                $financeService = app(\App\Services\CompanyFinanceReceiverService::class);
+                $activeFinanceIds = $financeService->activeUserIds();
+                if (!empty($activeFinanceIds)) {
+                    $financeUserId = (int) $activeFinanceIds[0];
+                } else {
+                    $financeUser = \App\Models\User::query()
+                        ->where('role', 'finance')
+                        ->orWhere('name', 'like', '%finance%')
+                        ->orWhere('role', 'admin')
+                        ->first();
+                    $financeUserId = $financeUser?->id;
+                }
+            } catch (\Throwable) {
+                $financeUserId = null;
+            }
 
             if ($invoice->status !== 'paid') {
                 $invoice->amount = (float) $capture->amount > 0 ? (float) $capture->amount : (float) $invoice->amount;
                 $invoice->status = 'paid';
                 $invoice->paid_at = $paidTimestamp;
                 $invoice->tolak_info = null;
+
+                if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+                    $invoice->payment_receiver_user_id = $financeUserId ?: ($actorId ?: $invoice->payment_receiver_user_id);
+                }
 
                 // Attach media proof if empty on invoice
                 if (empty($invoice->bukti_pembayaran) && !empty($mediaPath)) {
@@ -493,6 +556,26 @@ class PaymentMatchingService
                 $invoice->save();
             }
 
+            $customer = $invoice->customer()->first() ?: $invoice->customer;
+            $previousDueDate = $customer?->due_date ? Carbon::parse($customer->due_date)->toDateString() : null;
+            $wasIsolated = (bool) ($customer?->is_service_isolated ?? false);
+
+            $rollbackData = [
+                'customer_id' => $customer?->id,
+                'previous_due_date' => $previousDueDate,
+                'was_isolated' => $wasIsolated,
+                'service_isolated_at' => $customer?->service_isolated_at ? Carbon::parse($customer->service_isolated_at)->toDateTimeString() : null,
+                'service_isolated_by' => $customer?->service_isolated_by,
+                'isolation_restore_profile' => $customer?->isolation_restore_profile,
+                'invoice_id' => $invoice->id,
+                'previous_invoice_status' => $invoice->getOriginal('status') ?: 'unpaid',
+                'previous_invoice_paid_at' => $invoice->getOriginal('paid_at'),
+                'previous_payment_receiver_id' => $invoice->getOriginal('payment_receiver_user_id'),
+                'previous_include_in_mutation' => $invoice->getOriginal('include_in_mutation'),
+                'previous_qris_transaction_number' => $invoice->getOriginal('qris_transaction_number'),
+                'confirmed_at' => now()->toDateTimeString(),
+            ];
+
             $capture->invoice_id = $invoice->id;
             $capture->customer_id = $invoice->customer_id;
             $capture->match_status = 'approved';
@@ -502,17 +585,16 @@ class PaymentMatchingService
             $capture->meta = array_merge((array) $capture->meta, [
                 'auto_applied' => $autoApplied,
                 'approved_invoice_id' => $invoice->id,
+                'rollback_data' => $rollbackData,
             ]);
             $capture->save();
 
             // Update customer due date & un-isolate service
-            $customer = $invoice->customer;
             if ($customer) {
-                $isIsolated = (bool) ($customer->is_service_isolated ?? false);
-                if ($isIsolated) {
+                if ($wasIsolated) {
                     $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
-                } elseif (!empty($customer->due_date)) {
-                    $customer->due_date = Carbon::parse((string) $customer->due_date)->startOfDay()->addDays(30)->toDateString();
+                } elseif (!empty($previousDueDate)) {
+                    $customer->due_date = Carbon::parse($previousDueDate)->startOfDay()->addDays(30)->toDateString();
                 } else {
                     $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
                 }
@@ -548,8 +630,9 @@ class PaymentMatchingService
                 }
             }
 
-            // Sync with financial ledger / mutations
-            $this->ledgerService->syncInvoicePayment($invoice->fresh(), $actorId);
+            // Sync with financial ledger / mutations as Admin Finance
+            $effectiveActor = $financeUserId ?: $actorId;
+            $this->ledgerService->syncInvoicePayment($invoice->fresh(), $effectiveActor);
 
             // Dispatch customer payment confirmation
             try {
@@ -560,6 +643,147 @@ class PaymentMatchingService
                     'error' => $notifEx->getMessage(),
                 ]);
             }
+        });
+    }
+
+    public function autoConfirmations(array $filters = [], int $perPage = 25)
+    {
+        $query = BillingPaymentCapture::query()
+            ->with([
+                'invoice:id,invoice_link,customer_id,status,amount,due_date,paid_at,qris_payment_time,qris_transaction_number,payment_receiver_user_id',
+                'invoice.customer:id,name,phone,pppoe_username,due_date,is_service_isolated',
+                'invoice.paymentReceiver:id,name,email,role',
+                'customer:id,name,pppoe_username,phone,due_date,is_service_isolated',
+            ])
+            ->where(function ($q) {
+                $q->where('match_status', 'approved')
+                  ->orWhere(function ($sq) {
+                      $sq->where('match_status', 'rejected')
+                         ->whereNotNull('meta->cancelled_at');
+                  });
+            })
+            ->where(function ($q) {
+                $q->where('meta->auto_applied', true)
+                  ->orWhere('meta->auto_applied', '1')
+                  ->orWhere('match_confidence', '>=', 80);
+            })
+            ->orderByDesc('id');
+
+        if (!empty($filters['status']) && $filters['status'] === 'approved') {
+            $query->where('match_status', 'approved');
+        } elseif (!empty($filters['status']) && $filters['status'] === 'cancelled') {
+            $query->where('match_status', 'rejected')->whereNotNull('meta->cancelled_at');
+        }
+
+        if (!empty($filters['search'])) {
+            $search = trim((string) $filters['search']);
+            $query->where(function ($q) use ($search) {
+                $q->where('reference_code', 'like', "%{$search}%")
+                    ->orWhere('id', $search)
+                    ->orWhereHas('customer', function ($cq) use ($search) {
+                        $cq->where('name', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%")
+                            ->orWhere('pppoe_username', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('invoice', function ($iq) use ($search) {
+                        $iq->where('invoice_link', 'like', "%{$search}%")
+                            ->orWhere('qris_transaction_number', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        if (!empty($filters['from_date'])) {
+            $query->whereDate('created_at', '>=', $filters['from_date']);
+        }
+
+        if (!empty($filters['to_date'])) {
+            $query->whereDate('created_at', '<=', $filters['to_date']);
+        }
+
+        return $query->paginate($perPage);
+    }
+
+    public function cancelAutoConfirmation(BillingPaymentCapture $capture, ?int $actorId = null): array
+    {
+        return DB::transaction(function () use ($capture, $actorId) {
+            $meta = (array) ($capture->meta ?? []);
+            $rollbackData = (array) ($meta['rollback_data'] ?? []);
+
+            $invoiceId = $capture->invoice_id ?: ($rollbackData['invoice_id'] ?? null);
+            $invoice = $invoiceId ? \App\Models\Invoice::find($invoiceId) : null;
+            $customerId = $capture->customer_id ?: ($rollbackData['customer_id'] ?? null);
+            $customer = $customerId ? \App\Models\Customer::find($customerId) : null;
+
+            // 1. Delete financial mutation and revert invoice to unpaid
+            if ($invoice) {
+                \App\Models\FinancialTransaction::query()
+                    ->where('source', 'invoice_payment')
+                    ->where('reference_type', Invoice::class)
+                    ->where('reference_id', $invoice->id)
+                    ->delete();
+
+                $invoice->status = 'unpaid';
+                $invoice->paid_at = null;
+                $invoice->tolak_info = 'Dibatalkan dari monitoring konfirmasi terima auto';
+                $invoice->qris_transaction_number = null;
+                if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+                    $invoice->payment_receiver_user_id = $rollbackData['previous_payment_receiver_id'] ?? null;
+                }
+                $invoice->save();
+
+                $this->ledgerService->syncInvoicePayment($invoice->fresh(), $actorId);
+            }
+
+            // 2. Revert customer due date & isolation state
+            if ($customer) {
+                $prevDueDate = $rollbackData['previous_due_date'] ?? null;
+                if ($prevDueDate) {
+                    $customer->due_date = $prevDueDate;
+                } elseif ($customer->due_date) {
+                    $customer->due_date = Carbon::parse($customer->due_date)->subDays(30)->toDateString();
+                }
+
+                $wasIsolated = (bool) ($rollbackData['was_isolated'] ?? false);
+                if ($wasIsolated) {
+                    $customer->is_service_isolated = true;
+                    $customer->service_isolated_at = $rollbackData['service_isolated_at'] ?? now();
+                    $customer->service_isolated_by = $rollbackData['service_isolated_by'] ?? null;
+                    $customer->isolation_restore_profile = $rollbackData['isolation_restore_profile'] ?? null;
+                    $customer->save();
+
+                    if ($customer->pppoe_username) {
+                        try {
+                            $mikrotik = app(\App\Services\MikroTikService::class);
+                            $mikrotik->restrictUser($customer->pppoe_username, 'isolir');
+                        } catch (\Throwable $ex) {
+                            Log::warning('MikroTik re-isolation on cancel skipped: ' . $ex->getMessage());
+                        }
+                    }
+                } else {
+                    $customer->save();
+                }
+            }
+
+            // 3. Update capture match_status to rejected and store cancelled meta
+            $capture->match_status = 'rejected';
+            $capture->meta = array_merge($meta, [
+                'cancelled' => true,
+                'cancelled_at' => now()->toISOString(),
+                'cancelled_by' => $actorId,
+            ]);
+            $capture->save();
+
+            $this->auditLogService->log('billing.payment_capture.auto_cancelled', $capture, [
+                'invoice_id' => $invoice?->id,
+                'customer_id' => $customer?->id,
+                'reverted_due_date' => $customer?->due_date,
+            ], $actorId);
+
+            return [
+                'success' => true,
+                'message' => 'Konfirmasi pembayaran berhasil dibatalkan. Mutasi dihapus, tagihan menjadi belum lunas, dan tanggal jatuh tempo dikembalikan.',
+                'capture' => $capture->fresh(['customer', 'invoice']),
+            ];
         });
     }
 
