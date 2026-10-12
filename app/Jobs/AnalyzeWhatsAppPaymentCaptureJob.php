@@ -61,14 +61,34 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                 $resolvedCustomer = $customerResolutionService->resolveFromText($ocrText);
                 if ($resolvedCustomer) {
                     $capture->customer_id = $resolvedCustomer->id;
-                    $activeInvoice = $customerResolutionService->findActiveInvoices($resolvedCustomer)->first();
-                    if ($activeInvoice && !$capture->invoice_id) {
-                        $capture->invoice_id = $activeInvoice->id;
-                    }
                     $capture->save();
-                    $capture->load(['customer', 'invoice']);
+                    $capture->load(['customer']);
                 }
             }
+        }
+
+        // Resolve target invoice for customer based on detected payment amount
+        if ($capture->customer) {
+            $detectedAmount = isset($analysis['amount']) ? (float) $analysis['amount'] : 0;
+            $activeInvoices = $customerResolutionService->findActiveInvoices($capture->customer);
+
+            // If source is web_public and invoice_id already set, keep it intact
+            if ($capture->invoice_id && ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))) {
+                // Keep existing invoice_id
+            } else {
+                // Try to find exact amount match among customer's active unpaid invoices
+                $matchingInvoice = $detectedAmount > 0
+                    ? $activeInvoices->first(fn ($inv) => abs((float) $inv->amount - $detectedAmount) <= 0.01)
+                    : null;
+
+                if ($matchingInvoice) {
+                    $capture->invoice_id = $matchingInvoice->id;
+                } elseif (!$capture->invoice_id && $activeInvoices->isNotEmpty()) {
+                    $capture->invoice_id = $activeInvoices->first()->id;
+                }
+                $capture->save();
+            }
+            $capture->load(['customer', 'invoice']);
         }
 
         $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);

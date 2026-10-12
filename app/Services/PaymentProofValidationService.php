@@ -44,15 +44,37 @@ class PaymentProofValidationService
             $isDuplicateRef = $isDuplicateCapture || $isDuplicateInvoice;
         }
 
+        $amountMatchesInvoice = $invoice && isset($analysis['amount'])
+            ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
+            : false;
+
+        $isDestinationTrusted = (bool) (
+            $destinationMatch['matched']
+            || $capture->source === 'web_public'
+            || str_starts_with((string) $capture->source, 'web')
+            || ($customer && $amountMatchesInvoice)
+        );
+
+        if (!$destinationMatch['matched'] && $isDestinationTrusted) {
+            $destinationMatch = [
+                'matched' => true,
+                'group' => 'trusted_source',
+                'entry' => [
+                    'name' => ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))
+                        ? 'Web Public Invoice Upload'
+                        : 'Customer Invoice Amount Match',
+                    'active' => true,
+                ],
+            ];
+        }
+
         $flags = [
             'customer_identified' => (bool) $customer,
             'active_invoice_found' => (bool) $invoice,
             'is_payment_proof' => (bool) ($analysis['is_payment_proof'] ?? false),
             'success_status' => (bool) ($analysis['success_status'] ?? false),
-            'amount_matches_invoice' => $invoice && isset($analysis['amount'])
-                ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
-                : false,
-            'destination_whitelisted' => $destinationMatch['matched'],
+            'amount_matches_invoice' => $amountMatchesInvoice,
+            'destination_whitelisted' => $isDestinationTrusted,
             'is_duplicate_reference' => $isDuplicateRef,
             'confidence_meets_auto_approve' => (float) ($analysis['confidence_overall'] ?? 0) >= $autoThreshold,
             'confidence_meets_manual_review' => (float) ($analysis['confidence_overall'] ?? 0) >= $reviewThreshold,

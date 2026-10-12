@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\BillingPaymentCapture;
+use App\Models\BillingPaymentMatchReview;
 use App\Models\Customer;
 use App\Models\FinancialTransaction;
 use App\Models\Invoice;
@@ -300,5 +301,160 @@ class AutoConfirmationHistoryTest extends TestCase
         // Must NOT be auto-approved
         $this->assertSame('needs_review', $newCapture->match_status);
         $this->assertSame('unpaid', $invoice->status);
+    }
+
+    public function test_web_public_upload_auto_confirms_uploaded_invoice_without_recommending_other_customers(): void
+    {
+        $customerA = Customer::create([
+            'name' => 'Anwar',
+            'phone' => '081211111111',
+            'due_date' => '2026-10-20',
+            'is_active' => true,
+        ]);
+
+        $customerB = Customer::create([
+            'name' => 'Zairina Wati',
+            'phone' => '081222222222',
+            'due_date' => '2026-10-20',
+            'is_active' => true,
+        ]);
+
+        $invoiceA = Invoice::create([
+            'customer_id' => $customerA->id,
+            'invoice_date' => '2026-10-01',
+            'due_date' => '2026-10-20',
+            'amount' => 200000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-anwar-web-001',
+        ]);
+
+        $invoiceB = Invoice::create([
+            'customer_id' => $customerB->id,
+            'invoice_date' => '2026-10-01',
+            'due_date' => '2026-10-20',
+            'amount' => 200000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-zairina-web-002',
+        ]);
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'web_public',
+            'customer_id' => $customerA->id,
+            'invoice_id' => $invoiceA->id,
+            'amount' => 200000,
+            'paid_date' => '2026-10-12',
+            'reference_code' => 'WEB-REF-ANWAR-001',
+            'match_confidence' => 95,
+            'fingerprint' => 'test-fp-web-public-anwar',
+            'match_status' => 'pending',
+            'meta' => [
+                'analysis' => [
+                    'amount' => 200000,
+                    'paid_date' => '2026-10-12',
+                    'paid_time' => '14:30:00',
+                    'reference_code' => 'WEB-REF-ANWAR-001',
+                    'payment_channel' => 'QRIS',
+                    'confidence_overall' => 95,
+                ],
+            ],
+        ]);
+
+        $matchingService = app(PaymentMatchingService::class);
+        $matchingService->runMatching($capture->id, true, $this->adminUser->id);
+
+        $capture->refresh();
+        $invoiceA->refresh();
+        $invoiceB->refresh();
+
+        // Must be approved immediately
+        $this->assertSame('approved', $capture->match_status);
+        $this->assertSame('paid', $invoiceA->status);
+        // Customer B must remain untouched
+        $this->assertSame('unpaid', $invoiceB->status);
+
+        // Reviews must ONLY contain Customer A's invoice, NOT Customer B!
+        $candidateInvoiceIds = BillingPaymentMatchReview::query()
+            ->where('capture_id', $capture->id)
+            ->pluck('candidate_invoice_id')
+            ->all();
+
+        $this->assertEquals([$invoiceA->id], $candidateInvoiceIds);
+    }
+
+    public function test_whatsapp_upload_auto_confirms_registered_customer_matching_invoice_without_other_customers(): void
+    {
+        $customerA = Customer::create([
+            'name' => 'Budi',
+            'phone' => '081344445555',
+            'due_date' => '2026-10-20',
+            'is_active' => true,
+        ]);
+
+        $customerB = Customer::create([
+            'name' => 'Siti',
+            'phone' => '081377778888',
+            'due_date' => '2026-10-20',
+            'is_active' => true,
+        ]);
+
+        $invoiceA = Invoice::create([
+            'customer_id' => $customerA->id,
+            'invoice_date' => '2026-10-01',
+            'due_date' => '2026-10-20',
+            'amount' => 150000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-budi-wa-001',
+        ]);
+
+        $invoiceB = Invoice::create([
+            'customer_id' => $customerB->id,
+            'invoice_date' => '2026-10-01',
+            'due_date' => '2026-10-20',
+            'amount' => 150000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-siti-wa-002',
+        ]);
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customerA->id,
+            'amount' => 150000,
+            'paid_date' => '2026-10-12',
+            'reference_code' => 'WA-REF-BUDI-001',
+            'match_confidence' => 90,
+            'fingerprint' => 'test-fp-wa-budi',
+            'match_status' => 'pending',
+            'meta' => [
+                'sender_phone' => '081344445555',
+                'analysis' => [
+                    'amount' => 150000,
+                    'paid_date' => '2026-10-12',
+                    'paid_time' => '10:15:00',
+                    'reference_code' => 'WA-REF-BUDI-001',
+                    'payment_channel' => 'Transfer Bank',
+                    'confidence_overall' => 90,
+                ],
+            ],
+        ]);
+
+        $matchingService = app(PaymentMatchingService::class);
+        $matchingService->runMatching($capture->id, true, $this->adminUser->id);
+
+        $capture->refresh();
+        $invoiceA->refresh();
+        $invoiceB->refresh();
+
+        // Must be approved immediately
+        $this->assertSame('approved', $capture->match_status);
+        $this->assertSame('paid', $invoiceA->status);
+        $this->assertSame('unpaid', $invoiceB->status);
+
+        // Candidate reviews must ONLY contain Customer A's invoice
+        $candidateInvoiceIds = BillingPaymentMatchReview::query()
+            ->where('capture_id', $capture->id)
+            ->pluck('candidate_invoice_id')
+            ->all();
+
+        $this->assertEquals([$invoiceA->id], $candidateInvoiceIds);
     }
 }

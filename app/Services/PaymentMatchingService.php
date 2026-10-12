@@ -289,7 +289,14 @@ class PaymentMatchingService
 
             $autoThreshold = (float) data_get(app(PaymentVerificationConfigService::class)->getConfig(), 'confidence_thresholds.auto_approve', 80);
 
-            if ($autoApply && $candidates->count() === 1 && $topScore >= $autoThreshold) {
+            $canAutoApply = $autoApply && $topScore >= $autoThreshold && (
+                $candidates->count() === 1 ||
+                ($capture->customer_id && $top['invoice']->customer_id === $capture->customer_id && (
+                    $candidates->count() === 1 || ($candidates->get(1)['score'] ?? 0) < $topScore
+                ))
+            );
+
+            if ($canAutoApply) {
                 // Check duplicate reference code to prevent double-applying receipt
                 $refCode = trim((string) ($capture->reference_code ?: data_get($capture->meta, 'analysis.reference_code', '')));
                 if ($refCode !== '' && strlen($refCode) >= 5) {
@@ -372,7 +379,28 @@ class PaymentMatchingService
 
         $candidates = collect();
 
-        // 1. If customer is identified, query active unpaid invoices for this customer
+        // 1. Web Public / Direct Invoice Upload:
+        // When receipt is uploaded from customer's specific invoice link, match ONLY that invoice!
+        if ($capture->invoice_id && ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))) {
+            $invoice = Invoice::query()
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
+                ->where('id', $capture->invoice_id)
+                ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                ->first();
+
+            if ($invoice) {
+                return collect([[
+                    'invoice' => $invoice,
+                    'score' => 100.0,
+                    'reason' => 'web_public_invoice_direct',
+                ]]);
+            }
+
+            return collect();
+        }
+
+        // 2. Identified Customer (e.g. from WhatsApp sender phone):
+        // Query ONLY this customer's active unpaid invoices. NEVER query other customers' invoices!
         if ($capture->customer_id) {
             $customerInvoices = Invoice::query()
                 ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
@@ -381,62 +409,56 @@ class PaymentMatchingService
                 ->orderBy('due_date')
                 ->get();
 
+            if ($customerInvoices->isEmpty()) {
+                return collect();
+            }
+
+            // Find invoices matching exact amount
+            $exactMatches = $customerInvoices->filter(fn ($inv) => $amount > 0 && abs((float) $inv->amount - $amount) <= 0.01);
+
+            if ($exactMatches->isNotEmpty()) {
+                // If there is an exact match for this customer, return ONLY this customer's matching invoice(s)!
+                foreach ($exactMatches as $invoice) {
+                    $candidates->push([
+                        'invoice' => $invoice,
+                        'score' => 100.0,
+                        'reason' => 'customer_match,amount_exact',
+                    ]);
+                }
+                return $candidates;
+            }
+
+            // No exact amount match, but customer has unpaid invoices
+            // Return only this customer's invoices for admin review
             foreach ($customerInvoices as $invoice) {
                 $score = 80.0;
-                $reasons = ['customer_match'];
-
-                if ($amount > 0 && abs((float) $invoice->amount - $amount) <= 0.01) {
-                    $score += 15;
-                    $reasons[] = 'amount_exact';
-                } elseif ($amount <= 0) {
-                    $score += 15;
-                    $reasons[] = 'customer_active_bill';
-                    // Auto-fill amount from invoice
-                    $capture->amount = (float) $invoice->amount;
-                    $capture->save();
-                } else {
-                    $score += 10;
-                    $reasons[] = 'customer_unpaid_invoice';
-                }
+                $reasons = ['customer_match', 'customer_unpaid_invoice'];
 
                 if ($capture->invoice_id && (int) $capture->invoice_id === (int) $invoice->id) {
                     $score += 5;
                     $reasons[] = 'invoice_hint';
                 }
 
-                if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
-                    $score += 5;
-                    $reasons[] = 'reference_hint';
-                }
-
-                if ($invoice->due_date) {
-                    $diff = abs($paidDate->diffInDays(Carbon::parse($invoice->due_date)->startOfDay(), false));
-                    if ($diff <= 7) {
-                        $score += 5;
-                        $reasons[] = 'date_near_due';
-                    }
-                }
-
                 $candidates->push([
                     'invoice' => $invoice,
-                    'score' => min($score, 100),
+                    'score' => min($score, 90),
                     'reason' => implode(',', $reasons),
                 ]);
             }
+
+            return $candidates;
         }
 
-        // 2. Query invoices matching exact amount if more candidates needed or customer not identified
-        if ($amount > 0 && $candidates->count() < 10) {
-            $query = Invoice::query()
+        // 3. Unknown / Unregistered Sender (e.g. WhatsApp from unknown number):
+        // Query unpaid invoices matching exact amount for manual admin review
+        if ($amount > 0) {
+            $amountMatches = Invoice::query()
                 ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
                 ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
-                ->whereBetween('amount', [$amount - 0.01, $amount + 0.01]);
-
-            if ($capture->customer_id) {
-                $query->where('customer_id', '!=', $capture->customer_id);
-            }
-
-            $amountMatches = $query->orderBy('due_date')->limit(15)->get();
+                ->whereBetween('amount', [$amount - 0.01, $amount + 0.01])
+                ->orderBy('due_date')
+                ->limit(15)
+                ->get();
 
             foreach ($amountMatches as $invoice) {
                 $score = 70.0;
@@ -457,7 +479,7 @@ class PaymentMatchingService
 
                 $candidates->push([
                     'invoice' => $invoice,
-                    'score' => min($score, 100),
+                    'score' => min($score, 85),
                     'reason' => implode(',', $reasons),
                 ]);
             }
