@@ -394,7 +394,51 @@ function normalizeMimeType(rawMime) {
     return clean;
 }
 
+function isSelfChatMessage(msg) {
+    if (!msg) return false;
+
+    const fromStr = String(msg.from || '');
+    const toStr = String(msg.to || '');
+    if (fromStr.includes('@g.us') || toStr.includes('@g.us') || fromStr === 'status@broadcast') {
+        return false;
+    }
+
+    const clean = (val) => String(val || '').replace(/@.*$/, '').replace(/\D/g, '');
+    const fromNum = clean(msg.from);
+    const toNum = clean(msg.to);
+    const remoteNum = clean(msg.id?.remote);
+    const botNum = clean(waStatus?.phone || client?.info?.wid?.user || '');
+
+    // 1. If from and to numbers are identical and non-empty
+    if (fromNum && toNum && fromNum === toNum) {
+        return true;
+    }
+
+    // 2. If toNum or remoteNum matches the bot's own phone number
+    if (botNum) {
+        if (toNum === botNum && fromNum === botNum) return true;
+        if (remoteNum === botNum && msg.fromMe) return true;
+        if (toNum === botNum && msg.fromMe) return true;
+    }
+
+    // 3. Fallback: if fromStr equals toStr and not empty
+    if (fromStr && toStr && fromStr === toStr) {
+        return true;
+    }
+
+    return false;
+}
+
 async function resolveSenderPhone(msg) {
+    if (isSelfChatMessage(msg)) {
+        const bodyText = String(msg.body || '');
+        const phoneMatch = bodyText.match(/(?:\+62|62|0)8[1-9][0-9]{7,11}/);
+        if (phoneMatch) {
+            const normalized = normalizeInboundPhone(phoneMatch[0]);
+            if (normalized) return normalized;
+        }
+    }
+
     try {
         if (typeof msg.getContact === 'function') {
             const contact = await msg.getContact();
@@ -438,6 +482,7 @@ function buildMessageContext(msg, sourceEvent = null) {
         to: msg?.to || null,
         author: msg?.author || null,
         from_me: !!msg?.fromMe,
+        is_self: isSelfChatMessage(msg),
         has_media: !!msg?.hasMedia,
         type: msg?.type || msg?._data?.type || null,
         mime_type: msg?._data?.mimetype || null,
@@ -448,8 +493,12 @@ function buildMessageContext(msg, sourceEvent = null) {
 }
 
 function classifyChatScope(msg) {
+    if (isSelfChatMessage(msg)) {
+        return 'self_chat';
+    }
+
     if (msg?.fromMe) {
-        return 'self_message';
+        return 'outbound_message';
     }
 
     if (msg?.from === 'status@broadcast') {
@@ -682,13 +731,14 @@ function sweepPendingCiphertextMessages() {
 }
 
 async function handleCiphertextCandidate(msg) {
+    const isSelf = isSelfChatMessage(msg);
     const context = buildMessageContext(msg, 'message_ciphertext');
     logGatewayEvent('ciphertext_seen', context);
 
-    if (context.from_me) {
+    if (context.from_me && !isSelf) {
         logGatewayEvent('skipped', {
             ...context,
-            reason: 'from_me',
+            reason: 'from_me_outbound',
         });
         return;
     }
@@ -774,14 +824,16 @@ async function postToWebhook(payload, headers) {
 }
 
 async function handleInboundCandidate(sourceEvent, msg) {
+    const isSelf = isSelfChatMessage(msg);
     const context = buildMessageContext(msg, sourceEvent);
     logGatewayEvent('incoming', context);
     sweepPendingCiphertextMessages();
 
-    if (context.from_me) {
+    // Lewati pesan outbound ke kontak/grup lain (tetapi izinkan jika di chat Diri Sendiri)
+    if (context.from_me && !isSelf) {
         logGatewayEvent('skipped', {
             ...context,
-            reason: 'from_me',
+            reason: 'from_me_outbound',
         });
         return;
     }
@@ -802,7 +854,8 @@ async function handleInboundCandidate(sourceEvent, msg) {
         });
     }
 
-    console.log(`📩 [${sourceEvent}] Pesan masuk dari ${context.from}: ${context.body_preview}...`);
+    const senderDisplay = isSelf ? 'Diri Sendiri (Self-chat)' : context.from;
+    console.log(`📩 [${sourceEvent}] Pesan terdeteksi dari ${senderDisplay} (media: ${context.has_media}): "${context.body_preview}"`);
 
     try {
         const result = await maybeForwardPaymentMessage(msg, sourceEvent, context);
@@ -849,9 +902,12 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             ...context,
             reason: 'no_media',
         });
+        console.log(`ℹ️ Pesan dari ${context.from || 'pengirim'} tidak memiliki lampiran media (bukan bukti bayar gambar), dilewati.`);
         return { forwarded: false, canRetry: false };
     }
 
+    const senderDisplay = context.is_self ? 'Diri Sendiri' : (msg.from || 'pengirim');
+    console.log(`📸 Terdeteksi media dari ${senderDisplay}, mulai mengunduh file...`);
     logGatewayEvent('media_download_started', context);
     const media = await downloadMediaWithRetry(msg, 4, 1500);
     if (!media || !media.data || !media.mimetype) {
@@ -860,7 +916,7 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             reason: !media ? 'media_download_empty' : 'media_data_empty',
             mime_type: media?.mimetype || null,
         });
-        console.log(`ℹ️ Media dari ${msg.from} belum dapat diunduh, tidak menandai processed agar bisa dicoba ulang.`);
+        console.log(`ℹ️ Media dari ${senderDisplay} belum dapat diunduh, tidak menandai processed agar bisa dicoba ulang.`);
         return { forwarded: false, canRetry: true };
     }
 
@@ -870,20 +926,23 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             reason: 'unsupported_mime_type',
             mime_type: media.mimetype,
         });
-        console.log(`ℹ️ Media dari ${msg.from} dilewati karena mime type tidak didukung: ${media.mimetype}`);
+        console.log(`ℹ️ Media dari ${senderDisplay} dilewati karena mime type tidak didukung: ${media.mimetype}`);
         return { forwarded: false, canRetry: false };
     }
 
     const cleanMime = normalizeMimeType(media.mimetype);
-    const senderPhone = await resolveSenderPhone(msg);
+    const resolvedPhone = await resolveSenderPhone(msg);
+    const senderPhone = resolvedPhone || String(msg.from || waStatus?.phone || 'unknown').replace(/@.*$/, '');
+    const mediaSize = Buffer.byteLength(media.data || '', 'base64');
 
     logGatewayEvent('media_download_succeeded', {
         ...context,
         mime_type: cleanMime,
         raw_mime: media.mimetype,
         sender_phone: senderPhone,
-        media_size: Buffer.byteLength(media.data || '', 'base64'),
+        media_size: mediaSize,
     });
+    console.log(`✅ Media berhasil diunduh (${cleanMime}, ${mediaSize} bytes, pengirim: ${senderPhone}). Meneruskan ke webhook...`);
 
     const payload = {
         message_id: getMessageId(msg) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -921,7 +980,7 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             target_url: postResult.url,
             response_body: postResult.body,
         });
-        console.log(`✅ Payment webhook berhasil [${postResult.status}] via ${postResult.url}: ${postResult.body}`);
+        console.log(`🎉 Webhook pembayaran berhasil [${postResult.status}] via ${postResult.url}: ${postResult.body}`);
         return { forwarded: true, canRetry: false };
     } catch (err) {
         logGatewayEvent('forward_failed', {
