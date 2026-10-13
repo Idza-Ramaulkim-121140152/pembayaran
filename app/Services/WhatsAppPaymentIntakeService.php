@@ -93,7 +93,11 @@ class WhatsAppPaymentIntakeService
         $messageId = trim((string) ($payload['message_id'] ?? ''));
         $senderPhone = $this->normalizePhone((string) ($payload['sender_phone'] ?? ''));
         $caption = trim((string) ($payload['caption'] ?? ''));
-        $mimeType = trim((string) ($payload['mime_type'] ?? 'image/jpeg'));
+        $rawMime = strtolower(trim(explode(';', (string) ($payload['mime_type'] ?? 'image/jpeg'))[0]));
+        if ($rawMime === 'image/jpg' || $rawMime === 'image/jfif' || $rawMime === 'image/pjpeg') {
+            $rawMime = 'image/jpeg';
+        }
+        $mimeType = $rawMime !== '' ? $rawMime : 'image/jpeg';
         $mediaUrl = trim((string) ($payload['media_url'] ?? ''));
         $mediaBase64 = trim((string) ($payload['media_base64'] ?? ''));
         $sentAt = Carbon::parse((string) ($payload['sent_at'] ?? now()->toISOString()));
@@ -117,9 +121,11 @@ class WhatsAppPaymentIntakeService
     private function storeMedia(array $normalized): array
     {
         $mimeType = (string) $normalized['mime_type'];
-        $allowed = (array) data_get($this->configService->getConfig(), 'allowed_source_mime_types', []);
-        if (!in_array($mimeType, $allowed, true)) {
-            throw new \InvalidArgumentException('Mime type media tidak diizinkan.');
+        $allowed = array_merge((array) data_get($this->configService->getConfig(), 'allowed_source_mime_types', []), [
+            'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/jfif', 'image/pjpeg', 'application/pdf',
+        ]);
+        if (!in_array($mimeType, $allowed, true) && !str_starts_with($mimeType, 'image/')) {
+            throw new \InvalidArgumentException('Mime type media tidak diizinkan: ' . $mimeType);
         }
 
         $extension = $this->extensionFromMime($mimeType);

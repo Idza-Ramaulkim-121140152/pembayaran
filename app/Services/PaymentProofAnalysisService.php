@@ -51,6 +51,7 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "paid_time": "HH:MM:SS"|null,
   "reference_code": string|null,
   "payment_channel": string|null,
+  "sender_name": string|null,
   "destination_identity": {
     "name": string|null,
     "account_number": string|null,
@@ -73,6 +74,7 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
 Pedoman:
 - is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
 - success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
+- sender_name: Nama pengirim/pembayar yang tertera pada bukti transfer (contoh: Dari Saripudin -> "Saripudin").
 - reference_code: Cari dan ekstrak nomor transaksi asli atau nomor unik bukti pembayaran yang tercetak pada gambar struk (contoh: No. Referensi, Nomor Transaksi, ID Transaksi, RRN / Retrieval Reference Number, No. Resi, Nomor Jurnal, Kode Transaksi, STAN, Approval Code).
 - PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...' atau nomor tagihan). Ekstrak HANYA nomor unik transaksi dari bukti bayar/struk. Jika tidak ada nomor unik transaksi dari bank/e-wallet/QRIS yang tertera pada struk, isi null.
 - confidence memakai skala angka 0 s.d 100.
@@ -525,6 +527,15 @@ PROMPT;
             $destMerchantId = trim($m[1]);
         }
 
+        $senderName = null;
+        if (preg_match('/(?:dari|pengirim|sender|atas\s*nama|a\.?n\.?)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})/i', $text, $m)) {
+            $candName = trim($m[1]);
+            $stopWords = ['bank', 'rekening', 'anda', 'kamu', 'qris', 'seabank', 'bca', 'bri', 'bni', 'mandiri', 'dana', 'gopay', 'ovo', 'shopeepay'];
+            if (strlen($candName) >= 3 && !in_array(strtolower($candName), $stopWords, true)) {
+                $senderName = $candName;
+            }
+        }
+
         $isPaymentProof = $amount !== null || $channel !== null || $isSuccess;
 
         return [
@@ -532,6 +543,7 @@ PROMPT;
             'amount' => $amount,
             'reference_code' => $ref,
             'payment_channel' => $channel,
+            'sender_name' => $senderName,
             'success_status' => $isSuccess,
             'paid_date' => $paidDate,
             'paid_time' => $paidTime,
@@ -570,6 +582,7 @@ PROMPT;
             'paid_time' => $this->stringOrNull($decoded['paid_time'] ?? null),
             'reference_code' => $rawRef,
             'payment_channel' => $this->stringOrNull($decoded['payment_channel'] ?? null),
+            'sender_name' => $this->stringOrNull($decoded['sender_name'] ?? null),
             'destination_identity' => [
                 'name' => $this->stringOrNull(data_get($decoded, 'destination_identity.name')),
                 'account_number' => $this->stringOrNull(data_get($decoded, 'destination_identity.account_number')),

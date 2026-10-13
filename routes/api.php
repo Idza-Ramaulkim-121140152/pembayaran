@@ -22,3 +22,7 @@ Route::prefix('mobile/customer')->group(function () {
         Route::post('/payments/confirm', [MobileCustomerPaymentConfirmationController::class, 'store']);
     });
 });
+
+Route::post('/whatsapp/webhooks/payments', [\App\Http\Controllers\WhatsAppPaymentWebhookController::class, 'store'])
+    ->name('api.whatsapp.webhooks.payments.api');
+

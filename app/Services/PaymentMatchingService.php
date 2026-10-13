@@ -183,7 +183,7 @@ class PaymentMatchingService
 
         $status = strtolower(trim((string) ($filters['status'] ?? 'all')));
         if ($status === 'needs_review') {
-            $query->where('match_status', 'needs_review');
+            $query->whereIn('match_status', ['needs_review', 'pending']);
         } elseif ($status === 'approved') {
             $query->where('match_status', 'approved');
         } elseif ($status === 'unmatched') {

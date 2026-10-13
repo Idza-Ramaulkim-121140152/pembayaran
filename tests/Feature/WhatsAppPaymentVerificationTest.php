@@ -585,6 +585,134 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertNotSame($invoice->invoice_link, $capture->reference_code);
     }
 
+    public function test_webhook_accepts_image_jpg_and_normalizes_it(): void
+    {
+        Storage::fake('public');
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        $response = $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-jpg-test',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-07-01T10:15:00+07:00',
+            'media_base64' => base64_encode('fake-jpg-binary'),
+            'caption' => 'Bukti JPG',
+            'mime_type' => 'image/jpg; charset=binary',
+        ]);
+
+        $response->assertStatus(202);
+        $capture = BillingPaymentCapture::latest('id')->first();
+        $this->assertNotNull($capture);
+        $this->assertSame('image/jpeg', data_get($capture->meta, 'source.mime_type'));
+    }
+
+    public function test_webhook_payment_resolves_customer_by_sender_name_on_receipt(): void
+    {
+        Storage::fake('public');
+        $customer = Customer::create([
+            'name' => 'Saripudin',
+            'phone' => '089999999999', // Different phone from sender phone!
+            'address' => 'Kalianda',
+            'due_date' => '2026-07-10',
+            'is_active' => true,
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_date' => '2026-07-01',
+            'due_date' => '2026-07-10',
+            'amount' => 200000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-saripudin-' . uniqid(),
+        ]);
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [[
+                    'name' => 'Rumah Kita Network',
+                    'merchant_id' => 'G141935892',
+                    'aliases' => ['rumahkitanetwork'],
+                    'active' => true,
+                ]],
+                'transfer_bank' => [],
+            ],
+        ]);
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => json_encode([
+                                'is_payment_proof' => true,
+                                'amount' => 200000,
+                                'paid_date' => '2026-07-01',
+                                'paid_time' => '11:36:00',
+                                'reference_code' => '011000MCWV7G',
+                                'payment_channel' => 'QRIS',
+                                'sender_name' => 'Saripudin',
+                                'destination_identity' => [
+                                    'name' => 'Rumah Kita Network',
+                                    'merchant_id' => 'G141935892',
+                                ],
+                                'success_status' => true,
+                                'confidence_overall' => 95,
+                                'confidence_by_field' => [
+                                    'payment_proof' => 95,
+                                    'amount' => 95,
+                                    'date' => 95,
+                                    'time' => 95,
+                                    'destination' => 95,
+                                    'success_status' => 95,
+                                ],
+                            ]),
+                        ]],
+                    ],
+                ]],
+            ]),
+        ]);
+
+        // Incoming message from family/different phone +62 821-9045-4546
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-saripudin-01',
+            'sender_phone' => '+62 821-9045-4546',
+            'sent_at' => '2026-07-01T11:36:00+07:00',
+            'media_base64' => base64_encode('fake-seabank-saripudin'),
+            'caption' => 'Saya telah berhasil mengirimkan Rp200.000 ke rekening kamu melalui SeaBank.',
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(202);
+
+        $capture = BillingPaymentCapture::latest('id')->first();
+        $this->assertSame($customer->id, $capture->customer_id);
+        $this->assertSame('approved', $capture->match_status);
+        $this->assertSame('paid', $invoice->fresh()->status);
+    }
+
+    public function test_captures_query_with_needs_review_includes_pending_captures(): void
+    {
+        Storage::fake('public');
+        $customer = Customer::create([
+            'name' => 'Pending Customer',
+            'phone' => '087777777777',
+            'address' => 'Test',
+            'due_date' => '2026-07-10',
+            'is_active' => true,
+        ]);
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customer->id,
+            'amount' => 200000,
+            'paid_date' => '2026-07-01',
+            'fingerprint' => 'test-pending-fp',
+            'match_status' => 'pending',
+        ]);
+
+        $matchingService = app(\App\Services\PaymentMatchingService::class);
+        $list = $matchingService->captures(['status' => 'needs_review']);
+
+        $this->assertTrue(collect($list->items())->contains('id', $capture->id));
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

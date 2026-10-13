@@ -91,8 +91,13 @@ class PaymentVerificationConfigService
             ],
             'allowed_source_mime_types' => [
                 'image/jpeg',
+                'image/jpg',
                 'image/png',
                 'image/webp',
+                'image/heic',
+                'image/heif',
+                'image/jfif',
+                'image/pjpeg',
                 'application/pdf',
             ],
             'destination_whitelist' => [

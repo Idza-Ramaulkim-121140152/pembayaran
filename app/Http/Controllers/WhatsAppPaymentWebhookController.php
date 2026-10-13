@@ -39,13 +39,32 @@ class WhatsAppPaymentWebhookController extends Controller
             ], 422);
         }
 
+        $rawMime = strtolower(trim(explode(';', (string) $validated['mime_type'])[0]));
+        if ($rawMime === 'image/jpg' || $rawMime === 'image/jfif' || $rawMime === 'image/pjpeg') {
+            $rawMime = 'image/jpeg';
+        }
+        $validated['mime_type'] = $rawMime;
+
         $expectedSecret = trim((string) env('WA_PAYMENT_WEBHOOK_SECRET', ''));
         if ($expectedSecret !== '') {
             $providedSecret = trim((string) $request->header('X-Webhook-Secret', ''));
             abort_if($providedSecret !== $expectedSecret, 403, 'Webhook secret tidak valid.');
         }
 
-        $result = $this->intakeService->intake($validated);
+        try {
+            $result = $this->intakeService->intake($validated);
+        } catch (\Throwable $e) {
+            Log::error('WhatsApp payment intake error', [
+                'message_id' => $validated['message_id'],
+                'sender_phone' => $validated['sender_phone'],
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'message' => 'Gagal memproses media pembayaran: ' . $e->getMessage(),
+            ], 422);
+        }
 
         Log::info('WhatsApp payment webhook accepted', [
             'message_id' => $validated['message_id'],

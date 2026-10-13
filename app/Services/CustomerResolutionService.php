@@ -140,6 +140,16 @@ class CustomerResolutionService
             if ($cust) return $cust;
         }
 
+        // D. Extract Sender / Customer Name from receipt text (e.g. Dari: Saripudin, Pengirim: Saripudin)
+        if (preg_match('/(?:dari|pengirim|sender|atas\s*nama|a\.?n\.?)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})/i', $text, $nameMatch)) {
+            $extractedName = trim($nameMatch[1]);
+            $stopWords = ['bank', 'rekening', 'anda', 'kamu', 'qris', 'seabank', 'bca', 'bri', 'bni', 'mandiri', 'dana', 'gopay', 'ovo', 'shopeepay'];
+            if (strlen($extractedName) >= 3 && !in_array(strtolower($extractedName), $stopWords, true)) {
+                $cust = Customer::query()->where('name', 'like', "%{$extractedName}%")->first();
+                if ($cust) return $cust;
+            }
+        }
+
         return null;
     }
 

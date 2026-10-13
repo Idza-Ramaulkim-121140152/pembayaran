@@ -54,7 +54,7 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
 
         $analysis = $analysisService->analyze($capture);
 
-        // If customer was still not identified, attempt resolution with newly extracted OCR text
+        // If customer was still not identified, attempt resolution with newly extracted OCR text or sender_name
         if (!$capture->customer_id || !$capture->customer) {
             $ocrText = (string) ($analysis['ocr_raw_text'] ?? '');
             if ($ocrText !== '') {
@@ -63,6 +63,20 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                     $capture->customer_id = $resolvedCustomer->id;
                     $capture->save();
                     $capture->load(['customer']);
+                }
+            }
+
+            if (!$capture->customer_id || !$capture->customer) {
+                $senderName = trim((string) ($analysis['sender_name'] ?? ''));
+                if ($senderName !== '' && strlen($senderName) >= 3) {
+                    $resolvedCustomer = \App\Models\Customer::query()
+                        ->where('name', 'like', "%{$senderName}%")
+                        ->first();
+                    if ($resolvedCustomer) {
+                        $capture->customer_id = $resolvedCustomer->id;
+                        $capture->save();
+                        $capture->load(['customer']);
+                    }
                 }
             }
         }

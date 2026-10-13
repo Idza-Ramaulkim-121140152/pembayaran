@@ -37,7 +37,17 @@ let waStatus = {
 const PAYMENT_WEBHOOK_URL = process.env.WA_PAYMENT_WEBHOOK_URL || ((process.env.APP_URL || 'http://localhost').replace(/\/+$/, '') + '/api/whatsapp/webhooks/payments');
 const PAYMENT_WEBHOOK_SECRET = process.env.WA_PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_FORWARD_ENABLED = String(process.env.WA_PAYMENT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
-const SUPPORTED_PAYMENT_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const SUPPORTED_PAYMENT_MIME_TYPES = [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/webp',
+    'image/heic',
+    'image/heif',
+    'image/jfif',
+    'image/pjpeg',
+    'application/pdf',
+];
 const GATEWAY_LOG_PATH = path.resolve(__dirname, 'logs/payment-forward.log');
 const RECENT_GATEWAY_EVENTS_LIMIT = 200;
 const CIPHERTEXT_RESOLUTION_TIMEOUT_MS = 30000;
@@ -370,7 +380,48 @@ function normalizeInboundPhone(rawPhone) {
 }
 
 function shouldForwardMimeType(mimeType) {
-    return SUPPORTED_PAYMENT_MIME_TYPES.includes(mimeType);
+    if (!mimeType) return false;
+    const clean = String(mimeType).split(';')[0].trim().toLowerCase();
+    return clean.startsWith('image/') || clean === 'application/pdf' || SUPPORTED_PAYMENT_MIME_TYPES.includes(clean);
+}
+
+function normalizeMimeType(rawMime) {
+    if (!rawMime) return 'image/jpeg';
+    const clean = String(rawMime).split(';')[0].trim().toLowerCase();
+    if (clean === 'image/jpg' || clean === 'image/jfif' || clean === 'image/pjpeg') {
+        return 'image/jpeg';
+    }
+    return clean;
+}
+
+async function resolveSenderPhone(msg) {
+    try {
+        if (typeof msg.getContact === 'function') {
+            const contact = await msg.getContact();
+            if (contact && contact.number) {
+                const normalized = normalizeInboundPhone(contact.number);
+                if (normalized && normalized.length >= 8 && normalized.length <= 16) {
+                    return normalized;
+                }
+            }
+        }
+    } catch (_) {}
+
+    const author = String(msg.author || '');
+    if (author.endsWith('@c.us')) {
+        return normalizeInboundPhone(author.replace('@c.us', ''));
+    }
+
+    const from = String(msg.from || '');
+    if (from.endsWith('@c.us')) {
+        return normalizeInboundPhone(from.replace('@c.us', ''));
+    }
+
+    if (msg._data?.id?.remote && String(msg._data.id.remote).endsWith('@c.us')) {
+        return normalizeInboundPhone(String(msg._data.id.remote).replace('@c.us', ''));
+    }
+
+    return normalizeInboundPhone(from);
 }
 
 function getMessageId(msg) {
@@ -409,7 +460,7 @@ function classifyChatScope(msg) {
         return 'group';
     }
 
-    if (msg?.from?.endsWith('@c.us')) {
+    if (msg?.from?.endsWith('@c.us') || msg?.from?.endsWith('@lid')) {
         return 'external_private_chat';
     }
 
@@ -646,6 +697,82 @@ async function handleCiphertextCandidate(msg) {
     sweepPendingCiphertextMessages();
 }
 
+async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1500) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            if (msg.hasMedia) {
+                const media = await msg.downloadMedia();
+                if (media && media.data && media.mimetype) {
+                    return media;
+                }
+            }
+        } catch (err) {
+            console.warn(`⚠️ downloadMedia percobaan ke-${attempt} gagal: ${err.message}`);
+        }
+        if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+    }
+    return null;
+}
+
+function getWebhookCandidateUrls() {
+    const urls = [];
+    if (process.env.WA_PAYMENT_WEBHOOK_URL) {
+        urls.push(process.env.WA_PAYMENT_WEBHOOK_URL.trim());
+    }
+    if (process.env.APP_URL) {
+        const appUrl = process.env.APP_URL.trim().replace(/\/+$/, '');
+        urls.push(`${appUrl}/api/whatsapp/webhooks/payments`);
+    }
+    urls.push('http://127.0.0.1/api/whatsapp/webhooks/payments');
+    urls.push('http://localhost/api/whatsapp/webhooks/payments');
+    urls.push('http://127.0.0.1:8000/api/whatsapp/webhooks/payments');
+
+    return [...new Set(urls.filter(Boolean))];
+}
+
+async function postToWebhook(payload, headers) {
+    const candidateUrls = getWebhookCandidateUrls();
+    let lastError = null;
+
+    for (const targetUrl of candidateUrls) {
+        try {
+            console.log(`🚚 Mencoba forward payment webhook ke ${targetUrl}...`);
+            let res = await fetch(targetUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload),
+                redirect: 'manual',
+            });
+
+            // Handle HTTP 301/302/307/308 redirects manually to preserve POST body & method
+            if ([301, 302, 307, 308].includes(res.status) && res.headers.has('location')) {
+                const redirectedUrl = new URL(res.headers.get('location'), targetUrl).toString();
+                console.log(`🔄 Webhook redirected [${res.status}] -> ${redirectedUrl}, re-posting payload...`);
+                res = await fetch(redirectedUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                });
+            }
+
+            const bodyText = await res.text();
+            if (res.ok) {
+                return { ok: true, status: res.status, url: targetUrl, body: bodyText };
+            }
+
+            console.warn(`⚠️ Target webhook ${targetUrl} mengembalikan [${res.status}]: ${bodyText.substring(0, 150)}`);
+            lastError = new Error(`HTTP ${res.status}: ${bodyText}`);
+        } catch (err) {
+            console.warn(`⚠️ Gagal menghubungi webhook target ${targetUrl}: ${err.message}`);
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('Semua target webhook URL gagal dihubungi.');
+}
+
 async function handleInboundCandidate(sourceEvent, msg) {
     const context = buildMessageContext(msg, sourceEvent);
     logGatewayEvent('incoming', context);
@@ -678,8 +805,10 @@ async function handleInboundCandidate(sourceEvent, msg) {
     console.log(`📩 [${sourceEvent}] Pesan masuk dari ${context.from}: ${context.body_preview}...`);
 
     try {
-        await maybeForwardPaymentMessage(msg, sourceEvent, context);
-        markMessageAsProcessed(context.message_id, sourceEvent);
+        const result = await maybeForwardPaymentMessage(msg, sourceEvent, context);
+        if (result?.forwarded || result?.canRetry === false) {
+            markMessageAsProcessed(context.message_id, sourceEvent);
+        }
     } catch (err) {
         logGatewayEvent('forward_exception', {
             ...context,
@@ -697,23 +826,12 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             ...context,
             reason: 'forward_disabled',
         });
-        return;
+        return { forwarded: false, canRetry: false };
     }
 
-    if (!PAYMENT_WEBHOOK_URL) {
-        logGatewayEvent('skipped', {
-            ...context,
-            reason: 'missing_webhook_url',
-        });
-        console.warn('⚠️ WA payment webhook URL belum di-set, inbound payment forwarding dilewati.');
-        return;
-    }
-
-    if (!msg || !msg.hasMedia || !msg.from || msg.from.includes('@g.us') || msg.from === 'status@broadcast') {
+    if (!msg || !msg.from || msg.from.includes('@g.us') || msg.from === 'status@broadcast') {
         let reason = 'not_eligible';
-        if (!msg?.hasMedia) {
-            reason = 'no_media';
-        } else if (msg?.from?.includes('@g.us')) {
+        if (msg?.from?.includes('@g.us')) {
             reason = 'group_message';
         } else if (msg?.from === 'status@broadcast') {
             reason = 'status_broadcast';
@@ -723,34 +841,57 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
             ...context,
             reason,
         });
-        return;
+        return { forwarded: false, canRetry: false };
+    }
+
+    if (!msg.hasMedia) {
+        logGatewayEvent('skipped', {
+            ...context,
+            reason: 'no_media',
+        });
+        return { forwarded: false, canRetry: false };
     }
 
     logGatewayEvent('media_download_started', context);
-    const media = await msg.downloadMedia();
-    if (!media || !media.data || !media.mimetype || !shouldForwardMimeType(media.mimetype)) {
+    const media = await downloadMediaWithRetry(msg, 4, 1500);
+    if (!media || !media.data || !media.mimetype) {
         logGatewayEvent('skipped', {
             ...context,
-            reason: !media ? 'media_download_empty' : (!media.data ? 'media_data_empty' : (!media.mimetype ? 'media_mime_missing' : 'unsupported_mime_type')),
+            reason: !media ? 'media_download_empty' : 'media_data_empty',
             mime_type: media?.mimetype || null,
         });
-        console.log(`ℹ️ Media dari ${msg.from} dilewati karena mime type tidak didukung: ${media?.mimetype || 'unknown'}`);
-        return;
+        console.log(`ℹ️ Media dari ${msg.from} belum dapat diunduh, tidak menandai processed agar bisa dicoba ulang.`);
+        return { forwarded: false, canRetry: true };
     }
+
+    if (!shouldForwardMimeType(media.mimetype)) {
+        logGatewayEvent('skipped', {
+            ...context,
+            reason: 'unsupported_mime_type',
+            mime_type: media.mimetype,
+        });
+        console.log(`ℹ️ Media dari ${msg.from} dilewati karena mime type tidak didukung: ${media.mimetype}`);
+        return { forwarded: false, canRetry: false };
+    }
+
+    const cleanMime = normalizeMimeType(media.mimetype);
+    const senderPhone = await resolveSenderPhone(msg);
 
     logGatewayEvent('media_download_succeeded', {
         ...context,
-        mime_type: media.mimetype,
+        mime_type: cleanMime,
+        raw_mime: media.mimetype,
+        sender_phone: senderPhone,
         media_size: Buffer.byteLength(media.data || '', 'base64'),
     });
 
     const payload = {
         message_id: getMessageId(msg) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        sender_phone: normalizeInboundPhone(msg.from),
+        sender_phone: senderPhone,
         sent_at: new Date((msg.timestamp || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
         media_base64: media.data,
         caption: msg.body || '',
-        mime_type: media.mimetype,
+        mime_type: cleanMime,
     };
 
     const headers = {
@@ -768,35 +909,29 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
         from: msg.from,
         sender_phone: payload.sender_phone,
         mime_type: payload.mime_type,
-        target_url: PAYMENT_WEBHOOK_URL,
-    });
-    console.log(`🚚 Forward inbound payment media ${payload.message_id} -> ${PAYMENT_WEBHOOK_URL}`);
-
-    const response = await fetch(PAYMENT_WEBHOOK_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
     });
 
-    const bodyText = await response.text();
-    if (!response.ok) {
+    try {
+        const postResult = await postToWebhook(payload, headers);
+
+        logGatewayEvent('forward_succeeded', {
+            ...context,
+            message_id: payload.message_id,
+            status: postResult.status,
+            target_url: postResult.url,
+            response_body: postResult.body,
+        });
+        console.log(`✅ Payment webhook berhasil [${postResult.status}] via ${postResult.url}: ${postResult.body}`);
+        return { forwarded: true, canRetry: false };
+    } catch (err) {
         logGatewayEvent('forward_failed', {
             ...context,
             message_id: payload.message_id,
-            status: response.status,
-            response_body: bodyText,
+            error: err.message,
         });
-        console.error(`❌ Payment webhook gagal [${response.status}] ${bodyText}`);
-        return;
+        console.error(`❌ Payment webhook gagal ke semua target: ${err.message}`);
+        return { forwarded: false, canRetry: true };
     }
-
-    logGatewayEvent('forward_succeeded', {
-        ...context,
-        message_id: payload.message_id,
-        status: response.status,
-        response_body: bodyText,
-    });
-    console.log(`✅ Payment webhook berhasil [${response.status}] ${bodyText}`);
 }
 
 function resetRuntimeState() {
