@@ -35,10 +35,10 @@ class PaymentProofAnalysisService
 
         $preferredProvider = (string) ($config['ai_provider'] ?? 'auto');
         $geminiKey = trim((string) (
-            $config['gemini_api_key']
-            ?? \App\Models\SiteSetting::get('gemini_api_key')
-            ?? \App\Models\SiteSetting::get('google_api_key')
-            ?? config('services.gemini.api_key')
+            (!empty($config['gemini_api_key']) ? $config['gemini_api_key'] : null)
+            ?: \App\Models\SiteSetting::get('gemini_api_key')
+            ?: \App\Models\SiteSetting::get('google_api_key')
+            ?: config('services.gemini.api_key')
             ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', '')))
         ));
         $openAiKey = trim((string) (
@@ -82,16 +82,17 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "ocr_raw_text": string|null,
   "raw_summary": string|null
 }
-Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Foto Layar, Foto Kamera HP):
-- PENTING GAMBAR BLUR/BURAM: Gambar ini mungkin agak blur, foto kamera HP dari struk/layar, agak redup, atau mengalami kompresi WhatsApp. Teliti setiap bagian gambar dengan sangat cermat:
-  1. amount: Cari angka nominal transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Hilangkan 'Rp' dan titik ribuan, kembalikan berupa angka murni (misal 150000). Walaupun angka agak kabur, baca angka nominal/total transfer sebaik mungkin.
-  2. sender_name: Cari nama pengirim / pemilik rekening pengirim (contoh: 'Dari: Saripudin', 'Pengirim: Rama', dsb.).
+Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Struk Termal/Kertas, Foto Kamera HP):
+- PENTING GAMBAR BLUR/BURAM/STRUK KERTAS/TERMAL/EDC/AGEN: Gambar ini mungkin agak blur, struk kertas termal/ATM/EDC/BRILink/minimarket, foto kamera HP agak redup/miring, atau kompresi WhatsApp:
+  1. amount: Cari angka nominal transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Carilah kata kunci 'Total', 'Nominal', 'Jumlah', 'Transfer', 'Bayar', atau angka ribuan yang menonjol. Hilangkan 'Rp' dan tanda baca, kembalikan angka murni (misal 150000). Walaupun angka agak pudar/kabur, baca sebaik mungkin.
+  2. sender_name: Cari nama pengirim / pemilik rekening pengirim (contoh: 'Dari: Saripudin', 'Pengirim: Rama', 'Pelanggan: Budi', dsb.).
   3. reference_code: Cari nomor transaksi unik bank / e-wallet (contoh: No. Transaksi, Nomor Transaksi, No. Referensi, ID Transaksi, RRN, No. Resi). Pada SeaBank atau bank lain, cari nomor transaksi unik panjang (misal 20261013...). PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...'). Jika tidak ada nomor unik dari bank/e-wallet, isi null.
   4. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada gambar struk/bukti bayar (contoh '13 Okt 2026, 11:36' -> paid_date: '2026-10-13', paid_time: '11:36:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
-  5. payment_channel: Deteksi bank/e-wallet (contoh: SeaBank, BCA, BRI / BRImo, Mandiri / Livin, BNI, Dana, GoPay, OVO, ShopeePay, QRIS).
-  6. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
-  7. success_status=true hanya jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM.
+  5. payment_channel: Deteksi bank/e-wallet (contoh: SeaBank, BCA, BRI / BRImo, Mandiri / Livin, BNI, Dana, GoPay, OVO, ShopeePay, QRIS, ATM, Agen).
+  6. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank/QRIS/agen/EDC/ATM.
+  7. success_status=true jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti bayar yang sah.
   8. confidence memakai skala angka 0 s.d 100.
+  9. ocr_raw_text: Salin seluruh teks yang terbaca pada struk (nama, angka, tanggal, nomor referensi) agar sistem dapat memverifikasi silang.
 PROMPT;
 
         // 1. Try AI Vision if raw bytes are available
@@ -136,9 +137,11 @@ PROMPT;
             $width = imagesx($img);
             $height = imagesy($img);
 
-            // Upscale small or low-res images so text is readable
-            if ($width < 900 && $height < 900 && $width > 50 && $height > 50) {
-                $scale = min(2.5, 1200 / max($width, $height));
+            // Upscale jika sisi terkecil < 800px agar teks kecil pada struk terbaca jelas
+            $minDim = min($width, $height);
+            $maxDim = max($width, $height);
+            if ($minDim < 800 && $minDim > 40) {
+                $scale = min(3.0, max(1.5, 1200 / $maxDim));
                 $newWidth = (int) round($width * $scale);
                 $newHeight = (int) round($height * $scale);
                 $resampled = imagecreatetruecolor($newWidth, $newHeight);
@@ -147,19 +150,19 @@ PROMPT;
                 $img = $resampled;
             }
 
-            // Contrast enhancement: negative values in GD increase contrast
-            imagefilter($img, IMG_FILTER_CONTRAST, -18);
+            // Contrast enhancement yang aman & seimbang
+            imagefilter($img, IMG_FILTER_CONTRAST, -10);
 
-            // Unsharp mask / sharpening convolution matrix
+            // Unsharp mask yang halus (tidak merusak karakter angka kecil)
             $sharpenMatrix = [
-                [-0.5, -0.5, -0.5],
-                [-0.5,  5.0, -0.5],
-                [-0.5, -0.5, -0.5],
+                [-0.15, -0.15, -0.15],
+                [-0.15,  2.20, -0.15],
+                [-0.15, -0.15, -0.15],
             ];
             imageconvolution($img, $sharpenMatrix, 1.0, 0);
 
             ob_start();
-            imagejpeg($img, null, 92);
+            imagejpeg($img, null, 95);
             $enhanced = ob_get_clean();
             imagedestroy($img);
 

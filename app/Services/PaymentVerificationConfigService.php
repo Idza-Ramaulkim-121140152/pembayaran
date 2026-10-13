@@ -16,6 +16,13 @@ class PaymentVerificationConfigService
         $storedConfig = is_array($decoded) ? $decoded : [];
 
         $config = array_replace_recursive($this->defaults(), $storedConfig);
+        $envKey = (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', ''));
+        if (empty($config['gemini_api_key']) && $envKey !== '') {
+            $config['gemini_api_key'] = $envKey;
+        }
+        if (empty($config['gemini_model']) || in_array($config['gemini_model'], ['gemini-1.5-flash', 'gemini-2.0-flash'])) {
+            $config['gemini_model'] = 'gemini-3.5-flash';
+        }
         if ((float) data_get($config, 'confidence_thresholds.auto_approve', 80) > 80) {
             $config['confidence_thresholds']['auto_approve'] = 80;
         }
