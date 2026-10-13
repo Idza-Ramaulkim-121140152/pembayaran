@@ -1550,9 +1550,9 @@ export default function PaymentVerificationPage() {
                                 </label>
                                 <input
                                     type="text"
-                                    value={config?.gemini_model || 'gemini-1.5-flash'}
+                                    value={config?.gemini_model || 'gemini-3.5-flash'}
                                     onChange={(e) => setConfig((p) => ({ ...p, gemini_model: e.target.value }))}
-                                    placeholder="gemini-1.5-flash"
+                                    placeholder="gemini-3.5-flash"
                                     className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white font-mono"
                                 />
                             </div>
