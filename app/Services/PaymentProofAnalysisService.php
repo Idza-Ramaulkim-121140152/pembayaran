@@ -177,8 +177,11 @@ PROMPT;
         string $prompt,
         array $config
     ): ?array {
-        $preferredModel = (string) ($config['gemini_model'] ?? 'gemini-1.5-flash');
-        $models = array_values(array_unique([$preferredModel, 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']));
+        $preferredModel = (string) ($config['gemini_model'] ?? 'gemini-3.5-flash');
+        if ($preferredModel === 'gemini-1.5-flash' || $preferredModel === 'gemini-2.0-flash') {
+            $preferredModel = 'gemini-3.5-flash';
+        }
+        $models = array_values(array_unique([$preferredModel, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-1.5-flash']));
 
         foreach ($models as $model) {
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
