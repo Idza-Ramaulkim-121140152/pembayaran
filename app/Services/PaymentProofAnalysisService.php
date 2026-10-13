@@ -74,8 +74,9 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
 Pedoman:
 - is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
 - success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
-- sender_name: Nama pengirim/pembayar yang tertera pada bukti transfer (contoh: Dari Saripudin -> "Saripudin").
-- reference_code: Cari dan ekstrak nomor transaksi asli atau nomor unik bukti pembayaran yang tercetak pada gambar struk (contoh: No. Referensi, Nomor Transaksi, ID Transaksi, RRN / Retrieval Reference Number, No. Resi, Nomor Jurnal, Kode Transaksi, STAN, Approval Code).
+- paid_date & paid_time: Ekstrak TANGGAL dan JAM TRANSAKSI yang tercetak asli pada gambar struk/bukti bayar (contoh 'Waktu Transaksi: 13 Okt 2026, 11:36' -> paid_date: '2026-10-13', paid_time: '11:36:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke YYYY-MM-DD. JANGAN PERNAH gunakan waktu sekarang atau waktu kirim WA. Jika detik tidak ada pada struk (HH:MM), tambahkan ':00'. Jika waktu tidak tertera pada struk, isi null.
+- sender_name: Nama pengirim/pembayar yang tertera pada bukti transfer (contoh: Dari: Saripudin (SeaBank: ...) -> "Saripudin").
+- reference_code: Cari dan ekstrak nomor transaksi asli atau nomor unik bukti pembayaran yang tercetak pada gambar struk (contoh: No. Transaksi, Nomor Transaksi, No. Referensi, Nomor Referensi, ID Transaksi, RRN, No. Resi, Nomor Jurnal, Kode Transaksi, STAN, Approval Code). Pada SeaBank atau bank lain, utamakan nomor transaksi atau nomor referensi unik.
 - PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...' atau nomor tagihan). Ekstrak HANYA nomor unik transaksi dari bukti bayar/struk. Jika tidak ada nomor unik transaksi dari bank/e-wallet/QRIS yang tertera pada struk, isi null.
 - confidence memakai skala angka 0 s.d 100.
 PROMPT;
@@ -239,6 +240,14 @@ PROMPT;
             $customer = $this->customerResolutionService->resolveFromText($ocrText);
         }
 
+        $parsed = $this->parseReceiptPatterns($combinedText);
+
+        if (!$customer && !empty($parsed['sender_name']) && strlen($parsed['sender_name']) >= 3) {
+            $customer = \App\Models\Customer::query()
+                ->where('name', 'like', "%{$parsed['sender_name']}%")
+                ->first();
+        }
+
         $activeInvoice = null;
         if ($customer) {
             $activeInvoice = $this->customerResolutionService->findActiveInvoices($customer)->first();
@@ -246,8 +255,6 @@ PROMPT;
         if (!$activeInvoice && $capture->invoice) {
             $activeInvoice = $capture->invoice;
         }
-
-        $parsed = $this->parseReceiptPatterns($combinedText);
 
         $amount = $parsed['amount'];
         if (!$amount && $activeInvoice) {
@@ -275,6 +282,15 @@ PROMPT;
         if ($parsed['amount'] && $activeInvoice && abs((float)$activeInvoice->amount - (float)$parsed['amount']) <= 0.01) {
             $confidence += 10.0;
         }
+        if ($parsed['paid_date']) {
+            $confidence += 5.0;
+        }
+        if ($parsed['paid_time']) {
+            $confidence += 5.0;
+        }
+        if ($referenceCode !== null) {
+            $confidence += 5.0;
+        }
         if ($parsed['success_status']) {
             $confidence += 5.0;
         }
@@ -299,11 +315,18 @@ PROMPT;
         }
         $rawSummary = implode(' · ', $summaryParts) ?: ($isPaymentProof ? 'Bukti transfer terdeteksi' : 'Bukan bukti pembayaran');
 
+        $paidDateResolved = $parsed['paid_date'] ?: ($capture->paid_date ? optional($capture->paid_date)->toDateString() : now()->toDateString());
+        $paidTimeResolved = $parsed['paid_time'] ?: null;
+
         Log::info('Local payment proof analysis completed', [
             'capture_id' => $capture->id,
             'customer_id' => $customer?->id,
             'invoice_id' => $activeInvoice?->id,
             'amount' => $amount,
+            'paid_date' => $paidDateResolved,
+            'paid_time' => $paidTimeResolved,
+            'reference_code' => $referenceCode,
+            'sender_name' => $parsed['sender_name'] ?? null,
             'confidence' => $confidence,
             'provider' => $ocrProvider,
         ]);
@@ -311,10 +334,11 @@ PROMPT;
         return [
             'is_payment_proof' => $isPaymentProof,
             'amount' => $amount,
-            'paid_date' => $parsed['paid_date'] ?: ($capture->paid_date ?: now()->toDateString()),
-            'paid_time' => $parsed['paid_time'] ?: now()->format('H:i:s'),
+            'paid_date' => $paidDateResolved,
+            'paid_time' => $paidTimeResolved,
             'reference_code' => $referenceCode,
             'payment_channel' => $channel,
+            'sender_name' => $parsed['sender_name'] ?? null,
             'destination_identity' => [
                 'name' => $parsed['destination_name'] ?: 'Rumah Kita Network',
                 'account_number' => $parsed['destination_account'],
@@ -326,8 +350,8 @@ PROMPT;
             'confidence_by_field' => [
                 'payment_proof' => $isPaymentProof ? 90.0 : 30.0,
                 'amount' => $amount ? 90.0 : 20.0,
-                'date' => 85.0,
-                'time' => 80.0,
+                'date' => $parsed['paid_date'] ? 95.0 : 70.0,
+                'time' => $paidTimeResolved ? 95.0 : 50.0,
                 'destination' => 85.0,
                 'success_status' => $successStatus ? 90.0 : 40.0,
             ],
@@ -399,11 +423,11 @@ PROMPT;
 
         // 1. Amount
         $amount = null;
-        if (preg_match('/(?:total|nominal|jumlah|transfer|sebesar|rp)\s*:?\s*(?:rp\.?)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})/i', $text, $m)) {
+        if (preg_match('~(?:total|nominal|jumlah|transfer|sebesar|rp)\s*:?\s*(?:rp\.?)?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})~i', $text, $m)) {
             $amount = (float) str_replace(['.', ','], '', $m[1]);
-        } elseif (preg_match('/\brp\.?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})\b/i', $text, $m)) {
+        } elseif (preg_match('~\brp\.?\s*([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{5,})\b~i', $text, $m)) {
             $amount = (float) str_replace(['.', ','], '', $m[1]);
-        } elseif (preg_match('/\b([1-9][0-9]{4,6})\b/', $text, $m)) {
+        } elseif (preg_match('~\b([1-9][0-9]{4,6})\b~', $text, $m)) {
             $candidate = (float) $m[1];
             if ($candidate >= 50000 && $candidate <= 5000000) {
                 $amount = $candidate;
@@ -413,14 +437,14 @@ PROMPT;
         // 2. Reference Code / Transaction ID / RRN / Receipt No
         $ref = null;
         $patterns = [
-            '/(?:no\.?\s*referensi|nomor\s*referensi|no\.?\s*ref\b|reference\s*(?:no|number|id)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:nomor\s*transaksi|no\.?\s*transaksi|id\s*transaksi|transaction\s*id|trx\s*id|kode\s*transaksi)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:r[rn]\b|kode\s*rrn|retrieval\s*reference\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:no\.?\s*resi|nomor\s*resi|receipt\s*(?:no|number)?|no\.?\s*struk|nomor\s*struk)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:nomor\s*jurnal|no\.?\s*jurnal|journal\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:id\s*pesanan|nomor\s*pesanan|order\s*id)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,50})/i',
-            '/(?:approval\s*code|kode\s*persetujuan|stan)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,30})/i',
-            '/(?:ref\.?\s*id|ref)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})/i',
+            '~(?:no\.?\s*transaksi|nomor\s*transaksi|transaction\s*(?:no|id|number)?|id\s*transaksi|trx\s*id|kode\s*transaksi)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:no\.?\s*referensi|nomor\s*referensi|no\.?\s*ref\b|reference\s*(?:no|number|id)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:r[rn]\b|kode\s*rrn|retrieval\s*reference\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:no\.?\s*resi|nomor\s*resi|receipt\s*(?:no|number)?|no\.?\s*struk|nomor\s*struk)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:nomor\s*jurnal|no\.?\s*jurnal|journal\s*(?:no|number)?)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:id\s*pesanan|nomor\s*pesanan|order\s*id)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
+            '~(?:approval\s*code|kode\s*persetujuan|stan)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{5,30})~i',
+            '~(?:ref\.?\s*id|ref)\s*[:#\.\s]?\s*([a-zA-Z0-9\-_]{6,50})~i',
         ];
 
         foreach ($patterns as $pattern) {
@@ -486,30 +510,70 @@ PROMPT;
             'mei' => 5, 'may' => 5,
             'jun' => 6, 'juni' => 6, 'june' => 6,
             'jul' => 7, 'juli' => 7, 'july' => 7,
-            'agu' => 8, 'agustus' => 8, 'aug' => 8, 'august' => 8,
+            'agu' => 8, 'agustus' => 8, 'agt' => 8, 'aug' => 8, 'august' => 8,
             'sep' => 9, 'september' => 9,
             'okt' => 10, 'oktober' => 10, 'oct' => 10, 'october' => 10,
             'nop' => 11, 'nov' => 11, 'november' => 11,
             'des' => 12, 'desember' => 12, 'dec' => 12, 'december' => 12,
         ];
 
-        // Format: 10 Okt 2026 or 10 October 2026
-        if (preg_match('/\b([0-9]{1,2})\s+([a-zA-Z]{3,10})\s+([0-9]{4})\b/i', $text, $m)) {
+        // Priority 1: Match combined date & time (e.g. "13 Okt 2026, 11:36" or "13 Okt 2026 • 11:36 WIB" or "13/10/2026 11:36:20")
+        if (preg_match('~\b([0-9]{1,2})\s+([a-zA-Z]{3,10})\s+([0-9]{4})(?:[,\s•/]+(?:pukul\s*|jam\s*)?([0-9]{1,2}[:.][0-9]{2}(?:[:.][0-9]{2})?))?~i', $text, $m)) {
             $monthKey = strtolower(substr($m[2], 0, 3));
             $monthNum = $monthMap[$monthKey] ?? ($monthMap[strtolower($m[2])] ?? null);
             if ($monthNum) {
                 $paidDate = sprintf('%04d-%02d-%02d', (int) $m[3], (int) $monthNum, (int) $m[1]);
             }
-        } elseif (preg_match('/\b([0-9]{4})[\/\-]([0-9]{1,2})[\/\-]([0-9]{1,2})\b/', $text, $m)) {
-            $paidDate = sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
-        } elseif (preg_match('/\b([0-9]{1,2})[\/\-]([0-9]{1,2})[\/\-]([0-9]{4})\b/', $text, $m)) {
+            if (!empty($m[4])) {
+                $timeParts = preg_split('/[:.]/', $m[4]);
+                $hour = (int) ($timeParts[0] ?? 0);
+                $min = (int) ($timeParts[1] ?? 0);
+                $sec = (int) ($timeParts[2] ?? 0);
+                if ($hour >= 0 && $hour <= 23 && $min >= 0 && $min <= 59) {
+                    $paidTime = sprintf('%02d:%02d:%02d', $hour, $min, $sec);
+                }
+            }
+        } elseif (preg_match('~\b([0-9]{1,2})[/\-.]([0-9]{1,2})[/\-.]([0-9]{4})(?:[,\s•/]+(?:pukul\s*|jam\s*)?([0-9]{1,2}[:.][0-9]{2}(?:[:.][0-9]{2})?))?~', $text, $m)) {
             $paidDate = sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
+            if (!empty($m[4])) {
+                $timeParts = preg_split('/[:.]/', $m[4]);
+                $hour = (int) ($timeParts[0] ?? 0);
+                $min = (int) ($timeParts[1] ?? 0);
+                $sec = (int) ($timeParts[2] ?? 0);
+                if ($hour >= 0 && $hour <= 23 && $min >= 0 && $min <= 59) {
+                    $paidTime = sprintf('%02d:%02d:%02d', $hour, $min, $sec);
+                }
+            }
+        } elseif (preg_match('~\b([0-9]{4})[/\-.]([0-9]{1,2})[/\-.]([0-9]{1,2})(?:[,\s•/]+(?:pukul\s*|jam\s*)?([0-9]{1,2}[:.][0-9]{2}(?:[:.][0-9]{2})?))?~', $text, $m)) {
+            $paidDate = sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
+            if (!empty($m[4])) {
+                $timeParts = preg_split('/[:.]/', $m[4]);
+                $hour = (int) ($timeParts[0] ?? 0);
+                $min = (int) ($timeParts[1] ?? 0);
+                $sec = (int) ($timeParts[2] ?? 0);
+                if ($hour >= 0 && $hour <= 23 && $min >= 0 && $min <= 59) {
+                    $paidTime = sprintf('%02d:%02d:%02d', $hour, $min, $sec);
+                }
+            }
         }
 
-        // Time: HH:mm:ss or HH:mm
-        if (preg_match('/\b([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?\b/', $text, $m)) {
-            $sec = !empty($m[3]) ? $m[3] : '00';
-            $paidTime = sprintf('%02d:%02d:%02d', (int) $m[1], (int) $m[2], (int) $sec);
+        // Priority 2: If time was not captured in combined date-time, look for explicit time markers
+        if (!$paidTime) {
+            if (preg_match('~(?:waktu\s*transaksi|waktu|jam|pukul|time)\s*[:\s]*([0-9]{1,2}[:.][0-9]{2}(?:[:.][0-9]{2})?)\s*(?:wib|wita|wit)?~i', $text, $m)) {
+                $timeParts = preg_split('/[:.]/', $m[1]);
+                $hour = (int) ($timeParts[0] ?? 0);
+                $min = (int) ($timeParts[1] ?? 0);
+                $sec = (int) ($timeParts[2] ?? 0);
+                if ($hour >= 0 && $hour <= 23 && $min >= 0 && $min <= 59) {
+                    $paidTime = sprintf('%02d:%02d:%02d', $hour, $min, $sec);
+                }
+            } elseif (preg_match('~\b([0-9]{1,2})[:.]([0-9]{2})(?:[:.]([0-9]{2}))?\s*(?:wib|wita|wit)\b~i', $text, $m)) {
+                $sec = !empty($m[3]) ? $m[3] : '00';
+                $paidTime = sprintf('%02d:%02d:%02d', (int) $m[1], (int) $m[2], (int) $sec);
+            } elseif (preg_match('~\b([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?\b~', $text, $m)) {
+                $sec = !empty($m[3]) ? $m[3] : '00';
+                $paidTime = sprintf('%02d:%02d:%02d', (int) $m[1], (int) $m[2], (int) $sec);
+            }
         }
 
         // 6. Destination Extraction
@@ -517,19 +581,22 @@ PROMPT;
         $destAccount = null;
         $destMerchantId = null;
 
-        if (preg_match('/(?:ke|penerima|tujuan)\s*:?\s*([a-zA-Z\s]{3,30})/i', $text, $m)) {
+        if (preg_match('~(?:ke|penerima|tujuan)\s*:?\s*([a-zA-Z\s]{3,30})~i', $text, $m)) {
             $destName = trim($m[1]);
         }
-        if (preg_match('/(?:rekening|no\.?\s*rek)\s*:?\s*([0-9]{8,18})/i', $text, $m)) {
+        if (preg_match('~(?:rekening|no\.?\s*rek)\s*:?\s*([0-9]{8,18})~i', $text, $m)) {
             $destAccount = trim($m[1]);
         }
-        if (preg_match('/(?:nmid|merchant\s*id)\s*:?\s*([a-zA-Z0-9]+)/i', $text, $m)) {
+        if (preg_match('~(?:nmid|merchant\s*id)\s*:?\s*([a-zA-Z0-9]+)~i', $text, $m)) {
             $destMerchantId = trim($m[1]);
         }
 
+        // 7. Sender Extraction
         $senderName = null;
-        if (preg_match('/(?:dari|pengirim|sender|atas\s*nama|a\.?n\.?)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})/i', $text, $m)) {
+        if (preg_match('~\b(?:dari|pengirim|sender|atas\s*nama|a\.?n\b|an\b)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})~i', $text, $m)) {
             $candName = trim($m[1]);
+            $candName = preg_replace('~\s*(?:\(|-)?\s*(?:seabank|bca|bri|bni|mandiri|bank|[0-9*]{4,}).*$~i', '', $candName);
+            $candName = trim($candName);
             $stopWords = ['bank', 'rekening', 'anda', 'kamu', 'qris', 'seabank', 'bca', 'bri', 'bni', 'mandiri', 'dana', 'gopay', 'ovo', 'shopeepay'];
             if (strlen($candName) >= 3 && !in_array(strtolower($candName), $stopWords, true)) {
                 $senderName = $candName;

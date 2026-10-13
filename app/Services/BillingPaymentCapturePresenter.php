@@ -36,6 +36,21 @@ class BillingPaymentCapturePresenter
 
         $duplicateLabel = $isDuplicate ? 'Bukti bayar sudah pernah digunakan' : null;
 
+        $analysisData = (array) data_get($meta, 'analysis', []);
+        $rawPaidTime = data_get($analysisData, 'paid_time') ?: data_get($meta, 'validation.normalized.transaction_time');
+        $paidTimeFormatted = null;
+        if ($rawPaidTime) {
+            $timeClean = substr((string) $rawPaidTime, 0, 5);
+            $paidTimeFormatted = $timeClean . ' WIB';
+        }
+
+        $receiptTimeDisplay = null;
+        if ($capture->paid_date && $paidTimeFormatted) {
+            $receiptTimeDisplay = \Carbon\Carbon::parse($capture->paid_date)->translatedFormat('d M Y') . ', ' . $paidTimeFormatted;
+        } elseif ($capture->paid_date) {
+            $receiptTimeDisplay = \Carbon\Carbon::parse($capture->paid_date)->translatedFormat('d M Y');
+        }
+
         return [
             'id' => $capture->id,
             'source' => $capture->source,
@@ -44,6 +59,9 @@ class BillingPaymentCapturePresenter
             'amount' => (float) $capture->amount,
             'paid_date' => optional($capture->paid_date)->toDateString(),
             'paid_date_display' => $capture->paid_date ? \Carbon\Carbon::parse($capture->paid_date)->translatedFormat('d M Y') : null,
+            'paid_time' => $rawPaidTime,
+            'paid_time_display' => $paidTimeFormatted,
+            'receipt_time_display' => $receiptTimeDisplay,
             'reference_code' => $cleanRefCode,
             'match_status' => !empty(data_get($meta, 'cancelled')) ? 'cancelled' : $capture->match_status,
             'match_confidence' => $capture->match_confidence !== null ? (float) $capture->match_confidence : null,

@@ -87,6 +87,10 @@ export default function PaymentVerificationPage() {
     const [showJsonWhitelist, setShowJsonWhitelist] = useState(false);
     const [whitelistText, setWhitelistText] = useState(JSON.stringify(emptyWhitelist, null, 2));
 
+    // AI API Keys visibility
+    const [showGeminiKey, setShowGeminiKey] = useState(false);
+    const [showOpenAiKey, setShowOpenAiKey] = useState(false);
+
     // Modals
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [uploadFile, setUploadFile] = useState(null);
@@ -1063,10 +1067,10 @@ export default function PaymentVerificationPage() {
                                                         </div>
 
                                                         <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Tanggal Transfer (Struk)</p>
+                                                            <p className="text-xs text-gray-500 font-medium">Tanggal & Jam di Struk</p>
                                                             <p className="mt-1 text-xs font-bold text-gray-900 flex items-center gap-1">
                                                                 <Calendar size={13} className="text-emerald-600" />
-                                                                {capture.paid_date_display || capture.paid_date || (analysis.paid_date ? `${analysis.paid_date} ${analysis.paid_time || ''}` : '-')}
+                                                                {capture.receipt_time_display || capture.paid_date_display || capture.paid_date || (analysis.paid_date ? `${analysis.paid_date} ${analysis.paid_time ? analysis.paid_time.slice(0, 5) + ' WIB' : ''}` : '-')}
                                                             </p>
                                                         </div>
 
@@ -1434,6 +1438,130 @@ export default function PaymentVerificationPage() {
                                     />
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* AI Vision Engine Card */}
+                    <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-white to-indigo-50/30 p-5 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div className="flex items-center gap-2.5">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
+                                    <Bot size={22} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-gray-900">AI Vision Engine (Gemini & OpenAI)</h3>
+                                    <p className="text-xs text-gray-500">
+                                        Menganalisis visual foto bukti transfer (SeaBank, QRIS, BCA, BRI, Mandiri, e-Wallet) dengan ketelitian membaca Tanggal, Jam, Nominal, No. Transaksi, dan Nama Pengirim.
+                                    </p>
+                                </div>
+                            </div>
+                            <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                                (config?.gemini_api_key || config?.openai_api_key) ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'
+                            }`}>
+                                <Sparkles size={13} />
+                                {(config?.gemini_api_key || config?.openai_api_key) ? 'AI Vision Siap Digunakan' : 'Mode Fallback Pola Lokal'}
+                            </span>
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2 pt-1">
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                    Penyedia AI Vision (AI Provider)
+                                </label>
+                                <select
+                                    value={config?.ai_provider || 'auto'}
+                                    onChange={(e) => setConfig((p) => ({ ...p, ai_provider: e.target.value }))}
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white"
+                                >
+                                    <option value="auto">Auto (Google Gemini lalu OpenAI)</option>
+                                    <option value="gemini">Google Gemini Vision (Gratis & Sangat Cepat)</option>
+                                    <option value="openai">OpenAI GPT-4o-mini</option>
+                                    <option value="local">Hanya Mesin Pola Lokal (Tanpa AI Cloud)</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                                    Model Gemini Vision
+                                </label>
+                                <input
+                                    type="text"
+                                    value={config?.gemini_model || 'gemini-1.5-flash'}
+                                    onChange={(e) => setConfig((p) => ({ ...p, gemini_model: e.target.value }))}
+                                    placeholder="gemini-1.5-flash"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white font-mono"
+                                />
+                            </div>
+
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
+                                    <span>Google Gemini API Key (Direkomendasikan - Gratis)</span>
+                                    <a
+                                        href="https://aistudio.google.com/app/apikey"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-normal inline-flex items-center gap-1"
+                                    >
+                                        Dapatkan API Key Gratis di Google AI Studio <ExternalLink size={11} />
+                                    </a>
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showGeminiKey ? 'text' : 'password'}
+                                        value={config?.gemini_api_key || ''}
+                                        onChange={(e) => setConfig((p) => ({ ...p, gemini_api_key: e.target.value }))}
+                                        placeholder="AIzaSy... (Masukkan API Key Google Gemini)"
+                                        className="w-full text-xs rounded-xl border border-gray-300 p-2.5 pr-10 bg-white font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowGeminiKey(!showGeminiKey)}
+                                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                                        title={showGeminiKey ? 'Sembunyikan API Key' : 'Tampilkan API Key'}
+                                    >
+                                        {showGeminiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    Kunci ini digunakan untuk membaca gambar struk asli (memastikan tanggal, jam transaksi, nominal, dan pengirim diekstrak akurat).
+                                </p>
+                            </div>
+
+                            <div className="sm:col-span-2">
+                                <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
+                                    <span>OpenAI API Key (Cadangan Opsional)</span>
+                                    <span className="text-xs text-gray-400 font-normal">GPT-4o-mini Vision</span>
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showOpenAiKey ? 'text' : 'password'}
+                                        value={config?.openai_api_key || ''}
+                                        onChange={(e) => setConfig((p) => ({ ...p, openai_api_key: e.target.value }))}
+                                        placeholder="sk-proj-... (Opsional)"
+                                        className="w-full text-xs rounded-xl border border-gray-300 p-2.5 pr-10 bg-white font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowOpenAiKey(!showOpenAiKey)}
+                                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                                        title={showOpenAiKey ? 'Sembunyikan API Key' : 'Tampilkan API Key'}
+                                    >
+                                        {showOpenAiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                            <button
+                                type="button"
+                                onClick={() => handleSaveConfig()}
+                                disabled={saving}
+                                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 transition disabled:opacity-60"
+                            >
+                                <Save size={14} />
+                                {saving ? 'Menyimpan...' : 'Simpan Pengaturan AI'}
+                            </button>
                         </div>
                     </div>
 
@@ -2014,7 +2142,7 @@ export default function PaymentVerificationPage() {
                                             <div>
                                                 <span className="text-slate-500 block text-[11px]">Waktu di Struk:</span>
                                                 <span className="font-semibold text-slate-800">
-                                                    {c.paid_date_display || c.paid_date || '-'} {analysis.paid_time ? `(${analysis.paid_time})` : ''}
+                                                    {c.receipt_time_display || c.paid_date_display || c.paid_date || '-'}
                                                 </span>
                                             </div>
                                             <div className="col-span-2">

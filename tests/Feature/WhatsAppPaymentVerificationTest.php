@@ -715,6 +715,65 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertTrue(collect($list->items())->contains('id', $capture->id));
     }
 
+    public function test_seabank_receipt_pattern_extracts_correct_date_time_ref_and_sender(): void
+    {
+        $service = app(\App\Services\PaymentProofAnalysisService::class);
+        $reflection = new \ReflectionClass($service);
+        $method = $reflection->getMethod('parseReceiptPatterns');
+        $method->setAccessible(true);
+
+        $receiptText = "SeaBank\nTransfer Berhasil\nRp 200.000\nDari: Saripudin (SeaBank: ********2719)\nKe: Rumah Kita Net , KALIANDA\nLAMPUNG SELATAN\nNama Acquirer: GoPay\n9360-0914-3848-8266-793\nNo. Transaksi: 2026101343509824805187146\nNo. Referensi: 011000MCWV7G\nMetode Transaksi: QRIS\nWaktu Transaksi: 13 Okt 2026, 11:36";
+
+        $parsed = $method->invoke($service, $receiptText);
+
+        $this->assertEquals('2026-10-13', $parsed['paid_date']);
+        $this->assertEquals('11:36:00', $parsed['paid_time']);
+        $this->assertEquals('2026101343509824805187146', $parsed['reference_code']);
+        $this->assertEquals('Saripudin', $parsed['sender_name']);
+        $this->assertContains($parsed['payment_channel'], ['QRIS', 'SeaBank']);
+        $this->assertEquals(200000, $parsed['amount']);
+        $this->assertTrue($parsed['success_status']);
+    }
+
+    public function test_receipt_without_time_does_not_fabricate_fake_current_time(): void
+    {
+        $service = app(\App\Services\PaymentProofAnalysisService::class);
+        $reflection = new \ReflectionClass($service);
+        $method = $reflection->getMethod('parseReceiptPatterns');
+        $method->setAccessible(true);
+
+        $receiptText = "Transfer Berhasil\nRp 150.000\n13 Okt 2026\nDari: Budi";
+
+        $parsed = $method->invoke($service, $receiptText);
+
+        $this->assertEquals('2026-10-13', $parsed['paid_date']);
+        $this->assertNull($parsed['paid_time'], 'paid_time must be null and never fabricated when missing from receipt');
+    }
+
+    public function test_presenter_formats_receipt_time_display_with_wib(): void
+    {
+        $capture = new BillingPaymentCapture([
+            'id' => 99,
+            'source' => 'whatsapp_webhook',
+            'amount' => 200000,
+            'paid_date' => '2026-10-13',
+            'match_status' => 'approved',
+            'meta' => [
+                'analysis' => [
+                    'paid_date' => '2026-10-13',
+                    'paid_time' => '11:36:00',
+                ],
+            ],
+        ]);
+
+        $presenter = app(\App\Services\BillingPaymentCapturePresenter::class);
+        $data = $presenter->present($capture);
+
+        $this->assertEquals('11:36:00', $data['paid_time']);
+        $this->assertEquals('11:36 WIB', $data['paid_time_display']);
+        $this->assertStringContainsString('11:36 WIB', $data['receipt_time_display']);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([
