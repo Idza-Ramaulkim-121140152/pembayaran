@@ -862,14 +862,18 @@ async function handleCiphertextCandidate(msg) {
     sweepPendingCiphertextMessages();
 }
 
-async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
+async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
     if (!msg || !msg.hasMedia) return null;
+
+    // Jeda 800ms awal agar media selesai streaming dari server WA
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         // Tier 1: Coba method bawaan whatsapp-web.js
         try {
             const media = await msg.downloadMedia();
-            if (media && media.data && media.mimetype) {
+            if (media && media.data && media.mimetype && media.data.length > 8000) {
+                console.log(`✅ [Media] Berhasil unduh gambar resolusi penuh (${media.mimetype}, length: ${media.data.length})`);
                 return media;
             }
         } catch (err) {
@@ -894,8 +898,8 @@ async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
 
                         const md = msgModel.mediaData;
 
-                        // Jika mediaData sudah memiliki base64 data langsung
-                        if (md && md.data && typeof md.data === 'string' && md.data.length > 50) {
+                        // Jika mediaData sudah memiliki base64 data langsung (resolusi penuh > 8000 chars)
+                        if (md && md.data && typeof md.data === 'string' && md.data.length > 8000) {
                             return {
                                 data: md.data.replace(/^data:[^;]+;base64,/, ''),
                                 mimetype: msgModel.mimetype || md.mimetype || 'image/jpeg',
@@ -946,7 +950,7 @@ async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
                                         });
                                     }
 
-                                    if (b64) {
+                                    if (b64 && b64.length > 8000) {
                                         return {
                                             data: b64,
                                             mimetype: msgModel.mimetype || 'image/jpeg',
@@ -957,26 +961,14 @@ async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
                             } catch (_) {}
                         }
 
-                        // Coba thumbnail preview base64 di mediaData
-                        if (md && md.preview) {
-                            const prevB64 = md.preview._b64 || (typeof md.preview === 'string' ? md.preview : null);
-                            if (prevB64 && prevB64.length > 50) {
-                                return {
-                                    data: prevB64.replace(/^data:[^;]+;base64,/, ''),
-                                    mimetype: msgModel.mimetype || 'image/jpeg',
-                                    filename: msgModel.filename || 'payment.jpg',
-                                };
-                            }
-                        }
-
                         return null;
                     } catch (e) {
                         return null;
                     }
                 }, msg.id._serialized, msg.id.id);
 
-                if (browserMedia && browserMedia.data) {
-                    console.log(`✅ Media berhasil diekstrak via Puppeteer fallback (${browserMedia.mimetype}, length: ${browserMedia.data.length})`);
+                if (browserMedia && browserMedia.data && browserMedia.data.length > 8000) {
+                    console.log(`✅ [Media] Berhasil diekstrak via Puppeteer store WA Web (${browserMedia.mimetype}, length: ${browserMedia.data.length})`);
                     return browserMedia;
                 }
             }
@@ -984,32 +976,22 @@ async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
             console.warn(`⚠️ Puppeteer media extraction fallback gagal: ${pupErr.message}`);
         }
 
-        // Tier 3: Cek apakah base64 preview gambar sudah ada di memory msg._data
-        if (msg._data) {
-            const rawBody = msg._data.body;
-            if (rawBody && typeof rawBody === 'string' && rawBody.length > 50 && (rawBody.startsWith('/9j/') || rawBody.startsWith('iVBORw') || !rawBody.includes(' '))) {
-                console.log(`✅ Menggunakan media preview base64 dari msg._data (length: ${rawBody.length})`);
-                return {
-                    data: rawBody.replace(/^data:[^;]+;base64,/, ''),
-                    mimetype: msg._data.mimetype || 'image/jpeg',
-                    filename: 'payment_preview.jpg',
-                };
-            }
-        }
-
         if (attempt < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
     }
 
-    // Tier 4: Fallback terakhir jika semua percobaan gagal namun ada raw data body
-    if (msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 50) {
-        console.log(`ℹ️ Menggunakan fallback raw data body (length: ${msg._data.body.length})`);
-        return {
-            data: msg._data.body.replace(/^data:[^;]+;base64,/, ''),
-            mimetype: msg._data.mimetype || 'image/jpeg',
-            filename: 'payment_proof.jpg',
-        };
+    // Tier 3: HANYA jika semua 5 percobaan unduh gambar resolusi penuh gagal total, gunakan preview thumbnail sebagai cadangan darurat
+    if (msg._data) {
+        const rawBody = msg._data.body;
+        if (rawBody && typeof rawBody === 'string' && rawBody.length > 50 && (rawBody.startsWith('/9j/') || rawBody.startsWith('iVBORw') || !rawBody.includes(' '))) {
+            console.warn(`⚠️ [Media] Gagal unduh resolusi penuh setelah 5 percobaan. Menggunakan fallback preview thumbnail (panjang: ${rawBody.length})`);
+            return {
+                data: rawBody.replace(/^data:[^;]+;base64,/, ''),
+                mimetype: msg._data.mimetype || 'image/jpeg',
+                filename: 'payment_preview.jpg',
+            };
+        }
     }
 
     return null;

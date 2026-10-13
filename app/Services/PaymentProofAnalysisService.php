@@ -181,53 +181,70 @@ PROMPT;
         if ($preferredModel === 'gemini-1.5-flash' || $preferredModel === 'gemini-2.0-flash') {
             $preferredModel = 'gemini-3.5-flash';
         }
-        $models = array_values(array_unique([$preferredModel, 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-1.5-flash']));
+        $models = array_values(array_unique([
+            $preferredModel,
+            'gemini-3.5-flash',
+            'gemini-3.6-flash',
+            'gemini-3.8-flash',
+            'gemini-flash-latest',
+            'gemini-3.5-flash-lite',
+        ]));
 
         foreach ($models as $model) {
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
-            try {
-                $response = Http::timeout(45)->post($url, [
-                    'contents' => [
-                        [
-                            'parts' => [
-                                ['text' => $prompt],
-                                [
-                                    'inline_data' => [
-                                        'mime_type' => $mimeType,
-                                        'data' => $imageData,
+            // Coba hingga 2 kali jika model mengalami lonjakan traffic sementara (503/429)
+            for ($attempt = 1; $attempt <= 2; $attempt++) {
+                try {
+                    $response = Http::withoutVerifying()->timeout(35)->post($url, [
+                        'contents' => [
+                            [
+                                'parts' => [
+                                    ['text' => $prompt],
+                                    [
+                                        'inline_data' => [
+                                            'mime_type' => 'image/jpeg',
+                                            'data' => $imageData,
+                                        ],
                                     ],
                                 ],
                             ],
                         ],
-                    ],
-                    'generationConfig' => [
-                        'response_mime_type' => 'application/json',
-                    ],
-                ]);
-
-                if (!$response->successful()) {
-                    Log::warning("Gemini model {$model} payment proof analysis request failed", [
-                        'capture_id' => $capture->id,
-                        'status' => $response->status(),
-                        'body' => $response->body(),
+                        'generationConfig' => [
+                            'response_mime_type' => 'application/json',
+                        ],
                     ]);
-                    continue;
-                }
 
-                $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
-                $decoded = $this->decodeJsonContent($rawText);
-                if (!is_array($decoded)) {
-                    continue;
-                }
+                    if (!$response->successful()) {
+                        $status = $response->status();
+                        Log::warning("Gemini model {$model} payment proof request failed (attempt {$attempt}, status {$status})", [
+                            'capture_id' => $capture->id,
+                            'status' => $status,
+                            'body' => substr($response->body(), 0, 300),
+                        ]);
 
-                $result = $this->normalizeResult($decoded);
-                $result['provider_used'] = 'gemini';
-                return $result;
-            } catch (\Throwable $exception) {
-                Log::warning("Gemini model {$model} payment proof analysis failed: " . $exception->getMessage(), [
-                    'capture_id' => $capture->id,
-                ]);
+                        if (($status === 503 || $status === 429) && $attempt < 2) {
+                            usleep(1200000); // 1.2s delay sebelum coba lagi
+                            continue;
+                        }
+                        break; // Lanjut ke model berikutnya
+                    }
+
+                    $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
+                    $decoded = $this->decodeJsonContent($rawText);
+                    if (!is_array($decoded)) {
+                        break;
+                    }
+
+                    $result = $this->normalizeResult($decoded);
+                    $result['provider_used'] = 'gemini';
+                    return $result;
+                } catch (\Throwable $exception) {
+                    Log::warning("Gemini model {$model} payment proof analysis failed: " . $exception->getMessage(), [
+                        'capture_id' => $capture->id,
+                    ]);
+                    break;
+                }
             }
         }
 
@@ -714,29 +731,74 @@ PROMPT;
             }
         }
 
+        $rawOcr = (string) ($decoded['ocr_raw_text'] ?? '');
+        $amount = isset($decoded['amount']) && is_numeric($decoded['amount']) ? round((float) $decoded['amount'], 2) : null;
+        $paidDate = $this->stringOrNull($decoded['paid_date'] ?? null);
+        $paidTime = $this->stringOrNull($decoded['paid_time'] ?? null);
+        $senderName = $this->stringOrNull($decoded['sender_name'] ?? null);
+        $channel = $this->stringOrNull($decoded['payment_channel'] ?? null);
+        $isPaymentProof = (bool) ($decoded['is_payment_proof'] ?? false);
+        $successStatus = (bool) ($decoded['success_status'] ?? false);
+
+        // Fallback safety net: jika AI mengosongkan structured fields tetapi ada ocr_raw_text
+        if ($rawOcr !== '') {
+            $parsed = $this->parseReceiptPatterns($rawOcr);
+            if (($amount === null || $amount <= 0) && !empty($parsed['amount'])) {
+                $amount = round((float) $parsed['amount'], 2);
+            }
+            if (!$paidDate && !empty($parsed['paid_date'])) {
+                $paidDate = $parsed['paid_date'];
+            }
+            if (!$paidTime && !empty($parsed['paid_time'])) {
+                $paidTime = $parsed['paid_time'];
+            }
+            if (!$senderName && !empty($parsed['sender_name'])) {
+                $senderName = $parsed['sender_name'];
+            }
+            if (!$rawRef && !empty($parsed['reference_code'])) {
+                $rawRef = $parsed['reference_code'];
+            }
+            if (!$channel && !empty($parsed['payment_channel'])) {
+                $channel = $parsed['payment_channel'];
+            }
+            if (!$successStatus && $parsed['success_status']) {
+                $successStatus = true;
+            }
+            if (!$isPaymentProof && ($amount > 0 || $channel || $successStatus)) {
+                $isPaymentProof = true;
+            }
+        }
+
+        $conf = $this->normalizeConfidence($decoded['confidence_overall'] ?? 0);
+        if ($conf <= 0 && $amount && $amount > 0) {
+            $conf = 90.0;
+        } elseif ($conf <= 0 && $isPaymentProof) {
+            $conf = 75.0;
+        }
+
         return [
-            'is_payment_proof' => (bool) ($decoded['is_payment_proof'] ?? false),
-            'amount' => isset($decoded['amount']) && is_numeric($decoded['amount']) ? round((float) $decoded['amount'], 2) : null,
-            'paid_date' => $this->stringOrNull($decoded['paid_date'] ?? null),
-            'paid_time' => $this->stringOrNull($decoded['paid_time'] ?? null),
+            'is_payment_proof' => $isPaymentProof,
+            'amount' => $amount,
+            'paid_date' => $paidDate,
+            'paid_time' => $paidTime,
             'reference_code' => $rawRef,
-            'payment_channel' => $this->stringOrNull($decoded['payment_channel'] ?? null),
-            'sender_name' => $this->stringOrNull($decoded['sender_name'] ?? null),
+            'payment_channel' => $channel,
+            'sender_name' => $senderName,
             'destination_identity' => [
                 'name' => $this->stringOrNull(data_get($decoded, 'destination_identity.name')),
                 'account_number' => $this->stringOrNull(data_get($decoded, 'destination_identity.account_number')),
                 'merchant_id' => $this->stringOrNull(data_get($decoded, 'destination_identity.merchant_id')),
                 'raw' => $this->stringOrNull(data_get($decoded, 'destination_identity.raw')),
             ],
-            'success_status' => (bool) ($decoded['success_status'] ?? false),
-            'confidence_overall' => $this->normalizeConfidence($decoded['confidence_overall'] ?? 0),
+            'success_status' => $successStatus,
+            'confidence_overall' => $conf,
             'confidence_by_field' => [
-                'payment_proof' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.payment_proof', 0)),
-                'amount' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.amount', 0)),
-                'date' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.date', 0)),
-                'time' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.time', 0)),
-                'destination' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.destination', 0)),
-                'success_status' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.success_status', 0)),
+                'payment_proof' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.payment_proof', $conf)),
+                'amount' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.amount', $conf)),
+                'date' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.date', $conf)),
+                'time' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.time', $conf)),
+                'destination' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.destination', $conf)),
+                'success_status' => $this->normalizeConfidence(data_get($decoded, 'confidence_by_field.success_status', $conf)),
             ],
             'ocr_raw_text' => $this->stringOrNull($decoded['ocr_raw_text'] ?? null),
             'raw_summary' => $this->stringOrNull($decoded['raw_summary'] ?? null),
