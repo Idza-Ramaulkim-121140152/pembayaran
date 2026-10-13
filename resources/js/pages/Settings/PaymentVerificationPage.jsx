@@ -1123,6 +1123,14 @@ export default function PaymentVerificationPage() {
                                                         </div>
                                                     </div>
 
+                                                    {/* AI Quota / Error Notice */}
+                                                    {analysis.ai_error && (
+                                                        <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800 font-medium">
+                                                            <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+                                                            <span>{analysis.ai_error}</span>
+                                                        </div>
+                                                    )}
+
                                                     {/* Linked Customer & Invoice Cards */}
                                                     <div className="mt-3 space-y-2.5">
                                                         {/* Customer Info Card */}

@@ -10,6 +10,8 @@ use Symfony\Component\Process\Process;
 
 class PaymentProofAnalysisService
 {
+    private ?string $lastAiError = null;
+
     public function __construct(
         private PaymentVerificationConfigService $configService,
         private CustomerResolutionService $customerResolutionService,
@@ -21,6 +23,7 @@ class PaymentProofAnalysisService
      */
     public function analyze(BillingPaymentCapture $capture): array
     {
+        $this->lastAiError = null;
         $config = $this->configService->getConfig();
         $mediaPath = (string) data_get($capture->meta, 'media.path', '');
         $mediaBase64 = (string) data_get($capture->meta, 'source.media_base64', '');
@@ -187,67 +190,63 @@ PROMPT;
         $models = array_values(array_unique([
             $preferredModel,
             'gemini-3.5-flash',
-            'gemini-3.6-flash',
             'gemini-3.8-flash',
-            'gemini-flash-latest',
-            'gemini-3.5-flash-lite',
         ]));
 
         foreach ($models as $model) {
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
-            // Coba hingga 2 kali jika model mengalami lonjakan traffic sementara (503/429)
-            for ($attempt = 1; $attempt <= 2; $attempt++) {
-                try {
-                    $response = Http::withoutVerifying()->timeout(35)->post($url, [
-                        'contents' => [
-                            [
-                                'parts' => [
-                                    ['text' => $prompt],
-                                    [
-                                        'inline_data' => [
-                                            'mime_type' => 'image/jpeg',
-                                            'data' => $imageData,
-                                        ],
+            try {
+                $response = Http::withoutVerifying()->timeout(12)->post($url, [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                ['text' => $prompt],
+                                [
+                                    'inline_data' => [
+                                        'mime_type' => 'image/jpeg',
+                                        'data' => $imageData,
                                     ],
                                 ],
                             ],
                         ],
-                        'generationConfig' => [
-                            'response_mime_type' => 'application/json',
-                        ],
+                    ],
+                    'generationConfig' => [
+                        'response_mime_type' => 'application/json',
+                    ],
+                ]);
+
+                if (!$response->successful()) {
+                    $status = $response->status();
+                    $body = substr($response->body(), 0, 300);
+                    Log::warning("Gemini model {$model} payment proof request failed (status {$status})", [
+                        'capture_id' => $capture->id,
+                        'status' => $status,
+                        'body' => $body,
                     ]);
 
-                    if (!$response->successful()) {
-                        $status = $response->status();
-                        Log::warning("Gemini model {$model} payment proof request failed (attempt {$attempt}, status {$status})", [
-                            'capture_id' => $capture->id,
-                            'status' => $status,
-                            'body' => substr($response->body(), 0, 300),
-                        ]);
-
-                        if (($status === 503 || $status === 429) && $attempt < 2) {
-                            usleep(1200000); // 1.2s delay sebelum coba lagi
-                            continue;
-                        }
-                        break; // Lanjut ke model berikutnya
-                    }
-
-                    $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
-                    $decoded = $this->decodeJsonContent($rawText);
-                    if (!is_array($decoded)) {
+                    // Jika kuota free tier Google untuk project ini habis (429 RESOURCE_EXHAUSTED), jangan gantung request! Keluar segera!
+                    if ($status === 429) {
+                        $this->lastAiError = 'Kuota Google Gemini API harian habis (HTTP 429). Buat API key di project baru Google AI Studio.';
+                        Log::warning("Google Gemini API Quota 429 Exceeded on model {$model}. Exiting immediately.");
                         break;
                     }
-
-                    $result = $this->normalizeResult($decoded);
-                    $result['provider_used'] = 'gemini';
-                    return $result;
-                } catch (\Throwable $exception) {
-                    Log::warning("Gemini model {$model} payment proof analysis failed: " . $exception->getMessage(), [
-                        'capture_id' => $capture->id,
-                    ]);
-                    break;
+                    continue;
                 }
+
+                $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
+                $decoded = $this->decodeJsonContent($rawText);
+                if (!is_array($decoded)) {
+                    continue;
+                }
+
+                $result = $this->normalizeResult($decoded);
+                $result['provider_used'] = 'gemini';
+                return $result;
+            } catch (\Throwable $exception) {
+                Log::warning("Gemini model {$model} payment proof analysis failed: " . $exception->getMessage(), [
+                    'capture_id' => $capture->id,
+                ]);
             }
         }
 
@@ -406,6 +405,9 @@ PROMPT;
             $summaryParts[] = "Tagihan #{$activeInvoice->invoice_number}";
         }
         $rawSummary = implode(' · ', $summaryParts) ?: ($isPaymentProof ? 'Bukti transfer terdeteksi' : 'Bukan bukti pembayaran');
+        if ($this->lastAiError) {
+            $rawSummary .= ' · ⚠️ ' . $this->lastAiError;
+        }
 
         $paidDateResolved = $parsed['paid_date'] ?: ($capture->paid_date ? optional($capture->paid_date)->toDateString() : now()->toDateString());
         $paidTimeResolved = $parsed['paid_time'] ?: null;
@@ -421,6 +423,7 @@ PROMPT;
             'sender_name' => $parsed['sender_name'] ?? null,
             'confidence' => $confidence,
             'provider' => $ocrProvider,
+            'ai_error' => $this->lastAiError,
         ]);
 
         return [
@@ -450,6 +453,7 @@ PROMPT;
             'ocr_raw_text' => $ocrText,
             'raw_summary' => $rawSummary,
             'provider_used' => $ocrProvider,
+            'ai_error' => $this->lastAiError,
         ];
     }
 
