@@ -187,8 +187,8 @@ function BillingPage() {
             const rows = Array.isArray(response?.data?.data) ? response.data.data : [];
             setPaymentReceivers(rows);
 
-            if (!paymentReceiverUserId && window.appUserId) {
-                setPaymentReceiverUserId(String(window.appUserId));
+            if (!paymentReceiverUserId) {
+                setPaymentReceiverUserId(resolveDefaultPaymentReceiverUserId(rows));
             }
         } catch (err) {
             console.error('Gagal memuat penerima pembayaran', err);
@@ -220,6 +220,34 @@ function BillingPage() {
         return defaultOption ? String(defaultOption.id) : '';
     };
 
+    const resolveDefaultPaymentReceiverUserId = (receivers) => {
+        if (!Array.isArray(receivers) || receivers.length === 0) {
+            return '';
+        }
+
+        // 1. Prioritaskan akun penerima keuangan perusahaan
+        const companyFinance = receivers.find((r) => r.is_company_finance_receiver);
+        if (companyFinance) {
+            return String(companyFinance.id);
+        }
+
+        // 2. Prioritaskan user dengan role finance
+        const financeRole = receivers.find((r) => String(r.role || '').toLowerCase() === 'finance');
+        if (financeRole) {
+            return String(financeRole.id);
+        }
+
+        // 3. Fallback ke akun user yang login
+        if (window.appUserId) {
+            const selfUser = receivers.find((r) => String(r.id) === String(window.appUserId));
+            if (selfUser) {
+                return String(selfUser.id);
+            }
+        }
+
+        return String(receivers[0].id);
+    };
+
     const getPaymentReceiptOptionLabel = (option) => {
         if (!option) return '-';
         return option.name || '-';
@@ -236,7 +264,7 @@ function BillingPage() {
         setConfirmModal({ open: false, invoice: null, customer: null });
         setPaidAmount('');
         setPaymentReceiptOptionId('');
-        setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
+        setPaymentReceiverUserId(resolveDefaultPaymentReceiverUserId(paymentReceivers));
         setIncludeInMutation(true);
         setQrisPaymentTime(getCurrentLocalDateTimeString());
         setQrisSender('');
@@ -268,7 +296,7 @@ function BillingPage() {
         const amount = parseFloat(invoice.amount);
         setPaidAmount(isNaN(amount) ? '' : Math.round(amount).toString());
         setPaymentReceiptOptionId(resolveDefaultPaymentReceiptOptionId(paymentReceiptOptions));
-        setPaymentReceiverUserId(window.appUserId ? String(window.appUserId) : '');
+        setPaymentReceiverUserId(resolveDefaultPaymentReceiverUserId(paymentReceivers));
         setIncludeInMutation(true);
         setQrisPaymentTime(getCurrentLocalDateTimeString());
         setQrisSender('');
@@ -2177,7 +2205,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     className={adminConsoleSelectClassName}
                                 >
                                     <option value="">
-                                        {loadingPaymentReceivers ? 'Memuat penerima...' : 'Akun saya (default)'}
+                                        {loadingPaymentReceivers ? 'Memuat penerima...' : '-- Pilih Penerima Pembayaran --'}
                                     </option>
                                     {paymentReceivers.map((receiver) => (
                                         <option key={receiver.id} value={receiver.id}>
@@ -2185,7 +2213,7 @@ Tim Layanan Pelanggan Rumah Kita Net`;
                                     </option>
                                 ))}
                                 </select>
-                                <p className="mt-1 text-xs text-slate-400">Jika dikosongkan, penerima otomatis akun Anda.</p>
+                                <p className="mt-1 text-xs text-slate-400">Default penerima otomatis akun Keuangan Perusahaan.</p>
                             </AdminConsoleField>
                         )}
                         {canChoosePaymentMutation && (

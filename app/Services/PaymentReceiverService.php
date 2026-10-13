@@ -88,4 +88,19 @@ class PaymentReceiverService
     {
         return $this->companyFinanceReceiverService->isCompanyFinanceUserId($receiverUserId);
     }
+
+    public function defaultCompanyFinanceReceiverId(): ?int
+    {
+        $activeIds = $this->companyFinanceReceiverService->activeUserIds();
+        if (!empty($activeIds)) {
+            return (int) $activeIds[0];
+        }
+
+        $financeUser = User::query()
+            ->where('role', 'finance')
+            ->orWhere('name', 'like', '%finance%')
+            ->first();
+
+        return $financeUser ? (int) $financeUser->id : null;
+    }
 }

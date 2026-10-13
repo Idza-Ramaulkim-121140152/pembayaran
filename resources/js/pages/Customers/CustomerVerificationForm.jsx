@@ -251,8 +251,16 @@ function CustomerVerificationForm() {
             const data = await response.json();
             const rows = Array.isArray(data?.data) ? data.data : [];
             setPaymentReceivers(rows);
-            if (!paymentReceiverUserId && window.appUserId) {
-                setPaymentReceiverUserId(String(window.appUserId));
+            if (!paymentReceiverUserId) {
+                const companyFinance = rows.find((r) => r.is_company_finance_receiver);
+                const financeRole = rows.find((r) => String(r.role || '').toLowerCase() === 'finance');
+                if (companyFinance) {
+                    setPaymentReceiverUserId(String(companyFinance.id));
+                } else if (financeRole) {
+                    setPaymentReceiverUserId(String(financeRole.id));
+                } else if (window.appUserId) {
+                    setPaymentReceiverUserId(String(window.appUserId));
+                }
             }
         } catch (err) {
             setPaymentReceivers([]);

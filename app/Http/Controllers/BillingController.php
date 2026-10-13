@@ -178,7 +178,8 @@ class BillingController extends Controller
                 $invoice->include_in_mutation = true;
             }
             if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
-                $invoice->payment_receiver_user_id = Auth::id();
+                $defaultCompanyFinanceId = $this->paymentReceiverService->defaultCompanyFinanceReceiverId();
+                $invoice->payment_receiver_user_id = $defaultCompanyFinanceId ?: Auth::id();
             }
 
             try {
@@ -1420,9 +1421,12 @@ class BillingController extends Controller
         $includeInMutation = Auth::user()?->canChoosePaymentMutation()
             ? (bool) ($validated['include_in_mutation'] ?? true)
             : true;
+        $defaultCompanyFinanceId = $this->paymentReceiverService->defaultCompanyFinanceReceiverId();
+        $fallbackReceiverId = $defaultCompanyFinanceId ?: Auth::id();
+
         $paymentReceiverUserId = Auth::user()?->canChoosePaymentReceiver()
-            ? (int) ($validated['payment_receiver_user_id'] ?? Auth::id())
-            : Auth::id();
+            ? (int) ($validated['payment_receiver_user_id'] ?? $fallbackReceiverId)
+            : $fallbackReceiverId;
         $currentUser = $request->user();
         $selectedReceiver = $paymentReceiverUserId ? User::query()->find($paymentReceiverUserId) : null;
         $actorIsCompanyFinance = $this->paymentReceiverService->isCompanyFinanceReceiver($currentUser?->id);
