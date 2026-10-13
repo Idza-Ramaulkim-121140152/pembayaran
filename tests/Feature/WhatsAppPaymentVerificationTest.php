@@ -526,7 +526,9 @@ class WhatsAppPaymentVerificationTest extends TestCase
 
         $capture2 = BillingPaymentCapture::latest('id')->first();
         $this->assertNotSame('approved', $capture2->match_status);
-        $this->assertSame('needs_review', $capture2->match_status);
+        $this->assertSame('rejected', $capture2->match_status);
+        $this->assertTrue((bool) data_get($capture2->meta, 'duplicate_receipt_detected'));
+        $this->assertSame('Bukti bayar sudah pernah digunakan', data_get($capture2->meta, 'duplicate_label'));
         $this->assertSame('duplicate_reference_code', data_get($capture2->meta, 'validation.failure_reason'));
         $this->assertSame('unpaid', $invoice2->fresh()->status);
     }

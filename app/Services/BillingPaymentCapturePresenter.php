@@ -30,6 +30,12 @@ class BillingPaymentCapturePresenter
             }
         }
 
+        $isDuplicate = (bool) data_get($meta, 'duplicate_receipt_detected', false)
+            || data_get($meta, 'validation.failure_reason') === 'duplicate_reference_code'
+            || data_get($meta, 'validation.flags.is_duplicate_reference') === true;
+
+        $duplicateLabel = $isDuplicate ? 'Bukti bayar sudah pernah digunakan' : null;
+
         return [
             'id' => $capture->id,
             'source' => $capture->source,
@@ -55,6 +61,8 @@ class BillingPaymentCapturePresenter
             'validation' => data_get($meta, 'validation', []),
             'media' => data_get($meta, 'media', []),
             'failure_reason' => data_get($meta, 'validation.failure_reason'),
+            'duplicate_receipt_detected' => $isDuplicate,
+            'duplicate_label' => $duplicateLabel,
             'invoice' => $capture->invoice ? [
                 'id' => $capture->invoice->id,
                 'invoice_link' => $capture->invoice->invoice_link,

@@ -1292,11 +1292,26 @@ function MutasiPage() {
                     const customer = invoice?.customer || (item.reference_type?.includes('Customer') ? item.reference : null);
                     const pengeluaran = item.reference_type?.includes('Pengeluaran') ? item.reference : null;
 
-                    const proofUrl = invoice?.id
-                        ? `/billing/invoice/${invoice.id}/payment-proof`
-                        : (item.meta?.media?.path ? (item.meta.media.path.startsWith('http') ? item.meta.media.path : `/storage/${item.meta.media.path.replace(/^\/+/, '')}`) : null);
+                    const proofData = item.meta?.payment_proof
+                        || (invoice?.approved_payment_capture?.meta ? {
+                            capture_id: invoice.approved_payment_capture.id,
+                            source: invoice.approved_payment_capture.source,
+                            reference_code: invoice.approved_payment_capture.reference_code || invoice.approved_payment_capture.meta?.analysis?.reference_code,
+                            sender_name: invoice.approved_payment_capture.meta?.analysis?.sender_name,
+                            bank_name: invoice.approved_payment_capture.meta?.analysis?.payment_channel,
+                            amount: invoice.approved_payment_capture.amount,
+                            paid_date: invoice.approved_payment_capture.paid_date,
+                            paid_time: invoice.approved_payment_capture.meta?.analysis?.paid_time,
+                            proof_url: invoice.approved_payment_capture.meta?.media?.path ? (invoice.approved_payment_capture.meta.media.path.startsWith('http') ? invoice.approved_payment_capture.meta.media.path : `/storage/${invoice.approved_payment_capture.meta.media.path.replace(/^\/+/, '')}`) : null,
+                            ocr_raw_text: invoice.approved_payment_capture.meta?.analysis?.ocr_raw_text,
+                            confidence: invoice.approved_payment_capture.match_confidence,
+                        } : null);
 
-                    const hasQrisMeta = item.meta?.qris_transaction_number || invoice?.qris_transaction_number;
+                    const proofUrl = proofData?.proof_url
+                        || (item.meta?.media?.url || (item.meta?.media?.path ? (item.meta.media.path.startsWith('http') ? item.meta.media.path : `/storage/${item.meta.media.path.replace(/^\/+/, '')}`) : null))
+                        || (invoice?.id ? `/billing/invoice/${invoice.id}/payment-proof` : null);
+
+                    const hasQrisMeta = proofData?.reference_code || item.meta?.qris_transaction_number || invoice?.qris_transaction_number;
 
                     return (
                         <div className="space-y-4 text-slate-800">
@@ -1480,32 +1495,90 @@ function MutasiPage() {
                                         </div>
                                     </div>
 
-                                    {/* Struk / Bukti Transfer */}
-                                    {proofUrl && (
-                                        <div className="mt-2 pt-3 border-t border-blue-100">
-                                            <p className="text-xs font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
-                                                <ImageIcon size={14} className="text-blue-600" /> Foto Bukti Pembayaran / Struk:
-                                            </p>
-                                            <div className="flex items-center gap-3">
-                                                <div
-                                                    className="h-24 w-24 overflow-hidden rounded-xl border border-blue-200 bg-white cursor-pointer transition hover:opacity-90 flex items-center justify-center shrink-0 shadow-xs"
-                                                    onClick={() => setPreviewImage(proofUrl)}
-                                                >
-                                                    <img
-                                                        src={proofUrl}
-                                                        alt="Bukti Transfer"
-                                                        className="h-full w-full object-cover"
-                                                        onError={(e) => { e.target.style.display = 'none'; }}
-                                                    />
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setPreviewImage(proofUrl)}
-                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition shadow-xs"
-                                                >
-                                                    <Eye size={14} /> Lihat Foto Struk Penuh
-                                                </button>
+                                    {/* Detail Bukti Pembayaran Pelanggan */}
+                                    {(proofData || proofUrl) && (
+                                        <div className="mt-3 pt-3 border-t border-blue-200/80 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs font-bold uppercase tracking-wider text-blue-950 flex items-center gap-1.5">
+                                                    <FileText size={14} className="text-blue-600" /> Rincian Bukti Transfer / Struk Pelanggan
+                                                </p>
+                                                {proofData?.bank_name && (
+                                                    <span className="text-[11px] font-bold text-blue-800 bg-blue-100 px-2.5 py-0.5 rounded-full">
+                                                        {proofData.bank_name}
+                                                    </span>
+                                                )}
                                             </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-white/90 p-3 rounded-xl border border-blue-100 shadow-xs">
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">No. Transaksi / Referensi:</span>
+                                                    <span className="font-mono text-xs font-bold text-slate-900 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded inline-block mt-0.5">
+                                                        {proofData?.reference_code || item.meta?.qris_transaction_number || invoice?.qris_transaction_number || '-'}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">Nama Pengirim di Struk:</span>
+                                                    <span className="font-semibold text-slate-800">
+                                                        {proofData?.sender_name || item.meta?.qris_sender || invoice?.qris_sender || '-'}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">Waktu / Tanggal Struk:</span>
+                                                    <span className="font-semibold text-slate-800">
+                                                        {proofData?.paid_date ? `${proofData.paid_date} ${proofData.paid_time ? `(${proofData.paid_time})` : ''}` : formatDateTime(item.meta?.qris_payment_time || invoice?.qris_payment_time)}
+                                                    </span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">Metode / Saluran:</span>
+                                                    <span className="font-semibold text-slate-800">
+                                                        {proofData?.bank_name || (hasQrisMeta ? 'QRIS / Transfer Bank' : 'Transfer Bank')}
+                                                    </span>
+                                                </div>
+                                                {proofData?.confidence && (
+                                                    <div className="col-span-1 sm:col-span-2 flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100">
+                                                        <span className="text-slate-500">Skor Verifikasi AI:</span>
+                                                        <span className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                                                            {Number(proofData.confidence).toFixed(0)}% Cocok
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Foto Struk */}
+                                            {proofUrl && (
+                                                <div className="flex items-center gap-3 bg-white/70 p-2.5 rounded-xl border border-blue-100 shadow-xs">
+                                                    <div
+                                                        className="h-20 w-20 overflow-hidden rounded-xl border border-blue-200 bg-white cursor-pointer transition hover:opacity-90 flex items-center justify-center shrink-0 shadow-xs relative group"
+                                                        onClick={() => setPreviewImage(proofUrl)}
+                                                    >
+                                                        <img
+                                                            src={proofUrl}
+                                                            alt="Bukti Transfer"
+                                                            className="h-full w-full object-cover"
+                                                            onError={(e) => { e.target.style.display = 'none'; }}
+                                                        />
+                                                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                                                            <Eye size={16} />
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                                                            <ImageIcon size={13} className="text-blue-600" />
+                                                            Foto Bukti Pembayaran Asli
+                                                        </p>
+                                                        <p className="text-[11px] text-slate-500">
+                                                            Klik tombol untuk melihat foto struk resolusi penuh.
+                                                        </p>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setPreviewImage(proofUrl)}
+                                                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 transition shadow-xs"
+                                                        >
+                                                            <Eye size={13} /> Lihat Foto Struk Penuh
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>

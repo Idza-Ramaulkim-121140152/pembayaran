@@ -167,6 +167,16 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
             return;
         }
 
+        if ($validation['status'] === 'rejected') {
+            $capture->match_status = 'rejected';
+            $capture->meta = array_merge((array) ($capture->meta ?? []), [
+                'duplicate_receipt_detected' => true,
+                'duplicate_label' => 'Bukti bayar sudah pernah digunakan',
+            ]);
+            $capture->save();
+            return;
+        }
+
         $capture->match_status = $validation['status'] === 'unmatched' ? 'unmatched' : 'needs_review';
         $capture->save();
         $notificationService->notifyNeedsReview($capture->fresh(['customer', 'invoice']));

@@ -64,6 +64,72 @@ class FinancialLedgerService
 
         $transactionDate = $invoice->paid_at ? Carbon::parse($invoice->paid_at)->toDateString() : now()->toDateString();
 
+        $capture = null;
+        if (class_exists(\App\Models\BillingPaymentCapture::class)) {
+            $capture = \App\Models\BillingPaymentCapture::query()
+                ->where('invoice_id', $invoice->id)
+                ->where('match_status', 'approved')
+                ->latest('id')
+                ->first();
+        }
+
+        $paymentProofData = null;
+        if ($capture) {
+            $cMeta = (array) ($capture->meta ?? []);
+            $cMediaPath = (string) data_get($cMeta, 'media.path', $invoice->bukti_pembayaran);
+            $proofUrl = null;
+            if ($cMediaPath !== '') {
+                if (str_starts_with($cMediaPath, 'http://') || str_starts_with($cMediaPath, 'https://')) {
+                    $proofUrl = $cMediaPath;
+                } else {
+                    $cleanPath = ltrim(str_replace('public/', '', $cMediaPath), '/');
+                    $proofUrl = '/storage/' . $cleanPath;
+                }
+            } elseif ($invoice->id && $invoice->bukti_pembayaran) {
+                $proofUrl = "/billing/invoice/{$invoice->id}/payment-proof";
+            }
+
+            $paymentProofData = [
+                'capture_id' => $capture->id,
+                'source' => $capture->source,
+                'reference_code' => $capture->reference_code ?: data_get($cMeta, 'analysis.reference_code', $invoice->qris_transaction_number),
+                'sender_name' => data_get($cMeta, 'analysis.sender_name', $invoice->qris_sender),
+                'bank_name' => data_get($cMeta, 'analysis.payment_channel'),
+                'amount' => (float) ($capture->amount ?: $invoice->amount),
+                'paid_date' => optional($capture->paid_date)->toDateString() ?: ($invoice->paid_at ? Carbon::parse($invoice->paid_at)->toDateString() : now()->toDateString()),
+                'paid_time' => data_get($cMeta, 'analysis.paid_time') ?: ($invoice->qris_payment_time ? Carbon::parse($invoice->qris_payment_time)->format('H:i:s') : null),
+                'media_path' => $cMediaPath,
+                'proof_url' => $proofUrl,
+                'ocr_raw_text' => data_get($cMeta, 'analysis.ocr_raw_text'),
+                'raw_summary' => data_get($cMeta, 'analysis.raw_summary'),
+                'confidence' => $capture->match_confidence !== null ? (float) $capture->match_confidence : null,
+            ];
+        } elseif (!empty($invoice->bukti_pembayaran)) {
+            $cMediaPath = (string) $invoice->bukti_pembayaran;
+            $proofUrl = null;
+            if (str_starts_with($cMediaPath, 'http://') || str_starts_with($cMediaPath, 'https://')) {
+                $proofUrl = $cMediaPath;
+            } else {
+                $cleanPath = ltrim(str_replace('public/', '', $cMediaPath), '/');
+                $proofUrl = '/storage/' . $cleanPath;
+            }
+            $paymentProofData = [
+                'capture_id' => null,
+                'source' => 'web_public_invoice',
+                'reference_code' => $invoice->qris_transaction_number,
+                'sender_name' => $invoice->qris_sender,
+                'bank_name' => null,
+                'amount' => (float) $invoice->amount,
+                'paid_date' => $invoice->paid_at ? Carbon::parse($invoice->paid_at)->toDateString() : now()->toDateString(),
+                'paid_time' => $invoice->qris_payment_time ? Carbon::parse($invoice->qris_payment_time)->format('H:i:s') : null,
+                'media_path' => $cMediaPath,
+                'proof_url' => $proofUrl,
+                'ocr_raw_text' => null,
+                'raw_summary' => null,
+                'confidence' => null,
+            ];
+        }
+
         return $query->updateOrCreate(
             [
                 'source' => 'invoice_payment',
@@ -94,6 +160,11 @@ class FinancialLedgerService
                     'qris_payment_time' => $this->formatSafeIsoDateTime($invoice->qris_payment_time),
                     'qris_sender' => $invoice->qris_sender,
                     'qris_transaction_number' => $invoice->qris_transaction_number,
+                    'payment_proof' => $paymentProofData,
+                    'media' => $paymentProofData ? [
+                        'path' => $paymentProofData['media_path'],
+                        'url' => $paymentProofData['proof_url'],
+                    ] : null,
                 ],
             ]
         );

@@ -100,4 +100,14 @@ class Invoice extends Model
     {
         return $this->hasMany(BorrowerLoan::class);
     }
+
+    public function paymentCaptures()
+    {
+        return $this->hasMany(BillingPaymentCapture::class);
+    }
+
+    public function approvedPaymentCapture()
+    {
+        return $this->hasOne(BillingPaymentCapture::class)->where('match_status', 'approved');
+    }
 }

@@ -186,8 +186,8 @@ class PaymentMatchingService
             $query->whereIn('match_status', ['needs_review', 'pending']);
         } elseif ($status === 'approved') {
             $query->where('match_status', 'approved');
-        } elseif ($status === 'unmatched') {
-            $query->where('match_status', 'unmatched');
+        } elseif ($status === 'unmatched' || $status === 'failed_auto' || $status === 'failed') {
+            $query->whereIn('match_status', ['unmatched', 'rejected']);
         } elseif ($status === 'rejected') {
             $query->where('match_status', 'rejected');
         } elseif ($status === 'pending') {
@@ -263,6 +263,70 @@ class PaymentMatchingService
         }
 
         DB::transaction(function () use (&$capture, $autoApply, $actorId): void {
+            // Guard: Check duplicate reference code and image hash to reject re-used payment proofs
+            $refCode = trim((string) ($capture->reference_code ?: data_get($capture->meta, 'analysis.reference_code', '')));
+            if ($refCode !== '') {
+                $refLower = strtolower($refCode);
+                if (str_starts_with($refLower, 'inv_') || str_starts_with($refLower, 'invoice') || ($capture->invoice && $refLower === strtolower((string) $capture->invoice->invoice_link))) {
+                    $refCode = '';
+                }
+            }
+
+            $dupCapture = false;
+            $dupInvoice = false;
+            if ($refCode !== '' && strlen($refCode) >= 4) {
+                $dupCapture = BillingPaymentCapture::query()
+                    ->where('id', '!=', $capture->id)
+                    ->where('match_status', 'approved')
+                    ->whereRaw('LOWER(reference_code) = ?', [strtolower($refCode)])
+                    ->exists();
+
+                $dupInvoice = Invoice::query()
+                    ->when($capture->invoice_id, fn ($q) => $q->where('id', '!=', $capture->invoice_id))
+                    ->where('status', 'paid')
+                    ->where(function ($q) use ($refCode) {
+                        $q->whereRaw('LOWER(qris_transaction_number) = ?', [strtolower($refCode)]);
+                    })
+                    ->exists();
+
+                if (!$dupInvoice && Schema::hasTable('financial_transactions')) {
+                    $dupInvoice = \App\Models\FinancialTransaction::query()
+                        ->where('meta->qris_transaction_number', $refCode)
+                        ->when($capture->invoice_id, fn ($q) => $q->where(function ($sq) use ($capture) {
+                            $sq->where('reference_type', '!=', Invoice::class)
+                               ->orWhere('reference_id', '!=', $capture->invoice_id);
+                        }))
+                        ->exists();
+                }
+            }
+
+            $fileHash = data_get($capture->meta, 'media.file_hash');
+            $dupImage = false;
+            if ($fileHash) {
+                $dupImage = BillingPaymentCapture::query()
+                    ->where('id', '!=', $capture->id)
+                    ->where('match_status', 'approved')
+                    ->where(function ($q) use ($fileHash) {
+                        $q->where('meta->media->file_hash', $fileHash)
+                          ->orWhere('meta->file_hash', $fileHash);
+                    })
+                    ->exists();
+            }
+
+            if ($dupCapture || $dupInvoice || $dupImage) {
+                $capture->match_status = 'rejected';
+                $capture->meta = array_merge((array) $capture->meta, [
+                    'duplicate_receipt_detected' => true,
+                    'duplicate_label' => 'Bukti bayar sudah pernah digunakan',
+                    'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
+                        'failure_reason' => 'duplicate_reference_code',
+                    ]),
+                ]);
+                $capture->save();
+                $capture->matchReviews()->delete();
+                return;
+            }
+
             $candidates = $this->findCandidates($capture);
 
             $capture->matchReviews()->delete();
@@ -338,15 +402,17 @@ class PaymentMatchingService
                 }
 
                 if ($dupCapture || $dupInvoice || $dupImage) {
-                    $capture->match_status = 'needs_review';
+                    $capture->match_status = 'rejected';
                     $capture->match_confidence = $topScore;
                     $capture->meta = array_merge((array) $capture->meta, [
                         'duplicate_receipt_detected' => true,
+                        'duplicate_label' => 'Bukti bayar sudah pernah digunakan',
                         'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
                             'failure_reason' => 'duplicate_reference_code',
                         ]),
                     ]);
                     $capture->save();
+                    $capture->matchReviews()->update(['status' => 'rejected']);
                     return;
                 }
 

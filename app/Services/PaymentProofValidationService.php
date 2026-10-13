@@ -132,7 +132,7 @@ class PaymentProofValidationService
 
         if ($flags['is_duplicate_reference']) {
             $failureReason = 'duplicate_reference_code';
-            $status = 'needs_review';
+            $status = 'rejected';
         } elseif (!$flags['customer_identified']) {
             $failureReason = 'unknown_customer';
             $status = 'needs_review';
@@ -161,6 +161,8 @@ class PaymentProofValidationService
         return [
             'status' => $status,
             'failure_reason' => $failureReason,
+            'is_duplicate' => (bool) $flags['is_duplicate_reference'],
+            'duplicate_label' => $flags['is_duplicate_reference'] ? 'Bukti bayar sudah pernah digunakan' : null,
             'validation_flags' => $flags,
             'destination_match' => $destinationMatch,
             'normalized' => [

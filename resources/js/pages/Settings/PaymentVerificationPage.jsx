@@ -9,6 +9,7 @@ import {
     ChevronLeft,
     ChevronRight,
     Clock,
+    Copy,
     Download,
     ExternalLink,
     FileText,
@@ -95,6 +96,11 @@ export default function PaymentVerificationPage() {
 
     // Zoom Image Modal
     const [previewImageUrl, setPreviewImageUrl] = useState(null);
+
+    // Detail Bukti Bayar Modal
+    const [selectedDetailCapture, setSelectedDetailCapture] = useState(null);
+    const [showOcrRawText, setShowOcrRawText] = useState(false);
+    const [copiedRef, setCopiedRef] = useState(false);
 
     // Add/Edit Whitelist Bank Modal
     const [isBankModalOpen, setIsBankModalOpen] = useState(false);
@@ -655,7 +661,12 @@ export default function PaymentVerificationPage() {
                     }`}
                 >
                     <XCircle size={16} />
-                    Ditolak / Unmatched
+                    Auto Konfirmasi Gagal (Ditolak)
+                    {activeTab === 'unmatched' && pagination?.total > 0 && (
+                        <span className="rounded-full bg-white/25 px-2 py-0.5 text-xs font-bold text-white">
+                            {pagination.total}
+                        </span>
+                    )}
                 </button>
 
                 <button
@@ -890,15 +901,32 @@ export default function PaymentVerificationPage() {
                                                     )}
                                                 </div>
 
-                                                {capture.proof_url && (
-                                                    <a
-                                                        href={capture.proof_url}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1"
+                                                {capture.proof_url ? (
+                                                    <div className="flex items-center gap-3">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedDetailCapture(capture)}
+                                                            className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                                                        >
+                                                            <Eye size={13} /> Detail Bukti
+                                                        </button>
+                                                        <a
+                                                            href={capture.proof_url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 inline-flex items-center gap-1"
+                                                        >
+                                                            <Download size={13} /> Buka Tab Baru
+                                                        </a>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedDetailCapture(capture)}
+                                                        className="text-xs font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
                                                     >
-                                                        <Download size={13} /> Buka Tab Baru
-                                                    </a>
+                                                        <Eye size={13} /> Lihat Detail
+                                                    </button>
                                                 )}
                                             </div>
 
@@ -934,40 +962,75 @@ export default function PaymentVerificationPage() {
                                                         </div>
 
                                                         {/* Action Buttons */}
-                                                        {canManage && (
-                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleReanalyze(capture.id)}
-                                                                    disabled={refreshing}
-                                                                    className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 shadow-sm"
-                                                                >
-                                                                    <RefreshCw size={13} /> Re-analyze AI
-                                                                </button>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSelectedDetailCapture(capture)}
+                                                                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 shadow-xs transition"
+                                                                title="Lihat Detail Bukti Bayar Lengkap"
+                                                            >
+                                                                <Eye size={14} /> Lihat Detail
+                                                            </button>
 
-                                                                {isNeedsReview && (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleResolve(capture.id, 'approve')}
-                                                                            disabled={refreshing}
-                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
-                                                                        >
-                                                                            <Check size={14} /> Konfirmasi & Lunaskan
-                                                                        </button>
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleResolve(capture.id, 'reject')}
-                                                                            disabled={refreshing}
-                                                                            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
-                                                                        >
-                                                                            <X size={14} /> Tolak
-                                                                        </button>
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        )}
+                                                            {canManage && (
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleReanalyze(capture.id)}
+                                                                        disabled={refreshing}
+                                                                        className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 shadow-sm"
+                                                                    >
+                                                                        <RefreshCw size={13} /> Re-analyze AI
+                                                                    </button>
+
+                                                                    {isNeedsReview && (
+                                                                        <>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleResolve(capture.id, 'approve')}
+                                                                                disabled={refreshing}
+                                                                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60"
+                                                                            >
+                                                                                <Check size={14} /> Konfirmasi & Lunaskan
+                                                                            </button>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleResolve(capture.id, 'reject')}
+                                                                                disabled={refreshing}
+                                                                                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
+                                                                            >
+                                                                                <X size={14} /> Tolak
+                                                                            </button>
+                                                                        </>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
                                                     </div>
+
+                                                    {/* Duplicate Receipt Warning Banner */}
+                                                    {capture.duplicate_receipt_detected && (
+                                                        <div className="mt-3 flex items-center justify-between rounded-xl border border-rose-300 bg-rose-50 p-3.5 text-rose-900 shadow-xs">
+                                                            <div className="flex items-center gap-2.5">
+                                                                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-600 text-white font-bold text-sm shrink-0">⛔</span>
+                                                                <div>
+                                                                    <p className="font-extrabold text-xs text-rose-900 uppercase tracking-wide">
+                                                                        Bukti bayar sudah pernah digunakan
+                                                                    </p>
+                                                                    <p className="text-[11px] text-rose-700 mt-0.5">
+                                                                        Nomor transaksi ({capture.reference_code || capture.analysis?.reference_code || 'struk'}) atau berkas bukti bayar ini sudah pernah diverifikasi sebelumnya. Pembayaran otomatis ditolak untuk mencegah penggunaan bukti bayar ganda.
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSelectedDetailCapture(capture)}
+                                                                className="inline-flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-bold text-white hover:bg-rose-700 transition shrink-0 ml-2"
+                                                            >
+                                                                <Eye size={13} /> Periksa Detail
+                                                            </button>
+                                                        </div>
+                                                    )}
 
                                                     {/* OCR Extraction Grid */}
                                                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1802,6 +1865,309 @@ export default function PaymentVerificationPage() {
                         </button>
                     </div>
                 </div>
+            </Modal>
+
+            {/* MODAL: DETAIL BUKTI PEMBAYARAN */}
+            <Modal
+                isOpen={!!selectedDetailCapture}
+                onClose={() => {
+                    setSelectedDetailCapture(null);
+                    setShowOcrRawText(false);
+                    setCopiedRef(false);
+                }}
+                title={selectedDetailCapture ? `Detail Bukti Pembayaran (Capture #${selectedDetailCapture.id})` : 'Detail Bukti Pembayaran'}
+                size="2xl"
+            >
+                {selectedDetailCapture && (() => {
+                    const c = selectedDetailCapture;
+                    const analysis = c.analysis || {};
+                    const isDuplicate = Boolean(c.duplicate_receipt_detected || c.failure_reason === 'duplicate_reference_code');
+                    const refNumber = c.reference_code || analysis.reference_code;
+                    const isNeedsReview = c.match_status === 'needs_review' || c.match_status === 'pending';
+
+                    return (
+                        <div className="space-y-4 text-slate-800">
+                            {/* Duplicate Warning Banner */}
+                            {isDuplicate && (
+                                <div className="rounded-xl border border-rose-300 bg-rose-50 p-3.5 text-rose-900 shadow-xs">
+                                    <div className="flex items-center gap-2 font-extrabold text-sm text-rose-800">
+                                        <AlertTriangle size={18} className="text-rose-600 shrink-0" />
+                                        <span>⛔ Bukti bayar sudah pernah digunakan</span>
+                                    </div>
+                                    <p className="text-xs text-rose-700 mt-1 leading-relaxed">
+                                        Nomor transaksi ({refNumber || 'struk'}) atau berkas bukti pembayaran ini sudah pernah terverifikasi/disetujui pada tagihan sebelumnya. Sistem secara otomatis menolak pembayaran ini untuk mencegah kecurangan klaim struk ganda.
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="grid gap-5 md:grid-cols-[230px_1fr]">
+                                {/* Image Box */}
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="relative group w-full h-64 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center shadow-xs">
+                                        {c.proof_url ? (
+                                            <>
+                                                <img
+                                                    src={c.proof_url}
+                                                    alt={`Bukti Bayar #${c.id}`}
+                                                    className="h-full w-full object-contain p-1.5"
+                                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPreviewImageUrl(c.proof_url)}
+                                                    className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition text-white font-medium text-xs gap-1.5"
+                                                >
+                                                    <ZoomIn size={16} /> Perbesar Foto
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <div className="text-center p-4 text-slate-400 text-xs">
+                                                <FileText size={32} className="mx-auto text-slate-300 mb-1" />
+                                                <span>Bukti fisik tidak tersedia</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {c.proof_url && (
+                                        <div className="flex items-center gap-2 w-full">
+                                            <button
+                                                type="button"
+                                                onClick={() => setPreviewImageUrl(c.proof_url)}
+                                                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition shadow-xs"
+                                            >
+                                                <ZoomIn size={13} /> Zoom
+                                            </button>
+                                            <a
+                                                href={c.proof_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 transition shadow-xs"
+                                            >
+                                                <ExternalLink size={13} /> Buka Tab
+                                            </a>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Information Box */}
+                                <div className="space-y-3.5">
+                                    {/* Receipt Extraction */}
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-2.5 shadow-xs">
+                                        <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                                                <FileText size={14} className="text-emerald-600" />
+                                                Rincian Transaksi di Struk
+                                            </span>
+                                            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                                                c.match_status === 'approved'
+                                                    ? 'bg-emerald-100 text-emerald-800'
+                                                    : isDuplicate
+                                                        ? 'bg-rose-100 text-rose-800'
+                                                        : 'bg-amber-100 text-amber-800'
+                                            }`}>
+                                                {c.match_status?.toUpperCase()}
+                                            </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2 text-xs">
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">Nominal Transfer:</span>
+                                                <span className="text-base font-extrabold text-slate-900">
+                                                    Rp {Number(c.amount || 0).toLocaleString('id-ID')}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">Metode / Saluran:</span>
+                                                <span className="font-bold text-slate-800">
+                                                    {analysis.payment_channel || 'Transfer Bank / QRIS'}
+                                                </span>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <span className="text-slate-500 block text-[11px]">No. Transaksi / Referensi Unik:</span>
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                    <span className="font-mono text-xs font-bold bg-white border border-slate-300 px-2 py-0.5 rounded text-slate-900">
+                                                        {refNumber || '-'}
+                                                    </span>
+                                                    {refNumber && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                navigator.clipboard.writeText(refNumber);
+                                                                setCopiedRef(true);
+                                                                setTimeout(() => setCopiedRef(false), 2000);
+                                                            }}
+                                                            className="text-[11px] text-blue-600 hover:text-blue-800 flex items-center gap-0.5 font-medium"
+                                                            title="Salin No. Referensi"
+                                                        >
+                                                            <Copy size={12} />
+                                                            <span>{copiedRef ? 'Tersalin!' : 'Salin'}</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">Pengirim / Pemilik Rek:</span>
+                                                <span className="font-semibold text-slate-800">
+                                                    {analysis.sender_name || c.sender_phone || '-'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">Waktu di Struk:</span>
+                                                <span className="font-semibold text-slate-800">
+                                                    {c.paid_date_display || c.paid_date || '-'} {analysis.paid_time ? `(${analysis.paid_time})` : ''}
+                                                </span>
+                                            </div>
+                                            <div className="col-span-2">
+                                                <span className="text-slate-500 block text-[11px]">Tujuan / Rekening Perusahaan:</span>
+                                                <span className="font-semibold text-slate-800">
+                                                    {analysis.destination_identity?.name || analysis.destination_identity?.account_number || analysis.destination_identity?.merchant_id || 'Rekening Perusahaan'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Linked Customer & Invoice */}
+                                    <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 space-y-2 text-xs">
+                                        <p className="font-bold text-blue-900 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                                            <User size={13} className="text-blue-600" />
+                                            Pelanggan & Tagihan Terhubung
+                                        </p>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">Nama Pelanggan:</span>
+                                                <span className="font-bold text-slate-900">
+                                                    {c.customer?.name || 'Belum Terhubung'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span className="text-slate-500 block text-[11px]">No. WhatsApp:</span>
+                                                <span className="font-semibold text-slate-800">
+                                                    {c.customer?.phone || c.sender_phone || '-'}
+                                                </span>
+                                            </div>
+                                            {c.customer?.pppoe_username && (
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">PPPoE Username:</span>
+                                                    <span className="font-mono font-bold text-blue-700">
+                                                        {c.customer.pppoe_username}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {c.invoice && (
+                                                <div>
+                                                    <span className="text-slate-500 block text-[11px]">Invoice Terpaut:</span>
+                                                    <a
+                                                        href={`/invoice/${c.invoice.invoice_link}`}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="font-bold text-blue-700 underline inline-flex items-center gap-0.5"
+                                                    >
+                                                        {c.invoice.invoice_link} <ExternalLink size={10} />
+                                                    </a>
+                                                    <span className="text-slate-500 block text-[10px]">
+                                                        Rp {Number(c.invoice.amount || 0).toLocaleString('id-ID')} · {c.invoice.status}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* AI Verification Score */}
+                                    <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2 text-xs shadow-xs">
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-bold text-slate-700 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                                                <Sparkles size={13} className="text-violet-600" />
+                                                Verifikasi & Analisis AI
+                                            </span>
+                                            <span className="font-bold text-slate-800">
+                                                Skor AI: {Number(c.match_confidence || 0).toFixed(0)}%
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                                            <div
+                                                className={`h-full ${
+                                                    Number(c.match_confidence || 0) >= 90
+                                                        ? 'bg-emerald-500'
+                                                        : Number(c.match_confidence || 0) >= 70
+                                                            ? 'bg-amber-500'
+                                                            : 'bg-rose-500'
+                                                }`}
+                                                style={{ width: `${Math.min(100, Math.max(0, c.match_confidence || 0))}%` }}
+                                            />
+                                        </div>
+                                        <div className="flex justify-between text-[11px] text-slate-500">
+                                            <span>Sumber: <strong>{c.source}</strong></span>
+                                            <span>Masuk: <strong>{c.created_at_display || '-'}</strong></span>
+                                        </div>
+                                        {c.failure_reason && (
+                                            <p className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded p-1.5">
+                                                Catatan Validasi: {c.failure_reason}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {/* Collapsible Raw OCR */}
+                                    {analysis.ocr_raw_text && (
+                                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowOcrRawText(!showOcrRawText)}
+                                                className="flex w-full items-center justify-between text-xs font-semibold text-slate-700 hover:text-slate-900"
+                                            >
+                                                <span>Teks Mentah Hasil Scan OCR Struk</span>
+                                                <span className="text-[11px] text-blue-600 font-bold">{showOcrRawText ? 'Sembunyikan ▲' : 'Lihat Teks ▼'}</span>
+                                            </button>
+                                            {showOcrRawText && (
+                                                <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-white border border-slate-200 p-2.5 font-mono text-[11px] text-slate-700">
+                                                    {analysis.ocr_raw_text}
+                                                </pre>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Modal Footer Actions */}
+                            <div className="flex items-center justify-between border-t border-slate-200 pt-3">
+                                <div className="flex items-center gap-2">
+                                    {canManage && isNeedsReview && (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    handleResolve(c.id, 'approve');
+                                                    setSelectedDetailCapture(null);
+                                                }}
+                                                disabled={refreshing}
+                                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 transition"
+                                            >
+                                                <Check size={14} /> Konfirmasi & Lunaskan
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    handleResolve(c.id, 'reject');
+                                                    setSelectedDetailCapture(null);
+                                                }}
+                                                disabled={refreshing}
+                                                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60 transition"
+                                            >
+                                                <X size={14} /> Tolak Bukti Bayar
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedDetailCapture(null)}
+                                    className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                >
+                                    Tutup
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })()}
             </Modal>
         </div>
     );

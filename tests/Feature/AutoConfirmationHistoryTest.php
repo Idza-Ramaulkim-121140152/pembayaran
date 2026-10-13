@@ -298,8 +298,9 @@ class AutoConfirmationHistoryTest extends TestCase
         $newCapture->refresh();
         $invoice->refresh();
 
-        // Must NOT be auto-approved
-        $this->assertSame('needs_review', $newCapture->match_status);
+        // Must NOT be auto-approved, must be rejected as duplicate
+        $this->assertSame('rejected', $newCapture->match_status);
+        $this->assertTrue((bool) data_get($newCapture->meta, 'duplicate_receipt_detected'));
         $this->assertSame('unpaid', $invoice->status);
     }
 
