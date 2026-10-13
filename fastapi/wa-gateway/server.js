@@ -747,22 +747,156 @@ async function handleCiphertextCandidate(msg) {
     sweepPendingCiphertextMessages();
 }
 
-async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1500) {
+async function downloadMediaWithRetry(msg, maxAttempts = 4, delayMs = 1200) {
+    if (!msg || !msg.hasMedia) return null;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // Tier 1: Coba method bawaan whatsapp-web.js
         try {
-            if (msg.hasMedia) {
-                const media = await msg.downloadMedia();
-                if (media && media.data && media.mimetype) {
-                    return media;
-                }
+            const media = await msg.downloadMedia();
+            if (media && media.data && media.mimetype) {
+                return media;
             }
         } catch (err) {
-            console.warn(`⚠️ downloadMedia percobaan ke-${attempt} gagal: ${err.message}`);
+            console.warn(`⚠️ downloadMedia percobaan ke-${attempt} gagal: ${err.message || err}`);
         }
+
+        // Tier 2: Injeksi Puppeteer Evaluate langsung ke store WA Web (mengatasi bug @lid & error 'r')
+        try {
+            if (client && client.pupPage) {
+                const browserMedia = await client.pupPage.evaluate(async (msgId, rawId) => {
+                    try {
+                        let msgModel = window.Store?.Msg?.get ? window.Store.Msg.get(msgId) : null;
+                        if (!msgModel && window.Store?.Msg?.models) {
+                            msgModel = window.Store.Msg.models.find((m) =>
+                                m.id?._serialized === msgId ||
+                                m.id?.id === rawId ||
+                                (rawId && m.id?._serialized && m.id._serialized.includes(rawId))
+                            );
+                        }
+
+                        if (!msgModel) return null;
+
+                        const md = msgModel.mediaData;
+
+                        // Jika mediaData sudah memiliki base64 data langsung
+                        if (md && md.data && typeof md.data === 'string' && md.data.length > 50) {
+                            return {
+                                data: md.data.replace(/^data:[^;]+;base64,/, ''),
+                                mimetype: msgModel.mimetype || md.mimetype || 'image/jpeg',
+                                filename: msgModel.filename || 'payment.jpg',
+                            };
+                        }
+
+                        // Coba unduh via fungsi model dengan try...catch aman
+                        if (typeof msgModel.downloadMedia === 'function') {
+                            try {
+                                await msgModel.downloadMedia({
+                                    downloadEvenIfExpensive: true,
+                                    rmrReason: 1,
+                                });
+                            } catch (_) {}
+                        }
+
+                        // Coba dekripsi via DownloadManager
+                        const dm = window.Store?.DownloadManager || window.Store?.mediaContent;
+                        const decryptFn = dm && (dm.downloadAndMaybeDecrypt || dm.downloadAndDecrypt);
+                        if (decryptFn && md && md.directPath && md.encFilehash && md.mediaKey) {
+                            try {
+                                const mockQpl = {
+                                    addAnnotations: function () { return this; },
+                                    addPoint: function () { return this; },
+                                };
+                                const decrypted = await decryptFn.call(dm, {
+                                    directPath: md.directPath,
+                                    encFilehash: md.encFilehash,
+                                    filehash: md.filehash,
+                                    mediaKey: md.mediaKey,
+                                    mediaKeyTimestamp: md.mediaKeyTimestamp,
+                                    type: msgModel.type || 'image',
+                                    signal: new AbortController().signal,
+                                    downloadQpl: mockQpl,
+                                });
+
+                                if (decrypted) {
+                                    let b64 = null;
+                                    if (window.WWebJS && typeof window.WWebJS.arrayBufferToBase64Async === 'function') {
+                                        b64 = await window.WWebJS.arrayBufferToBase64Async(decrypted);
+                                    } else {
+                                        const blob = new Blob([decrypted], { type: msgModel.mimetype || 'image/jpeg' });
+                                        const reader = new FileReader();
+                                        b64 = await new Promise((res) => {
+                                            reader.onloadend = () => res(reader.result ? reader.result.split(',')[1] : null);
+                                            reader.readAsDataURL(blob);
+                                        });
+                                    }
+
+                                    if (b64) {
+                                        return {
+                                            data: b64,
+                                            mimetype: msgModel.mimetype || 'image/jpeg',
+                                            filename: msgModel.filename || 'payment.jpg',
+                                        };
+                                    }
+                                }
+                            } catch (_) {}
+                        }
+
+                        // Coba thumbnail preview base64 di mediaData
+                        if (md && md.preview) {
+                            const prevB64 = md.preview._b64 || (typeof md.preview === 'string' ? md.preview : null);
+                            if (prevB64 && prevB64.length > 50) {
+                                return {
+                                    data: prevB64.replace(/^data:[^;]+;base64,/, ''),
+                                    mimetype: msgModel.mimetype || 'image/jpeg',
+                                    filename: msgModel.filename || 'payment.jpg',
+                                };
+                            }
+                        }
+
+                        return null;
+                    } catch (e) {
+                        return null;
+                    }
+                }, msg.id._serialized, msg.id.id);
+
+                if (browserMedia && browserMedia.data) {
+                    console.log(`✅ Media berhasil diekstrak via Puppeteer fallback (${browserMedia.mimetype}, length: ${browserMedia.data.length})`);
+                    return browserMedia;
+                }
+            }
+        } catch (pupErr) {
+            console.warn(`⚠️ Puppeteer media extraction fallback gagal: ${pupErr.message}`);
+        }
+
+        // Tier 3: Cek apakah base64 preview gambar sudah ada di memory msg._data
+        if (msg._data) {
+            const rawBody = msg._data.body;
+            if (rawBody && typeof rawBody === 'string' && rawBody.length > 50 && (rawBody.startsWith('/9j/') || rawBody.startsWith('iVBORw') || !rawBody.includes(' '))) {
+                console.log(`✅ Menggunakan media preview base64 dari msg._data (length: ${rawBody.length})`);
+                return {
+                    data: rawBody.replace(/^data:[^;]+;base64,/, ''),
+                    mimetype: msg._data.mimetype || 'image/jpeg',
+                    filename: 'payment_preview.jpg',
+                };
+            }
+        }
+
         if (attempt < maxAttempts) {
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
     }
+
+    // Tier 4: Fallback terakhir jika semua percobaan gagal namun ada raw data body
+    if (msg._data && msg._data.body && typeof msg._data.body === 'string' && msg._data.body.length > 50) {
+        console.log(`ℹ️ Menggunakan fallback raw data body (length: ${msg._data.body.length})`);
+        return {
+            data: msg._data.body.replace(/^data:[^;]+;base64,/, ''),
+            mimetype: msg._data.mimetype || 'image/jpeg',
+            filename: 'payment_proof.jpg',
+        };
+    }
+
     return null;
 }
 
