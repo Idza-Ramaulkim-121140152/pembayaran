@@ -366,20 +366,45 @@ class BillingAutomationController extends Controller
         ]);
     }
 
-    public function assignCustomer(Request $request, BillingPaymentCapture $capture)
-    {
+    public function assignCustomer(
+        Request $request,
+        BillingPaymentCapture $capture,
+        \App\Services\CustomerResolutionService $customerResolutionService
+    ) {
         $validated = $request->validate([
             'customer_id' => 'required|integer|exists:customers,id',
         ]);
 
-        $capture->customer_id = (int) $validated['customer_id'];
+        $customerId = (int) $validated['customer_id'];
+        $capture->customer_id = $customerId;
+
+        // Remember WhatsApp LID mapping if capture came from a LID
+        $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+        $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+        if ($senderLid !== '') {
+            $customerResolutionService->rememberCustomerLid($customerId, $senderLid);
+        } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+            $customerResolutionService->rememberCustomerLid($customerId, $senderPhone);
+        }
+
+        // Auto-link active invoice if not already attached
+        if (!$capture->invoice_id) {
+            $customer = \App\Models\Customer::find($customerId);
+            if ($customer) {
+                $activeInvoice = $customerResolutionService->findActiveInvoices($customer)->first();
+                if ($activeInvoice) {
+                    $capture->invoice_id = $activeInvoice->id;
+                }
+            }
+        }
+
         $capture->save();
 
         // Run candidate matching for this capture
         $this->paymentMatchingService->runMatching($capture->id, false, auth()->id());
 
         return response()->json([
-            'message' => 'Pelanggan berhasil ditautkan ke bukti pembayaran.',
+            'message' => 'Pelanggan berhasil ditautkan ke bukti pembayaran dan ID WhatsApp disimpan.',
             'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
         ]);
     }

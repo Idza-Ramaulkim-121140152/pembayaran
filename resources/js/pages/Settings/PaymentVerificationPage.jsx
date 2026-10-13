@@ -622,6 +622,32 @@ export default function PaymentVerificationPage() {
                 </div>
             )}
 
+            {/* AI Vision Inactive Notice Banner */}
+            {!config?.gemini_api_key && !config?.openai_api_key && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50/90 p-4 text-amber-900 shadow-xs">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-200 text-amber-800">
+                            <AlertTriangle size={18} />
+                        </div>
+                        <div>
+                            <p className="text-xs sm:text-sm font-bold text-amber-900">
+                                AI Vision (Google Gemini) Belum Aktif
+                            </p>
+                            <p className="mt-0.5 text-[11px] sm:text-xs text-amber-700">
+                                Struk transfer buram/foto kamera HP dan struk SeaBank/BCA memerlukan Google Gemini AI Vision agar terbaca akurat (&gt;90%). Masukkan Gemini API Key gratis di tab Pengaturan.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('settings')}
+                        className="shrink-0 rounded-xl bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-700 transition"
+                    >
+                        Buka Pengaturan AI →
+                    </button>
+                </div>
+            )}
+
             {/* Tabs Navigation */}
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 pb-2">
                 <button
@@ -1046,7 +1072,22 @@ export default function PaymentVerificationPage() {
                                                         </div>
 
                                                         <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                                                            <p className="text-xs text-gray-500 font-medium">Skor Kepercayaan AI</p>
+                                                            <div className="flex items-center justify-between gap-1">
+                                                                <p className="text-xs text-gray-500 font-medium">Skor Kepercayaan</p>
+                                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                                                    capture.provider_used === 'gemini'
+                                                                        ? 'bg-purple-100 text-purple-700'
+                                                                        : capture.provider_used === 'openai'
+                                                                        ? 'bg-blue-100 text-blue-700'
+                                                                        : 'bg-gray-200 text-gray-700'
+                                                                }`}>
+                                                                    {capture.provider_used === 'gemini'
+                                                                        ? '✨ Gemini AI'
+                                                                        : capture.provider_used === 'openai'
+                                                                        ? '🤖 OpenAI'
+                                                                        : 'Mode Lokal'}
+                                                                </span>
+                                                            </div>
                                                             <div className="mt-1 flex items-center gap-2">
                                                                 <div className="h-2 w-16 overflow-hidden rounded-full bg-gray-200">
                                                                     <div
@@ -1098,8 +1139,11 @@ export default function PaymentVerificationPage() {
                                                                             {capture.customer.pppoe_username && (
                                                                                 <span>· PPPoE: <strong className="font-mono text-emerald-700">{capture.customer.pppoe_username}</strong></span>
                                                                             )}
-                                                                            {capture.sender_phone && capture.sender_phone !== capture.customer.phone && (
-                                                                                <span className="text-gray-400">· Pengirim: {capture.sender_phone}</span>
+                                                                            {capture.sender_name && (
+                                                                                <span>· Nama WA: <strong className="text-purple-700">"{capture.sender_name}"</strong></span>
+                                                                            )}
+                                                                            {capture.is_lid && (
+                                                                                <span className="font-mono text-gray-400">· (WA Multi-Device: {capture.sender_lid || capture.sender_phone})</span>
                                                                             )}
                                                                         </p>
                                                                     </div>
@@ -1129,11 +1173,16 @@ export default function PaymentVerificationPage() {
                                                                         <AlertTriangle size={16} className="text-amber-600 shrink-0" />
                                                                         <div>
                                                                             <span className="font-bold">Pelanggan belum terhubung secara otomatis.</span>
-                                                                            {capture.sender_phone && (
-                                                                                <span className="text-gray-600 ml-1">
-                                                                                    (Nomor Pengirim WA: <strong>{capture.sender_phone}</strong>)
-                                                                                </span>
-                                                                            )}
+                                                                            <div className="mt-0.5 text-gray-600 flex items-center gap-2 flex-wrap">
+                                                                                {capture.is_lid ? (
+                                                                                    <span>📱 ID Perangkat WA: <strong className="font-mono text-gray-800">{capture.sender_lid || capture.sender_phone}</strong> (Multi-Device)</span>
+                                                                                ) : (
+                                                                                    <span>📱 Nomor Pengirim WA: <strong>{capture.sender_phone}</strong></span>
+                                                                                )}
+                                                                                {capture.sender_name && (
+                                                                                    <span>· Nama Profil WA: <strong className="text-purple-700">"{capture.sender_name}"</strong></span>
+                                                                                )}
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                     {canManage && isNeedsReview && (
@@ -1151,6 +1200,21 @@ export default function PaymentVerificationPage() {
                                                                 {/* Search Customer Inline Form */}
                                                                 {isSearchOpen && (
                                                                     <div className="mt-3 pt-3 border-t border-amber-200/80 space-y-2">
+                                                                        {capture.sender_name && (
+                                                                            <div className="flex items-center gap-2 text-[11px]">
+                                                                                <span className="text-gray-500">Saran:</span>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => {
+                                                                                        handleSearchCustomer(capture.id, capture.sender_name);
+                                                                                        setCustomerSearchQueries((prev) => ({ ...prev, [capture.id]: capture.sender_name }));
+                                                                                    }}
+                                                                                    className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-semibold hover:bg-purple-100 transition inline-flex items-center gap-1"
+                                                                                >
+                                                                                    🔍 Cari nama profil "{capture.sender_name}"
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
                                                                         <div className="relative">
                                                                             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                                                                             <input
@@ -1185,7 +1249,7 @@ export default function PaymentVerificationPage() {
                                                                                             type="button"
                                                                                             className="px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold text-[11px]"
                                                                                         >
-                                                                                            Pilih
+                                                                                            Tautkan & Ingat
                                                                                         </button>
                                                                                     </div>
                                                                                 ))}

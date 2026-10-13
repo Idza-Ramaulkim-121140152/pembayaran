@@ -429,43 +429,158 @@ function isSelfChatMessage(msg) {
     return false;
 }
 
-async function resolveSenderPhone(msg) {
-    if (isSelfChatMessage(msg)) {
-        const bodyText = String(msg.body || '');
-        const phoneMatch = bodyText.match(/(?:\+62|62|0)8[1-9][0-9]{7,11}/);
-        if (phoneMatch) {
-            const normalized = normalizeInboundPhone(phoneMatch[0]);
-            if (normalized) return normalized;
-        }
+function isLidIdentifier(val) {
+    if (!val) return false;
+    const str = String(val);
+    if (str.includes('@lid')) return true;
+    const digits = str.replace(/\D/g, '');
+    return (digits.length >= 14 && (digits.startsWith('1') || digits.startsWith('2') || digits.startsWith('01') || digits.startsWith('02')));
+}
+
+function cleanLidDigits(val) {
+    if (!val) return '';
+    const digits = String(val).replace('@lid', '').replace(/\D/g, '');
+    if (digits.length >= 15 && digits.startsWith('0')) {
+        return digits.slice(1);
+    }
+    return digits;
+}
+
+async function resolveSenderDetails(msg) {
+    const fromStr = String(msg?.from || '');
+    const authorStr = String(msg?.author || '');
+    const remoteStr = String(msg?._data?.id?.remote || '');
+    const isSelf = isSelfChatMessage(msg);
+
+    let senderLid = '';
+    let isLid = false;
+    if (fromStr.includes('@lid') || isLidIdentifier(fromStr)) {
+        isLid = true;
+        senderLid = cleanLidDigits(fromStr);
+    } else if (authorStr.includes('@lid') || isLidIdentifier(authorStr)) {
+        isLid = true;
+        senderLid = cleanLidDigits(authorStr);
+    } else if (remoteStr.includes('@lid') || isLidIdentifier(remoteStr)) {
+        isLid = true;
+        senderLid = cleanLidDigits(remoteStr);
     }
 
+    // 1. Extract pushname / display name
+    let senderName = '';
+    let contact = null;
     try {
         if (typeof msg.getContact === 'function') {
-            const contact = await msg.getContact();
-            if (contact && contact.number) {
-                const normalized = normalizeInboundPhone(contact.number);
-                if (normalized && normalized.length >= 8 && normalized.length <= 16) {
-                    return normalized;
+            contact = await msg.getContact();
+            if (contact) {
+                senderName = contact.pushname || contact.name || '';
+                if (!senderLid && contact.id?.server === 'lid') {
+                    isLid = true;
+                    senderLid = cleanLidDigits(contact.id.user || contact.number);
                 }
             }
         }
     } catch (_) {}
 
-    const author = String(msg.author || '');
-    if (author.endsWith('@c.us')) {
-        return normalizeInboundPhone(author.replace('@c.us', ''));
+    if (!senderName && msg._data) {
+        senderName = msg._data.notifyName || msg._data.pushname || '';
     }
 
-    const from = String(msg.from || '');
-    if (from.endsWith('@c.us')) {
-        return normalizeInboundPhone(from.replace('@c.us', ''));
+    // 2. Real phone number resolution
+    let resolvedPhone = '';
+
+    if (isSelf) {
+        const bodyText = String(msg.body || '');
+        const phoneMatch = bodyText.match(/(?:\+62|62|0)8[1-9][0-9]{7,11}/);
+        if (phoneMatch) {
+            resolvedPhone = normalizeInboundPhone(phoneMatch[0]);
+        }
     }
 
-    if (msg._data?.id?.remote && String(msg._data.id.remote).endsWith('@c.us')) {
-        return normalizeInboundPhone(String(msg._data.id.remote).replace('@c.us', ''));
+    if (!resolvedPhone) {
+        if (authorStr.endsWith('@c.us')) {
+            resolvedPhone = normalizeInboundPhone(authorStr.replace('@c.us', ''));
+        } else if (fromStr.endsWith('@c.us')) {
+            resolvedPhone = normalizeInboundPhone(fromStr.replace('@c.us', ''));
+        } else if (remoteStr.endsWith('@c.us')) {
+            resolvedPhone = normalizeInboundPhone(remoteStr.replace('@c.us', ''));
+        } else if (contact && contact.id?.server === 'c.us' && contact.number) {
+            const p = normalizeInboundPhone(contact.number);
+            if (p && p.length >= 10 && p.length <= 14) {
+                resolvedPhone = p;
+            }
+        }
     }
 
-    return normalizeInboundPhone(from);
+    // 3. Query Puppeteer WA Web Store for LID to Phone mapping
+    if (!resolvedPhone && (isLid || fromStr.includes('@lid')) && client && client.pupPage) {
+        try {
+            const lidQuery = fromStr.includes('@lid') ? fromStr : (senderLid ? `${senderLid}@lid` : fromStr);
+            const queriedPhone = await client.pupPage.evaluate((targetLid, rawDigits) => {
+                try {
+                    const clean = String(targetLid || '').trim();
+                    const full = clean.includes('@') ? clean : `${clean}@lid`;
+
+                    if (window.Store?.LidContact) {
+                        const lc = window.Store.LidContact.get ? window.Store.LidContact.get(full) : null;
+                        if (lc?.phoneNumber) return String(lc.phoneNumber);
+                        if (lc?.wid?.user && lc?.wid?.server === 'c.us') return String(lc.wid.user);
+                    }
+
+                    if (window.Store?.Contact) {
+                        const c = window.Store.Contact.get ? window.Store.Contact.get(full) : null;
+                        if (c?.phoneNumber) return String(c.phoneNumber);
+                        if (c?.id?.server === 'c.us' && c?.id?.user) return String(c.id.user);
+                        if (c?.wid?.server === 'c.us' && c?.wid?.user) return String(c.wid.user);
+                    }
+
+                    if (window.Store?.LidUtils?.getPhoneNumber) {
+                        const num = window.Store.LidUtils.getPhoneNumber(full);
+                        if (num) return String(num);
+                    }
+
+                    if (window.Store?.Chat) {
+                        const chat = window.Store.Chat.get ? window.Store.Chat.get(full) : null;
+                        if (chat?.contact?.phoneNumber) return String(chat.contact.phoneNumber);
+                        if (chat?.id?.server === 'c.us' && chat?.id?.user) return String(chat.id.user);
+                    }
+
+                    if (window.Store?.Contact?.models) {
+                        const found = window.Store.Contact.models.find(m =>
+                            (m.lid === full || m.id?._serialized === full || m.lid?._serialized === full || (rawDigits && String(m.id?.user) === String(rawDigits))) &&
+                            (m.phoneNumber || (m.id?.server === 'c.us' && m.id?.user))
+                        );
+                        if (found?.phoneNumber) return String(found.phoneNumber);
+                        if (found?.id?.server === 'c.us' && found?.id?.user) return String(found.id.user);
+                    }
+
+                    return null;
+                } catch (e) {
+                    return null;
+                }
+            }, lidQuery, senderLid);
+
+            if (queriedPhone) {
+                const norm = normalizeInboundPhone(queriedPhone);
+                if (norm && norm.length >= 10 && norm.length <= 14) {
+                    resolvedPhone = norm;
+                    console.log(`🔍 [LID Resolver] Berhasil menemukan nomor HP asli dari LID ${senderLid}: ${resolvedPhone}`);
+                }
+            }
+        } catch (_) {}
+    }
+
+    return {
+        phone: resolvedPhone,
+        lid: senderLid,
+        name: String(senderName || '').trim(),
+        isLid: isLid || !resolvedPhone,
+        rawSender: fromStr,
+    };
+}
+
+async function resolveSenderPhone(msg) {
+    const details = await resolveSenderDetails(msg);
+    return details.phone || (details.lid ? `0${details.lid}` : normalizeInboundPhone(msg.from));
 }
 
 function getMessageId(msg) {
@@ -1065,8 +1180,8 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
     }
 
     const cleanMime = normalizeMimeType(media.mimetype);
-    const resolvedPhone = await resolveSenderPhone(msg);
-    const senderPhone = resolvedPhone || String(msg.from || waStatus?.phone || 'unknown').replace(/@.*$/, '');
+    const senderDetails = await resolveSenderDetails(msg);
+    const senderPhone = senderDetails.phone || (senderDetails.lid ? `0${senderDetails.lid}` : normalizeInboundPhone(msg.from));
     const mediaSize = Buffer.byteLength(media.data || '', 'base64');
 
     logGatewayEvent('media_download_succeeded', {
@@ -1074,13 +1189,17 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
         mime_type: cleanMime,
         raw_mime: media.mimetype,
         sender_phone: senderPhone,
+        sender_lid: senderDetails.lid || null,
+        sender_name: senderDetails.name || null,
         media_size: mediaSize,
     });
-    console.log(`✅ Media berhasil diunduh (${cleanMime}, ${mediaSize} bytes, pengirim: ${senderPhone}). Meneruskan ke webhook...`);
+    console.log(`✅ Media berhasil diunduh (${cleanMime}, ${mediaSize} bytes, pengirim: ${senderPhone}, lid: ${senderDetails.lid || '-'}, nama: ${senderDetails.name || '-'}). Meneruskan ke webhook...`);
 
     const payload = {
         message_id: getMessageId(msg) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         sender_phone: senderPhone,
+        sender_lid: senderDetails.lid || null,
+        sender_name: senderDetails.name || null,
         sent_at: new Date((msg.timestamp || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
         media_base64: media.data,
         caption: msg.body || '',

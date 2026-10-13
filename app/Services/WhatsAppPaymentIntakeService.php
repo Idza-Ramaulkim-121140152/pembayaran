@@ -33,10 +33,24 @@ class WhatsAppPaymentIntakeService
             ];
         }
 
-        $customer = $this->customerResolutionService->findCustomerByPhone($normalized['sender_phone']);
+        $customer = null;
+        if (!$this->customerResolutionService->isLid($normalized['sender_phone'])) {
+            $customer = $this->customerResolutionService->findCustomerByPhone($normalized['sender_phone']);
+        }
+        if (!$customer && !empty($normalized['sender_lid'])) {
+            $customer = $this->customerResolutionService->findCustomerByLid($normalized['sender_lid']);
+        }
+        if (!$customer && !empty($normalized['sender_name'])) {
+            $customer = $this->customerResolutionService->findCustomerByName($normalized['sender_name']);
+        }
         if (!$customer && !empty($normalized['caption'])) {
             $customer = $this->customerResolutionService->resolveFromText($normalized['caption']);
         }
+
+        if ($customer && !empty($normalized['sender_lid'])) {
+            $this->customerResolutionService->rememberCustomerLid($customer->id, $normalized['sender_lid']);
+        }
+
         $invoice = $customer ? $this->customerResolutionService->findActiveInvoices($customer)->first() : null;
         $media = $this->storeMedia($normalized);
 
@@ -51,6 +65,8 @@ class WhatsAppPaymentIntakeService
             'match_status' => 'pending',
             'meta' => [
                 'sender_phone' => $normalized['sender_phone'],
+                'sender_lid' => $normalized['sender_lid'],
+                'sender_name' => $normalized['sender_name'],
                 'source' => [
                     'message_id' => $normalized['message_id'],
                     'caption' => $normalized['caption'],
@@ -91,7 +107,18 @@ class WhatsAppPaymentIntakeService
     private function normalizePayload(array $payload): array
     {
         $messageId = trim((string) ($payload['message_id'] ?? ''));
-        $senderPhone = $this->normalizePhone((string) ($payload['sender_phone'] ?? ''));
+        $rawSenderPhone = trim((string) ($payload['sender_phone'] ?? ''));
+        $senderLid = trim((string) ($payload['sender_lid'] ?? ''));
+        $senderName = trim((string) ($payload['sender_name'] ?? ''));
+
+        if ($senderLid === '' && $this->customerResolutionService->isLid($rawSenderPhone)) {
+            $senderLid = $this->customerResolutionService->cleanLid($rawSenderPhone);
+        }
+
+        $senderPhone = $this->customerResolutionService->isLid($rawSenderPhone)
+            ? ($senderLid ? '0' . $senderLid : $rawSenderPhone)
+            : $this->normalizePhone($rawSenderPhone);
+
         $caption = trim((string) ($payload['caption'] ?? ''));
         $rawMime = strtolower(trim(explode(';', (string) ($payload['mime_type'] ?? 'image/jpeg'))[0]));
         if ($rawMime === 'image/jpg' || $rawMime === 'image/jfif' || $rawMime === 'image/pjpeg') {
@@ -109,6 +136,8 @@ class WhatsAppPaymentIntakeService
         return [
             'message_id' => $messageId,
             'sender_phone' => $senderPhone,
+            'sender_lid' => $senderLid,
+            'sender_name' => $senderName,
             'caption' => $caption,
             'mime_type' => $mimeType,
             'media_url' => $mediaUrl,

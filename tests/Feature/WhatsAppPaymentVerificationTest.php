@@ -774,6 +774,74 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertStringContainsString('11:36 WIB', $data['receipt_time_display']);
     }
 
+    public function test_customer_resolution_by_whatsapp_lid_and_push_name(): void
+    {
+        $customer = Customer::create([
+            'name' => 'Saripudin',
+            'phone' => '085712345678',
+            'address' => 'Desa Makmur',
+            'package_type' => 'Paket 15 Mbps',
+            'due_date' => '2026-10-15',
+            'is_active' => true,
+        ]);
+
+        $resolver = app(\App\Services\CustomerResolutionService::class);
+
+        // 1. Resolve by Push Name
+        $matchedByName = $resolver->findCustomerByName('Saripudin');
+        $this->assertNotNull($matchedByName);
+        $this->assertEquals($customer->id, $matchedByName->id);
+
+        // 2. Remember and resolve by WhatsApp LID
+        $lid = '170339074089196';
+        $resolver->rememberCustomerLid($customer->id, $lid);
+
+        $matchedByLid = $resolver->findCustomerByLid($lid);
+        $this->assertNotNull($matchedByLid);
+        $this->assertEquals($customer->id, $matchedByLid->id);
+
+        // Also works with '0' prefix added by gateway
+        $matchedByPrefixedLid = $resolver->findCustomerByLid('0' . $lid);
+        $this->assertNotNull($matchedByPrefixedLid);
+        $this->assertEquals($customer->id, $matchedByPrefixedLid->id);
+    }
+
+    public function test_assign_customer_remembers_lid_mapping(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+        $customer = Customer::create([
+            'name' => 'Pak Rama',
+            'phone' => '081299887766',
+            'address' => 'Jl. Mawar',
+            'is_active' => true,
+        ]);
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'amount' => 150000,
+            'paid_date' => '2026-10-13',
+            'fingerprint' => 'test-fp-' . uniqid(),
+            'match_status' => 'needs_review',
+            'meta' => [
+                'sender_phone' => '013524902346818',
+                'sender_lid' => '13524902346818',
+            ],
+        ]);
+
+        $response = $this->actingAs($admin)->postJson("/api/billing/payments/{$capture->id}/assign-customer", [
+            'customer_id' => $customer->id,
+        ]);
+
+        $response->assertOk();
+        $this->assertEquals($customer->id, $capture->fresh()->customer_id);
+
+        // Verify LID was remembered
+        $resolver = app(\App\Services\CustomerResolutionService::class);
+        $found = $resolver->findCustomerByLid('13524902346818');
+        $this->assertNotNull($found);
+        $this->assertEquals($customer->id, $found->id);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

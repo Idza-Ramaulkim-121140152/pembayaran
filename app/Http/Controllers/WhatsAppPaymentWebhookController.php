@@ -26,6 +26,8 @@ class WhatsAppPaymentWebhookController extends Controller
         $validated = $request->validate([
             'message_id' => 'required|string|max:191',
             'sender_phone' => 'required|string|max:32',
+            'sender_lid' => 'nullable|string|max:64',
+            'sender_name' => 'nullable|string|max:191',
             'sent_at' => 'required|date',
             'media_url' => 'nullable|string|max:2000',
             'media_base64' => 'nullable|string',

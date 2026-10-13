@@ -34,8 +34,19 @@ class PaymentProofAnalysisService
         }
 
         $preferredProvider = (string) ($config['ai_provider'] ?? 'auto');
-        $geminiKey = trim((string) ($config['gemini_api_key'] ?? config('services.gemini.api_key') ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', '')))));
-        $openAiKey = trim((string) ($config['openai_api_key'] ?? config('services.openai.api_key') ?: env('OPENAI_API_KEY', '')));
+        $geminiKey = trim((string) (
+            $config['gemini_api_key']
+            ?? \App\Models\SiteSetting::get('gemini_api_key')
+            ?? \App\Models\SiteSetting::get('google_api_key')
+            ?? config('services.gemini.api_key')
+            ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', '')))
+        ));
+        $openAiKey = trim((string) (
+            $config['openai_api_key']
+            ?? \App\Models\SiteSetting::get('openai_api_key')
+            ?? config('services.openai.api_key')
+            ?: env('OPENAI_API_KEY', '')
+        ));
 
         if (app()->runningUnitTests()) {
             if ($geminiKey === '') $geminiKey = 'test-gemini-key';
@@ -71,19 +82,22 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "ocr_raw_text": string|null,
   "raw_summary": string|null
 }
-Pedoman:
-- is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
-- success_status=true hanya jika transaksi jelas BERHASIL / SUKSES / LUNAS.
-- paid_date & paid_time: Ekstrak TANGGAL dan JAM TRANSAKSI yang tercetak asli pada gambar struk/bukti bayar (contoh 'Waktu Transaksi: 13 Okt 2026, 11:36' -> paid_date: '2026-10-13', paid_time: '11:36:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke YYYY-MM-DD. JANGAN PERNAH gunakan waktu sekarang atau waktu kirim WA. Jika detik tidak ada pada struk (HH:MM), tambahkan ':00'. Jika waktu tidak tertera pada struk, isi null.
-- sender_name: Nama pengirim/pembayar yang tertera pada bukti transfer (contoh: Dari: Saripudin (SeaBank: ...) -> "Saripudin").
-- reference_code: Cari dan ekstrak nomor transaksi asli atau nomor unik bukti pembayaran yang tercetak pada gambar struk (contoh: No. Transaksi, Nomor Transaksi, No. Referensi, Nomor Referensi, ID Transaksi, RRN, No. Resi, Nomor Jurnal, Kode Transaksi, STAN, Approval Code). Pada SeaBank atau bank lain, utamakan nomor transaksi atau nomor referensi unik.
-- PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...' atau nomor tagihan). Ekstrak HANYA nomor unik transaksi dari bukti bayar/struk. Jika tidak ada nomor unik transaksi dari bank/e-wallet/QRIS yang tertera pada struk, isi null.
-- confidence memakai skala angka 0 s.d 100.
+Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Foto Layar, Foto Kamera HP):
+- PENTING GAMBAR BLUR/BURAM: Gambar ini mungkin agak blur, foto kamera HP dari struk/layar, agak redup, atau mengalami kompresi WhatsApp. Teliti setiap bagian gambar dengan sangat cermat:
+  1. amount: Cari angka nominal transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Hilangkan 'Rp' dan titik ribuan, kembalikan berupa angka murni (misal 150000). Walaupun angka agak kabur, baca angka nominal/total transfer sebaik mungkin.
+  2. sender_name: Cari nama pengirim / pemilik rekening pengirim (contoh: 'Dari: Saripudin', 'Pengirim: Rama', dsb.).
+  3. reference_code: Cari nomor transaksi unik bank / e-wallet (contoh: No. Transaksi, Nomor Transaksi, No. Referensi, ID Transaksi, RRN, No. Resi). Pada SeaBank atau bank lain, cari nomor transaksi unik panjang (misal 20261013...). PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...'). Jika tidak ada nomor unik dari bank/e-wallet, isi null.
+  4. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada gambar struk/bukti bayar (contoh '13 Okt 2026, 11:36' -> paid_date: '2026-10-13', paid_time: '11:36:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
+  5. payment_channel: Deteksi bank/e-wallet (contoh: SeaBank, BCA, BRI / BRImo, Mandiri / Livin, BNI, Dana, GoPay, OVO, ShopeePay, QRIS).
+  6. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank atau QRIS.
+  7. success_status=true hanya jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM.
+  8. confidence memakai skala angka 0 s.d 100.
 PROMPT;
 
         // 1. Try AI Vision if raw bytes are available
         if ($rawBytes) {
-            $imageData = base64_encode($rawBytes);
+            $processedBytes = $this->preprocessImageBytes($rawBytes, $mimeType);
+            $imageData = base64_encode($processedBytes);
 
             if (($preferredProvider === 'gemini' || $preferredProvider === 'auto') && $geminiKey !== '') {
                 $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
@@ -104,6 +118,57 @@ PROMPT;
         return $this->runLocalHeuristicAnalysis($capture, $config);
     }
 
+    /**
+     * Enhance image quality (contrast, brightness, sharpness) for blurry or low-contrast receipts
+     */
+    public function preprocessImageBytes(string $rawBytes, string $mimeType): string
+    {
+        if (!extension_loaded('gd') || !str_starts_with($mimeType, 'image/')) {
+            return $rawBytes;
+        }
+
+        try {
+            $img = @imagecreatefromstring($rawBytes);
+            if (!$img) {
+                return $rawBytes;
+            }
+
+            $width = imagesx($img);
+            $height = imagesy($img);
+
+            // Upscale small or low-res images so text is readable
+            if ($width < 900 && $height < 900 && $width > 50 && $height > 50) {
+                $scale = min(2.5, 1200 / max($width, $height));
+                $newWidth = (int) round($width * $scale);
+                $newHeight = (int) round($height * $scale);
+                $resampled = imagecreatetruecolor($newWidth, $newHeight);
+                imagecopyresampled($resampled, $img, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
+                imagedestroy($img);
+                $img = $resampled;
+            }
+
+            // Contrast enhancement: negative values in GD increase contrast
+            imagefilter($img, IMG_FILTER_CONTRAST, -18);
+
+            // Unsharp mask / sharpening convolution matrix
+            $sharpenMatrix = [
+                [-0.5, -0.5, -0.5],
+                [-0.5,  5.0, -0.5],
+                [-0.5, -0.5, -0.5],
+            ];
+            imageconvolution($img, $sharpenMatrix, 1.0, 0);
+
+            ob_start();
+            imagejpeg($img, null, 92);
+            $enhanced = ob_get_clean();
+            imagedestroy($img);
+
+            return $enhanced ?: $rawBytes;
+        } catch (\Throwable $e) {
+            return $rawBytes;
+        }
+    }
+
     private function analyzeWithGemini(
         BillingPaymentCapture $capture,
         string $apiKey,
@@ -112,54 +177,58 @@ PROMPT;
         string $prompt,
         array $config
     ): ?array {
-        $model = (string) ($config['gemini_model'] ?? 'gemini-1.5-flash');
-        $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        $preferredModel = (string) ($config['gemini_model'] ?? 'gemini-1.5-flash');
+        $models = array_values(array_unique([$preferredModel, 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-latest']));
 
-        try {
-            $response = Http::timeout(45)->post($url, [
-                'contents' => [
-                    [
-                        'parts' => [
-                            ['text' => $prompt],
-                            [
-                                'inline_data' => [
-                                    'mime_type' => $mimeType,
-                                    'data' => $imageData,
+        foreach ($models as $model) {
+            $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+
+            try {
+                $response = Http::timeout(45)->post($url, [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                ['text' => $prompt],
+                                [
+                                    'inline_data' => [
+                                        'mime_type' => $mimeType,
+                                        'data' => $imageData,
+                                    ],
                                 ],
                             ],
                         ],
                     ],
-                ],
-                'generationConfig' => [
-                    'response_mime_type' => 'application/json',
-                ],
-            ]);
-
-            if (!$response->successful()) {
-                Log::warning('Gemini payment proof analysis request failed', [
-                    'capture_id' => $capture->id,
-                    'status' => $response->status(),
-                    'body' => $response->body(),
+                    'generationConfig' => [
+                        'response_mime_type' => 'application/json',
+                    ],
                 ]);
-                return null;
-            }
 
-            $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
-            $decoded = $this->decodeJsonContent($rawText);
-            if (!is_array($decoded)) {
-                return null;
-            }
+                if (!$response->successful()) {
+                    Log::warning("Gemini model {$model} payment proof analysis request failed", [
+                        'capture_id' => $capture->id,
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                    continue;
+                }
 
-            $result = $this->normalizeResult($decoded);
-            $result['provider_used'] = 'gemini';
-            return $result;
-        } catch (\Throwable $exception) {
-            Log::warning('Gemini payment proof analysis failed', [
-                'capture_id' => $capture->id,
-                'error' => $exception->getMessage(),
-            ]);
-            return null;
+                $rawText = (string) data_get($response->json(), 'candidates.0.content.parts.0.text', '');
+                $decoded = $this->decodeJsonContent($rawText);
+                if (!is_array($decoded)) {
+                    continue;
+                }
+
+                $result = $this->normalizeResult($decoded);
+                $result['provider_used'] = 'gemini';
+                return $result;
+            } catch (\Throwable $exception) {
+                Log::warning("Gemini model {$model} payment proof analysis failed: " . $exception->getMessage(), [
+                    'capture_id' => $capture->id,
+                ]);
+            }
         }
+
+        return null;
     }
 
     private function analyzeWithOpenAi(
