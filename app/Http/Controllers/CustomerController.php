@@ -505,30 +505,79 @@ class CustomerController extends Controller
                 ], 404);
             }
             
-            // Check if user is currently connected (active)
+            // Check if user is currently connected (active connection)
             $isConnected = false;
+            $activeConn = null;
             try {
-                $activeConnections = $mikrotik->getActivePPPoEConnections();
+                $normalizedUsername = strtolower(trim((string) $customer->pppoe_username));
+                $activeConnections = $mikrotik->getActivePPPoEConnections(true);
                 foreach ($activeConnections as $conn) {
-                    if (isset($conn['name']) && $conn['name'] === $customer->pppoe_username) {
+                    $connName = strtolower(trim((string) ($conn['name'] ?? '')));
+                    if ($connName !== '' && $connName === $normalizedUsername) {
+                        $activeConn = $conn;
                         $isConnected = true;
                         break;
+                    }
+                }
+
+                // Fallback direct MikroTik query if not found in active list
+                if (!$activeConn) {
+                    try {
+                        $directActive = $mikrotik->command('/ppp/active/print', [
+                            '?name' => $customer->pppoe_username,
+                        ], true);
+                        if (!empty($directActive) && is_array($directActive)) {
+                            $item = $directActive[0];
+                            $activeConn = [
+                                'name' => $item['name'] ?? $customer->pppoe_username,
+                                'address' => $item['address'] ?? ($item['remote-address'] ?? ($item['remote_address'] ?? null)),
+                                'caller_id' => $item['caller-id'] ?? ($item['caller_id'] ?? null),
+                                'uptime' => $item['uptime'] ?? null,
+                                'service' => $item['service'] ?? null,
+                            ];
+                            $isConnected = true;
+                        }
+                    } catch (\Throwable) {
+                        // ignore fallback error
                     }
                 }
             } catch (\Exception $e) {
                 \Log::error('Failed to check active connections', ['error' => $e->getMessage()]);
             }
-            
+
+            // Remote Address (IP): Prioritaskan diambil dari active connection
+            if ($activeConn && !empty($activeConn['address'])) {
+                $secret['remote_address'] = $activeConn['address'];
+                $secret['source_remote_address'] = 'active_connection';
+            } else {
+                $secret['source_remote_address'] = !empty($secret['remote_address']) ? 'secret' : 'none';
+            }
+
+            if ($activeConn) {
+                if (!empty($activeConn['caller_id'])) {
+                    $secret['caller_id'] = $activeConn['caller_id'];
+                }
+                if (!empty($activeConn['uptime'])) {
+                    $secret['uptime'] = $activeConn['uptime'];
+                }
+                if (!empty($activeConn['service'])) {
+                    $secret['service'] = $activeConn['service'];
+                }
+            }
+
             // Add connection status to secret data
             $secret['is_connected'] = $isConnected;
-            
-            // Remove sensitive password from log and response
+
             $safeSecret = $secret;
-            unset($safeSecret['password']);
-            
+            if (empty($safeSecret['password'])) {
+                $safeSecret['password'] = '-';
+            }
+
             \Log::info('Secret found', [
                 'username' => $customer->pppoe_username, 
                 'is_connected' => $isConnected,
+                'remote_address' => $secret['remote_address'] ?? null,
+                'source_remote_address' => $secret['source_remote_address'] ?? null,
             ]);
             
             return response()->json([

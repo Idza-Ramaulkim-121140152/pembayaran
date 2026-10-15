@@ -2381,9 +2381,26 @@ function CustomersPage() {
                                         </div>
                                     </div>
                                     <div className="bg-gray-50 rounded-lg p-4">
-                                        <p className="text-xs text-gray-500 mb-1">Remote Address (IP)</p>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <p className="text-xs text-gray-500">Remote Address (IP)</p>
+                                            {secretData.source_remote_address === 'active_connection' ? (
+                                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                                                    Active Connection
+                                                </span>
+                                            ) : secretData.remote_address ? (
+                                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">
+                                                    Static Secret
+                                                </span>
+                                            ) : null}
+                                        </div>
                                         <p className="text-lg font-mono font-medium text-gray-900">{secretData.remote_address || '-'}</p>
                                     </div>
+                                    {secretData.uptime && (
+                                        <div className="bg-gray-50 rounded-lg p-4">
+                                            <p className="text-xs text-gray-500 mb-1">Uptime Koneksi</p>
+                                            <p className="text-sm font-mono font-medium text-gray-900">{secretData.uptime}</p>
+                                        </div>
+                                    )}
                                     {secretData.local_address && (
                                         <div className="bg-gray-50 rounded-lg p-4">
                                             <p className="text-xs text-gray-500 mb-1">Local Address</p>
@@ -2392,8 +2409,8 @@ function CustomersPage() {
                                     )}
                                     {secretData.caller_id && (
                                         <div className="bg-gray-50 rounded-lg p-4">
-                                            <p className="text-xs text-gray-500 mb-1">Caller ID</p>
-                                            <p className="text-sm font-medium text-gray-900">{secretData.caller_id}</p>
+                                            <p className="text-xs text-gray-500 mb-1">Caller ID (MAC)</p>
+                                            <p className="text-sm font-mono font-medium text-gray-900">{secretData.caller_id}</p>
                                         </div>
                                     )}
                                     <div className={`rounded-lg p-4 border ${secretData.is_connected ? 'bg-green-50 border-green-200' : secretData.disabled === 'true' ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
@@ -2406,7 +2423,9 @@ function CustomersPage() {
                                                     : '🟡 Offline (Not Connected)'}
                                         </p>
                                         {secretData.is_connected && (
-                                            <p className="text-xs text-green-600 mt-1">Sedang terhubung ke MikroTik</p>
+                                            <p className="text-xs text-green-600 mt-1">
+                                                Sedang terhubung ke MikroTik {secretData.uptime ? `· Uptime: ${secretData.uptime}` : ''}
+                                            </p>
                                         )}
                                     </div>
                                 </div>
