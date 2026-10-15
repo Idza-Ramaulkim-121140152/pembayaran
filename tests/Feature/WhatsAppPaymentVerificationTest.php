@@ -842,6 +842,212 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertEquals($customer->id, $found->id);
     }
 
+    public function test_webhook_payment_with_wrong_destination_account_is_sent_to_manual_review_even_if_amount_matches(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->update(['amount' => 250000]);
+
+        // Whitelist only company account: IDZA RAMAULKIM (BRI)
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [],
+                'transfer_bank' => [[
+                    'name' => 'IDZA RAMAULKIM',
+                    'account_number' => '581001000036562',
+                    'aliases' => ['idza', 'ramaulkim'],
+                    'active' => true,
+                ]],
+            ],
+            'notification_recipients' => [
+                [
+                    'id' => 'review-admin-1',
+                    'name' => 'Admin Review',
+                    'phone' => '083333333333',
+                    'is_active' => true,
+                    'receive_auto_approved' => false,
+                    'receive_needs_review' => true,
+                ],
+            ],
+        ]);
+
+        // Customer uploads a transfer receipt sent to an UNREGISTERED person (M ABDUL ROHMAN, BNI)
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => true,
+                            'amount' => 250000,
+                            'paid_date' => '2026-10-15',
+                            'paid_time' => '09:17:13',
+                            'reference_code' => 'BNI-998877',
+                            'payment_channel' => 'BNI',
+                            'sender_name' => 'Nazarudin',
+                            'destination_identity' => [
+                                'name' => 'M ABDUL ROHMAN',
+                                'account_number' => '0847566563',
+                                'merchant_id' => null,
+                                'raw' => 'BNI 0847566563 M ABDUL ROHMAN',
+                            ],
+                            'success_status' => true,
+                            'confidence_overall' => 95,
+                            'confidence_by_field' => [
+                                'payment_proof' => 99,
+                                'amount' => 99,
+                                'date' => 95,
+                                'time' => 95,
+                                'destination' => 95,
+                                'success_status' => 99,
+                            ],
+                            'ocr_raw_text' => 'Transfer Berhasil ke BNI 0847566563 M ABDUL ROHMAN Rp 250.000',
+                            'raw_summary' => 'Transfer ke rekening tidak terdaftar',
+                        ]),
+                    ],
+                ]],
+            ]),
+            '*send-bulk' => Http::response([
+                'results' => [
+                    ['phone' => '083333333333', 'success' => true],
+                ],
+            ]),
+        ]);
+
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-wrong-dest',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-10-15T09:17:13+07:00',
+            'media_base64' => base64_encode('fake-wrong-dest-receipt'),
+            'caption' => 'Ini bukti bayar',
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(202);
+
+        $capture = BillingPaymentCapture::query()->where('source', 'whatsapp_webhook')->latest('id')->firstOrFail();
+        $invoice->refresh();
+
+        // Must NOT be auto-approved!
+        $this->assertSame('needs_review', $capture->match_status);
+        $this->assertSame('destination_not_whitelisted', data_get($capture->meta, 'validation.failure_reason'));
+        $this->assertFalse((bool) data_get($capture->meta, 'validation.flags.destination_whitelisted'));
+        $this->assertSame('unpaid', $invoice->status);
+        $this->assertNull($invoice->paid_at);
+
+        // No confirmation should be sent to customer
+        $customerLog = NotificationLog::query()
+            ->where('customer_id', $customer->id)
+            ->where('meta->type', 'billing_payment_capture_customer_confirmation')
+            ->first();
+        $this->assertNull($customerLog);
+    }
+
+    public function test_payment_auto_approval_sends_only_one_message_and_records_correct_sender_and_time(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->update(['amount' => 200000]);
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [],
+                'transfer_bank' => [[
+                    'name' => 'IDZA RAMAULKIM',
+                    'account_number' => '581001000036562',
+                    'aliases' => ['idza', 'ramaulkim'],
+                    'active' => true,
+                ]],
+            ],
+            'notification_recipients' => [
+                [
+                    'id' => 'auto-admin-1',
+                    'name' => 'Admin Auto',
+                    'phone' => '081111111111',
+                    'is_active' => true,
+                    'receive_auto_approved' => true,
+                    'receive_needs_review' => false,
+                ],
+            ],
+        ]);
+
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => true,
+                            'amount' => 200000,
+                            'paid_date' => '2026-10-15',
+                            'paid_time' => '09:17:13',
+                            'reference_code' => 'BRI-REF-12345',
+                            'payment_channel' => 'BRI',
+                            'sender_name' => 'Saripudin',
+                            'destination_identity' => [
+                                'name' => 'IDZA RAMAULKIM',
+                                'account_number' => '581001000036562',
+                                'merchant_id' => null,
+                                'raw' => 'BRI 581001000036562 IDZA RAMAULKIM',
+                            ],
+                            'success_status' => true,
+                            'confidence_overall' => 96,
+                            'confidence_by_field' => [
+                                'payment_proof' => 99,
+                                'amount' => 99,
+                                'date' => 95,
+                                'time' => 95,
+                                'destination' => 98,
+                                'success_status' => 99,
+                            ],
+                            'ocr_raw_text' => 'Transfer Sukses BRI 581001000036562 IDZA RAMAULKIM Pengirim: Saripudin Rp 200.000',
+                            'raw_summary' => 'Transfer sukses ke rekening perusahaan',
+                        ]),
+                    ],
+                ]],
+            ]),
+            '*send-bulk' => Http::response([
+                'results' => [
+                    ['phone' => '081111111111', 'success' => true],
+                    ['phone' => $customer->phone, 'success' => true],
+                ],
+            ]),
+        ]);
+
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-single-test',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-10-15T09:17:13+07:00',
+            'media_base64' => base64_encode('fake-valid-receipt'),
+            'caption' => 'Sudah bayar',
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(202);
+
+        $capture = BillingPaymentCapture::query()->where('source', 'whatsapp_webhook')->latest('id')->firstOrFail();
+        $invoice->refresh();
+
+        $this->assertSame('approved', $capture->match_status);
+        $this->assertSame('paid', $invoice->status);
+
+        // Verify sender name is 'Saripudin' (NOT recipient 'IDZA RAMAULKIM')
+        $this->assertSame('Saripudin', $invoice->qris_sender);
+
+        // Verify paid_at timestamp: 09:17:13 WIB corresponds to 02:17:13 UTC
+        $this->assertSame('02:17:13', $invoice->paid_at->format('H:i:s'));
+
+        // Verify exactly ONE customer notification log was created (no duplicates)
+        $customerLogsCount = NotificationLog::query()
+            ->where('customer_id', $customer->id)
+            ->where('meta->type', 'billing_payment_capture_customer_confirmation')
+            ->count();
+        $this->assertSame(1, $customerLogsCount);
+
+        // Verify exactly ONE admin notification log was created
+        $adminLogsCount = NotificationLog::query()
+            ->where('phone', '081111111111')
+            ->where('meta->type', 'billing_payment_capture_auto_approved')
+            ->count();
+        $this->assertSame(1, $adminLogsCount);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

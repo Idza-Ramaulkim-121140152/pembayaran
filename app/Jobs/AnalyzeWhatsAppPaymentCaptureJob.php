@@ -154,8 +154,7 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                         $invoice->save();
                     }
                 }
-
-                $notificationService->notifyAutoApproved($capture->fresh(['customer', 'invoice']));
+                // Note: notifyAutoApproved was already sent by PaymentMatchingService::applyCaptureToInvoice
             } else {
                 $notificationService->notifyNeedsReview($capture->fresh(['customer', 'invoice']));
             }

@@ -21,7 +21,8 @@ class PaymentProofValidationService
         $destinationMatch = $this->matchDestinationWhitelist(
             (string) ($analysis['payment_channel'] ?? ''),
             (array) ($analysis['destination_identity'] ?? []),
-            (array) ($config['destination_whitelist'] ?? [])
+            (array) ($config['destination_whitelist'] ?? []),
+            (string) ($analysis['ocr_raw_text'] ?? '')
         );
 
         $refCode = trim((string) ($analysis['reference_code'] ?? ''));
@@ -91,25 +92,26 @@ class PaymentProofValidationService
 
         $isDuplicate = $isDuplicateRef || $isDuplicateImage;
 
-        $amountMatchesInvoice = $invoice && isset($analysis['amount'])
+        $amountMatchesInvoice = $invoice && isset($analysis['amount']) && (float) $analysis['amount'] > 0
             ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
             : false;
 
-        $isDestinationTrusted = (bool) (
-            $destinationMatch['matched']
-            || $capture->source === 'web_public'
-            || str_starts_with((string) $capture->source, 'web')
-            || ($customer && $amountMatchesInvoice)
-        );
+        $hasWhitelistConfigured = (bool) ($destinationMatch['configured'] ?? false);
+        if ($hasWhitelistConfigured) {
+            // Strict verification: destination MUST match company whitelist when whitelist is registered!
+            $isDestinationTrusted = (bool) $destinationMatch['matched'];
+        } else {
+            // Fallback only when company has not yet registered any whitelist accounts
+            $isDestinationTrusted = (bool) ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'));
+        }
 
         if (!$destinationMatch['matched'] && $isDestinationTrusted) {
             $destinationMatch = [
                 'matched' => true,
+                'configured' => false,
                 'group' => 'trusted_source',
                 'entry' => [
-                    'name' => ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))
-                        ? 'Web Public Invoice Upload'
-                        : 'Customer Invoice Amount Match',
+                    'name' => 'Web Public Invoice Upload',
                     'active' => true,
                 ],
             ];
@@ -175,38 +177,116 @@ class PaymentProofValidationService
         ];
     }
 
-    private function matchDestinationWhitelist(string $paymentChannel, array $destinationIdentity, array $whitelist): array
-    {
+    private function matchDestinationWhitelist(
+        string $paymentChannel,
+        array $destinationIdentity,
+        array $whitelist,
+        ?string $ocrRawText = null
+    ): array {
         $normalizedChannel = $this->normalizeText($paymentChannel);
-        $groupKey = str_contains($normalizedChannel, 'qris') ? 'qris' : 'transfer_bank';
-        $rows = is_array($whitelist[$groupKey] ?? null) ? $whitelist[$groupKey] : [];
+        $preferredGroup = str_contains($normalizedChannel, 'qris') ? 'qris' : 'transfer_bank';
+
+        $qrisRows = array_filter(
+            is_array($whitelist['qris'] ?? null) ? $whitelist['qris'] : [],
+            fn ($r) => is_array($r) && ($r['active'] ?? true)
+        );
+        $bankRows = array_filter(
+            is_array($whitelist['transfer_bank'] ?? null) ? $whitelist['transfer_bank'] : [],
+            fn ($r) => is_array($r) && ($r['active'] ?? true)
+        );
+
+        $hasAnyWhitelist = !empty($qrisRows) || !empty($bankRows);
+        if (!$hasAnyWhitelist) {
+            return [
+                'matched' => false,
+                'configured' => false,
+                'group' => $preferredGroup,
+                'entry' => null,
+            ];
+        }
+
+        $orderedGroups = $preferredGroup === 'qris'
+            ? ['qris' => $qrisRows, 'transfer_bank' => $bankRows]
+            : ['transfer_bank' => $bankRows, 'qris' => $qrisRows];
+
         $haystacks = array_filter([
             $this->normalizeText((string) ($destinationIdentity['name'] ?? '')),
             $this->normalizeText((string) ($destinationIdentity['account_number'] ?? '')),
             $this->normalizeText((string) ($destinationIdentity['merchant_id'] ?? '')),
             $this->normalizeText((string) ($destinationIdentity['raw'] ?? '')),
+            $ocrRawText ? $this->normalizeText($ocrRawText) : '',
         ]);
 
-        foreach ($rows as $row) {
-            if (!is_array($row) || !($row['active'] ?? true)) {
-                continue;
-            }
+        $rawDigits = array_filter([
+            preg_replace('/\D/', '', (string) ($destinationIdentity['account_number'] ?? '')),
+            preg_replace('/\D/', '', (string) ($destinationIdentity['raw'] ?? '')),
+            $ocrRawText ? preg_replace('/\D/', '', $ocrRawText) : '',
+        ]);
 
-            $needles = array_filter([
-                $this->normalizeText((string) ($row['name'] ?? '')),
-                $this->normalizeText((string) ($row['account_number'] ?? '')),
-                $this->normalizeText((string) ($row['merchant_id'] ?? '')),
-                ...array_map(fn ($alias) => $this->normalizeText((string) $alias), is_array($row['aliases'] ?? null) ? $row['aliases'] : []),
-            ]);
+        foreach ($orderedGroups as $groupKey => $rows) {
+            foreach ($rows as $row) {
+                // 1. Account number match (minimum 5 digits)
+                $targetAcc = preg_replace('/\D/', '', (string) ($row['account_number'] ?? ''));
+                if (strlen($targetAcc) >= 5) {
+                    foreach ($rawDigits as $haystackDigits) {
+                        if ($haystackDigits !== '' && str_contains($haystackDigits, $targetAcc)) {
+                            return [
+                                'matched' => true,
+                                'configured' => true,
+                                'group' => $groupKey,
+                                'entry' => $row,
+                            ];
+                        }
+                    }
+                }
 
-            foreach ($needles as $needle) {
-                foreach ($haystacks as $haystack) {
-                    if ($needle !== '' && str_contains($haystack, $needle)) {
-                        return [
-                            'matched' => true,
-                            'group' => $groupKey,
-                            'entry' => $row,
-                        ];
+                // 2. Merchant ID match (minimum 4 chars)
+                $targetMid = $this->normalizeText((string) ($row['merchant_id'] ?? ''));
+                if (strlen($targetMid) >= 4) {
+                    foreach ($haystacks as $haystack) {
+                        if (str_contains($haystack, $targetMid)) {
+                            return [
+                                'matched' => true,
+                                'configured' => true,
+                                'group' => $groupKey,
+                                'entry' => $row,
+                            ];
+                        }
+                    }
+                }
+
+                // 3. Name & Alias match
+                $needles = array_filter([
+                    $this->normalizeText((string) ($row['name'] ?? '')),
+                    ...array_map(fn ($alias) => $this->normalizeText((string) $alias), is_array($row['aliases'] ?? null) ? $row['aliases'] : []),
+                ]);
+
+                foreach ($needles as $needle) {
+                    if (strlen($needle) < 4) {
+                        continue;
+                    }
+
+                    $destName = $this->normalizeText((string) ($destinationIdentity['name'] ?? ''));
+                    if ($destName !== '') {
+                        if (str_contains($destName, $needle) || (strlen($destName) >= 4 && str_contains($needle, $destName))) {
+                            return [
+                                'matched' => true,
+                                'configured' => true,
+                                'group' => $groupKey,
+                                'entry' => $row,
+                            ];
+                        }
+                    }
+
+                    foreach ($haystacks as $haystack) {
+                        if (str_contains($haystack, $needle)) {
+                            return [
+                                'matched' => true,
+                                'configured' => true,
+                                'group' => $groupKey,
+                                'entry' => $row,
+                            ];
+                        }
                     }
                 }
             }
@@ -214,7 +294,8 @@ class PaymentProofValidationService
 
         return [
             'matched' => false,
-            'group' => $groupKey,
+            'configured' => true,
+            'group' => $preferredGroup,
             'entry' => null,
         ];
     }

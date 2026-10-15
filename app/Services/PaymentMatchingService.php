@@ -353,12 +353,19 @@ class PaymentMatchingService
 
             $autoThreshold = (float) data_get(app(PaymentVerificationConfigService::class)->getConfig(), 'confidence_thresholds.auto_approve', 80);
 
-            $canAutoApply = $autoApply && $topScore >= $autoThreshold && (
-                $candidates->count() === 1 ||
-                ($capture->customer_id && $top['invoice']->customer_id === $capture->customer_id && (
-                    $candidates->count() === 1 || ($candidates->get(1)['score'] ?? 0) < $topScore
-                ))
-            );
+            $amountMatchesTop = $top && abs((float) $top['invoice']->amount - (float) $capture->amount) <= 0.01 && (float) $capture->amount > 0;
+            $destinationOk = (bool) data_get($capture->meta, 'validation.flags.destination_whitelisted', true);
+
+            $canAutoApply = $autoApply
+                && $topScore >= $autoThreshold
+                && $amountMatchesTop
+                && $destinationOk
+                && (
+                    $candidates->count() === 1 ||
+                    ($capture->customer_id && $top['invoice']->customer_id === $capture->customer_id && (
+                        $candidates->count() === 1 || ($candidates->get(1)['score'] ?? 0) < $topScore
+                    ))
+                );
 
             if ($canAutoApply) {
                 // Check duplicate reference code and duplicate image hash to prevent double-applying receipt
@@ -517,9 +524,9 @@ class PaymentMatchingService
             }
 
             // No exact amount match, but customer has unpaid invoices
-            // Return only this customer's invoices for admin review
+            // Return only this customer's invoices for admin review (score must be < 70 so it never auto-approves)
             foreach ($customerInvoices as $invoice) {
-                $score = 80.0;
+                $score = 50.0;
                 $reasons = ['customer_match', 'customer_unpaid_invoice'];
 
                 if ($capture->invoice_id && (int) $capture->invoice_id === (int) $invoice->id) {
@@ -529,7 +536,7 @@ class PaymentMatchingService
 
                 $candidates->push([
                     'invoice' => $invoice,
-                    'score' => min($score, 90),
+                    'score' => min($score, 65),
                     'reason' => implode(',', $reasons),
                 ]);
             }
@@ -591,7 +598,7 @@ class PaymentMatchingService
                 $paidTime .= ':00';
             }
             try {
-                $paidTimestamp = Carbon::parse($paidDate->toDateString() . ' ' . $paidTime);
+                $paidTimestamp = Carbon::parse($paidDate->toDateString() . ' ' . $paidTime, 'Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'));
             } catch (\Throwable) {
                 $paidTimestamp = now();
             }
@@ -638,7 +645,11 @@ class PaymentMatchingService
                         $referenceCode = '';
                     }
                 }
-                $sender = (string) data_get($capture->meta, 'analysis.destination_identity.name', data_get($capture->meta, 'source.sender_name', data_get($capture->meta, 'analysis.payment_channel', '')));
+                $sender = trim((string) (
+                    data_get($capture->meta, 'analysis.sender_name')
+                    ?: data_get($capture->meta, 'source.sender_name')
+                    ?: ($invoice->customer?->name ?? '')
+                ));
                 $channel = strtolower((string) data_get($capture->meta, 'analysis.payment_channel', ''));
                 $isQris = str_contains($channel, 'qris');
 

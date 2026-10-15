@@ -16,6 +16,12 @@ class PaymentVerificationConfigService
         $storedConfig = is_array($decoded) ? $decoded : [];
 
         $config = array_replace_recursive($this->defaults(), $storedConfig);
+        if (isset($storedConfig['destination_whitelist'])) {
+            $config['destination_whitelist'] = $storedConfig['destination_whitelist'];
+        }
+        if (isset($storedConfig['notification_recipients'])) {
+            $config['notification_recipients'] = $storedConfig['notification_recipients'];
+        }
         $envKey = (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', ''));
         if (empty($config['gemini_api_key']) && $envKey !== '') {
             $config['gemini_api_key'] = $envKey;
@@ -35,7 +41,16 @@ class PaymentVerificationConfigService
 
     public function updateConfig(array $payload): array
     {
-        $config = array_replace_recursive($this->getConfig(), $payload);
+        $current = $this->getConfig();
+        if (array_key_exists('destination_whitelist', $payload)) {
+            $current['destination_whitelist'] = $payload['destination_whitelist'];
+            unset($payload['destination_whitelist']);
+        }
+        if (array_key_exists('notification_recipients', $payload)) {
+            $current['notification_recipients'] = $payload['notification_recipients'];
+            unset($payload['notification_recipients']);
+        }
+        $config = array_replace_recursive($current, $payload);
         $config['notification_recipients'] = $this->normalizeNotificationRecipients(
             is_array($config['notification_recipients'] ?? null) ? $config['notification_recipients'] : []
         );
@@ -108,18 +123,8 @@ class PaymentVerificationConfigService
                 'application/pdf',
             ],
             'destination_whitelist' => [
-                'qris' => [[
-                    'name' => 'Rumah Kita Network',
-                    'merchant_id' => 'G141935892',
-                    'aliases' => ['rumahkitanetwork', 'mabdulrohman'],
-                    'active' => true,
-                ]],
-                'transfer_bank' => [[
-                    'name' => 'M ABDUL ROHMAN',
-                    'account_number' => '0847566563',
-                    'aliases' => ['abdulrohman', 'rumahkitanetwork'],
-                    'active' => true,
-                ]],
+                'qris' => [],
+                'transfer_bank' => [],
             ],
             'notification_recipients' => [],
         ];

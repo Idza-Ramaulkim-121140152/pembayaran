@@ -19,6 +19,20 @@ class PaymentCaptureNotificationService
 
     public function notifyNeedsReview(BillingPaymentCapture $capture): void
     {
+        $notifiedAt = data_get($capture->meta, 'notified_needs_review_at');
+        if ($notifiedAt) {
+            Log::info('notifyNeedsReview skipped as notification was already sent', [
+                'capture_id' => $capture->id,
+                'notified_at' => $notifiedAt,
+            ]);
+            return;
+        }
+
+        $meta = (array) ($capture->meta ?? []);
+        $meta['notified_needs_review_at'] = now()->toIso8601String();
+        $capture->meta = $meta;
+        $capture->saveQuietly();
+
         $message = $this->buildAdminReviewMessage($capture);
         $recipients = $this->paymentVerificationConfigService->notificationRecipientsFor('needs_review');
 
@@ -32,6 +46,20 @@ class PaymentCaptureNotificationService
 
     public function notifyAutoApproved(BillingPaymentCapture $capture): void
     {
+        $notifiedAt = data_get($capture->meta, 'notified_auto_approved_at');
+        if ($notifiedAt) {
+            Log::info('notifyAutoApproved skipped as notification was already sent', [
+                'capture_id' => $capture->id,
+                'notified_at' => $notifiedAt,
+            ]);
+            return;
+        }
+
+        $meta = (array) ($capture->meta ?? []);
+        $meta['notified_auto_approved_at'] = now()->toIso8601String();
+        $capture->meta = $meta;
+        $capture->saveQuietly();
+
         $capture->loadMissing('customer', 'invoice');
         $recipients = $this->paymentVerificationConfigService->notificationRecipientsFor('auto_approved');
 
