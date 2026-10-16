@@ -10,7 +10,14 @@ const paymentVerificationService = {
     }),
     resolveCapture: (captureId, payload) => apiClient.post(`/billing/payments/${captureId}/resolve`, payload),
     bulkResolve: (payload) => apiClient.post('/billing/payments/bulk-resolve', payload),
-    reanalyzeCapture: (captureId) => apiClient.post(`/billing/payments/${captureId}/reanalyze`),
+    reanalyzeCapture: (captureId, formData = null) => {
+        if (formData) {
+            return apiClient.post(`/billing/payments/${captureId}/reanalyze`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+        }
+        return apiClient.post(`/billing/payments/${captureId}/reanalyze`);
+    },
     assignCustomer: (captureId, customerId) => apiClient.post(`/billing/payments/${captureId}/assign-customer`, { customer_id: customerId }),
     getCustomers: (params = {}) => apiClient.get('/customers', { params }),
     getAutoConfirmations: (params = {}) => apiClient.get('/billing/payment-verification/auto-confirmations', { params }),

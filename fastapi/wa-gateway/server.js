@@ -4,6 +4,7 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 loadEnvFile(path.resolve(__dirname, '../../.env'));
@@ -862,25 +863,164 @@ async function handleCiphertextCandidate(msg) {
     sweepPendingCiphertextMessages();
 }
 
+const MEDIA_HKDF_MAP = {
+    image: 'WhatsApp Image Keys',
+    video: 'WhatsApp Video Keys',
+    audio: 'WhatsApp Audio Keys',
+    document: 'WhatsApp Document Keys',
+    sticker: 'WhatsApp Image Keys',
+};
+
+async function decryptWhatsAppMediaFromCdn(directPath, mediaKeyRaw, mediaType = 'image') {
+    if (!directPath || !mediaKeyRaw) return null;
+
+    let mediaKey;
+    try {
+        if (Buffer.isBuffer(mediaKeyRaw)) {
+            mediaKey = mediaKeyRaw;
+        } else if (typeof mediaKeyRaw === 'string') {
+            mediaKey = Buffer.from(mediaKeyRaw, 'base64');
+        } else if (mediaKeyRaw && typeof mediaKeyRaw === 'object' && Array.isArray(mediaKeyRaw.data)) {
+            mediaKey = Buffer.from(mediaKeyRaw.data);
+        } else {
+            return null;
+        }
+    } catch (_) {
+        return null;
+    }
+
+    if (!mediaKey || mediaKey.length !== 32) {
+        console.warn(`⚠️ [Media CDN] Panjang mediaKey (${mediaKey?.length}) bukan 32 bytes.`);
+        return null;
+    }
+
+    const infoLabel = MEDIA_HKDF_MAP[mediaType] || MEDIA_HKDF_MAP['image'];
+    const salt = Buffer.alloc(32, 0);
+    const derived = Buffer.from(crypto.hkdfSync('sha256', mediaKey, salt, Buffer.from(infoLabel), 112));
+
+    const iv = derived.subarray(0, 16);
+    const cipherKey = derived.subarray(16, 48);
+
+    const candidates = [];
+    if (directPath.startsWith('http')) {
+        candidates.push(directPath);
+    } else {
+        const cleanPath = directPath.startsWith('/') ? directPath : `/${directPath}`;
+        candidates.push(`https://mmg.whatsapp.net${cleanPath}`);
+        candidates.push(`https://pps.whatsapp.net${cleanPath}`);
+    }
+
+    for (const url of candidates) {
+        try {
+            console.log(`🌐 [Media CDN] Mengunduh encrypted payload dari CDN WhatsApp: ${url.substring(0, 65)}...`);
+            const res = await fetch(url, {
+                headers: {
+                    'User-Agent': 'WhatsApp/2.24.12.78 i',
+                },
+                signal: AbortSignal.timeout(15000),
+            });
+
+            if (res.ok) {
+                const fileBuffer = Buffer.from(await res.arrayBuffer());
+                if (fileBuffer.length > 20) {
+                    const encryptedPayload = fileBuffer.subarray(0, fileBuffer.length - 10);
+                    const decipher = crypto.createDecipheriv('aes-256-cbc', cipherKey, iv);
+                    const decrypted = Buffer.concat([
+                        decipher.update(encryptedPayload),
+                        decipher.final(),
+                    ]);
+
+                    if (decrypted && decrypted.length > 500) {
+                        console.log(`🎉 [Media CDN] SUKSES! File asli terdekripsi penuh (${decrypted.length} bytes, high-res)`);
+                        return decrypted;
+                    }
+                }
+            } else {
+                console.warn(`⚠️ [Media CDN] Gagal unduh dari ${url.substring(0, 45)}: HTTP ${res.status}`);
+            }
+        } catch (fetchErr) {
+            console.warn(`⚠️ [Media CDN] Exception saat request ${url.substring(0, 45)}: ${fetchErr.message}`);
+        }
+    }
+
+    return null;
+}
+
 async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
     if (!msg || !msg.hasMedia) return null;
 
-    // Jeda 800ms awal agar media selesai streaming dari server WA
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // TIER 0 (PRIORITAS UTAMA): Direct Native CDN Download & Decrypt via Node.js Crypto
+    // Kebal terhadap bug Puppeteer, kebal terhadap bug @lid multi-device, dan langsung mengambil
+    // file gambar asli resolusi penuh 100% tanpa kompresi / blur!
+    try {
+        let directPath = msg._data?.directPath || msg.directPath;
+        let mediaKey = msg._data?.mediaKey || msg.mediaKey;
+        let mediaType = msg._data?.type || msg.type || 'image';
+        let mimeType = msg._data?.mimetype || msg.mimetype || 'image/jpeg';
+        let filename = msg._data?.filename || msg.filename || 'payment.jpg';
+
+        if ((!directPath || !mediaKey) && client && client.pupPage) {
+            try {
+                const meta = await client.pupPage.evaluate((msgId, rawId) => {
+                    let m = window.Store?.Msg?.get ? window.Store.Msg.get(msgId) : null;
+                    if (!m && window.Store?.Msg?.models) {
+                        m = window.Store.Msg.models.find((x) =>
+                            x.id?._serialized === msgId ||
+                            x.id?.id === rawId ||
+                            (rawId && x.id?._serialized && x.id._serialized.includes(rawId))
+                        );
+                    }
+                    if (!m) return null;
+                    return {
+                        directPath: m.directPath || m.mediaData?.directPath,
+                        mediaKey: m.mediaKey || m.mediaData?.mediaKey,
+                        type: m.type || m.mediaData?.type,
+                        mimetype: m.mimetype || m.mediaData?.mimetype,
+                    };
+                }, msg.id._serialized, msg.id.id);
+
+                if (meta) {
+                    directPath = directPath || meta.directPath;
+                    mediaKey = mediaKey || meta.mediaKey;
+                    mediaType = mediaType || meta.type;
+                    mimeType = mimeType || meta.mimetype;
+                }
+            } catch (_) {}
+        }
+
+        if (directPath && mediaKey) {
+            console.log(`🚀 [Media] Mencoba Direct Native CDN Decrypt untuk ${msg.id?._serialized || 'pesan'}...`);
+            const decryptedBuffer = await decryptWhatsAppMediaFromCdn(directPath, mediaKey, mediaType);
+            if (decryptedBuffer && decryptedBuffer.length > 2000) {
+                console.log(`✅ [Media] BERHASIL UNDUH FILE ASLI RESOLUSI PENUH via CDN (${mimeType}, size: ${decryptedBuffer.length} bytes, high-res)`);
+                return {
+                    data: decryptedBuffer.toString('base64'),
+                    mimetype: mimeType,
+                    filename: filename,
+                };
+            }
+        }
+    } catch (cdnErr) {
+        console.warn(`⚠️ Direct CDN Decrypt gagal, beralih ke fallback internal: ${cdnErr.message}`);
+    }
+
+    // Jeda 600ms awal agar media selesai streaming dari server WA
+    await new Promise((resolve) => setTimeout(resolve, 600));
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Tier 1: Coba method bawaan whatsapp-web.js
+        // TIER 1: Method bawaan whatsapp-web.js (dengan memastikan chat ter-load terlebih dahulu)
         try {
+            await msg.getChat().catch(() => null);
             const media = await msg.downloadMedia();
             if (media && media.data && media.mimetype && media.data.length > 8000) {
-                console.log(`✅ [Media] Berhasil unduh gambar resolusi penuh (${media.mimetype}, length: ${media.data.length})`);
+                console.log(`✅ [Media] Berhasil unduh gambar resolusi penuh via whatsapp-web.js (${media.mimetype}, length: ${media.data.length})`);
                 return media;
             }
         } catch (err) {
             console.warn(`⚠️ downloadMedia percobaan ke-${attempt} gagal: ${err.message || err}`);
         }
 
-        // Tier 2: Injeksi Puppeteer Evaluate langsung ke store WA Web (mengatasi bug @lid & error 'r')
+        // TIER 2: Injeksi Puppeteer Evaluate langsung ke store WA Web (mengatasi bug @lid & error 'r')
         try {
             if (client && client.pupPage) {
                 const browserMedia = await client.pupPage.evaluate(async (msgId, rawId) => {
@@ -914,6 +1054,33 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
                                     downloadEvenIfExpensive: true,
                                     rmrReason: 1,
                                 });
+                            } catch (_) {}
+                        } else if (md && typeof md.downloadMedia === 'function') {
+                            try {
+                                await md.downloadMedia({
+                                    downloadEvenIfExpensive: true,
+                                    rmrReason: 1,
+                                });
+                            } catch (_) {}
+                        }
+
+                        // Coba ambil blob url dari renderableUrl
+                        if (md && md.renderableUrl) {
+                            try {
+                                const resp = await fetch(md.renderableUrl);
+                                const blob = await resp.blob();
+                                const b64 = await new Promise((res) => {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => res(reader.result ? reader.result.split(',')[1] : null);
+                                    reader.readAsDataURL(blob);
+                                });
+                                if (b64 && b64.length > 8000) {
+                                    return {
+                                        data: b64,
+                                        mimetype: msgModel.mimetype || md.mimetype || 'image/jpeg',
+                                        filename: msgModel.filename || 'payment.jpg',
+                                    };
+                                }
                             } catch (_) {}
                         }
 
@@ -981,19 +1148,9 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
         }
     }
 
-    // Tier 3: HANYA jika semua 5 percobaan unduh gambar resolusi penuh gagal total, gunakan preview thumbnail sebagai cadangan darurat
-    if (msg._data) {
-        const rawBody = msg._data.body;
-        if (rawBody && typeof rawBody === 'string' && rawBody.length > 50 && (rawBody.startsWith('/9j/') || rawBody.startsWith('iVBORw') || !rawBody.includes(' '))) {
-            console.warn(`⚠️ [Media] Gagal unduh resolusi penuh setelah 5 percobaan. Menggunakan fallback preview thumbnail (panjang: ${rawBody.length})`);
-            return {
-                data: rawBody.replace(/^data:[^;]+;base64,/, ''),
-                mimetype: msg._data.mimetype || 'image/jpeg',
-                filename: 'payment_preview.jpg',
-            };
-        }
-    }
-
+    // PENTING: JANGAN gunakan fallback preview thumbnail (msg._data.body) karena berukuran ~80x80px dan sangat blur.
+    // Menghindari pengiriman thumbnail blur agar pesan dapat dicoba ulang (canRetry: true).
+    console.warn('⚠️ [Media] Gagal mengunduh gambar resolusi penuh dari semua metode. Menghindari pengiriman thumbnail blur.');
     return null;
 }
 

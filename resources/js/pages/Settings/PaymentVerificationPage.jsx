@@ -321,14 +321,24 @@ export default function PaymentVerificationPage() {
         }
     };
 
-    // Re-analyze Capture
-    const handleReanalyze = async (captureId) => {
+    // Re-analyze Capture (opsional dengan ganti file foto struk)
+    const handleReanalyze = async (captureId, replaceFile = null) => {
         try {
             setRefreshing(true);
             setError('');
             setMessage('');
-            const res = await paymentVerificationService.reanalyzeCapture(captureId);
+            let res;
+            if (replaceFile) {
+                const fd = new FormData();
+                fd.append('file', replaceFile);
+                res = await paymentVerificationService.reanalyzeCapture(captureId, fd);
+            } else {
+                res = await paymentVerificationService.reanalyzeCapture(captureId);
+            }
             setMessage(res.data?.message || `Capture #${captureId} berhasil dianalisis ulang.`);
+            if (selectedDetailCapture && selectedDetailCapture.id === captureId) {
+                setSelectedDetailCapture(res.data?.data || null);
+            }
             await loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
         } catch (err) {
             setError(err.response?.data?.message || err.message || 'Gagal menganalisis ulang bukti pembayaran.');
@@ -2189,6 +2199,34 @@ export default function PaymentVerificationPage() {
                                             </a>
                                         </div>
                                     )}
+
+                                    {/* Upload Ulang / Ganti Foto jika blur */}
+                                    <div className="w-full mt-1">
+                                        <input
+                                            type="file"
+                                            id={`replace-photo-${c.id}`}
+                                            accept="image/jpeg,image/png,image/webp,image/jpg,application/pdf"
+                                            className="hidden"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    handleReanalyze(c.id, file);
+                                                }
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                        <label
+                                            htmlFor={`replace-photo-${c.id}`}
+                                            className="cursor-pointer w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 hover:bg-amber-100/70 px-3 py-2 text-xs font-semibold text-amber-800 transition shadow-2xs text-center"
+                                            title="Ganti foto struk dengan file asli yang lebih jernih"
+                                        >
+                                            <UploadCloud size={14} className="text-amber-600 shrink-0" />
+                                            <span>Ganti / Upload Ulang Foto Struk</span>
+                                        </label>
+                                        <p className="text-[10px] text-slate-400 text-center mt-1">
+                                            Upload foto asli jika bukti dari WA sebelumnya terpotong / blur.
+                                        </p>
+                                    </div>
                                 </div>
 
                                 {/* Information Box */}

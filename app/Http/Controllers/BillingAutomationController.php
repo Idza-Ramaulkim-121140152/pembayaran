@@ -343,13 +343,30 @@ class BillingAutomationController extends Controller
         ]);
     }
 
-    public function reanalyzeCapture(BillingPaymentCapture $capture)
+    public function reanalyzeCapture(Request $request, BillingPaymentCapture $capture)
     {
+        $meta = (array) ($capture->meta ?? []);
+        if ($request->hasFile('file')) {
+            $request->validate([
+                'file' => 'required|file|mimes:jpeg,jpg,png,webp,pdf|max:10240',
+            ]);
+            $file = $request->file('file');
+            $extension = $file->getClientOriginalExtension() ?: 'jpg';
+            $path = 'payment-captures/' . now()->format('Y/m') . '/' . \Illuminate\Support\Str::uuid() . '.' . $extension;
+            $file->storeAs('public', $path);
+
+            $meta['media'] = [
+                'path' => $path,
+                'mime_type' => $file->getMimeType() ?: 'image/jpeg',
+                'original_name' => $file->getClientOriginalName(),
+                'file_hash' => hash_file('sha256', $file->getRealPath()),
+            ];
+        }
+
+        $meta['reanalyze_requested_at'] = now()->toISOString();
         $capture->update([
             'match_status' => 'pending',
-            'meta' => array_merge((array) ($capture->meta ?? []), [
-                'reanalyze_requested_at' => now()->toISOString(),
-            ]),
+            'meta' => $meta,
         ]);
 
         try {
