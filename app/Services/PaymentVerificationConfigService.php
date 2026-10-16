@@ -22,12 +22,23 @@ class PaymentVerificationConfigService
         if (isset($storedConfig['notification_recipients'])) {
             $config['notification_recipients'] = $storedConfig['notification_recipients'];
         }
+        $orEnvKey = (string) env('OPENROUTER_API_KEY', '');
+        if (empty($config['openrouter_api_key'])) {
+            $config['openrouter_api_key'] = $orEnvKey;
+        }
+        if (empty($config['openrouter_model'])) {
+            $config['openrouter_model'] = (string) env('OPENROUTER_PAYMENT_VISION_MODEL', 'google/gemini-2.5-flash');
+        }
+        if (empty($config['ai_provider']) || $config['ai_provider'] === 'gemini') {
+            $config['ai_provider'] = 'openrouter';
+        }
+
         $envKey = (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', ''));
         if (empty($config['gemini_api_key']) && $envKey !== '') {
             $config['gemini_api_key'] = $envKey;
         }
         if (empty($config['gemini_model']) || in_array($config['gemini_model'], ['gemini-1.5-flash', 'gemini-2.0-flash'])) {
-            $config['gemini_model'] = 'gemini-3.5-flash';
+            $config['gemini_model'] = 'gemini-2.5-flash';
         }
         if ((float) data_get($config, 'confidence_thresholds.auto_approve', 80) > 80) {
             $config['confidence_thresholds']['auto_approve'] = 80;
@@ -42,6 +53,12 @@ class PaymentVerificationConfigService
     public function updateConfig(array $payload): array
     {
         $current = $this->getConfig();
+        if (array_key_exists('openrouter_api_key', $payload) && !empty($payload['openrouter_api_key'])) {
+            $current['openrouter_api_key'] = trim((string) $payload['openrouter_api_key']);
+        }
+        if (array_key_exists('openrouter_model', $payload) && !empty($payload['openrouter_model'])) {
+            $current['openrouter_model'] = trim((string) $payload['openrouter_model']);
+        }
         if (array_key_exists('destination_whitelist', $payload)) {
             $current['destination_whitelist'] = $payload['destination_whitelist'];
             unset($payload['destination_whitelist']);
@@ -101,9 +118,11 @@ class PaymentVerificationConfigService
     public function defaults(): array
     {
         return [
-            'ai_provider' => 'auto',
+            'ai_provider' => 'openrouter',
+            'openrouter_api_key' => (string) env('OPENROUTER_API_KEY', ''),
+            'openrouter_model' => (string) env('OPENROUTER_PAYMENT_VISION_MODEL', 'google/gemini-2.5-flash'),
             'gemini_api_key' => (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', '')),
-            'gemini_model' => (string) env('GEMINI_PAYMENT_VISION_MODEL', 'gemini-3.5-flash'),
+            'gemini_model' => (string) env('GEMINI_PAYMENT_VISION_MODEL', 'gemini-2.5-flash'),
             'openai_api_key' => (string) env('OPENAI_API_KEY', ''),
             'openai_model' => (string) env('OPENAI_PAYMENT_VISION_MODEL', 'gpt-4o-mini'),
             'auto_approve_enabled' => true,

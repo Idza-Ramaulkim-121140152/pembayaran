@@ -36,7 +36,13 @@ class PaymentProofAnalysisService
             $rawBytes = base64_decode($mediaBase64);
         }
 
-        $preferredProvider = (string) ($config['ai_provider'] ?? 'auto');
+        $preferredProvider = (string) ($config['ai_provider'] ?? 'openrouter');
+        $openrouterKey = trim((string) (
+            (!empty($config['openrouter_api_key']) ? $config['openrouter_api_key'] : null)
+            ?: \App\Models\SiteSetting::get('openrouter_api_key')
+            ?: config('services.openrouter.api_key')
+            ?: env('OPENROUTER_API_KEY', '')
+        ));
         $geminiKey = trim((string) (
             (!empty($config['gemini_api_key']) ? $config['gemini_api_key'] : null)
             ?: \App\Models\SiteSetting::get('gemini_api_key')
@@ -52,6 +58,7 @@ class PaymentProofAnalysisService
         ));
 
         if (app()->runningUnitTests()) {
+            if ($openrouterKey === '') $openrouterKey = 'test-openrouter-key';
             if ($geminiKey === '') $geminiKey = 'test-gemini-key';
             if ($openAiKey === '') $openAiKey = 'test-openai-key';
         }
@@ -85,17 +92,23 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "ocr_raw_text": string|null,
   "raw_summary": string|null
 }
-Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Struk Termal/Kertas, Foto Kamera HP):
-- PENTING GAMBAR BLUR/BURAM/STRUK KERTAS/TERMAL/EDC/AGEN: Gambar ini mungkin agak blur, struk kertas termal/ATM/EDC/BRILink/minimarket, foto kamera HP agak redup/miring, atau kompresi WhatsApp:
-  1. amount: Cari angka nominal transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Carilah kata kunci 'Total', 'Nominal', 'Jumlah', 'Transfer', 'Bayar', atau angka ribuan yang menonjol. Hilangkan 'Rp' dan tanda baca, kembalikan angka murni (misal 150000). Walaupun angka agak pudar/kabur, baca sebaik mungkin.
-  2. sender_name: Cari nama pengirim / pemilik rekening pengirim (contoh: 'Dari: Saripudin', 'Pengirim: Rama', 'Pelanggan: Budi', dsb.).
-  3. reference_code: Cari nomor transaksi unik bank / e-wallet (contoh: No. Transaksi, Nomor Transaksi, No. Referensi, ID Transaksi, RRN, No. Resi). Pada SeaBank atau bank lain, cari nomor transaksi unik panjang (misal 20261013...). PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...'). Jika tidak ada nomor unik dari bank/e-wallet, isi null.
-  4. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada gambar struk/bukti bayar (contoh '13 Okt 2026, 11:36' -> paid_date: '2026-10-13', paid_time: '11:36:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
-  5. payment_channel: Deteksi bank/e-wallet (contoh: SeaBank, BCA, BRI / BRImo, Mandiri / Livin, BNI, Dana, GoPay, OVO, ShopeePay, QRIS, ATM, Agen).
-  6. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer bank/QRIS/agen/EDC/ATM.
-  7. success_status=true jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti bayar yang sah.
-  8. confidence memakai skala angka 0 s.d 100.
-  9. ocr_raw_text: Salin seluruh teks yang terbaca pada struk (nama, angka, tanggal, nomor referensi) agar sistem dapat memverifikasi silang.
+Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Kompresi WhatsApp, M-Banking Dark Mode, Struk Termal/Kertas):
+- PENTING GAMBAR BLUR/BURAM/DARK MODE/KOMPRESI WHATSAPP/STRUK KERTAS:
+  Gambar ini bisa berupa tangkapan layar m-banking tema gelap (dark mode / background hitam seperti BRImo, BCA, Livin Mandiri, SeaBank, Dana) atau tema terang, struk kertas termal/ATM/EDC/agen BRILink, atau foto HP terkompresi dari WhatsApp:
+  1. amount: Cari angka nominal utama transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Pada m-banking dark mode atau struk transfer, angka nominal biasanya dicetak tebal/besar di bagian tengah atau atas. Hilangkan simbol 'Rp', titik ribuan, spasi, dan koma sen (contoh: 'Rp 250.000,00' -> 250000, 'Rp200.000' -> 200000). Kembalikan sebagai angka murni (number). JANGAN kembalikan null atau 0 jika terlihat nominal transfer!
+  2. destination_identity: Cari rekening tujuan / penerima transfer:
+     - name: nama pemilik rekening tujuan / merchant / nama penerima.
+     - account_number: nomor rekening tujuan (ambil angka murninya, misal 581001000036562 atau 0847566563).
+     - merchant_id: Merchant ID / NMID jika QRIS (misal G141935892).
+     - raw: gabungan bank + rekening + nama tujuan yang tertera pada struk.
+  3. sender_name: Cari nama pengirim / rekening asal / sumber dana (contoh: 'Dari: Hanny', 'Pengirim: Saripudin', 'Sumber Dana: ...').
+  4. reference_code: Cari nomor transaksi unik bank / e-wallet (No. Transaksi, Nomor Referensi, ID Transaksi, RRN, No. Jurnal). PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...'). Jika tidak ada nomor unik dari bank/e-wallet, isi null.
+  5. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada struk/m-banking (contoh '16 Okt 2026, 09:17' -> paid_date: '2026-10-16', paid_time: '09:17:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
+  6. payment_channel: Deteksi bank / e-wallet (contoh: BCA, BRI / BRImo, Mandiri / Livin, BNI, SeaBank, Dana, GoPay, OVO, ShopeePay, QRIS, Agen).
+  7. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer m-banking/QRIS/agen/EDC/ATM.
+  8. success_status=true jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti transfer yang sah.
+  9. confidence memakai skala angka 0 s.d 100.
+  10. ocr_raw_text: Salin seluruh teks yang terbaca pada struk (nama, angka, tanggal, nomor referensi) agar sistem dapat memverifikasi silang.
 PROMPT;
 
         // 1. Try AI Vision if raw bytes are available
@@ -103,17 +116,43 @@ PROMPT;
             $processedBytes = $this->preprocessImageBytes($rawBytes, $mimeType);
             $imageData = base64_encode($processedBytes);
 
-            if (($preferredProvider === 'gemini' || $preferredProvider === 'auto') && $geminiKey !== '') {
+            // Provider 1: OpenRouter (Primary if selected or auto with key)
+            if (($preferredProvider === 'openrouter' || $preferredProvider === 'auto') && $openrouterKey !== '') {
+                $openrouterResult = $this->analyzeWithOpenRouter($capture, $openrouterKey, $imageData, $mimeType, $prompt, $config);
+                if ($openrouterResult !== null) {
+                    return $openrouterResult;
+                }
+            }
+
+            // Provider 2: Gemini Direct
+            if (($preferredProvider === 'gemini' || ($preferredProvider === 'auto' && $openrouterKey === '')) && $geminiKey !== '') {
                 $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
                 if ($geminiResult !== null) {
                     return $geminiResult;
                 }
             }
 
-            if (($preferredProvider === 'openai' || $preferredProvider === 'auto' || $geminiKey === '') && $openAiKey !== '') {
+            // Provider 3: OpenAI Direct
+            if (($preferredProvider === 'openai' || $preferredProvider === 'auto') && $openAiKey !== '') {
                 $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
                 if ($openAiResult !== null) {
                     return $openAiResult;
+                }
+            }
+
+            // Fallback chain if preferred OpenRouter failed
+            if ($preferredProvider === 'openrouter') {
+                if ($geminiKey !== '') {
+                    $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
+                    if ($geminiResult !== null) {
+                        return $geminiResult;
+                    }
+                }
+                if ($openAiKey !== '') {
+                    $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
+                    if ($openAiResult !== null) {
+                        return $openAiResult;
+                    }
                 }
             }
         }
@@ -123,7 +162,8 @@ PROMPT;
     }
 
     /**
-     * Enhance image quality (contrast, brightness, sharpness) for blurry or low-contrast receipts
+     * Non-destructive image preprocessing: preserves original contrast & dark-mode backgrounds,
+     * only downscaling if photo exceeds 2048px to prevent token/bandwidth bloat.
      */
     public function preprocessImageBytes(string $rawBytes, string $mimeType): string
     {
@@ -139,40 +179,108 @@ PROMPT;
 
             $width = imagesx($img);
             $height = imagesy($img);
-
-            // Upscale jika sisi terkecil < 800px agar teks kecil pada struk terbaca jelas
-            $minDim = min($width, $height);
             $maxDim = max($width, $height);
-            if ($minDim < 800 && $minDim > 40) {
-                $scale = min(3.0, max(1.5, 1200 / $maxDim));
+
+            // Downscale only if extremely large (> 2048px) to conserve API bandwidth and avoid timeout
+            if ($maxDim > 2048) {
+                $scale = 2048 / $maxDim;
                 $newWidth = (int) round($width * $scale);
                 $newHeight = (int) round($height * $scale);
                 $resampled = imagecreatetruecolor($newWidth, $newHeight);
                 imagecopyresampled($resampled, $img, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
                 imagedestroy($img);
-                $img = $resampled;
+
+                ob_start();
+                imagejpeg($resampled, null, 92);
+                $cleanBytes = ob_get_clean();
+                imagedestroy($resampled);
+                return $cleanBytes ?: $rawBytes;
             }
 
-            // Contrast enhancement yang aman & seimbang
-            imagefilter($img, IMG_FILTER_CONTRAST, -10);
-
-            // Unsharp mask yang halus (tidak merusak karakter angka kecil)
-            $sharpenMatrix = [
-                [-0.15, -0.15, -0.15],
-                [-0.15,  2.20, -0.15],
-                [-0.15, -0.15, -0.15],
-            ];
-            imageconvolution($img, $sharpenMatrix, 1.0, 0);
-
-            ob_start();
-            imagejpeg($img, null, 95);
-            $enhanced = ob_get_clean();
             imagedestroy($img);
-
-            return $enhanced ?: $rawBytes;
+            // Return original pristine bytes directly (prevents compression artifacts & dark-mode distortion)
+            return $rawBytes;
         } catch (\Throwable $e) {
             return $rawBytes;
         }
+    }
+
+    private function analyzeWithOpenRouter(
+        BillingPaymentCapture $capture,
+        string $apiKey,
+        string $imageData,
+        string $mimeType,
+        string $prompt,
+        array $config
+    ): ?array {
+        $dataUri = 'data:' . $mimeType . ';base64,' . $imageData;
+        $model = (string) ($config['openrouter_model'] ?? 'google/gemini-2.5-flash');
+        if (empty($model)) {
+            $model = 'google/gemini-2.5-flash';
+        }
+
+        $modelsToTry = array_values(array_unique([
+            $model,
+            'google/gemini-2.5-flash',
+            'openai/gpt-4o-mini',
+            'google/gemini-3.5-flash',
+        ]));
+
+        foreach ($modelsToTry as $currentModel) {
+            try {
+                $response = Http::withoutVerifying()
+                    ->timeout(35)
+                    ->withHeaders([
+                        'Authorization' => 'Bearer ' . $apiKey,
+                        'HTTP-Referer' => 'https://rumahkitanet.my.id',
+                        'X-Title' => 'Rumah Kita Network',
+                        'Content-Type' => 'application/json',
+                    ])
+                    ->post('https://openrouter.ai/api/v1/chat/completions', [
+                        'model' => $currentModel,
+                        'max_tokens' => 1500,
+                        'response_format' => ['type' => 'json_object'],
+                        'messages' => [[
+                            'role' => 'user',
+                            'content' => [
+                                ['type' => 'text', 'text' => $prompt],
+                                ['type' => 'image_url', 'image_url' => ['url' => $dataUri]],
+                            ],
+                        ]],
+                    ]);
+
+                if (!$response->successful()) {
+                    $status = $response->status();
+                    $body = substr($response->body(), 0, 300);
+                    Log::warning("OpenRouter model {$currentModel} request failed (status {$status})", [
+                        'capture_id' => $capture->id,
+                        'status' => $status,
+                        'body' => $body,
+                    ]);
+                    $this->lastAiError = "OpenRouter ({$currentModel}) HTTP {$status}: {$body}";
+                    continue;
+                }
+
+                $content = (string) data_get($response->json(), 'choices.0.message.content', '');
+                $decoded = $this->decodeJsonContent($content);
+                if (!is_array($decoded)) {
+                    continue;
+                }
+
+                $result = $this->normalizeResult($decoded);
+                $result['provider_used'] = 'openrouter';
+                $result['openrouter_model_used'] = $currentModel;
+                return $result;
+            } catch (\Throwable $exception) {
+                Log::warning("OpenRouter model {$currentModel} analysis failed: " . $exception->getMessage(), [
+                    'capture_id' => $capture->id,
+                    'error' => $exception->getMessage(),
+                ]);
+                $this->lastAiError = "OpenRouter error: " . $exception->getMessage();
+            }
+        }
+
+        return null;
     }
 
     private function analyzeWithGemini(

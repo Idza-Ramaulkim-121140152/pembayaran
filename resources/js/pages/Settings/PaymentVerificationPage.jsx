@@ -88,6 +88,7 @@ export default function PaymentVerificationPage() {
     const [whitelistText, setWhitelistText] = useState(JSON.stringify(emptyWhitelist, null, 2));
 
     // AI API Keys visibility
+    const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
     const [showGeminiKey, setShowGeminiKey] = useState(false);
     const [showOpenAiKey, setShowOpenAiKey] = useState(false);
 
@@ -1075,13 +1076,17 @@ export default function PaymentVerificationPage() {
                                                             <div className="flex items-center justify-between gap-1">
                                                                 <p className="text-xs text-gray-500 font-medium">Skor Kepercayaan</p>
                                                                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                                                                    capture.provider_used === 'gemini'
+                                                                    capture.provider_used === 'openrouter'
+                                                                        ? 'bg-amber-100 text-amber-700'
+                                                                        : capture.provider_used === 'gemini'
                                                                         ? 'bg-purple-100 text-purple-700'
                                                                         : capture.provider_used === 'openai'
                                                                         ? 'bg-blue-100 text-blue-700'
                                                                         : 'bg-gray-200 text-gray-700'
                                                                 }`}>
-                                                                    {capture.provider_used === 'gemini'
+                                                                    {capture.provider_used === 'openrouter'
+                                                                        ? '⚡ OpenRouter AI'
+                                                                        : capture.provider_used === 'gemini'
                                                                         ? '✨ Gemini AI'
                                                                         : capture.provider_used === 'openai'
                                                                         ? '🤖 OpenAI'
@@ -1541,40 +1546,80 @@ export default function PaymentVerificationPage() {
                                     Penyedia AI Vision (AI Provider)
                                 </label>
                                 <select
-                                    value={config?.ai_provider || 'auto'}
+                                    value={config?.ai_provider || 'openrouter'}
                                     onChange={(e) => setConfig((p) => ({ ...p, ai_provider: e.target.value }))}
-                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white"
+                                    className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white font-medium"
                                 >
-                                    <option value="auto">Auto (Google Gemini lalu OpenAI)</option>
-                                    <option value="gemini">Google Gemini Vision (Gratis & Sangat Cepat)</option>
-                                    <option value="openai">OpenAI GPT-4o-mini</option>
+                                    <option value="openrouter">⚡ OpenRouter AI (Direkomendasikan - Sangat Cepat & Akurat)</option>
+                                    <option value="auto">Auto (OpenRouter &rarr; Gemini &rarr; OpenAI)</option>
+                                    <option value="gemini">Google Gemini Vision</option>
+                                    <option value="openai">OpenAI Direct (GPT-4o-mini)</option>
                                     <option value="local">Hanya Mesin Pola Lokal (Tanpa AI Cloud)</option>
                                 </select>
                             </div>
 
                             <div>
                                 <label className="block text-xs font-semibold text-gray-700 mb-1">
-                                    Model Gemini Vision
+                                    Model OpenRouter Vision
                                 </label>
                                 <input
                                     type="text"
-                                    value={config?.gemini_model || 'gemini-3.5-flash'}
-                                    onChange={(e) => setConfig((p) => ({ ...p, gemini_model: e.target.value }))}
-                                    placeholder="gemini-3.5-flash"
+                                    value={config?.openrouter_model || 'google/gemini-2.5-flash'}
+                                    onChange={(e) => setConfig((p) => ({ ...p, openrouter_model: e.target.value }))}
+                                    placeholder="google/gemini-2.5-flash"
                                     className="w-full text-xs rounded-xl border border-gray-300 p-2.5 bg-white font-mono"
                                 />
+                                <p className="text-[10px] text-gray-500 mt-0.5">
+                                    Pilihan: <code className="bg-gray-100 px-1 rounded cursor-pointer" onClick={() => setConfig(p => ({ ...p, openrouter_model: 'google/gemini-2.5-flash' }))}>google/gemini-2.5-flash</code> (Rekomendasi), <code className="bg-gray-100 px-1 rounded cursor-pointer" onClick={() => setConfig(p => ({ ...p, openrouter_model: 'openai/gpt-4o-mini' }))}>openai/gpt-4o-mini</code>, <code className="bg-gray-100 px-1 rounded cursor-pointer" onClick={() => setConfig(p => ({ ...p, openrouter_model: 'google/gemini-3.5-flash' }))}>google/gemini-3.5-flash</code>
+                                </p>
                             </div>
 
                             <div className="sm:col-span-2">
                                 <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
-                                    <span>Google Gemini API Key (Direkomendasikan - Gratis)</span>
+                                    <span className="flex items-center gap-1.5 font-bold text-amber-700">
+                                        ⚡ OpenRouter API Key (Aktif Digunakan)
+                                    </span>
+                                    <a
+                                        href="https://openrouter.ai/keys"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-normal inline-flex items-center gap-1"
+                                    >
+                                        Buka Dashboard OpenRouter <ExternalLink size={11} />
+                                    </a>
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showOpenRouterKey ? 'text' : 'password'}
+                                        value={config?.openrouter_api_key || ''}
+                                        onChange={(e) => setConfig((p) => ({ ...p, openrouter_api_key: e.target.value }))}
+                                        placeholder="sk-or-v1-..."
+                                        className="w-full text-xs rounded-xl border border-amber-300 p-2.5 pr-10 bg-amber-50/30 font-mono focus:border-amber-500 focus:ring-amber-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowOpenRouterKey(!showOpenRouterKey)}
+                                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                                        title={showOpenRouterKey ? 'Sembunyikan API Key' : 'Tampilkan API Key'}
+                                    >
+                                        {showOpenRouterKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mt-1">
+                                    OpenRouter AI membaca bukti transfer WhatsApp dengan model Gemini 2.5 Flash / GPT-4o-mini yang sangat akurat membaca struk dark mode maupun blur.
+                                </p>
+                            </div>
+
+                            <div className="sm:col-span-2 border-t border-gray-100 pt-3">
+                                <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
+                                    <span>Google Gemini API Key (Cadangan Langsung)</span>
                                     <a
                                         href="https://aistudio.google.com/app/apikey"
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-xs text-indigo-600 hover:text-indigo-800 font-normal inline-flex items-center gap-1"
                                     >
-                                        Dapatkan API Key Gratis di Google AI Studio <ExternalLink size={11} />
+                                        Google AI Studio <ExternalLink size={11} />
                                     </a>
                                 </label>
                                 <div className="relative">
@@ -1582,7 +1627,7 @@ export default function PaymentVerificationPage() {
                                         type={showGeminiKey ? 'text' : 'password'}
                                         value={config?.gemini_api_key || ''}
                                         onChange={(e) => setConfig((p) => ({ ...p, gemini_api_key: e.target.value }))}
-                                        placeholder="AIzaSy... (Masukkan API Key Google Gemini)"
+                                        placeholder="AIzaSy... (Opsional sebagai cadangan)"
                                         className="w-full text-xs rounded-xl border border-gray-300 p-2.5 pr-10 bg-white font-mono"
                                     />
                                     <button
@@ -1594,15 +1639,12 @@ export default function PaymentVerificationPage() {
                                         {showGeminiKey ? <EyeOff size={15} /> : <Eye size={15} />}
                                     </button>
                                 </div>
-                                <p className="text-[11px] text-gray-500 mt-1">
-                                    Kunci ini digunakan untuk membaca gambar struk asli (memastikan tanggal, jam transaksi, nominal, dan pengirim diekstrak akurat).
-                                </p>
                             </div>
 
                             <div className="sm:col-span-2">
                                 <label className="block text-xs font-semibold text-gray-700 mb-1 flex items-center justify-between">
-                                    <span>OpenAI API Key (Cadangan Opsional)</span>
-                                    <span className="text-xs text-gray-400 font-normal">GPT-4o-mini Vision</span>
+                                    <span>OpenAI API Key (Cadangan Langsung)</span>
+                                    <span className="text-xs text-gray-400 font-normal">GPT-4o-mini</span>
                                 </label>
                                 <div className="relative">
                                     <input

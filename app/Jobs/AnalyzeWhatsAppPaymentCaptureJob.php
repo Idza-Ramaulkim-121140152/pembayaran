@@ -79,6 +79,16 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                     }
                 }
             }
+
+            if ($capture->customer) {
+                $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+                $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+                if ($senderLid !== '') {
+                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderLid);
+                } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderPhone);
+                }
+            }
         }
 
         // Resolve target invoice for customer based on detected payment amount

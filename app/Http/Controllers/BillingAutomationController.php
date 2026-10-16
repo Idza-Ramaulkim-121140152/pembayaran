@@ -121,6 +121,8 @@ class BillingAutomationController extends Controller
     {
         $validated = $request->validate([
             'ai_provider' => 'sometimes|nullable|string|max:40',
+            'openrouter_api_key' => 'sometimes|nullable|string|max:255',
+            'openrouter_model' => 'sometimes|nullable|string|max:120',
             'gemini_api_key' => 'sometimes|nullable|string|max:255',
             'gemini_model' => 'sometimes|nullable|string|max:120',
             'openai_api_key' => 'sometimes|nullable|string|max:255',
