@@ -112,6 +112,49 @@ class FinancialTransactionController extends Controller
             $baseQuery->whereDate('transaction_date', '<=', $request->string('end_date'));
         }
 
+        if ($request->filled('received_via')) {
+            $receivedVia = trim((string) $request->string('received_via'));
+
+            if (str_starts_with($receivedVia, 'option:')) {
+                $optionId = substr($receivedVia, 7);
+                $baseQuery->where(function ($q) use ($optionId) {
+                    $q->where('meta->received_via_id', (int) $optionId)
+                        ->orWhere('meta->received_via_id', (string) $optionId);
+
+                    if (Schema::hasTable('payment_receipt_options')) {
+                        $optionName = \App\Models\PaymentReceiptOption::where('id', $optionId)->value('name');
+                        if ($optionName) {
+                            $q->orWhere('meta->received_via_name', $optionName);
+                        }
+                    }
+                });
+            } elseif (str_starts_with($receivedVia, 'receiver:')) {
+                $receiverId = substr($receivedVia, 9);
+                $baseQuery->where(function ($q) use ($receiverId) {
+                    $q->where('meta->payment_receiver_user_id', (int) $receiverId)
+                        ->orWhere('meta->payment_receiver_user_id', (string) $receiverId);
+                });
+            } elseif (is_numeric($receivedVia)) {
+                $baseQuery->where(function ($q) use ($receivedVia) {
+                    $q->where('meta->received_via_id', (int) $receivedVia)
+                        ->orWhere('meta->received_via_id', (string) $receivedVia);
+
+                    if (Schema::hasTable('payment_receipt_options')) {
+                        $optionName = \App\Models\PaymentReceiptOption::where('id', $receivedVia)->value('name');
+                        if ($optionName) {
+                            $q->orWhere('meta->received_via_name', $optionName);
+                        }
+                    }
+                });
+            } else {
+                $baseQuery->where(function ($q) use ($receivedVia) {
+                    $q->where('meta->received_via_name', $receivedVia)
+                        ->orWhere('meta->received_via_name', 'like', "%{$receivedVia}%")
+                        ->orWhere('meta->payment_receiver_name', 'like', "%{$receivedVia}%");
+                });
+            }
+        }
+
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->string('keyword'));
 
@@ -119,6 +162,8 @@ class FinancialTransactionController extends Controller
                 $query->where('source', 'like', "%{$keyword}%")
                     ->orWhere('description', 'like', "%{$keyword}%")
                     ->orWhere('type', 'like', "%{$keyword}%")
+                    ->orWhere('meta->received_via_name', 'like', "%{$keyword}%")
+                    ->orWhere('meta->payment_receiver_name', 'like', "%{$keyword}%")
                     ->orWhereHas('creator', function ($creatorQuery) use ($keyword) {
                         $creatorQuery->where('name', 'like', "%{$keyword}%");
                     });

@@ -95,6 +95,7 @@ function MutasiPage() {
         type: '',
         status: '',
         source: '',
+        received_via: '',
         start_date: currentMonthStart,
         end_date: currentMonthEnd,
         keyword: '',
@@ -148,6 +149,7 @@ function MutasiPage() {
             if (activeFilters.type) params.type = activeFilters.type;
             if (activeFilters.status) params.status = activeFilters.status;
             if (activeFilters.source) params.source = activeFilters.source;
+            if (activeFilters.received_via) params.received_via = activeFilters.received_via;
             if (activeFilters.start_date) params.start_date = activeFilters.start_date;
             if (activeFilters.end_date) params.end_date = activeFilters.end_date;
             if (activeFilters.keyword?.trim()) params.keyword = activeFilters.keyword.trim();
@@ -516,6 +518,7 @@ function MutasiPage() {
             type: '',
             status: '',
             source: '',
+            received_via: '',
             start_date: currentMonthStart,
             end_date: currentMonthEnd,
             keyword: '',
@@ -633,7 +636,7 @@ function MutasiPage() {
 
             <AdminConsoleSurface accent="violet" className="relative z-20 overflow-visible p-4">
             <form onSubmit={applyFilter}>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                     <AdminConsoleField label="Jenis">
                         <select
                             value={filters.type}
@@ -674,7 +677,34 @@ function MutasiPage() {
                             <option value="balance_adjustment">Balance Adjustment</option>
                         </select>
                     </AdminConsoleField>
-                    <div className="block space-y-2 lg:col-span-2">
+                    <AdminConsoleField label="Penerima Via">
+                        <select
+                            value={filters.received_via}
+                            onChange={(e) => setFilters((p) => ({ ...p, received_via: e.target.value }))}
+                            className={adminConsoleSelectClassName}
+                        >
+                            <option value="">Semua</option>
+                            {paymentReceiptOptions.length > 0 && (
+                                <optgroup label="Metode / Rekening Kas">
+                                    {paymentReceiptOptions.map((opt) => (
+                                        <option key={`opt_${opt.id}`} value={`option:${opt.id}`}>
+                                            {opt.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {paymentReceivers.length > 0 && (
+                                <optgroup label="Petugas / Penanggung Jawab">
+                                    {paymentReceivers.map((rec) => (
+                                        <option key={`rec_${rec.id}`} value={`receiver:${rec.id}`}>
+                                            {rec.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            )}
+                        </select>
+                    </AdminConsoleField>
+                    <div className="block space-y-2 lg:col-span-1">
                         <div className="flex items-center justify-between gap-3">
                             <span className="text-sm font-medium text-slate-700">Tanggal</span>
                         </div>
@@ -685,10 +715,10 @@ function MutasiPage() {
                                     setDatePickerOpen((prev) => !prev);
                                     setCalendarMonth(parseDateInput(filters.start_date || filters.end_date) || new Date());
                                 }}
-                                className={`${adminConsoleInputClassName} flex items-center justify-between text-left`}
+                                className={`${adminConsoleInputClassName} flex items-center justify-between text-left text-xs sm:text-sm`}
                             >
-                                <span>{dateRangeLabel}</span>
-                                <Calendar size={18} className="text-slate-500" />
+                                <span className="truncate">{dateRangeLabel}</span>
+                                <Calendar size={18} className="text-slate-500 shrink-0 ml-1" />
                             </button>
 
                             {datePickerOpen && (
