@@ -82,6 +82,7 @@ const ACCESS = {
     paymentReceipts: ['superadmin', 'admin', 'finance'],
     ipaymuIntegration: ['superadmin', 'admin', 'finance'],
     masterData: ['superadmin', 'admin', 'finance'],
+    masterPegawai: ['superadmin', 'admin'],
     masterWilayah: ['superadmin', 'admin'],
     masterMikrotik: ['superadmin', 'admin'],
     masterOlt: ['superadmin', 'admin'],
@@ -143,6 +144,7 @@ const MENU_PERMISSION_MAP = {
     paymentReceipts: 'master.payment.manage',
     ipaymuIntegration: 'master.payment.manage',
     masterData: 'masterdata.view',
+    masterPegawai: 'masterdata.view',
     masterWilayah: 'master.wilayah.manage',
     masterMikrotik: 'master.mikrotik.manage',
     masterOlt: 'master.mikrotik.manage',
@@ -220,6 +222,7 @@ const MENU_GROUPS = [
         label: 'Master',
         icon: FolderKanban,
         items: [
+            { key: 'masterPegawai', label: 'Master Pegawai', to: '/settings/master-pegawai', icon: Users, match: (p) => p === '/settings/master-pegawai' },
             { key: 'masterData', label: 'Master Data', to: '/settings/master-data', icon: Settings2, match: (p) => p === '/settings/master-data' },
             { key: 'installationPricing', label: 'Harga Instalasi', to: '/settings/installation-pricing', icon: Package, match: (p) => p === '/settings/installation-pricing' },
             { key: 'customerPackageManagement', label: 'Audit Paket Pelanggan', to: '/settings/customer-package-management', icon: Package, match: (p) => p === '/settings/customer-package-management' },

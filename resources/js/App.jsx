@@ -87,6 +87,7 @@ const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLi
 const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
 const AreaIncidentActionPage = lazy(() => import('./pages/AreaIncidentActionPage'));
 const MonitoringPekerjaanPage = lazy(() => import('./pages/TechnicianJobs/MonitoringPekerjaanPage'));
+const MasterPegawaiPage = lazy(() => import('./pages/Settings/MasterPegawaiPage'));
 
 
 const ROUTE_FALLBACK_ROLES = {
@@ -462,6 +463,7 @@ function App() {
                     <Route path="/settings/master-olts" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterOltPage />} />} />
                     <Route path="/settings/customer-wifi-links" element={<GuardedRoute permissionKey="master.customer_wifi_links.manage" element={<CustomerWifiLinksPage />} />} />
                     <Route path="/settings/master-data" element={<GuardedRoute permissionKey="masterdata.view" element={<MasterDataPage />} />} />
+                    <Route path="/settings/master-pegawai" element={<GuardedRoute allowedRoles={['superadmin', 'admin']} element={<MasterPegawaiPage />} />} />
                     <Route path="/settings/access-policy" element={<GuardedRoute permissionKey="access_policy.manage" element={<AccessPolicyPage />} />} />
                     <Route path="/settings/system-logs" element={<GuardedRoute permissionKey="access_policy.manage" element={<SystemActivityLogsPage />} />} />
                     <Route path="/settings/customer-package-management" element={<GuardedRoute permissionKey="customer.package_audit.view" element={<CustomerPackageManagementPage />} />} />

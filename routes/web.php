@@ -728,6 +728,17 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/settings/master-olt', fn() => view('app'))->name('master-olt.settings');
         Route::get('/settings/master-olts', fn() => view('app'))->name('master-olts.settings');
         Route::get('/settings/customer-wifi-links', fn() => view('app'))->name('settings.customer-wifi-links');
+        Route::get('/settings/master-pegawai', fn() => view('app'))->name('settings.master-pegawai');
+
+        Route::prefix('api/master-pegawai')->group(function () {
+            Route::get('/', [\App\Http\Controllers\MasterPegawaiController::class, 'index'])->name('api.master-pegawai.index');
+            Route::post('/', [\App\Http\Controllers\MasterPegawaiController::class, 'store'])->name('api.master-pegawai.store');
+            Route::post('/auto-sync', [\App\Http\Controllers\MasterPegawaiController::class, 'autoSync'])->name('api.master-pegawai.auto-sync');
+            Route::post('/link', [\App\Http\Controllers\MasterPegawaiController::class, 'link'])->name('api.master-pegawai.link');
+            Route::get('/{id}', [\App\Http\Controllers\MasterPegawaiController::class, 'show'])->name('api.master-pegawai.show');
+            Route::put('/{id}', [\App\Http\Controllers\MasterPegawaiController::class, 'update'])->name('api.master-pegawai.update');
+            Route::delete('/{id}', [\App\Http\Controllers\MasterPegawaiController::class, 'destroy'])->name('api.master-pegawai.destroy');
+        });
 
         Route::get('/api/master-wilayah', [MasterWilayahController::class, 'index'])->name('api.master-wilayah.index');
         Route::post('/api/master-wilayah/kecamatan', [MasterWilayahController::class, 'storeKecamatan'])->name('api.master-wilayah.kecamatan.store');
