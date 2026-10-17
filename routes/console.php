@@ -63,3 +63,9 @@ Schedule::command('network:check-area-outages')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
+Schedule::command('jobs:send-morning-reminders')
+    ->dailyAt('08:00')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+

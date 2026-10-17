@@ -35,6 +35,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'phone',
         'password',
         'role',
         'can_confirm_payments',
@@ -146,5 +147,11 @@ class User extends Authenticatable
             'user_id',
             'receiver_user_id'
         )->withTimestamps();
+    }
+
+    public function assignedJobs()
+    {
+        return $this->belongsToMany(TechnicianJob::class, 'technician_job_assignments', 'user_id', 'job_id')
+            ->withTimestamps();
     }
 }

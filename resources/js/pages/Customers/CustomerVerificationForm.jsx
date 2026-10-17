@@ -17,6 +17,7 @@ import {
     CheckCircle2,
     Info,
     Building2,
+    HardHat,
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -97,6 +98,7 @@ function CustomerVerificationForm() {
     const [sheetsReference, setSheetsReference] = useState(null);
     const [secretInfo, setSecretInfo] = useState(null);
     const [agreementInfo, setAgreementInfo] = useState(null);
+    const [verifiedCustomer, setVerifiedCustomer] = useState(null);
     const [showSecretModal, setShowSecretModal] = useState(false);
     const [showErrorModal, setShowErrorModal] = useState(false);
     const [errorModalMessage, setErrorModalMessage] = useState('');
@@ -990,6 +992,7 @@ function CustomerVerificationForm() {
             closeInstallationPaymentFlow();
             setSecretInfo(result.secret || null);
             setAgreementInfo(result.agreement || null);
+            setVerifiedCustomer(result.customer || null);
             setShowSecretModal(true);
             setSuccess(true);
         } catch (err) {
@@ -2317,15 +2320,28 @@ function CustomerVerificationForm() {
                                 </div>
                             )}
 
-                            <div className="flex gap-3">
+                            <div className="flex flex-col sm:flex-row gap-2.5">
                                 <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowSecretModal(false);
+                                        const cId = verifiedCustomer?.id || '';
+                                        navigate(`/monitoring-pekerjaan?action=new&type=pemasangan_baru&customer_id=${cId}`);
+                                    }}
+                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-xs sm:text-sm shadow-sm flex items-center justify-center gap-1.5"
+                                >
+                                    <HardHat size={16} />
+                                    Tugaskan Pemasangan ke Teknisi
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={() => {
                                         setShowSecretModal(false);
                                         navigate('/customer-verification');
                                     }}
-                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2.5 rounded-xl transition-colors text-sm shadow-sm"
+                                    className="sm:w-32 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-4 py-2.5 rounded-xl transition-colors text-xs sm:text-sm text-center"
                                 >
-                                    Tutup & Lanjutkan
+                                    Selesai
                                 </button>
                             </div>
                         </div>

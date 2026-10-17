@@ -86,6 +86,7 @@ const ProjectReportPage = lazy(() => import('./pages/Reports/ProjectReportPage')
 const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLinksPage'));
 const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
 const AreaIncidentActionPage = lazy(() => import('./pages/AreaIncidentActionPage'));
+const MonitoringPekerjaanPage = lazy(() => import('./pages/TechnicianJobs/MonitoringPekerjaanPage'));
 
 
 const ROUTE_FALLBACK_ROLES = {
@@ -420,6 +421,9 @@ function App() {
                     <Route path="/customer-verification/register" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerRegistrationForm />} />} />
                     <Route path="/customer-verification/verify/:timestamp" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerVerificationForm />} />} />
                     <Route path="/customer-prospects" element={<GuardedRoute permissionKey="customer.verification" element={<CustomerProspectsPage />} />} />
+                    
+                    {/* Monitoring Pekerjaan */}
+                    <Route path="/monitoring-pekerjaan" element={<GuardedRoute permissionKey="monitoring.view" fallbackRoles={['superadmin', 'admin', 'teknisi']} element={<MonitoringPekerjaanPage />} />} />
                     
                     {/* ODP */}
                     <Route path="/odp" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage />} />} />

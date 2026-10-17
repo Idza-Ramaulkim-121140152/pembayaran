@@ -33,11 +33,13 @@ import {
     UserCheck,
     QrCode,
     CheckCircle2,
+    HardHat,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
 
 const ACCESS = {
+    monitoringPekerjaan: ['superadmin', 'admin', 'teknisi'],
     dashboard: ['superadmin', 'admin', 'teknisi', 'finance'],
     dashboardPrediction: ['superadmin', 'admin', 'finance'],
     reports: ['superadmin', 'admin', 'finance'],
@@ -98,6 +100,7 @@ const ACCESS = {
 };
 
 const MENU_PERMISSION_MAP = {
+    monitoringPekerjaan: 'monitoring.view',
     dashboard: 'dashboard.view',
     dashboardPrediction: 'dashboard.prediction.view',
     reports: 'report.view',
@@ -165,6 +168,7 @@ const MENU_GROUPS = [
         icon: Wrench,
         items: [
             { key: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: Home, match: (p) => p === '/dashboard' },
+            { key: 'monitoringPekerjaan', label: 'Monitoring Pekerjaan', to: '/monitoring-pekerjaan', icon: HardHat, match: (p) => p.startsWith('/monitoring-pekerjaan') },
             { key: 'superPanel', label: 'Super Panel', to: '/super-panel', icon: Shield, match: (p) => p.startsWith('/super-panel') },
             { key: 'dashboardPrediction', label: 'Prediksi', to: '/dashboard/prediksi', icon: Brain, match: (p) => p === '/dashboard/prediksi' },
             { key: 'pelanggan', label: 'Pelanggan', to: '/customers', icon: Users, match: (p) => p.startsWith('/customers') || p.startsWith('/pelanggan') },

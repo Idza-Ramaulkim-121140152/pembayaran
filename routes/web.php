@@ -508,6 +508,19 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/node-create', [SuperPanelController::class, 'createNode'])->name('api.super-panel.node-create');
             Route::get('/form-options', [SuperPanelController::class, 'formOptions'])->name('api.super-panel.form-options');
         });
+
+        // Monitoring Pekerjaan (Job Monitoring)
+        Route::get('/monitoring-pekerjaan', fn() => view('app'))->name('technician-jobs.index');
+        Route::prefix('api/technician-jobs')->group(function () {
+            Route::get('/', [\App\Http\Controllers\TechnicianJobController::class, 'index'])->name('api.technician-jobs.index');
+            Route::get('/technicians', [\App\Http\Controllers\TechnicianJobController::class, 'techniciansList'])->name('api.technician-jobs.technicians');
+            Route::post('/', [\App\Http\Controllers\TechnicianJobController::class, 'store'])->name('api.technician-jobs.store');
+            Route::post('/from-installation', [\App\Http\Controllers\TechnicianJobController::class, 'fromInstallation'])->name('api.technician-jobs.from-installation');
+            Route::put('/technicians/{user}/phone', [\App\Http\Controllers\TechnicianJobController::class, 'updateTechnicianPhone'])->name('api.technician-jobs.update-phone');
+            Route::post('/{job}/resolve', [\App\Http\Controllers\TechnicianJobController::class, 'resolve'])->name('api.technician-jobs.resolve');
+            Route::post('/{job}/cancel', [\App\Http\Controllers\TechnicianJobController::class, 'cancel'])->name('api.technician-jobs.cancel');
+            Route::get('/{job}/copy-text', [\App\Http\Controllers\TechnicianJobController::class, 'copyText'])->name('api.technician-jobs.copy-text');
+        });
     }); // end teknisi routes
 
     // Billing/Penagihan API (permission-driven, role-agnostic)
