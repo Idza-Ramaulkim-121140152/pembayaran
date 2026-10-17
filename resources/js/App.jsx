@@ -160,7 +160,7 @@ function GuardedRoute({ permissionKey, element, allowedRoles }) {
         return <Navigate to="/dashboard" replace />;
     }
 
-    if (hasRoutePermission(permissionKey)) {
+    if (!permissionKey || hasRoutePermission(permissionKey)) {
         return <RouteSuspense>{element}</RouteSuspense>;
     }
 
@@ -463,7 +463,8 @@ function App() {
                     <Route path="/settings/master-olts" element={<GuardedRoute permissionKey="master.mikrotik.manage" element={<MasterOltPage />} />} />
                     <Route path="/settings/customer-wifi-links" element={<GuardedRoute permissionKey="master.customer_wifi_links.manage" element={<CustomerWifiLinksPage />} />} />
                     <Route path="/settings/master-data" element={<GuardedRoute permissionKey="masterdata.view" element={<MasterDataPage />} />} />
-                    <Route path="/settings/master-pegawai" element={<GuardedRoute allowedRoles={['superadmin', 'admin']} element={<MasterPegawaiPage />} />} />
+                    <Route path="/settings/master-pegawai" element={<GuardedRoute permissionKey="masterdata.view" allowedRoles={['superadmin', 'admin']} element={<MasterPegawaiPage />} />} />
+                    <Route path="/master-pegawai" element={<GuardedRoute permissionKey="masterdata.view" allowedRoles={['superadmin', 'admin']} element={<MasterPegawaiPage />} />} />
                     <Route path="/settings/access-policy" element={<GuardedRoute permissionKey="access_policy.manage" element={<AccessPolicyPage />} />} />
                     <Route path="/settings/system-logs" element={<GuardedRoute permissionKey="access_policy.manage" element={<SystemActivityLogsPage />} />} />
                     <Route path="/settings/customer-package-management" element={<GuardedRoute permissionKey="customer.package_audit.view" element={<CustomerPackageManagementPage />} />} />

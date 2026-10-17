@@ -222,7 +222,7 @@ const MENU_GROUPS = [
         label: 'Master',
         icon: FolderKanban,
         items: [
-            { key: 'masterPegawai', label: 'Master Pegawai', to: '/settings/master-pegawai', icon: Users, match: (p) => p === '/settings/master-pegawai' },
+            { key: 'masterPegawai', label: 'Master Pegawai', to: '/settings/master-pegawai', icon: Users, match: (p) => p === '/settings/master-pegawai' || p === '/master-pegawai' },
             { key: 'masterData', label: 'Master Data', to: '/settings/master-data', icon: Settings2, match: (p) => p === '/settings/master-data' },
             { key: 'installationPricing', label: 'Harga Instalasi', to: '/settings/installation-pricing', icon: Package, match: (p) => p === '/settings/installation-pricing' },
             { key: 'customerPackageManagement', label: 'Audit Paket Pelanggan', to: '/settings/customer-package-management', icon: Package, match: (p) => p === '/settings/customer-package-management' },

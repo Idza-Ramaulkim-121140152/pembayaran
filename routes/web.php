@@ -729,6 +729,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/settings/master-olts', fn() => view('app'))->name('master-olts.settings');
         Route::get('/settings/customer-wifi-links', fn() => view('app'))->name('settings.customer-wifi-links');
         Route::get('/settings/master-pegawai', fn() => view('app'))->name('settings.master-pegawai');
+        Route::get('/master-pegawai', fn() => view('app'))->name('master-pegawai.alias');
 
         Route::prefix('api/master-pegawai')->group(function () {
             Route::get('/', [\App\Http\Controllers\MasterPegawaiController::class, 'index'])->name('api.master-pegawai.index');
