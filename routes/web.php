@@ -573,19 +573,19 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/billing/payments/upload-and-analyze', [BillingAutomationController::class, 'uploadAndAnalyze'])->name('api.billing.payments.upload-and-analyze');
         Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->name('api.billing.payments.match');
         Route::put('/api/billing/payment-verification/config', [BillingAutomationController::class, 'updatePaymentVerificationConfig'])->name('api.billing.payment-verification.config.update');
-        Route::post('/api/billing/payments/{capture}/reanalyze', [BillingAutomationController::class, 'reanalyzeCapture'])->name('api.billing.payments.reanalyze');
+        Route::post('/api/billing/payments/{capture}/reanalyze', [BillingAutomationController::class, 'reanalyzeCapture'])->whereNumber('capture')->name('api.billing.payments.reanalyze');
     });
 
     Route::middleware('permission:billing.payment_capture.review')->group(function () {
         Route::get('/api/billing/payment-verification/config', [BillingAutomationController::class, 'paymentVerificationConfig'])->name('api.billing.payment-verification.config');
         Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
-        Route::get('/api/billing/payments/{capture}', [BillingAutomationController::class, 'showCapture'])->name('api.billing.payments.show');
         Route::match(['get', 'post'], '/api/billing/payments/captures', [BillingAutomationController::class, 'captures'])->name('api.billing.payments.captures');
         Route::get('/api/billing/payment-verification/auto-confirmations', [BillingAutomationController::class, 'autoConfirmations'])->name('api.billing.payment-verification.auto-confirmations');
-        Route::post('/api/billing/payment-verification/auto-confirmations/{capture}/cancel', [BillingAutomationController::class, 'cancelAutoConfirmation'])->name('api.billing.payment-verification.auto-confirmations.cancel');
+        Route::post('/api/billing/payment-verification/auto-confirmations/{capture}/cancel', [BillingAutomationController::class, 'cancelAutoConfirmation'])->whereNumber('capture')->name('api.billing.payment-verification.auto-confirmations.cancel');
         Route::post('/api/billing/payments/bulk-resolve', [BillingAutomationController::class, 'bulkResolve'])->name('api.billing.payments.bulk-resolve');
-        Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->name('api.billing.payments.resolve');
-        Route::post('/api/billing/payments/{capture}/assign-customer', [BillingAutomationController::class, 'assignCustomer'])->name('api.billing.payments.assign-customer');
+        Route::get('/api/billing/payments/{capture}', [BillingAutomationController::class, 'showCapture'])->whereNumber('capture')->name('api.billing.payments.show');
+        Route::post('/api/billing/payments/{capture}/resolve', [BillingAutomationController::class, 'resolveCapture'])->whereNumber('capture')->name('api.billing.payments.resolve');
+        Route::post('/api/billing/payments/{capture}/assign-customer', [BillingAutomationController::class, 'assignCustomer'])->whereNumber('capture')->name('api.billing.payments.assign-customer');
     });
 
     Route::middleware('permission:customer.package_audit.view')->group(function () {
