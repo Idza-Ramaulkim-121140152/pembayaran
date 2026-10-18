@@ -1048,6 +1048,159 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertSame(1, $adminLogsCount);
     }
 
+    public function test_admin_review_message_contains_direct_review_link(): void
+    {
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        $capture = BillingPaymentCapture::query()->create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customer->id,
+            'invoice_id' => $invoice->id,
+            'amount' => 150000,
+            'paid_date' => '2026-10-18',
+            'match_status' => 'needs_review',
+            'match_confidence' => 65.5,
+            'fingerprint' => 'test-fp-review-link',
+            'meta' => [
+                'sender_phone' => '081234567890',
+                'validation' => [
+                    'failure_reason' => 'amount_mismatch',
+                ],
+            ],
+        ]);
+
+        $notificationService = app(\App\Services\PaymentCaptureNotificationService::class);
+        $reflection = new \ReflectionClass($notificationService);
+        $method = $reflection->getMethod('buildAdminReviewMessage');
+        $method->setAccessible(true);
+
+        $message = $method->invoke($notificationService, $capture);
+
+        $this->assertStringContainsString("Capture ID: {$capture->id}", $message);
+        $this->assertStringContainsString("/settings/payment-verification?review_id={$capture->id}", $message);
+        $this->assertStringContainsString('Konfirmasi / Review Bukti Bayar', $message);
+    }
+
+    public function test_can_get_single_payment_capture_api(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        $capture = BillingPaymentCapture::query()->create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customer->id,
+            'invoice_id' => $invoice->id,
+            'amount' => 200000,
+            'paid_date' => '2026-10-18',
+            'match_status' => 'needs_review',
+            'match_confidence' => 85.0,
+            'fingerprint' => 'test-fp-get-single',
+            'meta' => [
+                'sender_phone' => '081234567890',
+            ],
+        ]);
+
+        $response = $this->actingAs($admin)->getJson("/api/billing/payments/{$capture->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $capture->id)
+            ->assertJsonPath('data.amount', 200000)
+            ->assertJsonPath('data.customer.id', $customer->id);
+    }
+
+    public function test_incoming_non_payment_proof_photo_is_discarded_and_not_saved_nor_notified(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'notification_recipients' => [
+                [
+                    'id' => 'admin-review',
+                    'name' => 'Admin Review',
+                    'phone' => '082222222222',
+                    'is_active' => true,
+                    'receive_auto_approved' => true,
+                    'receive_needs_review' => true,
+                ],
+            ],
+        ]);
+
+        // Customer sends a photo of broken cables / street / speedtest / complaint
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => false,
+                            'amount' => null,
+                            'paid_date' => null,
+                            'paid_time' => null,
+                            'reference_code' => null,
+                            'payment_channel' => null,
+                            'sender_name' => null,
+                            'destination_identity' => [
+                                'name' => null,
+                                'account_number' => null,
+                                'merchant_id' => null,
+                                'raw' => null,
+                            ],
+                            'success_status' => false,
+                            'confidence_overall' => 0,
+                            'ocr_raw_text' => 'Kabel fiber putus di depan jalan mawar',
+                            'raw_summary' => 'Bukan bukti pembayaran (foto kabel putus / keluhan gangguan)',
+                        ]),
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $response = $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-non-receipt',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-10-18T08:00:00+07:00',
+            'media_base64' => base64_encode('fake-image-cable-broken'),
+            'caption' => 'Pak tolong internet saya mati kabel putus ketabrak truk',
+            'mime_type' => 'image/jpeg',
+        ]);
+
+        $response->assertStatus(202);
+
+        // Capture record MUST be deleted and completely absent from database
+        $this->assertDatabaseMissing('billing_payment_captures', [
+            'fingerprint' => sha1('wa-msg-non-receipt|' . $customer->phone . '||' . substr(base64_encode('fake-image-cable-broken'), 0, 120)),
+        ]);
+        $this->assertSame(0, BillingPaymentCapture::query()->count());
+
+        // Storage file must also be cleaned up
+        $files = Storage::disk('public')->allFiles('payment-captures');
+        $this->assertEmpty($files);
+
+        // No notification should be sent to admin
+        $adminReviewLog = NotificationLog::query()
+            ->where('phone', '082222222222')
+            ->where('meta->type', 'billing_payment_capture_admin_review')
+            ->first();
+        $this->assertNull($adminReviewLog);
+    }
+
+    public function test_local_heuristics_detects_non_receipt_text_as_not_payment_proof(): void
+    {
+        $service = app(\App\Services\PaymentProofAnalysisService::class);
+        $reflection = new \ReflectionClass($service);
+        $method = $reflection->getMethod('parseReceiptPatterns');
+        $method->setAccessible(true);
+
+        $speedtestText = "Speedtest by Ookla\nPing 12 ms Jitter 2 ms\nDownload 25.4 Mbps\nUpload 10.2 Mbps";
+        $parsed = $method->invoke($service, $speedtestText);
+        $this->assertFalse($parsed['is_payment_proof']);
+
+        $cableComplaintText = "Pak kabel putus di tiang depan rumah lampu los merah menyala tolong teknisi";
+        $parsedComplaint = $method->invoke($service, $cableComplaintText);
+        $this->assertFalse($parsedComplaint['is_payment_proof']);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

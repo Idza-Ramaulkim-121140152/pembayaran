@@ -127,6 +127,12 @@ class PaymentCaptureNotificationService
     {
         $capture->loadMissing('customer', 'invoice');
 
+        $baseUrl = rtrim((string) config('app.url', 'https://rumahkitanet.my.id'), '/');
+        if (($baseUrl === '' || $baseUrl === 'http://localhost') && !app()->isLocal() && !app()->runningUnitTests()) {
+            $baseUrl = 'https://rumahkitanet.my.id';
+        }
+        $reviewUrl = "{$baseUrl}/settings/payment-verification?review_id={$capture->id}";
+
         return "Perlu review pembayaran WhatsApp\n\n"
             . "Capture ID: {$capture->id}\n"
             . "Pelanggan: " . ($capture->customer?->name ?: '-') . "\n"
@@ -134,7 +140,9 @@ class PaymentCaptureNotificationService
             . "Invoice: " . ($capture->invoice?->invoice_link ?: '-') . "\n"
             . "Nominal OCR: Rp " . number_format((float) $capture->amount, 0, ',', '.') . "\n"
             . "Confidence: " . number_format((float) $capture->match_confidence, 2) . "%\n"
-            . "Alasan: " . ((string) data_get($capture->meta, 'validation.failure_reason', '-'));
+            . "Alasan: " . ((string) data_get($capture->meta, 'validation.failure_reason', '-')) . "\n\n"
+            . "🔗 *Konfirmasi / Review Bukti Bayar:*\n"
+            . $reviewUrl;
     }
 
     private function buildAdminApprovedMessage(BillingPaymentCapture $capture): string

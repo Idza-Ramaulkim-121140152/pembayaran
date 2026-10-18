@@ -132,7 +132,10 @@ class PaymentProofValidationService
         $failureReason = null;
         $status = 'needs_review';
 
-        if ($flags['is_duplicate_reference']) {
+        if (!$flags['is_payment_proof']) {
+            $failureReason = 'not_payment_proof';
+            $status = 'rejected';
+        } elseif ($flags['is_duplicate_reference']) {
             $failureReason = 'duplicate_reference_code';
             $status = 'rejected';
         } elseif (!$flags['customer_identified']) {
@@ -140,9 +143,6 @@ class PaymentProofValidationService
             $status = 'needs_review';
         } elseif (!$flags['active_invoice_found']) {
             $failureReason = 'no_active_invoice';
-            $status = 'needs_review';
-        } elseif (!$flags['is_payment_proof']) {
-            $failureReason = 'not_payment_proof';
             $status = 'needs_review';
         } elseif (!$flags['amount_matches_invoice']) {
             $failureReason = 'amount_mismatch';

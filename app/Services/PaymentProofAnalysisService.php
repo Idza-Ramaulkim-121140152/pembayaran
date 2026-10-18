@@ -92,9 +92,21 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "ocr_raw_text": string|null,
   "raw_summary": string|null
 }
-Pedoman Khusus Akurasi Tinggi (Termasuk Gambar Blur, Kompresi WhatsApp, M-Banking Dark Mode, Struk Termal/Kertas):
-- PENTING GAMBAR BLUR/BURAM/DARK MODE/KOMPRESI WHATSAPP/STRUK KERTAS:
-  Gambar ini bisa berupa tangkapan layar m-banking tema gelap (dark mode / background hitam seperti BRImo, BCA, Livin Mandiri, SeaBank, Dana) atau tema terang, struk kertas termal/ATM/EDC/agen BRILink, atau foto HP terkompresi dari WhatsApp:
+Pedoman Khusus Klasifikasi & Akurasi (PENTING PENYARINGAN BUKTI BAYAR):
+- KRITERIA UTAMA: APAKAH INI BUKTI PEMBAYARAN ATAU BUKAN?
+  * is_payment_proof = true HANYA JIKA gambar adalah bukti transaksi finansial yang sah (tangkapan layar transfer m-banking seperti BCA/BRImo/Livin/SeaBank/Dana/GoPay/OVO/ShopeePay/BSI/BNI, struk transfer ATM/EDC/agen BRILink/teller, bukti pembayaran QRIS, atau mutasi rekening).
+  * is_payment_proof = false JIKA gambar BUKAN bukti pembayaran, misalnya:
+    - Foto jalanan / aspal / lingkungan / pemandangan
+    - Foto tiang kabel internet, kabel fiber optik, kabel putus / menjuntai
+    - Foto router / modem / ONT / lampu indikator (seperti lampu LOS merah, lampu mati, adaptor, perangkat keras)
+    - Foto screenshot hasil uji kecepatan internet (Speedtest Ookla / Fast.com / ping)
+    - Foto screenshot percakapan chat WhatsApp atau keluhan / komplain gangguan internet pelanggan
+    - Foto selfie, meme, stiker, gambar produk barang/makanan, kartu identitas (KTP/SIM/KK), foto rumah/kantor tanpa struk, atau foto non-transaksi finansial lainnya.
+  * JIKA is_payment_proof = false:
+    - Set amount: null, paid_date: null, paid_time: null, reference_code: null, payment_channel: null, sender_name: null, success_status: false, confidence_overall: 0.
+    - Set raw_summary: "Bukan bukti pembayaran (foto non-transaksi / keluhan pelanggan / jalanan / perangkat)".
+
+- JIKA GAMBAR ADALAH BUKTI PEMBAYARAN (Termasuk Gambar Blur, Kompresi WhatsApp, M-Banking Dark Mode, Struk Termal/Kertas):
   1. amount: Cari angka nominal utama transfer / pembayaran (contoh 50000, 100000, 150000, 200000, 250000, dst.). Pada m-banking dark mode atau struk transfer, angka nominal biasanya dicetak tebal/besar di bagian tengah atau atas. Hilangkan simbol 'Rp', titik ribuan, spasi, dan koma sen (contoh: 'Rp 250.000,00' -> 250000, 'Rp200.000' -> 200000). Kembalikan sebagai angka murni (number). JANGAN kembalikan null atau 0 jika terlihat nominal transfer!
   2. destination_identity: Cari rekening tujuan / penerima transfer:
      - name: nama pemilik rekening tujuan / merchant / nama penerima.
@@ -456,11 +468,44 @@ PROMPT;
         }
 
         $amount = $parsed['amount'];
+        $isPaymentProof = (bool) $parsed['is_payment_proof'];
+
+        if (!$isPaymentProof) {
+            return [
+                'is_payment_proof' => false,
+                'amount' => 0,
+                'paid_date' => null,
+                'paid_time' => null,
+                'reference_code' => null,
+                'payment_channel' => null,
+                'sender_name' => null,
+                'destination_identity' => [
+                    'name' => null,
+                    'account_number' => null,
+                    'merchant_id' => null,
+                    'raw' => null,
+                ],
+                'success_status' => false,
+                'confidence_overall' => 0.0,
+                'confidence_by_field' => [
+                    'payment_proof' => 0.0,
+                    'amount' => 0.0,
+                    'date' => 0.0,
+                    'time' => 0.0,
+                    'destination' => 0.0,
+                    'success_status' => 0.0,
+                ],
+                'ocr_raw_text' => $ocrText,
+                'raw_summary' => 'Bukan bukti pembayaran (tidak ditemukan tanda transaksi transfer/struk)',
+                'provider_used' => $ocrProvider,
+                'ai_error' => $this->lastAiError,
+            ];
+        }
+
         if (!$amount && $activeInvoice) {
             $amount = (float) $activeInvoice->amount;
         }
 
-        $isPaymentProof = $parsed['is_payment_proof'] || $activeInvoice !== null || $customer !== null;
         $successStatus = $parsed['success_status'] || $activeInvoice !== null;
         $channel = $parsed['payment_channel'] ?: ($activeInvoice ? 'Transfer Bank / QRIS' : 'Transfer Bank');
         $referenceCode = $parsed['reference_code'] ?: null;
@@ -807,7 +852,30 @@ PROMPT;
             }
         }
 
-        $isPaymentProof = $amount !== null || $channel !== null || $isSuccess;
+        // Negative keywords for non-receipt photos (e.g., speedtests, cable issues, router lights)
+        $negativeKeywords = [
+            'speedtest', 'download mbps', 'upload mbps', 'ping ms', 'jitter', 'ookla',
+            'lampu los', 'kabel putus', 'kabel putuz', 'odp rusak', 'modem mati', 'red light',
+            'gangguan massal', 'keluhan internet', 'sinyal hilang',
+        ];
+        $isNegative = false;
+        foreach ($negativeKeywords as $nk) {
+            if (str_contains($normalized, $nk)) {
+                $isNegative = true;
+                break;
+            }
+        }
+
+        $hasReceiptMarkers = false;
+        if (!$isNegative) {
+            if ($amount !== null && ($channel !== null || !empty($ref) || $isSuccess)) {
+                $hasReceiptMarkers = true;
+            } elseif ($channel !== null && (!empty($ref) || $isSuccess)) {
+                $hasReceiptMarkers = true;
+            }
+        }
+
+        $isPaymentProof = $hasReceiptMarkers;
 
         return [
             'is_payment_proof' => $isPaymentProof,
@@ -855,7 +923,38 @@ PROMPT;
         $isPaymentProof = (bool) ($decoded['is_payment_proof'] ?? false);
         $successStatus = (bool) ($decoded['success_status'] ?? false);
 
-        // Fallback safety net: jika AI mengosongkan structured fields tetapi ada ocr_raw_text
+        // If AI explicitly concluded that the image is NOT a payment proof, never override it!
+        if (array_key_exists('is_payment_proof', $decoded) && !$decoded['is_payment_proof']) {
+            return [
+                'is_payment_proof' => false,
+                'amount' => 0,
+                'paid_date' => null,
+                'paid_time' => null,
+                'reference_code' => null,
+                'payment_channel' => null,
+                'sender_name' => null,
+                'destination_identity' => [
+                    'name' => null,
+                    'account_number' => null,
+                    'merchant_id' => null,
+                    'raw' => null,
+                ],
+                'success_status' => false,
+                'confidence_overall' => 0.0,
+                'confidence_by_field' => [
+                    'payment_proof' => 0.0,
+                    'amount' => 0.0,
+                    'date' => 0.0,
+                    'time' => 0.0,
+                    'destination' => 0.0,
+                    'success_status' => 0.0,
+                ],
+                'ocr_raw_text' => $rawOcr ?: null,
+                'raw_summary' => $this->stringOrNull($decoded['raw_summary'] ?? null) ?: 'Bukan bukti pembayaran (foto keluhan/jalan/perangkat/non-transaksi)',
+            ];
+        }
+
+        // Fallback safety net: if AI omitted structured fields but provided ocr_raw_text
         if ($rawOcr !== '') {
             $parsed = $this->parseReceiptPatterns($rawOcr);
             if (($amount === null || $amount <= 0) && !empty($parsed['amount'])) {
@@ -879,7 +978,7 @@ PROMPT;
             if (!$successStatus && $parsed['success_status']) {
                 $successStatus = true;
             }
-            if (!$isPaymentProof && ($amount > 0 || $channel || $successStatus)) {
+            if (!$isPaymentProof && $parsed['is_payment_proof']) {
                 $isPaymentProof = true;
             }
         }

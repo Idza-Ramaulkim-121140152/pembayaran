@@ -4,6 +4,7 @@ const paymentVerificationService = {
     getConfig: () => apiClient.get('/billing/payment-verification/config'),
     updateConfig: (payload) => apiClient.put('/billing/payment-verification/config', payload),
     getCaptures: (params = {}) => apiClient.get('/billing/payments/captures', { params }),
+    getCapture: (captureId) => apiClient.get(`/billing/payments/${captureId}`),
     getUnmatched: (params = {}) => apiClient.get('/billing/payments/unmatched', { params }),
     uploadAndAnalyze: (formData) => apiClient.post('/billing/payments/upload-and-analyze', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },

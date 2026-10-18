@@ -14,6 +14,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 
 class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
 {
@@ -116,6 +117,25 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
         }
 
         $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);
+
+        // Filter out non-payment photos (e.g. street photos, broken cables, router lights, speedtests, memes, complaints)
+        if (empty($analysis['is_payment_proof']) || $validation['failure_reason'] === 'not_payment_proof') {
+            Log::info('Non-payment proof image discarded from payment verification', [
+                'capture_id' => $capture->id,
+                'customer_id' => $capture->customer_id,
+                'sender_phone' => data_get($capture->meta, 'sender_phone'),
+                'caption' => data_get($capture->meta, 'source.caption'),
+                'summary' => $analysis['raw_summary'] ?? 'Bukan bukti pembayaran',
+            ]);
+
+            $mediaPath = (string) data_get($capture->meta, 'media.path', '');
+            if ($mediaPath !== '' && Storage::disk('public')->exists($mediaPath)) {
+                Storage::disk('public')->delete($mediaPath);
+            }
+
+            $capture->delete();
+            return;
+        }
 
         Log::info('WhatsApp payment capture analyzed', [
             'capture_id' => $capture->id,

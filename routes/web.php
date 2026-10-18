@@ -579,6 +579,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::middleware('permission:billing.payment_capture.review')->group(function () {
         Route::get('/api/billing/payment-verification/config', [BillingAutomationController::class, 'paymentVerificationConfig'])->name('api.billing.payment-verification.config');
         Route::get('/api/billing/payments/unmatched', [BillingAutomationController::class, 'unmatched'])->name('api.billing.payments.unmatched');
+        Route::get('/api/billing/payments/{capture}', [BillingAutomationController::class, 'showCapture'])->name('api.billing.payments.show');
         Route::match(['get', 'post'], '/api/billing/payments/captures', [BillingAutomationController::class, 'captures'])->name('api.billing.payments.captures');
         Route::get('/api/billing/payment-verification/auto-confirmations', [BillingAutomationController::class, 'autoConfirmations'])->name('api.billing.payment-verification.auto-confirmations');
         Route::post('/api/billing/payment-verification/auto-confirmations/{capture}/cancel', [BillingAutomationController::class, 'cancelAutoConfirmation'])->name('api.billing.payment-verification.auto-confirmations.cancel');

@@ -282,6 +282,18 @@ class BillingAutomationController extends Controller
         $analysis = $analysisService->analyze($capture);
         $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);
 
+        if (empty($analysis['is_payment_proof']) || $validation['failure_reason'] === 'not_payment_proof') {
+            if (\Illuminate\Support\Facades\Storage::disk('public')->exists($path)) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($path);
+            }
+            $capture->delete();
+
+            return response()->json([
+                'message' => 'Berkas yang diunggah terdeteksi bukan bukti pembayaran (seperti foto jalan, keluhan pelanggan, atau foto non-transaksi). Berkas tidak dimasukkan ke dalam verifikasi pembayaran.',
+                'data' => null,
+            ], 422);
+        }
+
         $meta = array_merge((array) ($capture->meta ?? []), [
             'analysis' => $analysis,
             'validation' => [
@@ -506,6 +518,13 @@ class BillingAutomationController extends Controller
         return response()->json([
             'message' => $result['message'],
             'data' => $this->capturePresenter->present($result['capture']),
+        ]);
+    }
+
+    public function showCapture(BillingPaymentCapture $capture)
+    {
+        return response()->json([
+            'data' => $this->capturePresenter->present($capture->loadMissing(['customer', 'invoice', 'matchReviews.candidateInvoice.customer'])),
         ]);
     }
 }

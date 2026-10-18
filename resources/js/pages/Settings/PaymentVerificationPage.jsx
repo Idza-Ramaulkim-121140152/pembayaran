@@ -35,7 +35,7 @@ import {
     Eye,
     EyeOff,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Modal from '../../components/common/Modal';
 import paymentVerificationService from '../../services/paymentVerificationService';
 
@@ -102,10 +102,26 @@ export default function PaymentVerificationPage() {
     // Zoom Image Modal
     const [previewImageUrl, setPreviewImageUrl] = useState(null);
 
+    // URL Query Params Deep Link for Direct Review Confirmation
+    const [searchParams, setSearchParams] = useSearchParams();
+    const reviewId = searchParams.get('review_id') || searchParams.get('capture_id');
+
     // Detail Bukti Bayar Modal
     const [selectedDetailCapture, setSelectedDetailCapture] = useState(null);
     const [showOcrRawText, setShowOcrRawText] = useState(false);
     const [copiedRef, setCopiedRef] = useState(false);
+
+    const handleCloseDetailModal = () => {
+        setSelectedDetailCapture(null);
+        setShowOcrRawText(false);
+        setCopiedRef(false);
+        if (searchParams.has('review_id') || searchParams.has('capture_id')) {
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete('review_id');
+            nextParams.delete('capture_id');
+            setSearchParams(nextParams, { replace: true });
+        }
+    };
 
     // Add/Edit Whitelist Bank Modal
     const [isBankModalOpen, setIsBankModalOpen] = useState(false);
@@ -177,6 +193,36 @@ export default function PaymentVerificationPage() {
     useEffect(() => {
         loadData(activeTab, 1, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
     }, [activeTab]);
+
+    // Auto-open capture detail modal when review_id or capture_id is passed in query params
+    useEffect(() => {
+        if (!reviewId) return;
+
+        let isMounted = true;
+        const fetchReviewCapture = async () => {
+            try {
+                const response = await paymentVerificationService.getCapture(reviewId);
+                const captureData = response.data?.data;
+                if (captureData && isMounted) {
+                    setSelectedDetailCapture(captureData);
+                    if (captureData.match_status === 'approved') {
+                        setActiveTab('approved');
+                    } else if (captureData.match_status === 'unmatched') {
+                        setActiveTab('unmatched');
+                    } else {
+                        setActiveTab('needs_review');
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to load review capture from URL parameter', err);
+            }
+        };
+
+        fetchReviewCapture();
+        return () => {
+            isMounted = false;
+        };
+    }, [reviewId]);
 
     const handleSearch = (e) => {
         e.preventDefault();
@@ -2122,11 +2168,7 @@ export default function PaymentVerificationPage() {
             {/* MODAL: DETAIL BUKTI PEMBAYARAN */}
             <Modal
                 isOpen={!!selectedDetailCapture}
-                onClose={() => {
-                    setSelectedDetailCapture(null);
-                    setShowOcrRawText(false);
-                    setCopiedRef(false);
-                }}
+                onClose={handleCloseDetailModal}
                 title={selectedDetailCapture ? `Detail Bukti Pembayaran (Capture #${selectedDetailCapture.id})` : 'Detail Bukti Pembayaran'}
                 size="2xl"
             >
@@ -2416,7 +2458,7 @@ export default function PaymentVerificationPage() {
                                                 type="button"
                                                 onClick={() => {
                                                     handleResolve(c.id, 'approve');
-                                                    setSelectedDetailCapture(null);
+                                                    handleCloseDetailModal();
                                                 }}
                                                 disabled={refreshing}
                                                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-60 transition"
@@ -2427,7 +2469,7 @@ export default function PaymentVerificationPage() {
                                                 type="button"
                                                 onClick={() => {
                                                     handleResolve(c.id, 'reject');
-                                                    setSelectedDetailCapture(null);
+                                                    handleCloseDetailModal();
                                                 }}
                                                 disabled={refreshing}
                                                 className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60 transition"
@@ -2439,7 +2481,7 @@ export default function PaymentVerificationPage() {
                                 </div>
                                 <button
                                     type="button"
-                                    onClick={() => setSelectedDetailCapture(null)}
+                                    onClick={handleCloseDetailModal}
                                     className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
                                 >
                                     Tutup
