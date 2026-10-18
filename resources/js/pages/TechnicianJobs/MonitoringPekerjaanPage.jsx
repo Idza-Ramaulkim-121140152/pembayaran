@@ -386,9 +386,10 @@ export default function MonitoringPekerjaanPage() {
 
             if (res.data?.success) {
                 const notifInfo = res.data.notification;
-                const notifText = notifInfo?.immediate
-                    ? 'Pesan penugasan telah langsung dikirim ke WhatsApp teknisi.'
-                    : 'Pekerjaan dibuat sebelum 08.00 WIB. Notifikasi WA dijadwalkan otomatis jam 08.00 WIB hari ini.';
+                const notifText = notifInfo?.message
+                    || (notifInfo?.immediate
+                        ? 'Pesan penugasan telah langsung dikirim ke WhatsApp teknisi.'
+                        : 'Notifikasi WA dijadwalkan otomatis pada jam 08.00 WIB hari kerja berikutnya.');
 
                 setSuccessMessage(`Pekerjaan #${res.data.data.job_number} berhasil dibuat! ${notifText}`);
                 setTimeout(() => setSuccessMessage(null), 8000);

@@ -19,8 +19,23 @@ class TechnicianJobNotificationService
         $now = Carbon::now('Asia/Jakarta');
         $cutoffToday = $now->copy()->setTime(8, 0, 0);
 
+        // 1. Hari Minggu teknisi libur operasional: JANGAN kirim pesan di hari Minggu
+        if ($now->isSunday()) {
+            $nextMondayAt8 = $now->copy()->next(Carbon::MONDAY)->setTime(8, 0, 0);
+            $job->scheduled_notify_at = $nextMondayAt8;
+            $job->notified_at = null;
+            $job->save();
+
+            return [
+                'immediate' => false,
+                'scheduled_for' => $nextMondayAt8->toDateTimeString(),
+                'message' => 'Hari Minggu teknisi libur. Notifikasi penugasan pekerjaan dijadwalkan otomatis pada hari Senin jam 08.00 WIB saat mulai bekerja.',
+            ];
+        }
+
+        // 2. Hari kerja (Senin - Sabtu):
         if ($now->greaterThanOrEqualTo($cutoffToday)) {
-            // Created at or after 08:00 WIB -> send immediately
+            // Dibuat pada atau setelah jam 08.00 WIB -> kirim langsung
             $results = $this->sendJobAssignmentNotification($job, isReminder: false);
             $job->notified_at = now();
             $job->scheduled_notify_at = null;
@@ -30,10 +45,11 @@ class TechnicianJobNotificationService
                 'immediate' => true,
                 'sent_at' => $now->toDateTimeString(),
                 'results' => $results,
+                'message' => 'Pesan penugasan pekerjaan telah langsung dikirim ke WhatsApp teknisi.',
             ];
         }
 
-        // Created before 08:00 WIB -> schedule for 08:00 WIB today
+        // Dibuat sebelum jam 08.00 WIB -> jadwalkan jam 08.00 WIB hari ini
         $job->scheduled_notify_at = $cutoffToday;
         $job->notified_at = null;
         $job->save();

@@ -76,8 +76,8 @@ class TechnicianJobMonitoringTest extends TestCase
 
     public function test_job_created_after_08_am_notifies_immediately(): void
     {
-        // Set time to 09:30 AM WIB
-        Carbon::setTestNow(Carbon::parse('2026-10-18 09:30:00', 'Asia/Jakarta'));
+        // Set time to Monday 09:30 AM WIB (Workday)
+        Carbon::setTestNow(Carbon::parse('2026-10-19 09:30:00', 'Asia/Jakarta'));
 
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
         $tech = User::factory()->create(['role' => User::ROLE_TEKNISI, 'phone' => '081234567890']);
@@ -109,8 +109,8 @@ class TechnicianJobMonitoringTest extends TestCase
 
     public function test_job_created_before_08_am_schedules_notification_for_08_am(): void
     {
-        // Set time to 06:45 AM WIB
-        Carbon::setTestNow(Carbon::parse('2026-10-18 06:45:00', 'Asia/Jakarta'));
+        // Set time to Monday 06:45 AM WIB (Workday before 08:00 AM)
+        Carbon::setTestNow(Carbon::parse('2026-10-19 06:45:00', 'Asia/Jakarta'));
 
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
         $tech = User::factory()->create(['role' => User::ROLE_TEKNISI, 'phone' => '081234567890']);
@@ -137,6 +137,42 @@ class TechnicianJobMonitoringTest extends TestCase
         $this->assertNull($job->notified_at);
         $this->assertNotNull($job->scheduled_notify_at);
         $this->assertEquals('08:00:00', $job->scheduled_notify_at->timezone('Asia/Jakarta')->format('H:i:s'));
+    }
+
+    public function test_job_created_on_sunday_schedules_notification_for_monday_08_am(): void
+    {
+        // Set time to Sunday at 09:04 AM WIB (Holiday / Libur)
+        Carbon::setTestNow(Carbon::parse('2026-10-18 09:04:00', 'Asia/Jakarta'));
+        $this->assertTrue(Carbon::now('Asia/Jakarta')->isSunday());
+
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = User::factory()->create(['role' => User::ROLE_TEKNISI, 'phone' => '081234567890']);
+        $customer = Customer::create([
+            'name' => 'Aji Pauji',
+            'phone' => '089502197464',
+            'address' => 'Kebun Pisang',
+            'pppoe_username' => 'ajipauji',
+        ]);
+
+        $response = $this->actingAs($admin)->postJson('/api/technician-jobs', [
+            'type' => TechnicianJob::TYPE_GANGGUAN_PELANGGAN,
+            'title' => 'Gangguan Pelanggan',
+            'description' => 'Wifinya ga bisa disambungin',
+            'customer_id' => $customer->id,
+            'technician_ids' => [$tech->id],
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('notification.immediate', false)
+            ->assertJsonPath('notification.scheduled_for', '2026-10-19 08:00:00');
+
+        $jobId = $response->json('data.id');
+        $job = TechnicianJob::find($jobId);
+
+        $this->assertNotNull($job);
+        $this->assertNull($job->notified_at);
+        $this->assertNotNull($job->scheduled_notify_at);
+        $this->assertEquals('2026-10-19 08:00:00', $job->scheduled_notify_at->timezone('Asia/Jakarta')->format('Y-m-d H:i:s'));
     }
 
     public function test_morning_reminder_skips_on_sunday(): void
