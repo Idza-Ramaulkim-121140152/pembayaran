@@ -44,10 +44,10 @@ class TechnicianJobController extends Controller
                     'kecamatan:id,name',
                     'desa:id,name',
                     'dusun:id,name',
-                    'odp:id,nama,kode',
+                    'odp:id,nama',
                 ]);
             },
-            'odp:id,nama,kode',
+            'odp:id,nama',
             'creator:id,name',
             'completer:id,name',
         ])->latest('id');
@@ -302,8 +302,8 @@ class TechnicianJobController extends Controller
             'customer.kecamatan:id,name',
             'customer.desa:id,name',
             'customer.dusun:id,name',
-            'customer.odp:id,nama,kode',
-            'odp:id,nama,kode',
+            'customer.odp:id,nama',
+            'odp:id,nama',
             'creator:id,name',
         ]);
 
@@ -378,8 +378,8 @@ class TechnicianJobController extends Controller
                 'customer.kecamatan:id,name',
                 'customer.desa:id,name',
                 'customer.dusun:id,name',
-                'customer.odp:id,nama,kode',
-                'odp:id,nama,kode',
+                'customer.odp:id,nama',
+                'odp:id,nama',
                 'creator:id,name',
             ]),
             'notification' => $notifResult,

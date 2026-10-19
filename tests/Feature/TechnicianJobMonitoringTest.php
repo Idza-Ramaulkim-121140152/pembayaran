@@ -30,6 +30,35 @@ class TechnicianJobMonitoringTest extends TestCase
         Storage::fake('public');
     }
 
+    public function test_index_lists_jobs_successfully(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $odp = Odp::create(['nama' => 'ODP-KLD-01', 'rasio_distribusi' => '1:8']);
+        $customer = Customer::create([
+            'name' => 'Budi Santoso',
+            'phone' => '081234567890',
+            'address' => 'Jl. Mawar',
+            'pppoe_username' => 'budi01',
+            'odp_id' => $odp->id,
+        ]);
+        $job = TechnicianJob::create([
+            'job_number' => 'JOB-GP-20261019-0001',
+            'type' => TechnicianJob::TYPE_GANGGUAN_PELANGGAN,
+            'title' => 'Gangguan Budi',
+            'customer_id' => $customer->id,
+            'odp_id' => $odp->id,
+            'status' => TechnicianJob::STATUS_ACTIVE,
+            'created_by' => $admin->id,
+        ]);
+
+        $response = $this->actingAs($admin)->getJson('/api/technician-jobs?status=active&type=all&priority=all');
+        $response->assertOk()
+            ->assertJsonStructure(['success', 'data', 'counts'])
+            ->assertJsonPath('data.0.job_number', 'JOB-GP-20261019-0001')
+            ->assertJsonPath('data.0.customer.pppoe_username', 'budi01')
+            ->assertJsonPath('counts.active', 1);
+    }
+
     public function test_technician_without_phone_is_rejected_with_specific_code(): void
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
