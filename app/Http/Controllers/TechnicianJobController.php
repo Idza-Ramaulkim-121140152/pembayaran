@@ -39,7 +39,14 @@ class TechnicianJobController extends Controller
 
         $query = TechnicianJob::with([
             'technicians:id,name,phone,role',
-            'customer:id,name,phone,address,pppoe_username',
+            'customer' => function ($q) {
+                $q->with([
+                    'kecamatan:id,name',
+                    'desa:id,name',
+                    'dusun:id,name',
+                    'odp:id,nama,kode',
+                ]);
+            },
             'odp:id,nama,kode',
             'creator:id,name',
             'completer:id,name',
@@ -292,7 +299,10 @@ class TechnicianJobController extends Controller
 
         $job->loadMissing([
             'technicians:id,name,phone,role',
-            'customer:id,name,phone,address',
+            'customer.kecamatan:id,name',
+            'customer.desa:id,name',
+            'customer.dusun:id,name',
+            'customer.odp:id,nama,kode',
             'odp:id,nama,kode',
             'creator:id,name',
         ]);
@@ -363,7 +373,15 @@ class TechnicianJobController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Penugasan pemasangan berhasil dibuat di Monitoring Pekerjaan.',
-            'data' => $job->load(['technicians', 'customer']),
+            'data' => $job->load([
+                'technicians:id,name,phone,role',
+                'customer.kecamatan:id,name',
+                'customer.desa:id,name',
+                'customer.dusun:id,name',
+                'customer.odp:id,nama,kode',
+                'odp:id,nama,kode',
+                'creator:id,name',
+            ]),
             'notification' => $notifResult,
         ], 201);
     }
@@ -465,7 +483,16 @@ class TechnicianJobController extends Controller
      */
     public function copyText(TechnicianJob $job)
     {
-        $job->loadMissing(['technicians', 'customer', 'odp', 'creator', 'completer']);
+        $job->loadMissing([
+            'technicians',
+            'customer.kecamatan',
+            'customer.desa',
+            'customer.dusun',
+            'customer.odp',
+            'odp',
+            'creator',
+            'completer',
+        ]);
 
         return response()->json([
             'success' => true,

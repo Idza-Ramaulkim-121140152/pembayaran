@@ -66,7 +66,15 @@ class TechnicianJobNotificationService
      */
     public function sendJobAssignmentNotification(TechnicianJob $job, bool $isReminder = false): array
     {
-        $job->loadMissing(['technicians', 'customer', 'odp', 'creator']);
+        $job->loadMissing([
+            'technicians',
+            'customer.kecamatan',
+            'customer.desa',
+            'customer.dusun',
+            'customer.odp',
+            'odp',
+            'creator',
+        ]);
         $results = [];
 
         foreach ($job->technicians as $technician) {
@@ -132,7 +140,15 @@ class TechnicianJobNotificationService
                 // OR active jobs created before today that are still incomplete
                 ->orWhere('created_at', '<', $todayStart);
             })
-            ->with(['technicians', 'customer', 'odp', 'creator'])
+            ->with([
+                'technicians',
+                'customer.kecamatan',
+                'customer.desa',
+                'customer.dusun',
+                'customer.odp',
+                'odp',
+                'creator',
+            ])
             ->get();
 
         $sentCount = 0;
@@ -173,19 +189,45 @@ class TechnicianJobNotificationService
         $appUrl = rtrim((string) config('app.url', 'http://localhost'), '/');
         $jobUrl = "{$appUrl}/monitoring-pekerjaan?job={$job->id}";
         $allTechs = $job->technicians->pluck('name')->join(', ') ?: $technician->name;
+        $priorityLabel = strtoupper($job->priority ?? 'NORMAL');
 
-        return "👷 *PENUGASAN PEKERJAAN BARU*\n\n" .
+        $message = "👷 *PENUGASAN PEKERJAAN BARU*\n\n" .
             "Halo *{$technician->name}*,\n" .
             "Anda mendapatkan penugasan pekerjaan dari *{$job->creator?->name}*:\n\n" .
             "🆔 *No. Tiket:* {$job->job_number}\n" .
             "📌 *Jenis:* {$job->type_label}\n" .
-            "⚡ *Prioritas:* " . strtoupper($job->priority) . "\n" .
-            "🎯 *Target / Lokasi:* {$job->target_summary}\n" .
-            "📝 *Catatan / Kendala:* " . ($job->description ?: '-') . "\n" .
+            "⚡ *Prioritas:* {$priorityLabel}\n\n";
+
+        if ($job->customer) {
+            $c = $job->customer;
+            $phone = $c->phone ? " ({$c->phone})" : '';
+            $odpName = $c->odp_full_text ?? ($job->odp?->nama ?: $job->odp?->name);
+
+            $message .= "👤 *Pelanggan:* {$c->name}{$phone}\n" .
+                "🔑 *User PPPoE:* " . ($c->pppoe_username ?: '-') . "\n" .
+                "🏠 *Alamat Lengkap:* " . ($c->address ?: '-') . "\n" .
+                "📍 *Wilayah:* " . ($c->wilayah_lengkap ?: '-') . "\n" .
+                "📦 *ODP:* " . ($odpName ?: '-') . "\n\n";
+        } elseif ($job->scope_type === 'odp' && $job->odp) {
+            $odpName = $job->odp->nama ?: $job->odp->name ?: ('ODP #' . $job->odp->id);
+            $message .= "📦 *ODP Terdampak:* {$odpName}\n" .
+                "📍 *Lokasi ODP:* " . ($job->odp->alamat_detail ?: '-') . "\n" .
+                "👥 *Jumlah Pelanggan:* {$job->customers()->count()} Pelanggan\n\n";
+        } elseif ($job->scope_type === 'wilayah') {
+            $wilayahName = $job->resolveWilayahName() ?: '-';
+            $message .= "📍 *Wilayah Terdampak:* " . ucfirst($job->wilayah_type ?? 'Wilayah') . " {$wilayahName}\n" .
+                "👥 *Jumlah Pelanggan:* {$job->customers()->count()} Pelanggan\n\n";
+        } else {
+            $message .= "🎯 *Target / Lokasi:* {$job->target_summary}\n\n";
+        }
+
+        $message .= "📝 *Catatan / Kendala:* " . ($job->description ?: '-') . "\n" .
             "👥 *Tim Teknisi:* {$allTechs}\n\n" .
             "Silakan buka link berikut untuk melihat detail dan menyelesaikan tugas:\n" .
             "🔗 {$jobUrl}\n\n" .
             "_(Pemberitahuan otomatis sistem Monitoring Pekerjaan)_";
+
+        return $message;
     }
 
     /**
@@ -195,17 +237,44 @@ class TechnicianJobNotificationService
     {
         $appUrl = rtrim((string) config('app.url', 'http://localhost'), '/');
         $jobUrl = "{$appUrl}/monitoring-pekerjaan?job={$job->id}";
+        $priorityLabel = strtoupper($job->priority ?? 'NORMAL');
 
-        return "⏰ *PENGINGAT PEKERJAAN BELUM SELESAI (08:00 WIB)*\n\n" .
+        $message = "⏰ *PENGINGAT PEKERJAAN BELUM SELESAI (08:00 WIB)*\n\n" .
             "Halo *{$technician->name}*,\n" .
             "Tugas berikut masih berstatus *AKTIF* dan belum diselesaikan dari hari sebelumnya:\n\n" .
             "🆔 *No. Tiket:* {$job->job_number}\n" .
             "📌 *Jenis:* {$job->type_label}\n" .
-            "🎯 *Target / Lokasi:* {$job->target_summary}\n" .
-            "📝 *Catatan / Kendala:* " . ($job->description ?: '-') . "\n\n" .
+            "⚡ *Prioritas:* {$priorityLabel}\n\n";
+
+        if ($job->customer) {
+            $c = $job->customer;
+            $phone = $c->phone ? " ({$c->phone})" : '';
+            $odpName = $c->odp_full_text ?? ($job->odp?->nama ?: $job->odp?->name);
+
+            $message .= "👤 *Pelanggan:* {$c->name}{$phone}\n" .
+                "🔑 *User PPPoE:* " . ($c->pppoe_username ?: '-') . "\n" .
+                "🏠 *Alamat Lengkap:* " . ($c->address ?: '-') . "\n" .
+                "📍 *Wilayah:* " . ($c->wilayah_lengkap ?: '-') . "\n" .
+                "📦 *ODP:* " . ($odpName ?: '-') . "\n\n";
+        } elseif ($job->scope_type === 'odp' && $job->odp) {
+            $odpName = $job->odp->nama ?: $job->odp->name ?: ('ODP #' . $job->odp->id);
+            $message .= "📦 *ODP Terdampak:* {$odpName}\n" .
+                "📍 *Lokasi ODP:* " . ($job->odp->alamat_detail ?: '-') . "\n" .
+                "👥 *Jumlah Pelanggan:* {$job->customers()->count()} Pelanggan\n\n";
+        } elseif ($job->scope_type === 'wilayah') {
+            $wilayahName = $job->resolveWilayahName() ?: '-';
+            $message .= "📍 *Wilayah Terdampak:* " . ucfirst($job->wilayah_type ?? 'Wilayah') . " {$wilayahName}\n" .
+                "👥 *Jumlah Pelanggan:* {$job->customers()->count()} Pelanggan\n\n";
+        } else {
+            $message .= "🎯 *Target / Lokasi:* {$job->target_summary}\n\n";
+        }
+
+        $message .= "📝 *Catatan / Kendala:* " . ($job->description ?: '-') . "\n\n" .
             "Mohon segera diselesaikan hari ini dan lampirkan bukti foto pengerjaan melalui link:\n" .
             "🔗 {$jobUrl}\n\n" .
             "Terima kasih atas dedikasi dan kerja kerasnya!";
+
+        return $message;
     }
 
     /**

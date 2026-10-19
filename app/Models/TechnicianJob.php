@@ -136,7 +136,11 @@ class TechnicianJob extends Model
             if ($this->customer) {
                 $phone = $this->customer->phone ? ' (' . $this->customer->phone . ')' : '';
                 $addr = $this->customer->address ? ' - ' . $this->customer->address : '';
-                return $this->customer->name . $phone . $addr;
+                $wilayah = ($this->customer->wilayah_lengkap && $this->customer->wilayah_lengkap !== '-')
+                    ? ' [' . $this->customer->wilayah_lengkap . ']'
+                    : '';
+
+                return $this->customer->name . $phone . $addr . $wilayah;
             }
         }
 
@@ -208,11 +212,38 @@ class TechnicianJob extends Model
             "🆔 *No. Tiket:* {$this->job_number}",
             "📌 *Jenis:* {$this->type_label}",
             "⚡ *Prioritas:* {$priorityEmoji}",
-            "🎯 *Target / Lokasi:* {$this->target_summary}",
-            "📝 *Catatan / Kendala:* " . ($this->description ?: '-'),
-            "👷 *Teknisi Bertugas:* {$techNames}",
-            "📊 *Status:* {$statusEmoji}",
         ];
+
+        if ($this->customer) {
+            $c = $this->customer;
+            $phone = $c->phone ? " ({$c->phone})" : '';
+            $lines[] = "👤 *Pelanggan:* {$c->name}{$phone}";
+            $lines[] = "🔑 *User PPPoE:* " . ($c->pppoe_username ?: '-');
+            $lines[] = "🏠 *Alamat Lengkap:* " . ($c->address ?: '-');
+            $lines[] = "📍 *Wilayah:* " . ($c->wilayah_lengkap ?: '-');
+
+            $odpName = $c->odp_full_text ?? ($this->odp?->nama ?: $this->odp?->name);
+            if ($odpName) {
+                $lines[] = "📦 *ODP:* {$odpName}";
+            }
+        } elseif ($this->scope_type === 'odp' && $this->odp) {
+            $odpName = $this->odp->nama ?: $this->odp->name ?: ('ODP #' . $this->odp->id);
+            $lines[] = "📦 *ODP Terdampak:* {$odpName}";
+            if ($this->odp->alamat_detail) {
+                $lines[] = "📍 *Lokasi ODP:* {$this->odp->alamat_detail}";
+            }
+            $lines[] = "👥 *Jumlah Pelanggan:* " . $this->customers()->count() . " Pelanggan";
+        } elseif ($this->scope_type === 'wilayah') {
+            $wilayahName = $this->resolveWilayahName() ?: '-';
+            $lines[] = "📍 *Wilayah Terdampak:* " . ucfirst($this->wilayah_type ?? 'Wilayah') . " {$wilayahName}";
+            $lines[] = "👥 *Jumlah Pelanggan:* " . $this->customers()->count() . " Pelanggan";
+        } else {
+            $lines[] = "🎯 *Target / Cakupan:* {$this->target_summary}";
+        }
+
+        $lines[] = "📝 *Catatan / Kendala:* " . ($this->description ?: '-');
+        $lines[] = "👷 *Teknisi Bertugas:* {$techNames}";
+        $lines[] = "📊 *Status:* {$statusEmoji}";
 
         if ($this->status === self::STATUS_COMPLETED && $this->completed_at) {
             $lines[] = "🏁 *Diselesaikan oleh:* " . ($this->completer?->name ?: 'Admin') . " pada " . $this->completed_at->format('d/m/Y H:i');

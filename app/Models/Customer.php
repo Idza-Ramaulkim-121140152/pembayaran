@@ -47,8 +47,68 @@ class Customer extends Model
         'portal_login_enabled' => 'boolean',
     ];
 
-    protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo'];
+    protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo', 'wilayah_lengkap', 'odp_full_text'];
     protected $hidden = ['home_router_password', 'mobile_password'];
+
+    public function getWilayahLengkapAttribute(): string
+    {
+        try {
+            $parts = [];
+            if ($this->dusun && !empty($this->dusun->name)) {
+                $parts[] = 'Dusun ' . $this->dusun->name;
+            }
+            if ($this->desa && !empty($this->desa->name)) {
+                $parts[] = 'Desa ' . $this->desa->name;
+            }
+            if ($this->kecamatan && !empty($this->kecamatan->name)) {
+                $parts[] = 'Kec. ' . $this->kecamatan->name;
+            }
+
+            return !empty($parts) ? implode(', ', $parts) : '-';
+        } catch (\Throwable) {
+            return '-';
+        }
+    }
+
+    public function getResolvedOdpNameAttribute(): ?string
+    {
+        try {
+            if ($this->relationLoaded('odpBox') && $this->odpBox) {
+                return $this->odpBox->nama ?? $this->odpBox->name;
+            }
+
+            if ($this->relationLoaded('odp') && is_object($this->getRelation('odp'))) {
+                return $this->getRelation('odp')->nama ?? $this->getRelation('odp')->name;
+            }
+
+            if ($this->odpBox) {
+                return $this->odpBox->nama ?? $this->odpBox->name;
+            }
+
+            $legacyOdp = $this->attributes['odp'] ?? null;
+            if (!empty($legacyOdp)) {
+                return (string) $legacyOdp;
+            }
+
+            return null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    public function getOdpFullTextAttribute(): ?string
+    {
+        $name = $this->resolved_odp_name;
+        if (!$name) {
+            return null;
+        }
+
+        if (!empty($this->odp_port_number)) {
+            $name .= " (Port {$this->odp_port_number})";
+        }
+
+        return $name;
+    }
 
     // Accessor untuk kompatibilitas dengan field lama
     public function getNamaAttribute()

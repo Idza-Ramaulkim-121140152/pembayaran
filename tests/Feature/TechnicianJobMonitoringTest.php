@@ -3,6 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\MasterWilayahDesa;
+use App\Models\MasterWilayahDusun;
+use App\Models\MasterWilayahKecamatan;
 use App\Models\Odp;
 use App\Models\TechnicianJob;
 use App\Models\User;
@@ -333,11 +336,22 @@ class TechnicianJobMonitoringTest extends TestCase
     {
         $admin = User::factory()->create(['name' => 'Admin Utama', 'role' => User::ROLE_ADMIN]);
         $tech = User::factory()->create(['name' => 'Budi Teknisi', 'role' => User::ROLE_TEKNISI, 'phone' => '081234567890']);
+        
+        $kec = MasterWilayahKecamatan::create(['name' => 'Kalianda', 'code' => 'KLD']);
+        $desa = MasterWilayahDesa::create(['kecamatan_id' => $kec->id, 'name' => 'Way Urang', 'code' => 'WU']);
+        $dusun = MasterWilayahDusun::create(['desa_id' => $desa->id, 'name' => 'Sido Makmur', 'code' => 'SM']);
+        $odp = Odp::create(['nama' => 'ODP-KLD-01', 'rasio_distribusi' => '1:8']);
+
         $customer = Customer::create([
             'name' => 'Joko Widodo',
             'phone' => '081122334455',
             'address' => 'Jl. Kalianda No. 12',
             'pppoe_username' => 'joko_kld',
+            'kecamatan_id' => $kec->id,
+            'desa_id' => $desa->id,
+            'dusun_id' => $dusun->id,
+            'odp_id' => $odp->id,
+            'odp_port_number' => 4,
         ]);
 
         $job = TechnicianJob::create([
@@ -361,5 +375,57 @@ class TechnicianJobMonitoringTest extends TestCase
         $this->assertStringContainsString('JOB-GP-20261018-0006', $text);
         $this->assertStringContainsString('Joko Widodo', $text);
         $this->assertStringContainsString('Budi Teknisi', $text);
+        $this->assertStringContainsString('User PPPoE:* joko_kld', $text);
+        $this->assertStringContainsString('Alamat Lengkap:* Jl. Kalianda No. 12', $text);
+        $this->assertStringContainsString('Wilayah:* Dusun Sido Makmur, Desa Way Urang, Kec. Kalianda', $text);
+        $this->assertStringContainsString('ODP:* ODP-KLD-01 (Port 4)', $text);
+    }
+
+    public function test_notification_message_contains_customer_pppoe_address_and_wilayah(): void
+    {
+        $creator = User::factory()->create(['name' => 'Koordinator Lapangan', 'role' => User::ROLE_ADMIN]);
+        $tech = User::factory()->create(['name' => 'Rahmat Teknisi', 'role' => User::ROLE_TEKNISI, 'phone' => '081234567890']);
+
+        $kec = MasterWilayahKecamatan::create(['name' => 'Kalianda', 'code' => 'KLD']);
+        $desa = MasterWilayahDesa::create(['kecamatan_id' => $kec->id, 'name' => 'Kedaton', 'code' => 'KDT']);
+        $dusun = MasterWilayahDusun::create(['desa_id' => $desa->id, 'name' => 'Dusun 02', 'code' => 'D2']);
+
+        $customer = Customer::create([
+            'name' => 'Ifan Suhendi',
+            'phone' => '089528290737',
+            'address' => 'Depan rumah Pak Rohman',
+            'pppoe_username' => 'ifan_suhendi',
+            'kecamatan_id' => $kec->id,
+            'desa_id' => $desa->id,
+            'dusun_id' => $dusun->id,
+        ]);
+
+        $job = TechnicianJob::create([
+            'job_number' => 'JOB-GP-20261019-0001',
+            'type' => TechnicianJob::TYPE_GANGGUAN_PELANGGAN,
+            'title' => 'WiFi Lambat',
+            'description' => 'Sering RTO dan putus-putus',
+            'customer_id' => $customer->id,
+            'status' => TechnicianJob::STATUS_ACTIVE,
+            'priority' => 'urgent',
+            'created_by' => $creator->id,
+        ]);
+        $job->technicians()->sync([$tech->id]);
+
+        $service = app(TechnicianJobNotificationService::class);
+        $newJobMessage = $service->buildNewJobMessage($job, $tech);
+
+        $this->assertStringContainsString('PENUGASAN PEKERJAAN BARU', $newJobMessage);
+        $this->assertStringContainsString('JOB-GP-20261019-0001', $newJobMessage);
+        $this->assertStringContainsString('Ifan Suhendi', $newJobMessage);
+        $this->assertStringContainsString('User PPPoE:* ifan_suhendi', $newJobMessage);
+        $this->assertStringContainsString('Alamat Lengkap:* Depan rumah Pak Rohman', $newJobMessage);
+        $this->assertStringContainsString('Wilayah:* Dusun Dusun 02, Desa Kedaton, Kec. Kalianda', $newJobMessage);
+
+        $reminderMessage = $service->buildReminderMessage($job, $tech);
+        $this->assertStringContainsString('PENGINGAT PEKERJAAN BELUM SELESAI', $reminderMessage);
+        $this->assertStringContainsString('User PPPoE:* ifan_suhendi', $reminderMessage);
+        $this->assertStringContainsString('Alamat Lengkap:* Depan rumah Pak Rohman', $reminderMessage);
+        $this->assertStringContainsString('Wilayah:* Dusun Dusun 02, Desa Kedaton, Kec. Kalianda', $reminderMessage);
     }
 }

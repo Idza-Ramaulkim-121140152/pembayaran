@@ -854,9 +854,20 @@ export default function MonitoringPekerjaanPage() {
                                                     <span className="font-bold text-gray-800">Target / Lokasi: </span>
                                                     <span className="text-gray-700">{job.target_summary}</span>
                                                     {job.customer && (
-                                                        <span className="text-gray-500 block text-[11px] mt-0.5">
-                                                            PPPoE: <strong>{job.customer.pppoe_username || '-'}</strong> | Alamat: {job.customer.address || '-'}
-                                                        </span>
+                                                        <div className="text-gray-500 text-[11px] mt-1 space-y-0.5">
+                                                            <div>
+                                                                User PPPoE: <strong className="text-blue-700 font-mono">{job.customer.pppoe_username || '-'}</strong>
+                                                                {job.customer.phone && <span className="text-gray-400"> &bull; WA: {job.customer.phone}</span>}
+                                                            </div>
+                                                            <div>
+                                                                Alamat Lengkap: <span className="text-gray-700 font-medium">{job.customer.address || '-'}</span>
+                                                            </div>
+                                                            {job.customer.wilayah_lengkap && job.customer.wilayah_lengkap !== '-' && (
+                                                                <div>
+                                                                    Wilayah: <span className="text-gray-700 font-medium">{job.customer.wilayah_lengkap}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
                                             </div>
@@ -1111,9 +1122,12 @@ export default function MonitoringPekerjaanPage() {
                                     <div className="space-y-0.5 text-xs">
                                         <p className="font-bold text-gray-900">{selectedCustomer.name}</p>
                                         <p className="text-gray-500">
-                                            WA: {selectedCustomer.phone || '-'} | PPPoE: {selectedCustomer.pppoe_username || '-'}
+                                            WA: {selectedCustomer.phone || '-'} | PPPoE: <strong>{selectedCustomer.pppoe_username || '-'}</strong>
                                         </p>
-                                        <p className="text-gray-600 text-[11px]">{selectedCustomer.address || '-'}</p>
+                                        <p className="text-gray-600 text-[11px]">
+                                            {selectedCustomer.address || '-'}
+                                            {selectedCustomer.wilayah_lengkap && selectedCustomer.wilayah_lengkap !== '-' && ` • ${selectedCustomer.wilayah_lengkap}`}
+                                        </p>
                                     </div>
                                     <button
                                         type="button"
@@ -1155,7 +1169,8 @@ export default function MonitoringPekerjaanPage() {
                                                 >
                                                     <p className="font-bold text-gray-900">{c.name}</p>
                                                     <p className="text-gray-500 text-[11px]">
-                                                        {c.phone || '-'} | PPPoE: {c.pppoe_username || '-'} | {c.address}
+                                                        {c.phone || '-'} | PPPoE: <strong>{c.pppoe_username || '-'}</strong> | {c.address}
+                                                        {c.wilayah_lengkap && c.wilayah_lengkap !== '-' && ` • ${c.wilayah_lengkap}`}
                                                     </p>
                                                 </div>
                                             ))}
@@ -1359,7 +1374,10 @@ export default function MonitoringPekerjaanPage() {
                                                     className="p-2.5 hover:bg-blue-50 cursor-pointer text-xs"
                                                 >
                                                     <p className="font-bold text-gray-900">{c.name}</p>
-                                                    <p className="text-gray-500 text-[11px]">{c.phone || '-'} | {c.address}</p>
+                                                    <p className="text-gray-500 text-[11px]">
+                                                        {c.phone || '-'} | {c.address}
+                                                        {c.wilayah_lengkap && c.wilayah_lengkap !== '-' && ` • ${c.wilayah_lengkap}`}
+                                                    </p>
                                                 </div>
                                             ))}
                                         </div>
@@ -1732,11 +1750,35 @@ export default function MonitoringPekerjaanPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="p-2.5 rounded-lg border border-gray-100 bg-white">
-                                <span className="text-gray-400 block text-[10px]">Target / Lokasi</span>
-                                <span className="font-bold text-gray-800">{detailModal.job.target_summary}</span>
+                            <div className="p-3 rounded-xl border border-gray-100 bg-white col-span-2 space-y-1.5">
+                                <div>
+                                    <span className="text-gray-400 block text-[10px] uppercase font-bold tracking-wider">Target / Pelanggan</span>
+                                    <span className="font-bold text-gray-900 text-sm">{detailModal.job.target_summary}</span>
+                                </div>
+                                {detailModal.job.customer && (
+                                    <div className="pt-2 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                        <div className="bg-slate-50 p-2 rounded-lg">
+                                            <span className="text-gray-400 block text-[10px]">User PPPoE</span>
+                                            <span className="font-mono font-bold text-blue-700">{detailModal.job.customer.pppoe_username || '-'}</span>
+                                        </div>
+                                        <div className="bg-slate-50 p-2 rounded-lg">
+                                            <span className="text-gray-400 block text-[10px]">Nomor WhatsApp / Telp</span>
+                                            <span className="font-semibold text-gray-800">{detailModal.job.customer.phone || '-'}</span>
+                                        </div>
+                                        <div className="bg-slate-50 p-2 rounded-lg col-span-1 sm:col-span-2">
+                                            <span className="text-gray-400 block text-[10px]">Alamat Lengkap</span>
+                                            <span className="font-medium text-gray-800">{detailModal.job.customer.address || '-'}</span>
+                                        </div>
+                                        {detailModal.job.customer.wilayah_lengkap && detailModal.job.customer.wilayah_lengkap !== '-' && (
+                                            <div className="bg-slate-50 p-2 rounded-lg col-span-1 sm:col-span-2">
+                                                <span className="text-gray-400 block text-[10px]">Wilayah (Dusun / Desa / Kecamatan)</span>
+                                                <span className="font-medium text-gray-800">{detailModal.job.customer.wilayah_lengkap}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                            <div className="p-2.5 rounded-lg border border-gray-100 bg-white">
+                            <div className="p-2.5 rounded-lg border border-gray-100 bg-white col-span-2 sm:col-span-1">
                                 <span className="text-gray-400 block text-[10px]">Prioritas</span>
                                 <span className="font-bold uppercase text-gray-800">{detailModal.job.priority}</span>
                             </div>
