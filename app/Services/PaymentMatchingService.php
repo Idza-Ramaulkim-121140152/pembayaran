@@ -442,7 +442,7 @@ class PaymentMatchingService
                 return;
             }
 
-            if ($topScore < 70) {
+            if ($topScore < 70 && !$capture->customer_id) {
                 $capture->match_status = 'unmatched';
                 $capture->match_confidence = $topScore;
                 $capture->save();

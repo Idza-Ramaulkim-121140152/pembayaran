@@ -402,31 +402,53 @@ class BillingAutomationController extends Controller
         BillingPaymentCapture $capture,
         \App\Services\CustomerResolutionService $customerResolutionService
     ) {
-        $validated = $request->validate([
-            'customer_id' => 'required|integer|exists:customers,id',
-        ]);
-
-        $customerId = (int) $validated['customer_id'];
-        $capture->customer_id = $customerId;
-
-        // Remember WhatsApp LID mapping if capture came from a LID
-        $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
-        $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
-        if ($senderLid !== '') {
-            $customerResolutionService->rememberCustomerLid($customerId, $senderLid);
-        } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
-            $customerResolutionService->rememberCustomerLid($customerId, $senderPhone);
+        if ($capture->match_status === 'approved') {
+            return response()->json([
+                'message' => 'Bukti pembayaran yang sudah disetujui tidak dapat diubah pelanggannya.',
+            ], 422);
         }
 
-        // Auto-link active invoice if not already attached
-        if (!$capture->invoice_id) {
+        $validated = $request->validate([
+            'customer_id' => 'nullable|integer|exists:customers,id',
+        ]);
+
+        $customerId = !empty($validated['customer_id']) ? (int) $validated['customer_id'] : null;
+        $capture->customer_id = $customerId;
+
+        if ($customerId) {
+            // Remember WhatsApp LID mapping if capture came from a LID
+            $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+            $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+            if ($senderLid !== '') {
+                $customerResolutionService->rememberCustomerLid($customerId, $senderLid);
+            } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+                $customerResolutionService->rememberCustomerLid($customerId, $senderPhone);
+            }
+
+            // Auto-link active invoice if not already attached, or if existing invoice belongs to a different customer
             $customer = \App\Models\Customer::find($customerId);
-            if ($customer) {
-                $activeInvoice = $customerResolutionService->findActiveInvoices($customer)->first();
-                if ($activeInvoice) {
-                    $capture->invoice_id = $activeInvoice->id;
+            $activeInvoice = $customer ? $customerResolutionService->findActiveInvoices($customer)->first() : null;
+
+            $shouldUpdateInvoice = false;
+            if (!$capture->invoice_id) {
+                $shouldUpdateInvoice = true;
+            } else {
+                $currentInvoice = \App\Models\Invoice::find($capture->invoice_id);
+                if (!$currentInvoice || (int) $currentInvoice->customer_id !== $customerId) {
+                    $shouldUpdateInvoice = true;
                 }
             }
+
+            if ($shouldUpdateInvoice) {
+                $capture->invoice_id = $activeInvoice ? $activeInvoice->id : null;
+            }
+
+            if ($capture->match_status === 'unmatched') {
+                $capture->match_status = 'needs_review';
+            }
+        } else {
+            // Clear invoice association if customer is unassigned
+            $capture->invoice_id = null;
         }
 
         $capture->save();
@@ -435,7 +457,9 @@ class BillingAutomationController extends Controller
         $this->paymentMatchingService->runMatching($capture->id, false, auth()->id());
 
         return response()->json([
-            'message' => 'Pelanggan berhasil ditautkan ke bukti pembayaran dan ID WhatsApp disimpan.',
+            'message' => $customerId
+                ? 'Pelanggan berhasil ditautkan ke bukti pembayaran dan ID WhatsApp disimpan.'
+                : 'Tautan pelanggan berhasil dilepas.',
             'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
         ]);
     }

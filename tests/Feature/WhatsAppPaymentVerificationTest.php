@@ -597,7 +597,7 @@ class WhatsAppPaymentVerificationTest extends TestCase
             'sender_phone' => $customer->phone,
             'sent_at' => '2026-07-01T10:15:00+07:00',
             'media_base64' => base64_encode('fake-jpg-binary'),
-            'caption' => 'Bukti JPG',
+            'caption' => 'Bukti Transfer Berhasil Rp 200.000 ke BCA',
             'mime_type' => 'image/jpg; charset=binary',
         ]);
 
@@ -840,6 +840,57 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $found = $resolver->findCustomerByLid('13524902346818');
         $this->assertNotNull($found);
         $this->assertEquals($customer->id, $found->id);
+    }
+
+    public function test_admin_can_reassign_customer_to_different_customer(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        [$customerA, $invoiceA] = $this->makeCustomerInvoice();
+        [$customerB, $invoiceB] = $this->makeCustomerInvoice();
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customerA->id,
+            'invoice_id' => $invoiceA->id,
+            'amount' => 200000,
+            'paid_date' => '2026-10-13',
+            'fingerprint' => 'test-fp-' . uniqid(),
+            'match_status' => 'needs_review',
+        ]);
+
+        $response = $this->actingAs($admin)->postJson("/api/billing/payments/{$capture->id}/assign-customer", [
+            'customer_id' => $customerB->id,
+        ]);
+
+        $response->assertOk();
+        $fresh = $capture->fresh();
+        $this->assertEquals($customerB->id, $fresh->customer_id);
+        $this->assertEquals($invoiceB->id, $fresh->invoice_id);
+    }
+
+    public function test_admin_can_unassign_customer(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => $customer->id,
+            'invoice_id' => $invoice->id,
+            'amount' => 200000,
+            'paid_date' => '2026-10-13',
+            'fingerprint' => 'test-fp-' . uniqid(),
+            'match_status' => 'needs_review',
+        ]);
+
+        $response = $this->actingAs($admin)->postJson("/api/billing/payments/{$capture->id}/assign-customer", [
+            'customer_id' => null,
+        ]);
+
+        $response->assertOk();
+        $fresh = $capture->fresh();
+        $this->assertNull($fresh->customer_id);
+        $this->assertNull($fresh->invoice_id);
     }
 
     public function test_webhook_payment_with_wrong_destination_account_is_sent_to_manual_review_even_if_amount_matches(): void

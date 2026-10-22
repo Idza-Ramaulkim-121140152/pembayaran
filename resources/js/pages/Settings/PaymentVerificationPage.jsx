@@ -419,12 +419,19 @@ export default function PaymentVerificationPage() {
             setRefreshing(true);
             setError('');
             setMessage('');
-            await paymentVerificationService.assignCustomer(captureId, customerId);
-            setMessage(`Pelanggan berhasil ditautkan ke Capture #${captureId}.`);
+            const res = await paymentVerificationService.assignCustomer(captureId, customerId);
+            setMessage(
+                customerId
+                    ? `Pelanggan berhasil ditautkan ke Capture #${captureId}.`
+                    : `Tautan pelanggan pada Capture #${captureId} berhasil dilepas.`
+            );
             setShowCustomerSearch((prev) => ({ ...prev, [captureId]: false }));
-            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate);
+            if (selectedDetailCapture && selectedDetailCapture.id === captureId) {
+                setSelectedDetailCapture(res.data?.data || null);
+            }
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
         } catch (err) {
-            setError(err.response?.data?.message || 'Gagal menautkan pelanggan ke capture.');
+            setError(err.response?.data?.message || 'Gagal mengubah pelanggan pada capture.');
         } finally {
             setRefreshing(false);
         }
@@ -1196,44 +1203,157 @@ export default function PaymentVerificationPage() {
                                                     <div className="mt-3 space-y-2.5">
                                                         {/* Customer Info Card */}
                                                         {capture.customer ? (
-                                                            <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 border border-emerald-200 gap-3 flex-wrap sm:flex-nowrap">
-                                                                <div className="flex items-center gap-2.5 text-xs text-emerald-950 min-w-0">
-                                                                    <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
-                                                                        <UserCheck size={18} />
+                                                            <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-200">
+                                                                <div className="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
+                                                                    <div className="flex items-center gap-2.5 text-xs text-emerald-950 min-w-0">
+                                                                        <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                                                            <UserCheck size={18} />
+                                                                        </div>
+                                                                        <div className="min-w-0">
+                                                                            <p className="font-bold text-sm text-gray-900 truncate">{capture.customer.name}</p>
+                                                                            <p className="text-gray-600 text-[11px] flex items-center gap-2 flex-wrap">
+                                                                                <span>📱 WA: <strong>{capture.customer.phone || '-'}</strong></span>
+                                                                                {capture.customer.pppoe_username && (
+                                                                                    <span>· PPPoE: <strong className="font-mono text-emerald-700">{capture.customer.pppoe_username}</strong></span>
+                                                                                )}
+                                                                                {capture.sender_name && (
+                                                                                    <span>· Nama WA: <strong className="text-purple-700">"{capture.sender_name}"</strong></span>
+                                                                                )}
+                                                                                {capture.is_lid && (
+                                                                                    <span className="font-mono text-gray-400">· (WA Multi-Device: {capture.sender_lid || capture.sender_phone})</span>
+                                                                                )}
+                                                                            </p>
+                                                                        </div>
                                                                     </div>
-                                                                    <div className="min-w-0">
-                                                                        <p className="font-bold text-sm text-gray-900 truncate">{capture.customer.name}</p>
-                                                                        <p className="text-gray-600 text-[11px] flex items-center gap-2 flex-wrap">
-                                                                            <span>📱 WA: <strong>{capture.customer.phone || '-'}</strong></span>
-                                                                            {capture.customer.pppoe_username && (
-                                                                                <span>· PPPoE: <strong className="font-mono text-emerald-700">{capture.customer.pppoe_username}</strong></span>
-                                                                            )}
-                                                                            {capture.sender_name && (
-                                                                                <span>· Nama WA: <strong className="text-purple-700">"{capture.sender_name}"</strong></span>
-                                                                            )}
-                                                                            {capture.is_lid && (
-                                                                                <span className="font-mono text-gray-400">· (WA Multi-Device: {capture.sender_lid || capture.sender_phone})</span>
-                                                                            )}
-                                                                        </p>
+                                                                    <div className="flex items-center gap-2 shrink-0">
+                                                                        {getCustomerWhatsAppUrl(capture.customer, capture) && (
+                                                                            <a
+                                                                                href={getCustomerWhatsAppUrl(capture.customer, capture)}
+                                                                                target="_blank"
+                                                                                rel="noreferrer"
+                                                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition"
+                                                                                title="Kirim pesan konfirmasi langsung ke WhatsApp pelanggan"
+                                                                            >
+                                                                                <Phone size={13} />
+                                                                                <span>Chat WA</span>
+                                                                            </a>
+                                                                        )}
+                                                                        <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">
+                                                                            Pelanggan Teridentifikasi
+                                                                        </span>
+                                                                        {canManage && isNeedsReview && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowCustomerSearch((prev) => ({ ...prev, [capture.id]: !isSearchOpen }))}
+                                                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition ${
+                                                                                    isSearchOpen
+                                                                                        ? 'bg-emerald-200 text-emerald-900 hover:bg-emerald-300'
+                                                                                        : 'bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100/70'
+                                                                                }`}
+                                                                                title="Ubah pelanggan yang ditautkan ke bukti pembayaran ini"
+                                                                            >
+                                                                                <User size={13} />
+                                                                                <span>{isSearchOpen ? 'Tutup Ubah Pelanggan' : 'Ubah Pelanggan'}</span>
+                                                                            </button>
+                                                                        )}
                                                                     </div>
                                                                 </div>
-                                                                <div className="flex items-center gap-2 shrink-0">
-                                                                    {getCustomerWhatsAppUrl(capture.customer, capture) && (
-                                                                        <a
-                                                                            href={getCustomerWhatsAppUrl(capture.customer, capture)}
-                                                                            target="_blank"
-                                                                            rel="noreferrer"
-                                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-sm transition"
-                                                                            title="Kirim pesan konfirmasi langsung ke WhatsApp pelanggan"
-                                                                        >
-                                                                            <Phone size={13} />
-                                                                            <span>Chat WA</span>
-                                                                        </a>
-                                                                    )}
-                                                                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-md">
-                                                                        Pelanggan Teridentifikasi
-                                                                    </span>
-                                                                </div>
+
+                                                                {/* Change Customer Inline Form */}
+                                                                {isSearchOpen && (
+                                                                    <div className="mt-3 pt-3 border-t border-emerald-200 space-y-2">
+                                                                        <div className="flex items-center justify-between text-xs">
+                                                                            <span className="font-semibold text-emerald-950">
+                                                                                Cari dan pilih pelanggan pengganti:
+                                                                            </span>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => handleAssignCustomer(capture.id, null)}
+                                                                                className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 hover:underline flex items-center gap-1"
+                                                                                title="Lepas tautan pelanggan saat ini agar kembali ke status belum terhubung"
+                                                                            >
+                                                                                <XCircle size={13} />
+                                                                                <span>Lepas Tautan Pelanggan</span>
+                                                                            </button>
+                                                                        </div>
+
+                                                                        {capture.sender_name && (
+                                                                            <div className="flex items-center gap-2 text-[11px]">
+                                                                                <span className="text-gray-500">Saran:</span>
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => {
+                                                                                        handleSearchCustomer(capture.id, capture.sender_name);
+                                                                                        setCustomerSearchQueries((prev) => ({ ...prev, [capture.id]: capture.sender_name }));
+                                                                                    }}
+                                                                                    className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-semibold hover:bg-purple-100 transition inline-flex items-center gap-1"
+                                                                                >
+                                                                                    🔍 Cari nama profil "{capture.sender_name}"
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+
+                                                                        <div className="relative">
+                                                                            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                                            <input
+                                                                                type="text"
+                                                                                value={customerSearchQueries[capture.id] || ''}
+                                                                                onChange={(e) => handleSearchCustomer(capture.id, e.target.value)}
+                                                                                placeholder="Ketik nama pelanggan, nomor WhatsApp, atau username PPPoE..."
+                                                                                className="w-full text-xs rounded-lg border border-emerald-300 pl-8 pr-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                                                            />
+                                                                        </div>
+
+                                                                        {isSearchingThisCapture && (
+                                                                            <p className="text-[11px] text-gray-500 italic">Mencari pelanggan...</p>
+                                                                        )}
+
+                                                                        {searchResultsForCapture.length > 0 && (
+                                                                            <div className="max-h-48 overflow-y-auto rounded-lg border border-emerald-200 bg-white divide-y divide-gray-100 shadow-sm">
+                                                                                {searchResultsForCapture.map((c) => {
+                                                                                    const isCurrent = capture.customer?.id === c.id;
+                                                                                    return (
+                                                                                        <div
+                                                                                            key={c.id}
+                                                                                            className={`flex items-center justify-between p-2.5 transition ${
+                                                                                                isCurrent ? 'bg-emerald-50 font-semibold' : 'hover:bg-emerald-50/50 cursor-pointer'
+                                                                                            }`}
+                                                                                            onClick={() => !isCurrent && handleAssignCustomer(capture.id, c.id)}
+                                                                                        >
+                                                                                            <div>
+                                                                                                <span className="font-bold text-gray-900 text-xs">{c.name}</span>
+                                                                                                <span className="text-gray-500 text-[11px] ml-2">WA: {c.phone || '-'}</span>
+                                                                                                {c.pppoe_username && (
+                                                                                                    <span className="text-emerald-700 text-[11px] ml-1 font-mono">({c.pppoe_username})</span>
+                                                                                                )}
+                                                                                                {isCurrent && (
+                                                                                                    <span className="ml-2 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                                                                                        Pelanggan Saat Ini
+                                                                                                    </span>
+                                                                                                )}
+                                                                                            </div>
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                disabled={isCurrent}
+                                                                                                onClick={(e) => {
+                                                                                                    e.stopPropagation();
+                                                                                                    if (!isCurrent) handleAssignCustomer(capture.id, c.id);
+                                                                                                }}
+                                                                                                className={`px-2.5 py-1 rounded font-semibold text-[11px] transition ${
+                                                                                                    isCurrent
+                                                                                                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                                                                                                        : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                                                                                                }`}
+                                                                                            >
+                                                                                                {isCurrent ? 'Terpilih' : 'Pilih & Ganti'}
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         ) : (
                                                             <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200 text-xs">
@@ -2350,10 +2470,22 @@ export default function PaymentVerificationPage() {
 
                                     {/* Linked Customer & Invoice */}
                                     <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 space-y-2 text-xs">
-                                        <p className="font-bold text-blue-900 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
-                                            <User size={13} className="text-blue-600" />
-                                            Pelanggan & Tagihan Terhubung
-                                        </p>
+                                        <div className="flex items-center justify-between">
+                                            <p className="font-bold text-blue-900 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                                                <User size={13} className="text-blue-600" />
+                                                Pelanggan & Tagihan Terhubung
+                                            </p>
+                                            {canManage && isNeedsReview && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowCustomerSearch((prev) => ({ ...prev, [c.id]: !showCustomerSearch[c.id] }))}
+                                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 font-semibold text-[11px] transition shadow-xs"
+                                                >
+                                                    <User size={12} />
+                                                    <span>{showCustomerSearch[c.id] ? 'Tutup Ubah' : (c.customer ? 'Ubah Pelanggan' : 'Tautkan Pelanggan')}</span>
+                                                </button>
+                                            )}
+                                        </div>
                                         <div className="grid grid-cols-2 gap-2">
                                             <div>
                                                 <span className="text-slate-500 block text-[11px]">Nama Pelanggan:</span>
@@ -2392,6 +2524,104 @@ export default function PaymentVerificationPage() {
                                                 </div>
                                             )}
                                         </div>
+
+                                        {/* Inline Customer Search inside Detail Modal */}
+                                        {showCustomerSearch[c.id] && (
+                                            <div className="mt-3 pt-3 border-t border-blue-200 space-y-2">
+                                                <div className="flex items-center justify-between text-xs">
+                                                    <span className="font-semibold text-blue-950">
+                                                        {c.customer ? 'Cari & pilih pelanggan pengganti:' : 'Cari & tautkan pelanggan:'}
+                                                    </span>
+                                                    {c.customer && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleAssignCustomer(c.id, null)}
+                                                            className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 hover:underline flex items-center gap-1"
+                                                            title="Lepas tautan pelanggan saat ini"
+                                                        >
+                                                            <XCircle size={12} />
+                                                            <span>Lepas Tautan Pelanggan</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                {c.sender_name && (
+                                                    <div className="flex items-center gap-2 text-[11px]">
+                                                        <span className="text-gray-500">Saran:</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                handleSearchCustomer(c.id, c.sender_name);
+                                                                setCustomerSearchQueries((prev) => ({ ...prev, [c.id]: c.sender_name }));
+                                                            }}
+                                                            className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-semibold hover:bg-purple-100 transition inline-flex items-center gap-1"
+                                                        >
+                                                            🔍 Cari nama profil "{c.sender_name}"
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                <div className="relative">
+                                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                                    <input
+                                                        type="text"
+                                                        value={customerSearchQueries[c.id] || ''}
+                                                        onChange={(e) => handleSearchCustomer(c.id, e.target.value)}
+                                                        placeholder="Ketik nama pelanggan, nomor WhatsApp, atau username PPPoE..."
+                                                        className="w-full text-xs rounded-lg border border-blue-300 pl-8 pr-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                                    />
+                                                </div>
+
+                                                {isSearchingCustomer[c.id] && (
+                                                    <p className="text-[11px] text-gray-500 italic">Mencari pelanggan...</p>
+                                                )}
+
+                                                {(customerSearchResults[c.id] || []).length > 0 && (
+                                                    <div className="max-h-40 overflow-y-auto rounded-lg border border-blue-200 bg-white divide-y divide-gray-100 shadow-sm">
+                                                        {(customerSearchResults[c.id] || []).map((cust) => {
+                                                            const isCurrent = c.customer?.id === cust.id;
+                                                            return (
+                                                                <div
+                                                                    key={cust.id}
+                                                                    className={`flex items-center justify-between p-2 text-xs transition ${
+                                                                        isCurrent ? 'bg-blue-50' : 'hover:bg-blue-50/50 cursor-pointer'
+                                                                    }`}
+                                                                    onClick={() => !isCurrent && handleAssignCustomer(c.id, cust.id)}
+                                                                >
+                                                                    <div>
+                                                                        <span className="font-bold text-gray-900">{cust.name}</span>
+                                                                        <span className="text-gray-500 text-[11px] ml-2">WA: {cust.phone || '-'}</span>
+                                                                        {cust.pppoe_username && (
+                                                                            <span className="text-blue-700 text-[11px] ml-1 font-mono">({cust.pppoe_username})</span>
+                                                                        )}
+                                                                        {isCurrent && (
+                                                                            <span className="ml-2 text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded">
+                                                                                Saat ini dipilih
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled={isCurrent}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (!isCurrent) handleAssignCustomer(c.id, cust.id);
+                                                                        }}
+                                                                        className={`px-2 py-0.5 rounded text-[11px] font-semibold transition ${
+                                                                            isCurrent
+                                                                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                                                                                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-xs'
+                                                                        }`}
+                                                                    >
+                                                                        {isCurrent ? 'Terpilih' : 'Pilih'}
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* AI Verification Score */}
