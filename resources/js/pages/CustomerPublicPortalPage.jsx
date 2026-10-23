@@ -45,30 +45,6 @@ export default function CustomerPublicPortalPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [copiedPassword, setCopiedPassword] = useState(false);
 
-    // Ganti WiFi Form
-    const [showChangeWifiForm, setShowChangeWifiForm] = useState(false);
-    const [wifiForm, setWifiForm] = useState({ ssid: '', password: '', password_confirmation: '' });
-    const [showNewPassword, setShowNewPassword] = useState(false);
-    const [savingWifi, setSavingWifi] = useState(false);
-    const [wifiMessage, setWifiMessage] = useState('');
-    const [wifiError, setWifiError] = useState('');
-    const [wifiSuccessModal, setWifiSuccessModal] = useState({
-        isOpen: false,
-        ssid: '',
-        password: '',
-        message: '',
-        waitInfo: '2 - 3 Menit',
-    });
-    const [wifiErrorModal, setWifiErrorModal] = useState({
-        isOpen: false,
-        message: '',
-    });
-
-    // Blocking device state
-    const [blockingMac, setBlockingMac] = useState(null);
-    const [blockModalTarget, setBlockModalTarget] = useState(null);
-    const [actionMessage, setActionMessage] = useState('');
-
     // Complaint / Aduan Gangguan state
     const [showComplaintForm, setShowComplaintForm] = useState(false);
     const [complaintCategory, setComplaintCategory] = useState('los_merah');
@@ -85,9 +61,6 @@ export default function CustomerPublicPortalPage() {
             setError('');
             const res = await axios.get(`/api/public/portal/${token}`);
             setPortalData(res.data);
-            if (res.data?.wifi?.ssid) {
-                setWifiForm((prev) => ({ ...prev, ssid: res.data.wifi.ssid }));
-            }
         } catch (err) {
             setError(err.response?.data?.message || 'Gagal memuat portal pelanggan. Pastikan link yang Anda buka benar.');
         } finally {
@@ -143,102 +116,7 @@ export default function CustomerPublicPortalPage() {
         }
     };
 
-    // Handle Ganti Password WiFi
-    const handleSaveWifi = async (e) => {
-        e.preventDefault();
-        setWifiError('');
-        setWifiMessage('');
 
-        if (!wifiForm.password) {
-            setWifiError('Masukkan kata sandi WiFi baru (minimal 8 karakter).');
-            return;
-        }
-
-        if (wifiForm.password.length < 8) {
-            setWifiError('Kata sandi WiFi baru minimal 8 karakter.');
-            return;
-        }
-
-        if (wifiForm.password_confirmation && wifiForm.password !== wifiForm.password_confirmation) {
-            setWifiError('Konfirmasi kata sandi baru tidak cocok.');
-            return;
-        }
-
-        const submittedPassword = wifiForm.password.trim();
-        const submittedSsid = wifiForm.ssid ? wifiForm.ssid.trim() : (portalData?.wifi?.ssid || 'Nama WiFi Anda');
-
-        try {
-            setSavingWifi(true);
-            const res = await axios.post(`/api/public/portal/${token}/wifi`, {
-                ssid: wifiForm.ssid ? wifiForm.ssid.trim() : undefined,
-                password: submittedPassword,
-            });
-
-            const successMsg = res.data?.message || 'Permintaan berhasil dikirim ke router! Tunggu 2-3 menit hingga kata sandi baru aktif sepenuhnya.';
-            setWifiMessage(`✅ Kata sandi baru (${submittedPassword}) berhasil dikirim ke router. Mohon tunggu 2 - 3 menit agar router menerapkan perubahan sebelum menghubungkan ulang perangkat Anda.`);
-            
-            // Pop up the clear success modal
-            setWifiSuccessModal({
-                isOpen: true,
-                ssid: submittedSsid,
-                password: submittedPassword,
-                message: successMsg,
-                waitInfo: '2 - 3 Menit',
-            });
-
-            setWifiForm((prev) => ({ ...prev, password: '', password_confirmation: '' }));
-            setShowChangeWifiForm(false);
-            await loadPortalData();
-        } catch (err) {
-            const errorMsg = err.response?.data?.message || 'Gagal memperbarui kata sandi WiFi. Pastikan router Anda aktif atau hubungi Layanan Pelanggan.';
-            setWifiError(errorMsg);
-            setWifiErrorModal({
-                isOpen: true,
-                message: errorMsg,
-            });
-        } finally {
-            setSavingWifi(false);
-        }
-    };
-
-    // Handle Blokir Perangkat
-    const handleConfirmBlock = async () => {
-        if (!blockModalTarget) return;
-        const mac = blockModalTarget.mac_address;
-        try {
-            setBlockingMac(mac);
-            setActionMessage('');
-            const res = await axios.post(`/api/public/portal/${token}/block-device`, {
-                mac_address: mac,
-                reason: `Diblokir oleh pelanggan (${blockModalTarget.name || 'Perangkat'})`,
-            });
-            setActionMessage(res.data?.message || `Perangkat ${mac} berhasil diblokir.`);
-            setBlockModalTarget(null);
-            await loadPortalData();
-        } catch (err) {
-            alert(err.response?.data?.message || 'Gagal memblokir perangkat.');
-        } finally {
-            setBlockingMac(null);
-        }
-    };
-
-    // Handle Buka Blokir Perangkat
-    const handleUnblock = async (mac) => {
-        if (!confirm(`Apakah Anda yakin ingin membuka blokir untuk perangkat ${mac}?`)) return;
-        try {
-            setBlockingMac(mac);
-            setActionMessage('');
-            const res = await axios.post(`/api/public/portal/${token}/unblock-device`, {
-                mac_address: mac,
-            });
-            setActionMessage(res.data?.message || `Blokir perangkat ${mac} berhasil dibuka.`);
-            await loadPortalData();
-        } catch (err) {
-            alert(err.response?.data?.message || 'Gagal membuka blokir perangkat.');
-        } finally {
-            setBlockingMac(null);
-        }
-    };
 
     if (loading) {
         return (
@@ -316,7 +194,7 @@ export default function CustomerPublicPortalPage() {
                                     Portal Pelanggan
                                 </span>
                             </h1>
-                            <p className="text-[11px] text-slate-400">Pusat Informasi & Manajemen WiFi Mandiri</p>
+                            <p className="text-[11px] text-slate-400">Pusat Informasi & Monitoring Layanan WiFi</p>
                         </div>
                     </div>
 
@@ -367,18 +245,6 @@ export default function CustomerPublicPortalPage() {
                     </div>
                 </div>
 
-                {/* ACTION MESSAGE BANNER */}
-                {actionMessage && (
-                    <div className="p-3.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <CheckCircle2 size={16} className="shrink-0" />
-                            <span>{actionMessage}</span>
-                        </div>
-                        <button onClick={() => setActionMessage('')} className="text-emerald-400 hover:text-white font-bold ml-2">
-                            ✕
-                        </button>
-                    </div>
-                )}
 
                 {/* SECTION: PEMBERITAHUAN GANGGUAN ROUTER & FORM ADUAN */}
                 {disruption?.is_disrupted && (
@@ -575,22 +441,15 @@ export default function CustomerPublicPortalPage() {
                                 <Wifi size={18} />
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-white">Pengaturan WiFi & Sandi</h3>
-                                <p className="text-[11px] text-slate-400">Informasi nama WiFi dan kata sandi router</p>
+                                <h3 className="text-sm font-bold text-white">Informasi WiFi & Sandi</h3>
+                                <p className="text-[11px] text-slate-400">Monitoring nama WiFi dan kata sandi router</p>
                             </div>
                         </div>
 
-                        {wifi.has_router && (
-                            <button
-                                type="button"
-                                onClick={() => setShowChangeWifiForm(!showChangeWifiForm)}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-md shadow-emerald-950/50"
-                            >
-                                <Lock size={13} />
-                                {showChangeWifiForm ? 'Tutup Form' : 'Ganti Sandi WiFi'}
-                                {showChangeWifiForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                            </button>
-                        )}
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-900/80 text-emerald-400 border border-slate-700">
+                            <Wifi size={13} />
+                            <span>{isOnline ? 'Sinyal Aktif' : 'Router Offline'}</span>
+                        </span>
                     </div>
 
                     {!wifi.has_router ? (
@@ -620,29 +479,7 @@ export default function CustomerPublicPortalPage() {
                         </div>
                     ) : (
                         <>
-
-                    {/* ACTIVE WIFI UPDATE NOTIFICATION BANNER */}
-                    {wifiMessage && (
-                        <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-200 text-xs space-y-2 animate-in fade-in duration-300">
-                            <div className="flex items-start gap-2.5">
-                                <CheckCircle2 size={20} className="text-emerald-400 shrink-0 mt-0.5" />
-                                <div className="space-y-1">
-                                    <p className="font-bold text-white text-sm">
-                                        Perintah Pergantian Kata Sandi Berhasil Diproses!
-                                    </p>
-                                    <p className="text-xs text-emerald-200 leading-relaxed">
-                                        {wifiMessage}
-                                    </p>
-                                    <div className="flex items-center gap-2 pt-1 text-[11px] text-amber-300 font-semibold">
-                                        <Clock size={13} />
-                                        <span>Estimasi waktu pembaruan router: 2 - 3 Menit</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* WIFI CREDENTIALS BOX */}
+                            {/* WIFI CREDENTIALS BOX */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                         {/* Nama SSID */}
                         <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-700/70">
@@ -710,7 +547,7 @@ export default function CustomerPublicPortalPage() {
                                         Kata Sandi WiFi Terenkripsi di Router
                                     </p>
                                     <p className="text-[11px] leading-relaxed text-slate-300">
-                                        Kata sandi pada model router ini dilindungi enkripsi internal router. Jika Anda lupa kata sandi atau ingin mereset kata sandi WiFi, silakan gunakan tombol <strong>Ganti Sandi WiFi</strong> di atas atau hubungi Customer Service kami.
+                                        Kata sandi pada model router ini dilindungi enkripsi internal router. Jika Anda memerlukan bantuan mengenai kata sandi WiFi atau pengaturan router, silakan hubungi Customer Service kami.
                                     </p>
                                 </div>
                             </div>
@@ -726,89 +563,6 @@ export default function CustomerPublicPortalPage() {
                                 </a>
                             </div>
                         </div>
-                    )}
-
-                    {/* COLLAPSIBLE GANTI PASSWORD FORM */}
-                    {showChangeWifiForm && (
-                        <form onSubmit={handleSaveWifi} className="pt-3 border-t border-slate-700/80 space-y-3.5">
-                            <h4 className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                                <Lock size={14} />
-                                Formulir Penggantian Kata Sandi / Nama WiFi:
-                            </h4>
-
-                            {wifiError && (
-                                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs">
-                                    {wifiError}
-                                </div>
-                            )}
-                            {wifiMessage && (
-                                <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs">
-                                    {wifiMessage}
-                                </div>
-                            )}
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                                <div>
-                                    <label className="block text-slate-300 font-semibold mb-1">
-                                        Nama SSID WiFi (Opsional)
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={wifiForm.ssid}
-                                        onChange={(e) => setWifiForm((p) => ({ ...p, ssid: e.target.value }))}
-                                        placeholder="Nama WiFi..."
-                                        className="w-full text-xs rounded-xl bg-slate-900 border border-slate-700 p-2.5 text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-slate-300 font-semibold mb-1">
-                                        Kata Sandi Baru (Min. 8 Karakter) <span className="text-rose-400">*</span>
-                                    </label>
-                                    <div className="relative">
-                                        <input
-                                            type={showNewPassword ? 'text' : 'password'}
-                                            value={wifiForm.password}
-                                            onChange={(e) => setWifiForm((p) => ({ ...p, password: e.target.value }))}
-                                            placeholder="Minimal 8 karakter..."
-                                            className="w-full text-xs rounded-xl bg-slate-900 border border-slate-700 pr-9 p-2.5 font-mono text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                                            required
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowNewPassword(!showNewPassword)}
-                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                                        >
-                                            {showNewPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-2 pt-1">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowChangeWifiForm(false)}
-                                    className="px-3.5 py-2 text-xs font-semibold text-slate-400 rounded-xl hover:bg-slate-700/60"
-                                >
-                                    Batal
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={savingWifi}
-                                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-500 disabled:opacity-50 flex items-center gap-1.5 shadow-lg shadow-emerald-900/30"
-                                >
-                                    {savingWifi ? (
-                                        <>
-                                            <RefreshCw size={13} className="animate-spin" />
-                                            Menerapkan ke Router... (Mohon tunggu)
-                                        </>
-                                    ) : (
-                                        'Simpan Kata Sandi Baru'
-                                    )}
-                                </button>
-                            </div>
-                        </form>
                     )}
                     </>
                     )}
@@ -882,12 +636,12 @@ export default function CustomerPublicPortalPage() {
                     {capacity.status === 'critical' && (
                         <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-center gap-2">
                             <ShieldAlert size={16} className="shrink-0 text-rose-400" />
-                            <span>Jumlah perangkat terhubung melebihi batas kuota paket (+{capacity.diff} perangkat). Blokir perangkat yang tidak dikenal di bawah ini atau hubungi CS untuk upgrade paket.</span>
+                            <span>Jumlah perangkat terhubung melebihi batas kuota paket (+{capacity.diff} perangkat). Pertimbangkan untuk menghubungi CS jika ingin melakukan upgrade paket layanan.</span>
                         </div>
                     )}
                 </div>
 
-                {/* SECTION 3: DAFTAR PERANGKAT TERHUBUNG & FITUR BLOKIR */}
+                {/* SECTION 3: DAFTAR PERANGKAT TERHUBUNG */}
                 <div className="rounded-3xl bg-slate-800/80 border border-slate-700/80 p-5 shadow-xl space-y-3.5">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -953,18 +707,6 @@ export default function CustomerPublicPortalPage() {
                                             <span className="text-[10px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-lg border border-slate-700">
                                                 {h.type || 'WiFi'}
                                             </span>
-
-                                            {h.mac_address && !isBlocked && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setBlockModalTarget(h)}
-                                                    disabled={blockingMac === h.mac_address}
-                                                    className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 font-bold text-[11px] transition flex items-center gap-1"
-                                                >
-                                                    <Ban size={12} />
-                                                    Blokir
-                                                </button>
-                                            )}
                                         </div>
                                     </div>
                                 );
@@ -983,23 +725,18 @@ export default function CustomerPublicPortalPage() {
                         <div className="pt-3 border-t border-slate-700/80 space-y-2">
                             <h4 className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
                                 <Ban size={13} />
-                                Perangkat yang Diblokir ({wifi.blocked_devices.length}):
+                                Perangkat Terblokir di Router ({wifi.blocked_devices.length}):
                             </h4>
                             <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 divide-y divide-rose-900/30 overflow-hidden">
                                 {wifi.blocked_devices.map((b, bIdx) => (
                                     <div key={bIdx} className="p-3 flex items-center justify-between text-xs">
                                         <div>
                                             <p className="font-mono font-bold text-rose-300">{b.mac_address}</p>
-                                            <p className="text-[10px] text-slate-400">{b.reason || 'Diblokir oleh pemilik WiFi'}</p>
+                                            <p className="text-[10px] text-slate-400">{b.reason || 'Terblokir di filter MAC router'}</p>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleUnblock(b.mac_address)}
-                                            disabled={blockingMac === b.mac_address}
-                                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[11px] transition"
-                                        >
-                                            Buka Blokir
-                                        </button>
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-rose-300 bg-rose-950/80 border border-rose-800/60">
+                                            Terblokir
+                                        </span>
                                     </div>
                                 ))}
                             </div>
@@ -1121,163 +858,6 @@ export default function CustomerPublicPortalPage() {
                 </footer>
             </main>
 
-            {/* MODAL KONFIRMASI BLOKIR PERANGKAT */}
-            {blockModalTarget && (
-                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl text-left">
-                        <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                            <Ban size={24} />
-                        </div>
-                        <div>
-                            <h4 className="text-sm font-bold text-white">Konfirmasi Blokir Perangkat</h4>
-                            <p className="text-xs text-slate-400 mt-1">
-                                Apakah Anda yakin ingin memblokir perangkat <strong>{blockModalTarget.name || 'ini'}</strong> (MAC:{' '}
-                                <span className="font-mono text-slate-300">{blockModalTarget.mac_address}</span>)?
-                            </p>
-                            <p className="text-[11px] text-amber-300/90 mt-2">
-                                Perangkat ini tidak akan bisa terhubung ke WiFi Anda setelah diblokir.
-                            </p>
-                        </div>
-                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                            <button
-                                type="button"
-                                onClick={() => setBlockModalTarget(null)}
-                                className="px-3.5 py-2 text-xs font-semibold text-slate-400 rounded-xl hover:bg-slate-800"
-                            >
-                                Batal
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleConfirmBlock}
-                                disabled={Boolean(blockingMac)}
-                                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition flex items-center gap-1.5 shadow-lg shadow-rose-950/50"
-                            >
-                                {blockingMac ? <RefreshCw size={13} className="animate-spin" /> : <Ban size={13} />}
-                                Ya, Blokir Perangkat
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-            {/* MODAL SUKSES GANTI KATA SANDI DENGAN INSTRUKSI JELAS */}
-            {wifiSuccessModal.isOpen && (
-                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-900 border border-emerald-500/40 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl text-left animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-                                <CheckCircle2 size={26} />
-                            </div>
-                            <div>
-                                <h4 className="text-base font-extrabold text-white">Pergantian Sandi Berhasil Dikirim!</h4>
-                                <p className="text-xs text-emerald-400 font-medium">Router sedang menerapkan kata sandi baru</p>
-                            </div>
-                        </div>
-
-                        <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5 text-xs">
-                            <div className="flex justify-between items-center py-1 border-b border-slate-800">
-                                <span className="text-slate-400">Nama WiFi (SSID):</span>
-                                <span className="font-bold font-mono text-white text-right">{wifiSuccessModal.ssid}</span>
-                            </div>
-                            <div className="flex justify-between items-center py-1 border-b border-slate-800">
-                                <span className="text-slate-400">Kata Sandi Baru:</span>
-                                <div className="flex items-center gap-1.5">
-                                    <span className="font-mono font-extrabold text-emerald-300 text-sm tracking-wider">{wifiSuccessModal.password}</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(wifiSuccessModal.password);
-                                            setCopiedPassword(true);
-                                            setTimeout(() => setCopiedPassword(false), 2000);
-                                        }}
-                                        className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-                                        title="Salin kata sandi baru"
-                                    >
-                                        {copiedPassword ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="flex justify-between items-center py-1">
-                                <span className="text-slate-400">Estimasi Waktu Aktif:</span>
-                                <span className="font-bold text-amber-400 flex items-center gap-1">
-                                    <Clock size={13} /> {wifiSuccessModal.waitInfo || '2 - 3 Menit'}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-200/90 space-y-2">
-                            <p className="font-bold text-amber-300 flex items-center gap-1.5">
-                                <Info size={15} className="shrink-0" />
-                                Langkah Selanjutnya:
-                            </p>
-                            <ol className="list-decimal list-inside space-y-1.5 text-[11px] text-slate-300 pl-1 leading-relaxed">
-                                <li><strong>Mohon tunggu 2 - 3 menit</strong> sampai router selesai memproses kata sandi baru dan memuat ulang sinyal WiFi.</li>
-                                <li>Buka menu Pengaturan WiFi di HP / Laptop Anda.</li>
-                                <li>Pilih <em>Lupakan Jaringan (Forget Network)</em> jika sandi lama masih tersimpan, lalu sambungkan kembali dengan kata sandi baru di atas.</li>
-                            </ol>
-                        </div>
-
-                        <div className="pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setWifiSuccessModal({ isOpen: false, ssid: '', password: '', message: '', waitInfo: '' })}
-                                className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition shadow-lg shadow-emerald-950/50"
-                            >
-                                <Check size={16} />
-                                Saya Mengerti & Tutup Informasi
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL ERROR GANTI KATA SANDI */}
-            {wifiErrorModal.isOpen && (
-                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-slate-900 border border-rose-500/40 rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl text-left animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center gap-3">
-                            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
-                                <AlertTriangle size={26} />
-                            </div>
-                            <div>
-                                <h4 className="text-base font-extrabold text-white">Gagal Mengirim Perubahan</h4>
-                                <p className="text-xs text-rose-400 font-medium">Kendala komunikasi ke router</p>
-                            </div>
-                        </div>
-
-                        <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 leading-relaxed">
-                            {wifiErrorModal.message}
-                        </div>
-
-                        <div className="p-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-xs text-slate-300 space-y-1">
-                            <p className="font-bold text-white">Saran Pemecahan Masalah:</p>
-                            <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-0.5">
-                                <li>Pastikan router dalam kondisi menyala dan terhubung ke internet.</li>
-                                <li>Jika lampu LOS router berkedip merah, silakan buat tiket aduan gangguan.</li>
-                                <li>Hubungi Customer Service Rumah Kita Net via WhatsApp jika butuh bantuan teknisi.</li>
-                            </ul>
-                        </div>
-
-                        <div className="flex gap-2 pt-2">
-                            <button
-                                type="button"
-                                onClick={() => setWifiErrorModal({ isOpen: false, message: '' })}
-                                className="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
-                            >
-                                Tutup
-                            </button>
-                            <a
-                                href={`https://wa.me/${cs_contact.whatsapp}?text=${encodeURIComponent(`Halo CS Rumah Kita Net, saya mengalami kendala saat mengubah kata sandi WiFi saya: ${wifiErrorModal.message}`)}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition shadow"
-                            >
-                                <MessageSquare size={14} />
-                                Hubungi CS
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

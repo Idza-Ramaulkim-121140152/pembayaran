@@ -300,68 +300,9 @@ class CustomerPublicPortalController extends Controller
      */
     public function updateWifi(Request $request, string $token)
     {
-        $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
-
-        if (!$customer) {
-            return response()->json([
-                'message' => 'Tautan akses portal pelanggan tidak valid.',
-            ], 404);
-        }
-
-        $validated = $request->validate([
-            'ssid' => ['nullable', 'string', 'min:1', 'max:32'],
-            'password' => ['nullable', 'string', 'min:8', 'max:63'],
-        ], [
-            'password.min' => 'Password WiFi baru minimal 8 karakter.',
-            'password.max' => 'Password WiFi baru maksimal 63 karakter.',
-            'ssid.max' => 'Nama SSID WiFi maksimal 32 karakter.',
-        ]);
-
-        if (empty($validated['ssid']) && empty($validated['password'])) {
-            return response()->json([
-                'message' => 'Masukkan Nama SSID atau Password baru yang ingin diperbarui.',
-            ], 422);
-        }
-
-        $pppoe = trim((string) $customer->pppoe_username);
-        if ($pppoe === '') {
-            return response()->json([
-                'message' => 'Akun pelanggan belum memiliki router PPPoE yang tertaut.',
-            ], 422);
-        }
-
-        try {
-            $device = $this->genieAcsService->findDeviceByPppoe($pppoe);
-            if (!$device) {
-                return response()->json([
-                    'message' => 'Router pelanggan sedang offline atau belum terdeteksi di server.',
-                ], 404);
-            }
-
-            $deviceId = $device['_id'];
-            $result = $this->genieAcsService->updateDeviceWifi($deviceId, $validated);
-
-            $this->auditLogService->log('customer_portal.wifi_updated', $customer, [
-                'customer_id' => $customer->id,
-                'device_id' => $deviceId,
-                'ssid_changed' => !empty($validated['ssid']),
-                'password_changed' => !empty($validated['password']),
-            ]);
-
-            return response()->json([
-                'message' => 'Kata sandi / SSID WiFi baru berhasil dikirim ke router Anda!',
-                'data' => $result,
-            ]);
-        } catch (GenieAcsException $e) {
-            return response()->json([
-                'message' => $e->getMessage(),
-            ], $e->status());
-        } catch (\Throwable $e) {
-            report($e);
-            return response()->json([
-                'message' => 'Gagal memperbarui konfigurasi WiFi: ' . $e->getMessage(),
-            ], 500);
-        }
+        return response()->json([
+            'message' => 'Fitur ganti kata sandi WiFi melalui portal pelanggan telah dinonaktifkan. Halaman ini saat ini difungsikan khusus untuk monitoring layanan. Silakan hubungi Customer Service jika Anda memerlukan perubahan kata sandi.',
+        ], 403);
     }
 
     /**
@@ -369,39 +310,9 @@ class CustomerPublicPortalController extends Controller
      */
     public function blockDevice(Request $request, string $token)
     {
-        $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
-
-        if (!$customer) {
-            return response()->json(['message' => 'Tautan akses portal pelanggan tidak valid.'], 404);
-        }
-
-        $validated = $request->validate([
-            'mac_address' => ['required', 'string', 'regex:/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/'],
-            'reason' => ['nullable', 'string', 'max:100'],
-        ]);
-
-        $pppoe = trim((string) $customer->pppoe_username);
-        $device = $pppoe ? $this->genieAcsService->findDeviceByPppoe($pppoe) : null;
-
-        if (!$device) {
-            return response()->json(['message' => 'Router pelanggan tidak ditemukan.'], 404);
-        }
-
-        try {
-            $result = $this->genieAcsService->blockDeviceMac($device['_id'], $validated['mac_address'], $customer->id, $validated['reason'] ?? null);
-
-            $this->auditLogService->log('customer_portal.device_blocked', $customer, [
-                'customer_id' => $customer->id,
-                'mac_address' => $validated['mac_address'],
-            ]);
-
-            return response()->json([
-                'message' => "Perangkat dengan MAC {$validated['mac_address']} berhasil diblokir dari WiFi Anda.",
-                'data' => $result,
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Gagal memblokir perangkat: ' . $e->getMessage()], 500);
-        }
+        return response()->json([
+            'message' => 'Fitur blokir perangkat melalui portal pelanggan telah dinonaktifkan. Halaman ini saat ini difungsikan khusus untuk monitoring layanan. Silakan hubungi Customer Service jika Anda memerlukan bantuan.',
+        ], 403);
     }
 
     /**
@@ -409,38 +320,9 @@ class CustomerPublicPortalController extends Controller
      */
     public function unblockDevice(Request $request, string $token)
     {
-        $customer = $this->genieAcsService->resolveCustomerByPortalToken($token);
-
-        if (!$customer) {
-            return response()->json(['message' => 'Tautan akses portal pelanggan tidak valid.'], 404);
-        }
-
-        $validated = $request->validate([
-            'mac_address' => ['required', 'string', 'regex:/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/'],
-        ]);
-
-        $pppoe = trim((string) $customer->pppoe_username);
-        $device = $pppoe ? $this->genieAcsService->findDeviceByPppoe($pppoe) : null;
-
-        if (!$device) {
-            return response()->json(['message' => 'Router pelanggan tidak ditemukan.'], 404);
-        }
-
-        try {
-            $result = $this->genieAcsService->unblockDeviceMac($device['_id'], $validated['mac_address'], $customer->id);
-
-            $this->auditLogService->log('customer_portal.device_unblocked', $customer, [
-                'customer_id' => $customer->id,
-                'mac_address' => $validated['mac_address'],
-            ]);
-
-            return response()->json([
-                'message' => "Perangkat dengan MAC {$validated['mac_address']} berhasil dibuka blokirnya.",
-                'data' => $result,
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json(['message' => 'Gagal membuka blokir perangkat: ' . $e->getMessage()], 500);
-        }
+        return response()->json([
+            'message' => 'Fitur buka blokir perangkat melalui portal pelanggan telah dinonaktifkan. Halaman ini saat ini difungsikan khusus untuk monitoring layanan. Silakan hubungi Customer Service jika Anda memerlukan bantuan.',
+        ], 403);
     }
 
     /**
