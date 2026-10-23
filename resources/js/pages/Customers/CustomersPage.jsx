@@ -265,15 +265,22 @@ function CustomersPage() {
         }
     };
 
-    const handleDelete = async (id) => {
-        if (!confirm('Apakah Anda yakin ingin menghapus pelanggan ini?')) return;
+    const handleDelete = async (customerOrId) => {
+        const cust = typeof customerOrId === 'object' ? customerOrId : customers.find((c) => c.id === customerOrId);
+        const name = cust?.name || 'ini';
+        const id = typeof customerOrId === 'object' ? customerOrId.id : customerOrId;
+
+        const confirmMsg = `Apakah Anda yakin ingin menghapus pelanggan "${name}"?\n\nData pelanggan TIDAK akan hilang dari database. Pelanggan akan dipindahkan ke menu "Riwayat Pelanggan Dihapus" di Master dan dapat dipulihkan sewaktu-waktu.`;
+        if (!window.confirm(confirmMsg)) return;
+
+        const reason = window.prompt(`Alasan penghapusan untuk "${name}" (opsional, klik OK untuk lanjut):`, '') || '';
 
         try {
-            await customerService.delete(id);
-            setCustomers(customers.filter((c) => c.id !== id));
-            setSuccess('Pelanggan berhasil dihapus');
+            await customerService.delete(id, reason);
+            setCustomers((prev) => prev.filter((c) => c.id !== id));
+            setSuccess(`Pelanggan "${name}" berhasil dipindahkan ke Riwayat Pelanggan Dihapus.`);
         } catch (err) {
-            setError('Gagal menghapus pelanggan');
+            setError(err.response?.data?.message || 'Gagal menghapus pelanggan');
             console.error(err);
         }
     };

@@ -51,6 +51,7 @@ const AccessPolicyPage = lazy(() => import('./pages/Settings/AccessPolicyPage'))
 const CustomerPackageManagementPage = lazy(() => import('./pages/Settings/CustomerPackageManagementPage'));
 const CustomerPackageMigrationPage = lazy(() => import('./pages/Settings/CustomerPackageMigrationPage'));
 const CustomerAccountsPage = lazy(() => import('./pages/Settings/CustomerAccountsPage'));
+const DeletedCustomersPage = lazy(() => import('./pages/Settings/DeletedCustomersPage'));
 const SystemHealthPage = lazy(() => import('./pages/Settings/SystemHealthPage'));
 const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivityLogsPage'));
 const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
@@ -470,6 +471,7 @@ function App() {
                     <Route path="/settings/customer-package-management" element={<GuardedRoute permissionKey="customer.package_audit.view" element={<CustomerPackageManagementPage />} />} />
                     <Route path="/settings/customer-package-migration" element={<GuardedRoute permissionKey="customer.package_migration.manage" element={<CustomerPackageMigrationPage />} />} />
                     <Route path="/settings/customer-accounts" element={<GuardedRoute permissionKey="customer.account.manage" element={<CustomerAccountsPage />} />} />
+                    <Route path="/settings/deleted-customers" element={<GuardedRoute permissionKey="customer.view" allowedRoles={['superadmin', 'admin']} element={<DeletedCustomersPage />} />} />
                     <Route path="/settings/system-health" element={<GuardedRoute permissionKey="access_policy.manage" element={<SystemHealthPage />} />} />
                     <Route path="/settings/attendance" element={<GuardedRoute permissionKey="attendance.manage" allowedRoles={['superadmin']} element={<AttendanceManagementPage />} />} />
                     

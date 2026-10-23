@@ -73,7 +73,7 @@ class Invoice extends Model
     }
     public function customer()
     {
-        return $this->belongsTo(\App\Models\Customer::class);
+        return $this->belongsTo(\App\Models\Customer::class)->withTrashed();
     }
 
     public function receivedViaPaymentMethod()

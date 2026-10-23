@@ -299,6 +299,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::middleware('role:teknisi')->group(function () {
         // Customers API
         Route::get('/api/customers', [CustomerController::class, 'list'])->name('api.customers.list');
+        Route::get('/api/customers/deleted', [CustomerController::class, 'deletedList'])->name('api.customers.deleted');
+        Route::post('/api/customers/{id}/restore', [CustomerController::class, 'restore'])->name('api.customers.restore');
         Route::post('/api/customers', [CustomerController::class, 'store'])->name('api.customers.store');
         Route::post('/api/customers/active-status', [CustomerController::class, 'activeStatusBulk'])->name('api.customers.active-status');
         Route::get('/api/customers/{customer}', [CustomerController::class, 'show'])->name('api.customers.show');
@@ -730,6 +732,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/settings/master-olts', fn() => view('app'))->name('master-olts.settings');
         Route::get('/settings/customer-wifi-links', fn() => view('app'))->name('settings.customer-wifi-links');
         Route::get('/settings/master-pegawai', fn() => view('app'))->name('settings.master-pegawai');
+        Route::get('/settings/deleted-customers', fn() => view('app'))->name('settings.deleted-customers');
         Route::get('/master-pegawai', fn() => view('app'))->name('master-pegawai.alias');
 
         Route::prefix('api/master-pegawai')->group(function () {

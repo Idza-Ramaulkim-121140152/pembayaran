@@ -3,9 +3,12 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Customer extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'name', 'area_code', 'phone', 'email', 'due_date', 'is_active',
         'billing_auto_disabled',
@@ -19,7 +22,8 @@ class Customer extends Model
         'portal_login_enabled',
         'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
         'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp',
-        'olt_id', 'pon_port_id', 'olt_onu_id', 'odp_port_number', 'dropcore_cable_length_meters'
+        'olt_id', 'pon_port_id', 'olt_onu_id', 'odp_port_number', 'dropcore_cable_length_meters',
+        'deleted_by_user_id', 'delete_reason'
     ];
 
     protected $casts = [
@@ -244,5 +248,10 @@ class Customer extends Model
     public function onu()
     {
         return $this->belongsTo(\App\Models\OltOnu::class, 'olt_onu_id');
+    }
+
+    public function deletedBy()
+    {
+        return $this->belongsTo(User::class, 'deleted_by_user_id');
     }
 }

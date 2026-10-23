@@ -865,15 +865,94 @@ class CustomerController extends Controller
         }
     }
 
-    public function destroy($customerId)
+    public function destroy(Request $request, $customerId)
     {
         $customer = Customer::findOrFail($customerId);
+
+        // Catat user yang menghapus dan alasan (bila ada)
+        $customer->deleted_by_user_id = auth()->id();
+        $customer->delete_reason = $request->input('reason');
+        $customer->save();
+
+        // Lakukan Soft Delete sehingga data tetap tersimpan aman di database
         $customer->delete();
         
-        if (request()->wantsJson()) {
-            return response()->json(['message' => 'Customer deleted successfully']);
+        $this->auditLogService->log('customer.deleted', $customer, [
+            'customer_id' => $customer->id,
+            'name' => $customer->name,
+            'reason' => $customer->delete_reason,
+            'deleted_by' => auth()->user()?->name ?? 'System',
+        ]);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus. Data tetap tersimpan aman di database.",
+            ]);
         }
-        return redirect()->route('customers.list')->with('success', 'Pelanggan berhasil dihapus.');
+        return redirect()->route('customers.list')->with('success', "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus.");
+    }
+
+    /**
+     * Mengambil daftar riwayat pelanggan yang telah dihapus (soft-deleted).
+     */
+    public function deletedList(Request $request)
+    {
+        $query = Customer::onlyTrashed()
+            ->with([
+                'deletedBy:id,name,username',
+                'package:id,name,price,speed',
+                'desa:id,name',
+                'kecamatan:id,name',
+                'dusun:id,name'
+            ])
+            ->latest('deleted_at');
+
+        if ($search = trim((string) $request->input('search'))) {
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('pppoe_username', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('address', 'like', "%{$search}%")
+                  ->orWhere('area_code', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = max(10, min(100, (int) $request->input('per_page', 25)));
+        $paginated = $query->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $paginated->items(),
+            'current_page' => $paginated->currentPage(),
+            'last_page' => $paginated->lastPage(),
+            'total' => $paginated->total(),
+            'per_page' => $paginated->perPage(),
+        ]);
+    }
+
+    /**
+     * Memulihkan kembali pelanggan yang pernah dihapus (restore).
+     */
+    public function restore(Request $request, $customerId)
+    {
+        $customer = Customer::onlyTrashed()->findOrFail($customerId);
+        $customer->restore();
+        $customer->deleted_by_user_id = null;
+        $customer->delete_reason = null;
+        $customer->save();
+
+        $this->auditLogService->log('customer.restored', $customer, [
+            'customer_id' => $customer->id,
+            'name' => $customer->name,
+            'restored_by' => auth()->user()?->name ?? 'System',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Pelanggan '{$customer->name}' berhasil dipulihkan kembali ke daftar pelanggan aktif.",
+            'data' => $customer,
+        ]);
     }
 
     private function customerValidationRules(bool $requireAreaCode): array

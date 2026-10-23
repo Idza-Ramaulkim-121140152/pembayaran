@@ -34,6 +34,7 @@ import {
     QrCode,
     CheckCircle2,
     HardHat,
+    Trash2,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -87,6 +88,7 @@ const ACCESS = {
     masterMikrotik: ['superadmin', 'admin'],
     masterOlt: ['superadmin', 'admin'],
     customerWifiLinks: ['superadmin', 'admin'],
+    deletedCustomers: ['superadmin', 'admin'],
     packages: ['superadmin', 'admin'],
     promo: ['superadmin', 'admin'],
     userManagement: ['superadmin'],
@@ -149,6 +151,7 @@ const MENU_PERMISSION_MAP = {
     masterMikrotik: 'master.mikrotik.manage',
     masterOlt: 'master.mikrotik.manage',
     customerWifiLinks: 'master.customer_wifi_links.manage',
+    deletedCustomers: 'customer.view',
     packages: 'master.package.manage',
     promo: 'master.promo.manage',
     userManagement: 'user.manage',
@@ -228,6 +231,7 @@ const MENU_GROUPS = [
             { key: 'customerPackageManagement', label: 'Audit Paket Pelanggan', to: '/settings/customer-package-management', icon: Package, match: (p) => p === '/settings/customer-package-management' },
             { key: 'customerPackageMigration', label: 'Migrasi PPPoE Pelanggan', to: '/settings/customer-package-migration', icon: Activity, match: (p) => p === '/settings/customer-package-migration' },
             { key: 'customerAccountMapping', label: 'Mapping Akun Pelanggan', to: '/settings/customer-accounts', icon: Users, match: (p) => p === '/settings/customer-accounts' },
+            { key: 'deletedCustomers', label: 'Riwayat Pelanggan Dihapus', to: '/settings/deleted-customers', icon: Trash2, match: (p) => p === '/settings/deleted-customers' },
             { key: 'paymentMethods', label: 'Metode Pembayaran', to: '/settings/payment-methods', icon: CreditCard, match: (p) => p === '/settings/payment-methods' },
             { key: 'paymentReceipts', label: 'Receipt Pembayaran', to: '/settings/payment-receipts', icon: CreditCard, match: (p) => p === '/settings/payment-receipts' },
             { key: 'ipaymuIntegration', label: 'Payment Gateway iPaymu', to: '/settings/ipaymu-integration', icon: CreditCard, match: (p) => p.startsWith('/settings/ipaymu-integration') || p.startsWith('/settings/payment-gateway') },

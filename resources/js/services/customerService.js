@@ -48,8 +48,14 @@ export const customerService = {
         withCredentials: true,
     }),
 
-    // Delete customer
-    delete: (id) => apiClient.delete(`/customers/${id}`),
+    // Delete customer (soft delete, data tetap aman tersimpan)
+    delete: (id, reason = null) => apiClient.delete(`/customers/${id}`, { data: { reason } }),
+
+    // Get deleted customers history
+    getDeletedCustomers: (params = {}) => apiClient.get('/customers/deleted', { params }),
+
+    // Restore soft-deleted customer
+    restoreCustomer: (id) => apiClient.post(`/customers/${id}/restore`),
 
     // Get riwayat pembayaran customer
     getPaymentHistory: (id) => apiClient.get(`/customers/${id}/riwayat`),
