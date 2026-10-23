@@ -26,6 +26,7 @@ export default function DeletedCustomersPage() {
     const [loading, setLoading] = useState(true);
     const [restoringId, setRestoringId] = useState(null);
     const [error, setError] = useState('');
+    const [warning, setWarning] = useState('');
     const [success, setSuccess] = useState('');
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
@@ -42,6 +43,11 @@ export default function DeletedCustomersPage() {
                 per_page: targetPerPage,
             });
             const payload = res?.data;
+            if (payload?.warning) {
+                setWarning(payload.warning);
+            } else {
+                setWarning('');
+            }
             setRows(payload?.data || []);
             setPagination({
                 current_page: payload?.current_page || 1,
@@ -159,6 +165,20 @@ export default function DeletedCustomersPage() {
             {/* ALERTS */}
             {error && <Alert type="danger" message={error} onClose={() => setError('')} />}
             {success && <Alert type="success" message={success} onClose={() => setSuccess('')} />}
+            {warning && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex items-start gap-3 text-amber-900 text-xs shadow-xs">
+                    <ShieldAlert size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                        <p className="font-bold text-amber-800 text-sm">Perhatian: Database Server Perlu Migrasi</p>
+                        <p className="text-amber-700 leading-relaxed">
+                            {warning}
+                        </p>
+                        <p className="text-[11px] font-mono bg-amber-100/90 px-2 py-1 rounded text-amber-900 inline-block mt-1 border border-amber-300/80">
+                            php artisan migrate --force
+                        </p>
+                    </div>
+                </div>
+            )}
 
             {/* INFO BANNER */}
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 text-amber-900 text-xs">

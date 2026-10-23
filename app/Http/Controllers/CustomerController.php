@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class CustomerController extends Controller
@@ -867,30 +868,45 @@ class CustomerController extends Controller
 
     public function destroy(Request $request, $customerId)
     {
-        $customer = Customer::findOrFail($customerId);
+        try {
+            $customer = Customer::findOrFail($customerId);
 
-        // Catat user yang menghapus dan alasan (bila ada)
-        $customer->deleted_by_user_id = auth()->id();
-        $customer->delete_reason = $request->input('reason');
-        $customer->save();
+            // Catat user yang menghapus dan alasan jika kolom tersedia di database
+            if (Schema::hasColumn('customers', 'deleted_by_user_id')) {
+                $customer->deleted_by_user_id = auth()->id();
+            }
+            if (Schema::hasColumn('customers', 'delete_reason')) {
+                $customer->delete_reason = $request->input('reason');
+            }
+            $customer->save();
 
-        // Lakukan Soft Delete sehingga data tetap tersimpan aman di database
-        $customer->delete();
-        
-        $this->auditLogService->log('customer.deleted', $customer, [
-            'customer_id' => $customer->id,
-            'name' => $customer->name,
-            'reason' => $customer->delete_reason,
-            'deleted_by' => auth()->user()?->name ?? 'System',
-        ]);
-
-        if ($request->wantsJson()) {
-            return response()->json([
-                'success' => true,
-                'message' => "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus. Data tetap tersimpan aman di database.",
+            // Lakukan Soft Delete
+            $customer->delete();
+            
+            $this->auditLogService->log('customer.deleted', $customer, [
+                'customer_id' => $customer->id,
+                'name' => $customer->name,
+                'reason' => $customer->delete_reason ?? null,
+                'deleted_by' => auth()->user()?->name ?? 'System',
             ]);
+
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus. Data tetap tersimpan aman di database.",
+                ]);
+            }
+            return redirect()->route('customers.list')->with('success', "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus.");
+        } catch (\Throwable $e) {
+            report($e);
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal menghapus pelanggan: ' . $e->getMessage(),
+                ], 500);
+            }
+            return redirect()->back()->with('error', 'Gagal menghapus pelanggan: ' . $e->getMessage());
         }
-        return redirect()->route('customers.list')->with('success', "Pelanggan '{$customer->name}' berhasil dipindahkan ke Riwayat Pelanggan Dihapus.");
     }
 
     /**
@@ -898,37 +914,59 @@ class CustomerController extends Controller
      */
     public function deletedList(Request $request)
     {
-        $query = Customer::onlyTrashed()
-            ->with([
-                'deletedBy:id,name,username',
-                'package:id,name,price,speed',
-                'desa:id,name',
-                'kecamatan:id,name',
-                'dusun:id,name'
-            ])
-            ->latest('deleted_at');
+        try {
+            // Cek jika tabel customers belum memiliki kolom deleted_at (sebelum migration dijalankan)
+            if (!Schema::hasColumn('customers', 'deleted_at')) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [],
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'total' => 0,
+                    'per_page' => 25,
+                    'migration_required' => true,
+                    'warning' => 'Kolom deleted_at belum terpasang di database. Silakan jalankan php artisan migrate di server.',
+                ]);
+            }
 
-        if ($search = trim((string) $request->input('search'))) {
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('pppoe_username', 'like', "%{$search}%")
-                  ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('address', 'like', "%{$search}%")
-                  ->orWhere('area_code', 'like', "%{$search}%");
-            });
+            $query = Customer::onlyTrashed()
+                ->with([
+                    'deletedBy:id,name,email',
+                    'package:id,name,price,speed',
+                    'desa:id,name',
+                    'kecamatan:id,name',
+                    'dusun:id,name'
+                ])
+                ->latest('deleted_at');
+
+            if ($search = trim((string) $request->input('search'))) {
+                $query->where(function($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('pppoe_username', 'like', "%{$search}%")
+                      ->orWhere('phone', 'like', "%{$search}%")
+                      ->orWhere('address', 'like', "%{$search}%")
+                      ->orWhere('area_code', 'like', "%{$search}%");
+                });
+            }
+
+            $perPage = max(10, min(100, (int) $request->input('per_page', 25)));
+            $paginated = $query->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $paginated->items(),
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'total' => $paginated->total(),
+                'per_page' => $paginated->perPage(),
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memuat riwayat pelanggan dihapus: ' . $e->getMessage(),
+            ], 500);
         }
-
-        $perPage = max(10, min(100, (int) $request->input('per_page', 25)));
-        $paginated = $query->paginate($perPage);
-
-        return response()->json([
-            'success' => true,
-            'data' => $paginated->items(),
-            'current_page' => $paginated->currentPage(),
-            'last_page' => $paginated->lastPage(),
-            'total' => $paginated->total(),
-            'per_page' => $paginated->perPage(),
-        ]);
     }
 
     /**
@@ -936,23 +974,43 @@ class CustomerController extends Controller
      */
     public function restore(Request $request, $customerId)
     {
-        $customer = Customer::onlyTrashed()->findOrFail($customerId);
-        $customer->restore();
-        $customer->deleted_by_user_id = null;
-        $customer->delete_reason = null;
-        $customer->save();
+        try {
+            if (!Schema::hasColumn('customers', 'deleted_at')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Fitur pemulihan membutuhkan kolom deleted_at. Silakan jalankan php artisan migrate di server.',
+                ], 400);
+            }
 
-        $this->auditLogService->log('customer.restored', $customer, [
-            'customer_id' => $customer->id,
-            'name' => $customer->name,
-            'restored_by' => auth()->user()?->name ?? 'System',
-        ]);
+            $customer = Customer::onlyTrashed()->findOrFail($customerId);
+            $customer->restore();
 
-        return response()->json([
-            'success' => true,
-            'message' => "Pelanggan '{$customer->name}' berhasil dipulihkan kembali ke daftar pelanggan aktif.",
-            'data' => $customer,
-        ]);
+            if (Schema::hasColumn('customers', 'deleted_by_user_id')) {
+                $customer->deleted_by_user_id = null;
+            }
+            if (Schema::hasColumn('customers', 'delete_reason')) {
+                $customer->delete_reason = null;
+            }
+            $customer->save();
+
+            $this->auditLogService->log('customer.restored', $customer, [
+                'customer_id' => $customer->id,
+                'name' => $customer->name,
+                'restored_by' => auth()->user()?->name ?? 'System',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Pelanggan '{$customer->name}' berhasil dipulihkan kembali ke daftar pelanggan aktif.",
+                'data' => $customer,
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memulihkan pelanggan: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     private function customerValidationRules(bool $requireAreaCode): array
