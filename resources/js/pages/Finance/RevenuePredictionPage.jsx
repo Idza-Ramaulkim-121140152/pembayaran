@@ -22,14 +22,17 @@ import {
 } from 'lucide-react';
 import { Bar } from 'react-chartjs-2';
 import {
+    BarController,
     BarElement,
     CategoryScale,
     Chart as ChartJS,
     Filler,
     Legend,
     LinearScale,
+    LineController,
     LineElement,
     PointElement,
+    registerables,
     Title,
     Tooltip,
 } from 'chart.js';
@@ -38,11 +41,14 @@ import Alert from '../../components/common/Alert';
 import revenuePredictionService from '../../services/revenuePredictionService';
 
 ChartJS.register(
+    ...(registerables || []),
     CategoryScale,
     LinearScale,
     PointElement,
     LineElement,
     BarElement,
+    LineController,
+    BarController,
     Title,
     Tooltip,
     Legend,
