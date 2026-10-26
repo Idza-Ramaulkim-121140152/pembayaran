@@ -4,7 +4,7 @@ import {
     User, Calendar, MapPin, Wifi, CreditCard,
     MessageCircle, ChevronRight, ChevronLeft, ArrowUpDown, ArrowUp, ArrowDown, History,
     CheckCircle, Clock, XCircle, Router, Gift, Download, MoreVertical,
-    RefreshCw, FileText, Upload, KeyRound, EyeOff
+    RefreshCw, FileText, Upload, KeyRound, EyeOff, ExternalLink
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -38,6 +38,7 @@ function CustomersPage() {
     const [filterStatus, setFilterStatus] = useState('all'); // all, active, inactive
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [showDetail, setShowDetail] = useState(false);
+    const [photoModal, setPhotoModal] = useState({ open: false, url: '', title: '' });
     const [showHistory, setShowHistory] = useState(false);
     const [paymentHistory, setPaymentHistory] = useState([]);
     const [loadingHistory, setLoadingHistory] = useState(false);
@@ -1406,6 +1407,41 @@ function CustomersPage() {
                                     <Calendar size={16} className="text-gray-400" />
                                     <span className="text-gray-700">Jatuh tempo: {customer.due_date || '-'}</span>
                                 </div>
+
+                                {/* Foto Depan Rumah (hanya tampil jika ada data registrasi) */}
+                                {customer.foto_depan_rumah && (
+                                    <div className="pt-2 border-t border-gray-100">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPhotoModal({
+                                                open: true,
+                                                url: customer.foto_depan_rumah,
+                                                title: `Foto Depan Rumah - ${customer.name}`
+                                            })}
+                                            className="group relative w-full h-28 rounded-xl overflow-hidden border border-gray-200 bg-gray-50 block focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            title="Klik untuk memperbesar foto depan rumah"
+                                        >
+                                            <img
+                                                src={customer.foto_depan_rumah}
+                                                alt={`Foto Depan Rumah ${customer.name}`}
+                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                                loading="lazy"
+                                                onError={(e) => {
+                                                    const parent = e.currentTarget.closest('.pt-2');
+                                                    if (parent) parent.style.display = 'none';
+                                                }}
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent opacity-85 group-hover:opacity-100 transition-opacity flex items-end justify-between p-2.5">
+                                                <span className="text-white text-xs font-medium flex items-center gap-1.5 drop-shadow">
+                                                    <Eye size={14} /> Foto Depan Rumah
+                                                </span>
+                                                <span className="text-[10px] bg-white/20 backdrop-blur-sm text-white px-1.5 py-0.5 rounded">
+                                                    Lihat Foto
+                                                </span>
+                                            </div>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Card Footer */}
@@ -2188,6 +2224,37 @@ function CustomersPage() {
                                 </div>
                             </div>
 
+                            {/* Foto Depan Rumah */}
+                            {selectedCustomer.foto_depan_rumah && (
+                                <div className="mt-6 pt-6 border-t border-gray-200">
+                                    <h3 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
+                                        <Eye size={18} className="text-blue-600" />
+                                        Foto Depan Rumah
+                                    </h3>
+                                    <div className="max-w-md">
+                                        <button
+                                            type="button"
+                                            onClick={() => setPhotoModal({
+                                                open: true,
+                                                url: selectedCustomer.foto_depan_rumah,
+                                                title: `Foto Depan Rumah - ${selectedCustomer.name}`
+                                            })}
+                                            className="group relative w-full h-48 rounded-xl overflow-hidden border border-gray-200 bg-gray-50 block focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            title="Klik untuk memperbesar foto depan rumah"
+                                        >
+                                            <img
+                                                src={selectedCustomer.foto_depan_rumah}
+                                                alt={`Foto Depan Rumah ${selectedCustomer.name}`}
+                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                            />
+                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-sm font-semibold">
+                                                <Eye size={18} className="mr-1.5" /> Klik untuk memperbesar
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Lokasi */}
                             {(selectedCustomer.latitude && selectedCustomer.longitude) && (
                                 <div className="mt-6 pt-6 border-t border-gray-200">
@@ -2739,6 +2806,50 @@ function CustomersPage() {
                                     Hubungi Tim Teknis
                                 </button>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* PHOTO PREVIEW MODAL */}
+            {photoModal.open && (
+                <div 
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+                    onClick={() => setPhotoModal({ open: false, url: '', title: '' })}
+                >
+                    <div 
+                        className="bg-white rounded-2xl overflow-hidden max-w-2xl w-full p-4 space-y-3 shadow-2xl animate-in fade-in zoom-in-95 duration-150"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                            <h4 className="text-sm font-bold text-gray-900 truncate pr-2">{photoModal.title}</h4>
+                            <div className="flex items-center gap-2">
+                                <a
+                                    href={photoModal.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 transition"
+                                    title="Buka gambar di tab baru"
+                                >
+                                    <ExternalLink size={13} />
+                                    <span>Buka Penuh</span>
+                                </a>
+                                <button 
+                                    type="button"
+                                    onClick={() => setPhotoModal({ open: false, url: '', title: '' })} 
+                                    className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+                                    title="Tutup"
+                                >
+                                    <X size={18} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex items-center justify-center bg-gray-950/5 rounded-xl overflow-hidden">
+                            <img 
+                                src={photoModal.url} 
+                                alt="Preview Foto Rumah" 
+                                className="w-full max-h-[72vh] object-contain rounded-xl"
+                            />
                         </div>
                     </div>
                 </div>

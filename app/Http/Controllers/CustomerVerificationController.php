@@ -721,7 +721,11 @@ class CustomerVerificationController extends Controller
             $validated['mikrotik_profile'] = $profileName;
 
             DB::beginTransaction();
-            $customer = Customer::create(Arr::except($validated, [
+            $frontPhoto = $validated['contract_photo_front_url'] 
+                ?? ($validated['photo_front_url'] 
+                ?? ($validated['foto_depan_rumah'] ?? null));
+
+            $customerPayload = Arr::except($validated, [
                 'contract_ktp_number',
                 'contract_router_mac',
                 'contract_device_serial',
@@ -730,7 +734,12 @@ class CustomerVerificationController extends Controller
                 'contract_photo_modem_url',
                 'contract_photo_ktp_url',
                 'contract_installation_photos',
-            ]));
+            ]);
+            if (!empty($frontPhoto)) {
+                $customerPayload['foto_depan_rumah'] = $frontPhoto;
+            }
+
+            $customer = Customer::create($customerPayload);
 
             $installationMutation = null;
             if ($installationPaymentFlow['enabled']) {
@@ -837,6 +846,20 @@ class CustomerVerificationController extends Controller
                     $request->file('contract_installation_photos', []),
                     auth()->id()
                 );
+
+                if ($agreement && empty($customer->foto_depan_rumah)) {
+                    $photoLinks = $agreement->customer_data['photo_links'] ?? [];
+                    if (is_array($photoLinks)) {
+                        foreach ($photoLinks as $link) {
+                            $label = strtolower(trim((string) ($link['label'] ?? '')));
+                            $key = strtolower(trim((string) ($link['key'] ?? '')));
+                            if ((str_contains($label, 'depan') || str_contains($key, 'front')) && !empty($link['url'])) {
+                                $customer->update(['foto_depan_rumah' => $link['url']]);
+                                break;
+                            }
+                        }
+                    }
+                }
             } catch (\Throwable $agreementException) {
                 Log::warning('Failed to generate customer agreement after verification', [
                     'customer_id' => $customer->id,

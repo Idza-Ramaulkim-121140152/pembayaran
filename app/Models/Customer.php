@@ -23,7 +23,7 @@ class Customer extends Model
         'home_router_wan_interface', 'home_router_monitoring_enabled', 'odp',
         'odp_id', 'package_id', 'installation_fee', 'latitude', 'longitude', 'google_sheets_timestamp',
         'olt_id', 'pon_port_id', 'olt_onu_id', 'odp_port_number', 'dropcore_cable_length_meters',
-        'deleted_by_user_id', 'delete_reason'
+        'deleted_by_user_id', 'delete_reason', 'foto_depan_rumah'
     ];
 
     protected $casts = [
@@ -51,7 +51,7 @@ class Customer extends Model
         'portal_login_enabled' => 'boolean',
     ];
 
-    protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo', 'wilayah_lengkap', 'odp_full_text'];
+    protected $appends = ['nama', 'alamat', 'no_telp', 'user_pppoe', 'paket', 'harga', 'tanggal_jatuh_tempo', 'wilayah_lengkap', 'odp_full_text', 'foto_depan_rumah'];
     protected $hidden = ['home_router_password', 'mobile_password'];
 
     public function getWilayahLengkapAttribute(): string
@@ -253,5 +253,70 @@ class Customer extends Model
     public function deletedBy()
     {
         return $this->belongsTo(User::class, 'deleted_by_user_id');
+    }
+
+    public function prospect()
+    {
+        return $this->hasOne(CustomerProspect::class, 'registration_no', 'google_sheets_timestamp');
+    }
+
+    public function getFotoDepanRumahAttribute(): ?string
+    {
+        // 1. Kolom langsung di tabel customers jika ada
+        $direct = $this->attributes['foto_depan_rumah'] ?? ($this->attributes['photo_front'] ?? null);
+        if (!empty($direct)) {
+            return $this->formatPhotoUrl($direct);
+        }
+
+        // 2. Ambil dari CustomerAgreement (Kontrak)
+        try {
+            $agreement = $this->relationLoaded('latestAgreement') ? $this->latestAgreement : null;
+            if ($agreement) {
+                $photoLinks = $agreement->customer_data['photo_links'] ?? [];
+                foreach ($photoLinks as $link) {
+                    $label = strtolower(trim((string) ($link['label'] ?? '')));
+                    $key = strtolower(trim((string) ($link['key'] ?? '')));
+                    if ((str_contains($label, 'depan') || str_contains($key, 'front')) && !empty($link['url'])) {
+                        return $this->formatPhotoUrl($link['url']);
+                    }
+                }
+            }
+        } catch (\Throwable) {}
+
+        // 3. Ambil dari CustomerProspect jika berelasi
+        try {
+            $prospect = $this->relationLoaded('prospect') ? $this->prospect : null;
+            if ($prospect && !empty($prospect->foto_depan_rumah)) {
+                return $this->formatPhotoUrl($prospect->foto_depan_rumah);
+            }
+        } catch (\Throwable) {}
+
+        return null;
+    }
+
+    public function formatPhotoUrl(?string $url): ?string
+    {
+        $clean = trim((string) $url);
+        if ($clean === '') {
+            return null;
+        }
+
+        // Konversi tautan Google Drive menjadi URL thumbnail langsung agar bisa di-render di tag <img>
+        if (preg_match('~/file/d/([^/&?]+)~', $clean, $m) || preg_match('~[?&]id=([^&]+)~', $clean, $m)) {
+            $fileId = $m[1];
+            return 'https://drive.google.com/thumbnail?id=' . rawurlencode($fileId) . '&sz=w800';
+        }
+
+        // Jika sudah berupa URL absolut HTTP/HTTPS atau Data URI
+        if (str_starts_with($clean, 'http://') || str_starts_with($clean, 'https://') || str_starts_with($clean, 'data:')) {
+            return $clean;
+        }
+
+        // Jika berupa relative path penyimpanan lokal (storage)
+        try {
+            return url(\Illuminate\Support\Facades\Storage::url($clean));
+        } catch (\Throwable) {
+            return $clean;
+        }
     }
 }

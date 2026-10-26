@@ -39,7 +39,7 @@ class CustomerController extends Controller
         
         // Check if this is an API request
         if (request('api') || request()->wantsJson()) {
-            $customers = $query->get();
+            $customers = $query->with(['latestAgreement', 'prospect'])->get();
             $isolatedUsernameMap = [];
             $today = Carbon::today()->startOfDay();
 
@@ -297,6 +297,8 @@ class CustomerController extends Controller
 
     public function show(Customer $customer)
     {
+        $customer->loadMissing(['latestAgreement', 'prospect']);
+
         // Get last paid invoice
         $lastPaidInvoice = $customer->invoices()
             ->where('status', 'paid')
