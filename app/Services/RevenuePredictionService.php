@@ -308,11 +308,26 @@ class RevenuePredictionService
                 }
 
                 // Jika tanggal estimasi jatuh di masa lalu (< today) tetapi pelanggan belum bayar:
-                // Artinya pelanggan sedang OVERDUE / terlambat!
-                // Pelanggan overdue akan membayar pada hari-hari awal rentang berjalan atau masa gajian terdekat.
+                // Artinya pelanggan sedang OVERDUE / menunggak dari siklus sebelumnya.
+                // Dalam operasional ISP, pelanggan menunggak tidak membayar sekaligus di hari ini,
+                // melainkan terdistribusi secara realistis:
+                // 1. Baru terlambat (1-5 hari): bayar dalam 1-2 hari ke depan
+                // 2. Terlambat sedang (6-15 hari): bayar saat masa gajian akhir bulan (tanggal 27-31)
+                // 3. Terlambat lama (> 15 hari): bayar saat tindakan isolir awal bulan berikutnya (tanggal 1-5)
                 if ($estimatedPayDate->lt($today)) {
-                    // Pindahkan ke tanggal masa kini / hari-hari pertama rentang
-                    $estimatedPayDate = $today->copy();
+                    $daysOverdue = (int) $nominalDueDate->diffInDays($today);
+
+                    if ($daysOverdue <= 5) {
+                        $stagger = (int) ($customer->id % 3);
+                        $estimatedPayDate = $today->copy()->addDays($stagger);
+                    } elseif ($daysOverdue <= 15) {
+                        $stagger = 1 + (int) ($customer->id % 5);
+                        $estimatedPayDate = $today->copy()->addDays($stagger);
+                    } else {
+                        $nextMonthStart = $today->copy()->addMonth()->startOfMonth();
+                        $stagger = (int) ($customer->id % 5);
+                        $estimatedPayDate = $nextMonthStart->copy()->addDays($stagger);
+                    }
                 }
 
                 // Cek apakah tanggal estimasi bayar jatuh DALAM rentang [$start, $end]
