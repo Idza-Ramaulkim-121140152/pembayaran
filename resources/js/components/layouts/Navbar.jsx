@@ -35,6 +35,7 @@ import {
     CheckCircle2,
     HardHat,
     Trash2,
+    TrendingUp,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -62,6 +63,7 @@ const ACCESS = {
     payroll: ['superadmin', 'admin', 'finance'],
     mutasi: ['superadmin', 'admin', 'finance'],
     cashCalendar: ['superadmin', 'admin', 'finance'],
+    revenuePrediction: ['superadmin', 'admin', 'finance'],
     reconciliation: ['superadmin', 'admin', 'finance'],
     pinjaman: ['superadmin', 'admin', 'finance'],
     odp: ['superadmin', 'admin', 'teknisi'],
@@ -125,6 +127,7 @@ const MENU_PERMISSION_MAP = {
     payroll: 'payroll.view',
     mutasi: 'finance.mutation.view',
     cashCalendar: 'finance.mutation.view',
+    revenuePrediction: 'finance.mutation.view',
     reconciliation: 'finance.mutation.view',
     pinjaman: 'finance.mutation.view',
     odp: 'odp.view',
@@ -198,6 +201,7 @@ const MENU_GROUPS = [
         icon: Wallet,
         items: [
             { key: 'penagihan', label: 'Penagihan', to: '/penagihan', icon: CreditCard, match: (p) => p.startsWith('/penagihan') || p.startsWith('/billing') },
+            { key: 'revenuePrediction', label: 'Prediksi Pendapatan', to: '/prediksi-pendapatan', icon: TrendingUp, match: (p) => p.startsWith('/prediksi-pendapatan') || p.startsWith('/keuangan/prediksi-pendapatan') },
             { key: 'cashCalendar', label: 'Kalender Kas', to: '/kalender-kas', icon: Landmark, match: (p) => p.startsWith('/kalender-kas') },
             { key: 'reconciliation', label: 'Rekonsiliasi', to: '/rekonsiliasi', icon: Shield, match: (p) => p.startsWith('/rekonsiliasi') },
             { key: 'pengeluaran', label: 'Pengeluaran', to: '/pengeluaran', icon: Wallet, match: (p) => p.startsWith('/pengeluaran') },

@@ -260,6 +260,11 @@ class Customer extends Model
         return $this->hasOne(CustomerProspect::class, 'registration_no', 'google_sheets_timestamp');
     }
 
+    public function paymentBehaviorProfile()
+    {
+        return $this->hasOne(CustomerPaymentBehaviorProfile::class);
+    }
+
     public function getFotoDepanRumahAttribute(): ?string
     {
         // 1. Kolom langsung di tabel customers jika ada

@@ -68,6 +68,7 @@ const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
 const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
 const MutasiPage = lazy(() => import('./pages/Finance/MutasiPage'));
 const CashObligationCalendarPage = lazy(() => import('./pages/Finance/CashObligationCalendarPage'));
+const RevenuePredictionPage = lazy(() => import('./pages/Finance/RevenuePredictionPage'));
 const ReconciliationCenterPage = lazy(() => import('./pages/Finance/ReconciliationCenterPage'));
 const ReportsPage = lazy(() => import('./pages/Reports/ReportsPage'));
 const DistributionRoutePage = lazy(() => import('./pages/DistributionRoute/DistributionRoutePage'));
@@ -496,8 +497,10 @@ function App() {
                     <Route path="/inventori" element={<GuardedRoute permissionKey="inventory.view" element={<InventoryPage />} />} />
                     <Route path="/inventori/master" element={<GuardedRoute permissionKey="inventory.master.manage" element={<InventoryMasterPage />} />} />
 
-                    {/* Mutasi */}
+                    {/* Mutasi & Keuangan */}
                     <Route path="/mutasi" element={<GuardedRoute permissionKey="finance.mutation.view" element={<MutasiPage />} />} />
+                    <Route path="/prediksi-pendapatan" element={<GuardedRoute permissionKey="finance.mutation.view" element={<RevenuePredictionPage />} />} />
+                    <Route path="/keuangan/prediksi-pendapatan" element={<GuardedRoute permissionKey="finance.mutation.view" element={<RevenuePredictionPage />} />} />
                     <Route path="/kalender-kas" element={<GuardedRoute permissionKey="finance.mutation.view" element={<CashObligationCalendarPage />} />} />
                     <Route path="/rekonsiliasi" element={<GuardedRoute permissionKey="finance.mutation.view" element={<ReconciliationCenterPage />} />} />
                     <Route path="/pinjaman" element={<GuardedRoute permissionKey="finance.mutation.view" element={<BorrowerLoansPage />} />} />

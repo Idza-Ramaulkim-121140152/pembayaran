@@ -614,6 +614,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/laporan/pelanggan-nonaktif', fn() => view('app'))->name('reports.inactive-customers.index');
         Route::get('/laporan/project', fn() => view('app'))->name('reports.project.index');
         Route::get('/kalender-kas', fn() => view('app'))->name('cash-obligation-calendar.index');
+        Route::get('/prediksi-pendapatan', fn() => view('app'))->name('revenue-prediction.index');
+        Route::get('/keuangan/prediksi-pendapatan', fn() => view('app'))->name('revenue-prediction.alias');
         Route::get('/rekonsiliasi', fn() => view('app'))->name('reconciliation-center.index');
         Route::get('/api/reports/summary', [ReportController::class, 'summary'])->name('api.reports.summary');
         Route::get('/api/reports/customer-income', [ReportController::class, 'customerIncome'])->name('api.reports.customer-income');
@@ -639,6 +641,10 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/reconciliation-center/refresh', [ReconciliationCenterController::class, 'refresh'])->name('api.reconciliation-center.refresh');
         Route::patch('/api/reconciliation-center/issues/{issue}/status', [ReconciliationCenterController::class, 'updateStatus'])->name('api.reconciliation-center.issues.status');
         Route::post('/api/reconciliation-center/issues/{issue}/actions/{action}', [ReconciliationCenterController::class, 'performAction'])->name('api.reconciliation-center.issues.actions');
+
+        // Prediksi Pendapatan Pintar (Smart Revenue Prediction)
+        Route::get('/api/revenue-prediction', [\App\Http\Controllers\RevenuePredictionController::class, 'index'])->name('api.revenue-prediction.index');
+        Route::post('/api/revenue-prediction/recalculate', [\App\Http\Controllers\RevenuePredictionController::class, 'recalculate'])->name('api.revenue-prediction.recalculate');
 
         Route::get('/api/dashboard/prediction-bundle', [DashboardController::class, 'predictionBundle'])->name('api.dashboard.prediction-bundle');
         Route::get('/api/dashboard/revenue-forecast', [DashboardController::class, 'revenueForecast'])->name('api.dashboard.revenue-forecast');
