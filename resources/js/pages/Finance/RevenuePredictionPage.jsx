@@ -90,8 +90,14 @@ function getCurrentMonthString() {
 function RevenuePredictionPage() {
     const [month, setMonth] = useState(getCurrentMonthString());
     const [rangeMode, setRangeMode] = useState('month'); // 'month' or 'custom'
-    const [customStartDate, setCustomStartDate] = useState('');
-    const [customEndDate, setCustomEndDate] = useState('');
+    const [customStartDate, setCustomStartDate] = useState(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    });
+    const [customEndDate, setCustomEndDate] = useState(() => {
+        const now = new Date();
+        return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    });
 
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
