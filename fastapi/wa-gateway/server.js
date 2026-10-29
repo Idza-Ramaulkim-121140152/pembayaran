@@ -38,6 +38,8 @@ let waStatus = {
 const PAYMENT_WEBHOOK_URL = process.env.WA_PAYMENT_WEBHOOK_URL || ((process.env.APP_URL || 'http://localhost').replace(/\/+$/, '') + '/api/whatsapp/webhooks/payments');
 const PAYMENT_WEBHOOK_SECRET = process.env.WA_PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_FORWARD_ENABLED = String(process.env.WA_PAYMENT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
+const NIGHT_SUPPORT_WEBHOOK_URL = process.env.WA_NIGHT_SUPPORT_WEBHOOK_URL || ((process.env.APP_URL || 'http://localhost').replace(/\/+$/, '') + '/api/whatsapp/webhooks/night-support');
+const NIGHT_SUPPORT_FORWARD_ENABLED = String(process.env.WA_NIGHT_SUPPORT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
 const SUPPORTED_PAYMENT_MIME_TYPES = [
     'image/jpeg',
     'image/jpg',
@@ -1212,6 +1214,62 @@ async function postToWebhook(payload, headers) {
     throw lastError || new Error('Semua target webhook URL gagal dihubungi.');
 }
 
+function getNightSupportCandidateUrls() {
+    const urls = [];
+    if (process.env.WA_NIGHT_SUPPORT_WEBHOOK_URL) {
+        urls.push(process.env.WA_NIGHT_SUPPORT_WEBHOOK_URL.trim());
+    }
+    if (process.env.APP_URL) {
+        const appUrl = process.env.APP_URL.trim().replace(/\/+$/, '');
+        urls.push(`${appUrl}/api/whatsapp/webhooks/night-support`);
+    }
+    urls.push('https://rumahkitanet.my.id/api/whatsapp/webhooks/night-support');
+    urls.push('http://127.0.0.1/api/whatsapp/webhooks/night-support');
+    urls.push('http://localhost/api/whatsapp/webhooks/night-support');
+    urls.push('http://127.0.0.1:8000/api/whatsapp/webhooks/night-support');
+
+    return [...new Set(urls.filter(Boolean))];
+}
+
+async function postToNightSupportWebhook(payload, headers) {
+    const candidateUrls = getNightSupportCandidateUrls();
+    let lastError = null;
+
+    for (const targetUrl of candidateUrls) {
+        try {
+            console.log(`🌙 [Night Support] Mencoba forward ke ${targetUrl}...`);
+            let res = await fetch(targetUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload),
+                redirect: 'manual',
+            });
+
+            if ([301, 302, 307, 308].includes(res.status) && res.headers.has('location')) {
+                const redirectedUrl = new URL(res.headers.get('location'), targetUrl).toString();
+                res = await fetch(redirectedUrl, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(payload),
+                });
+            }
+
+            const bodyText = await res.text();
+            if (res.ok) {
+                return { ok: true, status: res.status, url: targetUrl, body: bodyText };
+            }
+
+            console.warn(`⚠️ Target night webhook ${targetUrl} mengembalikan [${res.status}]: ${bodyText.substring(0, 150)}`);
+            lastError = new Error(`HTTP ${res.status}: ${bodyText}`);
+        } catch (err) {
+            console.warn(`⚠️ Gagal menghubungi target night webhook ${targetUrl}: ${err.message}`);
+            lastError = err;
+        }
+    }
+
+    throw lastError || new Error('Semua target night webhook URL gagal dihubungi.');
+}
+
 async function handleInboundCandidate(sourceEvent, msg) {
     const isSelf = isSelfChatMessage(msg);
     const context = buildMessageContext(msg, sourceEvent);
@@ -1247,16 +1305,71 @@ async function handleInboundCandidate(sourceEvent, msg) {
     console.log(`📩 [${sourceEvent}] Pesan terdeteksi dari ${senderDisplay} (media: ${context.has_media}): "${context.body_preview}"`);
 
     try {
-        const result = await maybeForwardPaymentMessage(msg, sourceEvent, context);
-        if (result?.forwarded || result?.canRetry === false) {
-            markMessageAsProcessed(context.message_id, sourceEvent);
+        if (context.has_media) {
+            // Jalur 1: Pesan dengan lampiran gambar/file bukti transfer
+            const result = await maybeForwardPaymentMessage(msg, sourceEvent, context);
+            if (result?.forwarded || result?.canRetry === false) {
+                markMessageAsProcessed(context.message_id, sourceEvent);
+            }
+        } else {
+            // Jalur 2: Pesan teks biasa -> Teruskan ke AI Mode Jaga Malam (21:00 - 08:00 WIB)
+            const result = await maybeForwardNightSupportMessage(msg, sourceEvent, context);
+            if (result?.forwarded || result?.canRetry === false) {
+                markMessageAsProcessed(context.message_id, sourceEvent);
+            }
         }
     } catch (err) {
         logGatewayEvent('forward_exception', {
             ...context,
             error: err.message,
         });
-        console.error(`❌ Error forwarding payment webhook dari ${sourceEvent}:`, err.message);
+        console.error(`❌ Error forwarding inbound webhook dari ${sourceEvent}:`, err.message);
+    }
+}
+
+async function maybeForwardNightSupportMessage(msg, sourceEvent = null, baseContext = null) {
+    const context = baseContext || buildMessageContext(msg, sourceEvent);
+
+    if (!NIGHT_SUPPORT_FORWARD_ENABLED) {
+        return { forwarded: false, canRetry: false };
+    }
+
+    if (!msg || !msg.from || msg.from.includes('@g.us') || msg.from === 'status@broadcast') {
+        return { forwarded: false, canRetry: false };
+    }
+
+    const textBody = String(msg.body || '').trim();
+    if (!textBody) {
+        return { forwarded: false, canRetry: false };
+    }
+
+    const senderDetails = await resolveSenderDetails(msg);
+    const senderPhone = senderDetails.phone || (senderDetails.lid ? `0${senderDetails.lid}` : normalizeInboundPhone(msg.from));
+
+    const payload = {
+        message_id: getMessageId(msg) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        sender_phone: senderPhone,
+        sender_lid: senderDetails.lid || null,
+        sender_name: senderDetails.name || null,
+        message: textBody,
+        timestamp: msg.timestamp || Math.floor(Date.now() / 1000),
+    };
+
+    const headers = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+    };
+    if (PAYMENT_WEBHOOK_SECRET) {
+        headers['X-Webhook-Secret'] = PAYMENT_WEBHOOK_SECRET;
+    }
+
+    try {
+        const postResult = await postToNightSupportWebhook(payload, headers);
+        console.log(`🌙 [Night Support] Pesan teks berhasil diteruskan dari ${senderPhone} [${postResult.status}]`);
+        return { forwarded: true, canRetry: false };
+    } catch (err) {
+        console.warn(`⚠️ [Night Support] Gagal meneruskan pesan teks: ${err.message}`);
+        return { forwarded: false, canRetry: true };
     }
 }
 

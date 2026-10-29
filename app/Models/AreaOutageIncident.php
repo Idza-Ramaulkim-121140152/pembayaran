@@ -17,6 +17,7 @@ class AreaOutageIncident extends Model
         'status',
         'incident_type',
         'incident_notes',
+        'ai_diagnostic',
         'network_notice_id',
         'alert_message_sent',
         'target_group_id',
@@ -28,6 +29,7 @@ class AreaOutageIncident extends Model
 
     protected $casts = [
         'inactive_customers_data' => 'array',
+        'ai_diagnostic' => 'array',
         'total_customers' => 'integer',
         'active_customers_count' => 'integer',
         'inactive_customers_count' => 'integer',

@@ -26,3 +26,9 @@ Route::prefix('mobile/customer')->group(function () {
 Route::post('/whatsapp/webhooks/payments', [\App\Http\Controllers\WhatsAppPaymentWebhookController::class, 'store'])
     ->name('api.whatsapp.webhooks.payments.api');
 
+Route::post('/whatsapp/webhooks/night-support', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'store'])
+    ->name('api.whatsapp.webhooks.night-support.api');
+Route::get('/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
+    ->name('api.whatsapp.night-support.status.api');
+
+

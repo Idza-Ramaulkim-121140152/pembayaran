@@ -183,6 +183,12 @@ Route::post('/api/whatsapp/webhooks/payments', [WhatsAppPaymentWebhookController
     ->middleware('throttle:60,1')
     ->name('api.whatsapp.webhooks.payments');
 
+Route::post('/api/whatsapp/webhooks/night-support', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'store'])
+    ->middleware('throttle:60,1')
+    ->name('api.whatsapp.webhooks.night-support');
+Route::get('/api/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
+    ->name('api.whatsapp.night-support.status');
+
 // iPaymu Payment Gateway Public Callbacks & Webhook (Tanpa Login)
 Route::match(['get', 'post'], '/api/ipaymu/return', [IpaymuIntegrationController::class, 'handleReturn'])->name('api.ipaymu.return');
 Route::match(['get', 'post'], '/api/ipaymu/cancel', [IpaymuIntegrationController::class, 'handleCancel'])->name('api.ipaymu.cancel');

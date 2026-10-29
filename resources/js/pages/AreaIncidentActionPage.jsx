@@ -78,7 +78,12 @@ export default function AreaIncidentActionPage() {
             // Default message template if not edited yet
             if (!messageText) {
                 const tpls = getTemplates(inc.area_code);
-                setMessageText(tpls.listrik);
+                const recTpl = inc.ai_diagnostic?.recommended_template || 'listrik';
+                setSelectedTemplate(recTpl);
+                setMessageText(tpls[recTpl] || tpls.listrik);
+                if (!inc.incident_type) {
+                    setIncidentType(recTpl === 'maintenance' ? 'maintenance_jaringan' : 'pemadaman_listrik');
+                }
             }
 
             // If first load, default select customers that are STILL offline
@@ -721,6 +726,111 @@ export default function AreaIncidentActionPage() {
                     </div>
                 </div>
 
+                {/* 🧠 SMART NOC DIAGNOSTIC ADVISOR 🧠 */}
+                {incident.ai_diagnostic && (
+                    <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl border border-indigo-800/50 shadow-md p-5 sm:p-6 overflow-hidden relative">
+                        <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-300 flex items-center justify-center font-bold border border-indigo-500/30">
+                                    <Sparkles size={18} />
+                                </div>
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-base font-bold text-white tracking-tight">Smart NOC Diagnostic Advisor</h3>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                                            AI Intelligence
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-indigo-200/80">Analisa cerdas korelasi sebaran ODP & pemadaman listrik PLN</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                                    incident.ai_diagnostic.probable_cause === 'kabel_putus'
+                                        ? 'bg-blue-500/20 text-blue-200 border-blue-400/40'
+                                        : 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                                }`}>
+                                    {incident.ai_diagnostic.probable_cause === 'kabel_putus' ? <Wrench size={14} /> : <Zap size={14} />}
+                                    <span>Indikasi: {incident.ai_diagnostic.cause_title}</span>
+                                    <span className="opacity-75">({incident.ai_diagnostic.confidence_score}%)</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 backdrop-blur-xs">
+                            <p className="text-sm text-slate-100 font-medium leading-relaxed">
+                                {incident.ai_diagnostic.summary}
+                            </p>
+                        </div>
+
+                        {/* Evidence & Action Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                            {/* Mengapa AI Menyimpulkan Ini */}
+                            <div className="bg-slate-800/60 rounded-xl p-3.5 border border-slate-700/60">
+                                <div className="font-bold text-indigo-200 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <Info size={13} />
+                                    <span>Fakta & Bukti Telemetri:</span>
+                                </div>
+                                <ul className="space-y-1.5 text-slate-300">
+                                    {incident.ai_diagnostic.reasons?.map((reason, idx) => (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <span className="text-indigo-400 shrink-0 mt-0.5">•</span>
+                                            <span>{reason}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+
+                            {/* Rekomendasi Tindakan Teknisi */}
+                            <div className="bg-slate-800/60 rounded-xl p-3.5 border border-slate-700/60">
+                                <div className="font-bold text-emerald-300 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                    <CheckCircle size={13} />
+                                    <span>Rekomendasi Tindakan NOC:</span>
+                                </div>
+                                <ul className="space-y-1.5 text-slate-300">
+                                    {incident.ai_diagnostic.recommended_actions?.map((act, idx) => (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <span className="text-emerald-400 shrink-0 mt-0.5">✓</span>
+                                            <span>{act}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+
+                        {/* ODP Distribution Breakdown */}
+                        {incident.ai_diagnostic.odp_distribution?.inactive_by_odp && (
+                            <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-semibold text-slate-300">Sebaran ODP Offline:</span>
+                                    {Object.entries(incident.ai_diagnostic.odp_distribution.inactive_by_odp).map(([odpName, count]) => (
+                                        <span key={odpName} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-red-950/60 text-red-200 border border-red-800/40 text-xs font-medium">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                                            <strong>{odpName}:</strong> {count} offline
+                                        </span>
+                                    ))}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const recTpl = incident.ai_diagnostic.recommended_template || 'listrik';
+                                        const recType = recTpl === 'maintenance' ? 'maintenance_jaringan' : 'pemadaman_listrik';
+                                        setIncidentType(recType);
+                                        handleSelectTemplate(recTpl);
+                                    }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition shadow-xs"
+                                >
+                                    <Sparkles size={13} />
+                                    <span>Terapkan Rekomendasi ({incident.ai_diagnostic.recommended_template === 'maintenance' ? 'Kabel Putus' : 'Listrik Padam'})</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* Option 1: Tandai Gangguan */}
                 <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 sm:p-6">
                     <div className="flex items-start justify-between gap-4 mb-4">
@@ -875,35 +985,45 @@ export default function AreaIncidentActionPage() {
                             <button
                                 type="button"
                                 onClick={() => handleSelectTemplate('listrik')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition inline-flex items-center gap-1.5 ${
                                     selectedTemplate === 'listrik'
                                         ? 'bg-amber-50 text-amber-800 border-amber-300 shadow-2xs'
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                ⚡ Template Listrik Padam
+                                <span>⚡ Template Listrik Padam</span>
+                                {incident?.ai_diagnostic?.recommended_template === 'listrik' && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 font-bold">
+                                        Saran AI
+                                    </span>
+                                )}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => handleSelectTemplate('maintenance')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition inline-flex items-center gap-1.5 ${
                                     selectedTemplate === 'maintenance'
                                         ? 'bg-blue-50 text-blue-800 border-blue-300 shadow-2xs'
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                🔧 Template Maintenance
+                                <span>🔧 Template Maintenance</span>
+                                {incident?.ai_diagnostic?.recommended_template === 'maintenance' && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-200 text-blue-900 font-bold">
+                                        Saran AI
+                                    </span>
+                                )}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => handleSelectTemplate('umum')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition inline-flex items-center gap-1.5 ${
                                     selectedTemplate === 'umum'
                                         ? 'bg-purple-50 text-purple-800 border-purple-300 shadow-2xs'
                                         : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                                 }`}
                             >
-                                📢 Template Gangguan Umum
+                                <span>📢 Template Gangguan Umum</span>
                             </button>
                         </div>
                     </div>

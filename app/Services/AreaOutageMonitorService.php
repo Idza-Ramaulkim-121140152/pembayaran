@@ -48,6 +48,7 @@ class AreaOutageMonitorService
                     $table->string('status', 30)->default('detected')->index();
                     $table->string('incident_type', 50)->nullable();
                     $table->text('incident_notes')->nullable();
+                    $table->json('ai_diagnostic')->nullable();
                     $table->foreignId('network_notice_id')->nullable()->constrained('network_notices')->onDelete('set null');
                     $table->text('alert_message_sent')->nullable();
                     $table->string('target_group_id', 100)->nullable();
@@ -59,6 +60,14 @@ class AreaOutageMonitorService
                 });
             } catch (\Throwable $e) {
                 Log::warning('Could not auto-create area_outage_incidents table: ' . $e->getMessage());
+            }
+        } elseif (!Schema::hasColumn('area_outage_incidents', 'ai_diagnostic')) {
+            try {
+                Schema::table('area_outage_incidents', function (Blueprint $table) {
+                    $table->json('ai_diagnostic')->nullable()->after('incident_notes');
+                });
+            } catch (\Throwable $e) {
+                Log::warning('Could not auto-add ai_diagnostic column: ' . $e->getMessage());
             }
         }
     }
@@ -388,6 +397,9 @@ class AreaOutageMonitorService
                     $token = Str::random(32);
                     $now = now();
 
+                    // Analisis diagnostik penyebab gangguan (Kabel Putus vs Mati Lampu PLN)
+                    $diagnostic = $this->analyzeIncidentDiagnostic($code, $data, $areas);
+
                     /** @var AreaOutageIncident $incident */
                     $incident = AreaOutageIncident::create([
                         'token' => $token,
@@ -396,14 +408,15 @@ class AreaOutageMonitorService
                         'active_customers_count' => $activeCount,
                         'inactive_customers_count' => $inactiveCount,
                         'inactive_customers_data' => $data['inactive_customers'],
+                        'ai_diagnostic' => $diagnostic,
                         'status' => 'detected',
                         'target_group_id' => $targetGroupId,
                         'alerted_at' => $now,
                     ]);
 
-                    // Format pesan WhatsApp
+                    // Format pesan WhatsApp dengan AI Advisor
                     $actionUrl = $incident->action_url;
-                    $message = $this->buildWhatsAppAlertMessage($code, $total, $activeCount, $inactiveCount, $inactivePercent, $now, $actionUrl);
+                    $message = $this->buildWhatsAppAlertMessage($code, $total, $activeCount, $inactiveCount, $inactivePercent, $now, $actionUrl, $diagnostic);
 
                     // Kirim ke grup WhatsApp jika target grup telah disetel
                     if ($targetGroupId) {
@@ -431,7 +444,157 @@ class AreaOutageMonitorService
     }
 
     /**
-     * Susun teks pesan alert untuk grup WhatsApp.
+     * Analisis diagnostik cerdas: Membedakan Kabel Fiber Putus vs Pemadaman Listrik PLN.
+     * Evaluasi sebaran pelanggan offline antar-ODP & korelasi antar-wilayah.
+     */
+    public function analyzeIncidentDiagnostic(string $areaCode, array $areaData, array $allAreas = []): array
+    {
+        $inactive = $areaData['inactive_customers'] ?? [];
+        $active = $areaData['active_customers'] ?? [];
+        $total = (int) ($areaData['total'] ?? (count($inactive) + count($active)));
+        $inactiveCount = (int) ($areaData['inactive_count'] ?? count($inactive));
+        $activeCount = (int) ($areaData['active_count'] ?? count($active));
+        $inactivePercent = $total > 0 ? round(($inactiveCount / $total) * 100, 1) : 0.0;
+
+        // Kelompokkan ODP offline & online
+        $inactiveByOdp = collect($inactive)->groupBy(function ($c) {
+            $odp = trim((string) ($c['odp'] ?? ''));
+            return $odp !== '' ? $odp : 'ODP Belum Terdata';
+        })->map(fn($group) => $group->count());
+
+        $activeByOdp = collect($active)->groupBy(function ($c) {
+            $odp = trim((string) ($c['odp'] ?? ''));
+            return $odp !== '' ? $odp : 'ODP Belum Terdata';
+        })->map(fn($group) => $group->count());
+
+        $allOdps = $inactiveByOdp->keys()->merge($activeByOdp->keys())->unique()->values();
+        $affectedOdpCount = $inactiveByOdp->count();
+        $totalOdpCount = $allOdps->count();
+
+        // Cek korelasi area tetangga yang juga outage
+        $otherOutages = collect($allAreas)
+            ->filter(function ($a, $k) use ($areaCode) {
+                $code = (string) ($a['area_code'] ?? $k);
+                return $code !== $areaCode && !empty($a['is_outage']);
+            })
+            ->map(fn($a, $k) => (string) ($a['area_code'] ?? $k))
+            ->values()
+            ->all();
+
+        // Cari ODP dengan pelanggan offline terbanyak
+        $topOdp = $inactiveByOdp->sortDesc()->keys()->first() ?? 'ODP Terkait';
+        $topOdpCount = (int) ($inactiveByOdp->get($topOdp) ?? 0);
+        $topOdpShare = $inactiveCount > 0 ? round(($topOdpCount / $inactiveCount) * 100, 1) : 0;
+
+        // Evaluasi Indikasi Gangguan
+        if (!empty($otherOutages)) {
+            // Skenario 1: Multi-wilayah padam bersamaan -> Sangat kuat indikasi PLN
+            $probableCause = 'pemadaman_listrik';
+            $causeTitle = 'Pemadaman Listrik PLN (Skala Wilayah)';
+            $confidence = 95;
+            $recommendedTemplate = 'listrik';
+            $otherList = implode(', ', $otherOutages);
+            $summary = "Terdeteksi pemadaman serentak pada beberapa area ({$areaCode} dan {$otherList}). Indikasi kuat padamnya gardu distribusi / transmisi listrik PLN.";
+            $reasons = [
+                "Multi-wilayah mengalami gangguan bersamaan ({$otherList})",
+                "{$inactiveCount} dari {$total} pelanggan offline di area {$areaCode} ({$inactivePercent}%)",
+                "Pola pemadaman tidak terbatas pada satu jalur kabel optik",
+            ];
+            $actions = [
+                "Konfirmasi status pemadaman PLN melalui PIC warga atau aparat desa setempat sebelum mengirim teknisi.",
+                "Gunakan template WhatsApp 'Listrik Padam' jika pelanggan menanyakan koneksi.",
+                "Perangkat akan otomatis aktif kembali begitu pasokan listrik PLN normal.",
+            ];
+        } elseif ($affectedOdpCount === 1 && $totalOdpCount > 1 && $topOdp !== 'ODP Belum Terdata') {
+            // Skenario 2: Hanya 1 ODP yang padam, ODP lain di area sama 100% online -> Indikasi Kabel Putus
+            $probableCause = 'kabel_putus';
+            $causeTitle = 'Kabel Fiber Putus / Gangguan Jalur ODP Spesifik';
+            $confidence = 90;
+            $recommendedTemplate = 'maintenance';
+            $summary = "Gangguan terisolir khusus pada {$topOdp} ({$topOdpCount} pelanggan offline), sedangkan ODP lain di Dusun {$areaCode} tetap normal ({$activeCount} pelanggan online). Indikasi kuat kabel fiber feeder/distribusi ODP ini putus atau redaman drop drastis.";
+            $reasons = [
+                "100% pelanggan offline berada pada satu jalur ({$topOdp})",
+                "ODP lain di Dusun {$areaCode} beroperasi normal tanpa kendala",
+                "Bukan karakteristik pemadaman trafo listrik PLN",
+            ];
+            $actions = [
+                "Kirim tim teknisi langsung ke jalur {$topOdp} membawa Optical Fault Locator / VFL dan Fusion Splicer.",
+                "Periksa bentangan kabel fiber di tiang menuju {$topOdp} (antisipasi pohon tumbang atau kabel tersangkut kendaraan).",
+                "Gunakan template WhatsApp 'Maintenance / Perbaikan' untuk pelanggan di {$topOdp}.",
+            ];
+        } elseif ($topOdpShare >= 80 && $affectedOdpCount <= 2 && $totalOdpCount > 2) {
+            // Skenario 3: Konsentrasi dominan pada 1 ODP
+            $probableCause = 'kabel_putus';
+            $causeTitle = 'Indikasi Kabel Fiber / ODP Bermasalah';
+            $confidence = 82;
+            $recommendedTemplate = 'maintenance';
+            $summary = "Mayoritas pelanggan offline ({$topOdpShare}%) terkonsentrasi di {$topOdp}, mengindikasikan kendala transmisi optik pada cabang jalur tersebut.";
+            $reasons = [
+                "Dominan offline ({$topOdpCount} pelanggan) berpusat di {$topOdp}",
+                "ODP tetangga di wilayah yang sama mayoritas tetap terhubung aktif",
+            ];
+            $actions = [
+                "Lakukan pengecekan redaman optical (OPM) pada ODP {$topOdp}.",
+                "Siapkan tim splicing perbaikan jika ditemukan kabel putus.",
+            ];
+        } elseif ($affectedOdpCount >= 2) {
+            // Skenario 4: Tersebar merata di banyak ODP dalam 1 area -> Indikasi Trafo PLN Padam
+            $probableCause = 'pemadaman_listrik';
+            $causeTitle = 'Pemadaman Listrik PLN (Tingkat Dusun/Trafo)';
+            $confidence = 85;
+            $recommendedTemplate = 'listrik';
+            $odpNames = $inactiveByOdp->keys()->take(3)->implode(', ');
+            $summary = "Pelanggan offline tersebar di {$affectedOdpCount} ODP berbeda ({$odpNames}). Karakteristik sebaran merata ini adalah pola umum saat trafo listrik PLN padam.";
+            $reasons = [
+                "Pelanggan offline tersebar di {$affectedOdpCount} ODP berbeda",
+                "Jalur kabel optik yang berbeda padam secara serentak",
+                "Sangat khas kejadian pemadaman listrik trafo PLN lokal",
+            ];
+            $actions = [
+                "Hubungi pelanggan atau PIC warga untuk konfirmasi apakah listrik di lokasi padam.",
+                "Jika PLN padam, tidak perlu kirim teknisi ke lapangan karena perangkat otomatis tersambung saat listrik hidup.",
+                "Gunakan template pesan cepat 'Listrik Padam' untuk notifikasi pelanggan.",
+            ];
+        } else {
+            // Skenario 5: Fallback bila data ODP belum lengkap
+            $probableCause = $inactivePercent >= 80 ? 'pemadaman_listrik' : 'investigasi_lapangan';
+            $causeTitle = $inactivePercent >= 80 ? 'Dugaan Pemadaman Listrik' : 'Perlu Investigasi Cepat';
+            $confidence = 70;
+            $recommendedTemplate = $inactivePercent >= 80 ? 'listrik' : 'umum';
+            $summary = "Terdeteksi {$inactiveCount} pelanggan offline ({$inactivePercent}%) di area {$areaCode}. Perlu konfirmasi cepat status listrik di sekitar lokasi.";
+            $reasons = [
+                "Tingkat offline mencapai {$inactivePercent}%",
+                "Data sebaran ODP terbatas untuk klasifikasi otomatis",
+            ];
+            $actions = [
+                "Tanyakan status listrik ke salah satu pelanggan offline.",
+                "Pantau apakah ada laporan lampu LOS merah dari pelanggan.",
+            ];
+        }
+
+        return [
+            'probable_cause' => $probableCause,
+            'cause_title' => $causeTitle,
+            'confidence_score' => $confidence,
+            'summary' => $summary,
+            'reasons' => $reasons,
+            'recommended_actions' => $actions,
+            'recommended_template' => $recommendedTemplate,
+            'odp_distribution' => [
+                'affected_odp_count' => $affectedOdpCount,
+                'total_odp_count' => $totalOdpCount,
+                'inactive_by_odp' => $inactiveByOdp->toArray(),
+                'active_by_odp' => $activeByOdp->toArray(),
+            ],
+            'cross_area_correlation' => [
+                'other_outage_areas' => $otherOutages,
+            ],
+            'analyzed_at' => now()->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Susun teks pesan alert untuk grup WhatsApp (termasuk rekomendasi cerdas Smart NOC Advisor).
      */
     private function buildWhatsAppAlertMessage(
         string $areaCode,
@@ -440,19 +603,40 @@ class AreaOutageMonitorService
         int $inactiveCount,
         float $inactivePercent,
         Carbon $time,
-        string $actionUrl
+        string $actionUrl,
+        ?array $diagnostic = null
     ): string {
         $formattedTime = $time->translatedFormat('d M Y, H:i') . ' WIB';
 
-        return "⚠️ *PERINGATAN GANGGUAN AREA MASSAL* ⚠️\n\n"
+        $msg = "⚠️ *PERINGATAN GANGGUAN AREA MASSAL* ⚠️\n\n"
             . "Ditemukan indikasi gangguan koneksi pada area pelanggan:\n"
             . "📍 *Area / Dusun:* {$areaCode}\n"
             . "👥 *Total Pelanggan:* {$total} Pelanggan\n"
             . "🔴 *Nonaktif (Offline):* {$inactiveCount} Pelanggan ({$inactivePercent}%)\n"
             . "🟢 *Aktif (Online):* {$activeCount} Pelanggan\n"
-            . "⏰ *Waktu Deteksi:* {$formattedTime}\n\n"
-            . "Silakan tentukan tindakan melalui link berikut:\n"
+            . "⏰ *Waktu Deteksi:* {$formattedTime}\n";
+
+        if (!empty($diagnostic)) {
+            $causeIcon = match ($diagnostic['probable_cause'] ?? '') {
+                'pemadaman_listrik' => '⚡',
+                'kabel_putus' => '🔧',
+                default => '🔍',
+            };
+            $causeTitle = $diagnostic['cause_title'] ?? 'Analisis Lapangan';
+            $score = $diagnostic['confidence_score'] ?? 80;
+            $summary = $diagnostic['summary'] ?? '';
+            $firstAction = $diagnostic['recommended_actions'][0] ?? 'Lakukan konfirmasi lapangan.';
+
+            $msg .= "\n🧠 *SMART NOC DIAGNOSTIC ADVISOR:*\n"
+                . "🎯 *Indikasi:* {$causeIcon} {$causeTitle} (Keyakinan: {$score}%)\n"
+                . "📋 *Analisa:* {$summary}\n"
+                . "💡 *Saran Tindakan:* {$firstAction}\n";
+        }
+
+        $msg .= "\nSilakan tentukan tindakan melalui link berikut:\n"
             . "👉 {$actionUrl}";
+
+        return $msg;
     }
 
     /**
@@ -644,6 +828,23 @@ class AreaOutageMonitorService
         // Set dynamic attributes on incident
         $incident->setAttribute('realtime_customers', $realtimeCustomers);
         $incident->setAttribute('realtime_summary', $realtimeSummary);
+
+        // Jika ai_diagnostic belum ada pada insiden ini, hitung dan simpan
+        if (empty($incident->ai_diagnostic)) {
+            $areaData = [
+                'area_code' => $incident->area_code,
+                'total' => $totalIncident,
+                'inactive_count' => $currentOfflineCount,
+                'active_count' => $currentOnlineCount,
+                'inactive_customers' => collect($realtimeCustomers)->filter(fn($c) => !$c['is_online'])->values()->all(),
+                'active_customers' => collect($realtimeCustomers)->filter(fn($c) => $c['is_online'])->values()->all(),
+            ];
+            $diagnostic = $this->analyzeIncidentDiagnostic($incident->area_code, $areaData);
+            $incident->ai_diagnostic = $diagnostic;
+            try {
+                $incident->saveQuietly();
+            } catch (\Throwable $e) {}
+        }
     }
 
     /**
