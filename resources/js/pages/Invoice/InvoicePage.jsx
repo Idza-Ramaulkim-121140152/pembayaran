@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { 
     Clock, Download, Upload, Phone, CheckCircle, AlertCircle, XCircle,
     QrCode, Building2, Copy, Check, CreditCard, ChevronRight, Wifi,
-    Calendar, User, MapPin, FileText, Printer
+    Calendar, User, MapPin, FileText, Printer, Sparkles, RefreshCw, Zap, ShieldCheck
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -27,10 +27,69 @@ function InvoicePage() {
     const [fieldErrors, setFieldErrors] = useState({});
     const [formError, setFormError] = useState('');
     const [fileInfo, setFileInfo] = useState(null);
+    const [dynamicQris, setDynamicQris] = useState(null);
+    const [loadingQris, setLoadingQris] = useState(false);
+
+    const isCurrentPaid = invoice?.status === 'paid';
+    const isCurrentCancelled = invoice?.status === 'cancelled';
 
     useEffect(() => {
         fetchData();
     }, [invoiceLink]);
+
+    // Fetch dynamic QRIS jika metode pembayaran QRIS dipilih
+    const fetchDynamicQris = async (forceRegenerate = false) => {
+        try {
+            setLoadingQris(true);
+            const res = await fetch(`/api/invoice/${invoiceLink}/dynamic-qris${forceRegenerate ? '?regenerate=1' : ''}`);
+            if (res.ok) {
+                const json = await res.json();
+                if (json.status === 'success' && json.data) {
+                    setDynamicQris(json.data);
+                    if (json.data.expected_amount) {
+                        setPaidAmount(json.data.expected_amount);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Gagal memuat Dynamic QRIS:', err);
+        } finally {
+            setLoadingQris(false);
+        }
+    };
+
+    useEffect(() => {
+        if (selectedMethod?.type === 'qris' && !isCurrentPaid && !isCurrentCancelled) {
+            fetchDynamicQris();
+        }
+    }, [selectedMethod?.type, invoiceLink, isCurrentPaid, isCurrentCancelled]);
+
+    // Polling status pelunasan invoice setiap 3.5 detik jika invoice belum lunas
+    useEffect(() => {
+        if (!invoice || isCurrentPaid || isCurrentCancelled) return;
+        const timer = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/invoice/${invoiceLink}/check-status`);
+                if (res.ok) {
+                    const statusData = await res.json();
+                    if (statusData.is_paid) {
+                        setInvoice((prev) => ({
+                            ...prev,
+                            status: 'paid',
+                            paid_at: statusData.paid_at,
+                            qris_sender: statusData.sender,
+                        }));
+                        setSuccess('🎉 Pembayaran QRIS berhasil diterima & diverifikasi otomatis!');
+                        clearInterval(timer);
+                    }
+                }
+            } catch {
+                // diamkan polling error
+            }
+        }, 3500);
+
+        return () => clearInterval(timer);
+    }, [invoice, invoiceLink, isCurrentPaid, isCurrentCancelled]);
 
     const MAX_PROOF_SIZE = 2 * 1024 * 1024;
     const ALLOWED_PROOF_MIME_TYPES = new Set([
@@ -494,24 +553,74 @@ function InvoicePage() {
                     <div className="bg-white px-6 py-6 border-t border-gray-100">
                         {selectedMethod.type === 'qris' ? (
                             <div className="text-center">
-                                <div className="bg-white border-2 border-gray-200 rounded-2xl p-4 inline-block shadow-lg mb-4">
-                                    <img 
-                                        src={selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg'} 
-                                        alt="QRIS" 
-                                        className="w-56 h-56 object-contain"
-                                    />
+                                {/* Auto-Konfirmasi Active Badge */}
+                                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold mb-4 shadow-sm">
+                                    <span className="relative flex h-2.5 w-2.5">
+                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                                    </span>
+                                    <span>Menunggu Pembayaran (Auto-Verifikasi Aktif)</span>
                                 </div>
-                                <p className="text-sm text-gray-600 mb-4">
-                                    Scan QR Code dengan aplikasi pembayaran favorit Anda
+
+                                {/* QR Code Display */}
+                                <div className="bg-white border-2 border-emerald-200 rounded-3xl p-4 inline-block shadow-xl shadow-emerald-500/10 mb-4 relative">
+                                    {loadingQris ? (
+                                        <div className="w-60 h-60 flex flex-col items-center justify-center gap-2">
+                                            <LoadingSpinner size="lg" />
+                                            <span className="text-xs text-gray-500">Menyiapkan QRIS Dinamis...</span>
+                                        </div>
+                                    ) : (
+                                        <img 
+                                            src={dynamicQris?.qr_data_uri || (selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg')} 
+                                            alt="QRIS Dinamis" 
+                                            className="w-60 h-60 object-contain mx-auto rounded-xl"
+                                        />
+                                    )}
+                                </div>
+
+                                {/* Nominal Pas & Auto Settlement Highlight */}
+                                {dynamicQris?.expected_amount && (
+                                    <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 rounded-2xl p-4 text-white text-center shadow-lg shadow-emerald-600/20 mb-4 mx-auto max-w-sm">
+                                        <p className="text-xs font-medium text-emerald-100 uppercase tracking-wider">Nominal Pas Transfer</p>
+                                        <p className="text-3xl font-extrabold font-mono tracking-tight my-1">
+                                            {formatCurrency(dynamicQris.expected_amount)}
+                                        </p>
+                                        <div className="flex items-center justify-center gap-1.5 text-xs text-emerald-100 mt-1">
+                                            <Sparkles size={14} className="text-amber-300 shrink-0" />
+                                            <span>Nominal pas sudah terisi otomatis saat Anda scan</span>
+                                        </div>
+                                        {dynamicQris.unique_code > 0 && (
+                                            <p className="text-[11px] text-emerald-200/90 mt-1">
+                                                (Tagihan Pokok: {formatCurrency(dynamicQris.base_amount)} + Kode Otomasi: Rp {dynamicQris.unique_code})
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+
+                                <p className="text-sm text-gray-600 mb-4 max-w-sm mx-auto">
+                                    Buka aplikasi <b>GoPay, BCA, Mandiri, DANA, ShopeePay, atau m-Banking</b> apa saja, lalu scan QR di atas.
                                 </p>
-                                <a
-                                    href={selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg'}
-                                    download
-                                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded-xl shadow-lg shadow-yellow-500/30 hover:shadow-xl transition-all"
-                                >
-                                    <Download size={20} />
-                                    Unduh QRIS
-                                </a>
+
+                                <div className="flex items-center justify-center gap-2">
+                                    <a
+                                        href={dynamicQris?.qr_data_uri || (selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg')}
+                                        download={`QRIS-${invoiceLink}.svg`}
+                                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all"
+                                    >
+                                        <Download size={18} />
+                                        Unduh QRIS
+                                    </a>
+                                    <button
+                                        type="button"
+                                        onClick={() => fetchDynamicQris(true)}
+                                        disabled={loadingQris}
+                                        className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition"
+                                        title="Muat ulang QRIS"
+                                    >
+                                        <RefreshCw size={16} className={loadingQris ? 'animate-spin' : ''} />
+                                        Segarkan
+                                    </button>
+                                </div>
                             </div>
                         ) : (
                             <div className="space-y-4">
@@ -557,12 +666,11 @@ function InvoicePage() {
                                     Cara Pembayaran
                                 </h4>
                                 {selectedMethod.type === 'qris' ? (
-                                    <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
-                                        <li>Simpan atau screenshot kode QRIS di atas</li>
-                                        <li>Buka aplikasi pembayaran (GoPay, OVO, Dana, LinkAja, dll)</li>
-                                        <li>Pilih menu "Scan QR" lalu upload gambar QRIS</li>
-                                        <li>Masukkan nominal sesuai tagihan</li>
-                                        <li>Konfirmasi pembayaran setelah berhasil</li>
+                                    <ol className="text-sm text-blue-700 space-y-1.5 list-decimal list-inside">
+                                        <li>Buka aplikasi <b>GoPay, BCA, Mandiri, DANA, ShopeePay, atau m-Banking</b> favorit Anda</li>
+                                        <li>Pilih <b>Scan QR</b> lalu scan kode QR di atas atau gunakan tangkapan layar</li>
+                                        <li>Nominal pembayaran pas sudah otomatis tertera di aplikasi</li>
+                                        <li>Konfirmasi & bayar — <b>sistem kami otomatis mencatat lunas</b> tanpa perlu kirim bukti transfer</li>
                                     </ol>
                                 ) : (
                                     <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">

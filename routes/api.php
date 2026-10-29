@@ -31,4 +31,15 @@ Route::post('/whatsapp/webhooks/night-support', [\App\Http\Controllers\WhatsAppN
 Route::get('/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
     ->name('api.whatsapp.night-support.status.api');
 
+// QRIS Dinamis & Webhook Notifikasi GoBiz (MacroDroid Android)
+Route::post('/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
+    ->name('api.qris.webhook');
+Route::get('/qris/status', [\App\Http\Controllers\QrisWebhookController::class, 'getSettings'])
+    ->name('api.qris.status');
+Route::get('/invoice/{invoice_link}/dynamic-qris', [\App\Http\Controllers\QrisWebhookController::class, 'getDynamicQris'])
+    ->name('api.invoice.dynamic-qris');
+Route::get('/invoice/{invoice_link}/check-status', [\App\Http\Controllers\QrisWebhookController::class, 'checkInvoiceStatus'])
+    ->name('api.invoice.check-status');
+
+
 

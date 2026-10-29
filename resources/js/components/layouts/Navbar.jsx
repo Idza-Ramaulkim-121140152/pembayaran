@@ -238,6 +238,7 @@ const MENU_GROUPS = [
             { key: 'deletedCustomers', label: 'Riwayat Pelanggan Dihapus', to: '/settings/deleted-customers', icon: Trash2, match: (p) => p === '/settings/deleted-customers' },
             { key: 'paymentMethods', label: 'Metode Pembayaran', to: '/settings/payment-methods', icon: CreditCard, match: (p) => p === '/settings/payment-methods' },
             { key: 'paymentReceipts', label: 'Receipt Pembayaran', to: '/settings/payment-receipts', icon: CreditCard, match: (p) => p === '/settings/payment-receipts' },
+            { key: 'qrisSettings', label: 'QRIS Dinamis & GoBiz', to: '/settings/qris', icon: QrCode, match: (p) => p === '/settings/qris' },
             { key: 'ipaymuIntegration', label: 'Payment Gateway iPaymu', to: '/settings/ipaymu-integration', icon: CreditCard, match: (p) => p.startsWith('/settings/ipaymu-integration') || p.startsWith('/settings/payment-gateway') },
             { key: 'packages', label: 'Paket Internet', to: '/settings/packages', icon: Package, match: (p) => p === '/settings/packages' },
             { key: 'promo', label: 'Promosi', to: '/settings/promo', icon: Megaphone, match: (p) => p === '/settings/promo' },

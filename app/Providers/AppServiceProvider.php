@@ -14,6 +14,21 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // Ensure BaconQrCode & DASPRiD\Enum are autoloaded reliably
+        spl_autoload_register(function ($class) {
+            if (str_starts_with($class, 'BaconQrCode\\')) {
+                $file = base_path('vendor/bacon/bacon-qr-code/src/' . str_replace('\\', '/', substr($class, 12)) . '.php');
+                if (file_exists($file)) {
+                    require_once $file;
+                }
+            } elseif (str_starts_with($class, 'DASPRiD\\Enum\\')) {
+                $file = base_path('vendor/dasprid/enum/src/' . str_replace('\\', '/', substr($class, 13)) . '.php');
+                if (file_exists($file)) {
+                    require_once $file;
+                }
+            }
+        });
+
         // Register MikroTikService as singleton to reuse connection within request
         $this->app->singleton(\App\Services\MikroTikService::class, function ($app) {
             return new \App\Services\MikroTikService();

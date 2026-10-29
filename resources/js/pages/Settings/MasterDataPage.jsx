@@ -1,4 +1,4 @@
-import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText, Wallet } from 'lucide-react';
+import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText, Wallet, QrCode } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const role = window.appUserRole || 'admin';
@@ -58,6 +58,13 @@ const MASTER_MENU = [
         description: 'Kelola rekening dan metode pembayaran aktif.',
         icon: CreditCard,
         path: '/settings/payment-methods',
+        roles: ['superadmin', 'admin', 'finance'],
+    },
+    {
+        title: 'QRIS Dinamis & GoBiz Listener',
+        description: 'Otomasi verifikasi QRIS via push notifikasi GoBiz HP Android (MacroDroid).',
+        icon: QrCode,
+        path: '/settings/qris',
         roles: ['superadmin', 'admin', 'finance'],
     },
     {
