@@ -108,6 +108,32 @@ export default function PaymentVerificationPage() {
 
     // Detail Bukti Bayar Modal
     const [selectedDetailCapture, setSelectedDetailCapture] = useState(null);
+
+    const formatFailureReason = (reason) => {
+        if (!reason) return '';
+        switch (reason) {
+            case 'ai_unreadable':
+                return 'AI belum dapat membaca otomatis bukti bayar ini. Silakan review gambar struk dan konfirmasi secara manual.';
+            case 'not_payment_proof':
+                return 'Bukan bukti pembayaran (foto keluhan/perangkat/non-transaksi).';
+            case 'duplicate_reference_code':
+                return 'Nomor referensi terdeteksi duplikat / sudah pernah dipakai pada transaksi sebelumnya.';
+            case 'unknown_customer':
+                return 'Pelanggan belum teridentifikasi dari nomor pengirim WhatsApp atau struk.';
+            case 'no_active_invoice':
+                return 'Tidak ditemukan tagihan aktif yang belum dibayar untuk pelanggan ini.';
+            case 'amount_mismatch':
+                return 'Nominal pembayaran pada bukti transfer tidak cocok dengan tagihan.';
+            case 'destination_not_whitelisted':
+                return 'Rekening/tujuan transfer tidak terdaftar dalam whitelist rekening resmi.';
+            case 'confidence_needs_review':
+                return 'Skor keyakinan AI di bawah ambang batas auto-konfirmasi. Perlu verifikasi manual.';
+            case 'auto_approve_disabled':
+                return 'Auto-konfirmasi sedang dinonaktifkan di pengaturan.';
+            default:
+                return reason;
+        }
+    };
     const [showOcrRawText, setShowOcrRawText] = useState(false);
     const [copiedRef, setCopiedRef] = useState(false);
 
@@ -1483,9 +1509,15 @@ export default function PaymentVerificationPage() {
                                                         )}
 
                                                         {capture.failure_reason && (
-                                                            <p className="text-rose-600 font-medium text-xs">
-                                                                ⚠️ <strong>Catatan Validasi:</strong> {capture.failure_reason}
-                                                            </p>
+                                                            <div className={`mt-2 rounded-lg p-2 text-xs font-medium border ${capture.failure_reason === 'ai_unreadable' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                                                                <p className="flex items-center gap-1.5 font-semibold">
+                                                                    {capture.failure_reason === 'ai_unreadable' ? <Sparkles size={14} className="text-amber-600 shrink-0" /> : <AlertTriangle size={14} className="text-rose-600 shrink-0" />}
+                                                                    <span>Catatan Validasi:</span>
+                                                                </p>
+                                                                <p className="mt-0.5 text-xs">
+                                                                    {formatFailureReason(capture.failure_reason)}
+                                                                </p>
+                                                            </div>
                                                         )}
                                                     </div>
 
@@ -2652,9 +2684,9 @@ export default function PaymentVerificationPage() {
                                             <span>Masuk: <strong>{c.created_at_display || '-'}</strong></span>
                                         </div>
                                         {c.failure_reason && (
-                                            <p className="text-[11px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded p-1.5">
-                                                Catatan Validasi: {c.failure_reason}
-                                            </p>
+                                            <div className={`text-[11px] font-semibold border rounded p-2 ${c.failure_reason === 'ai_unreadable' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'text-rose-600 bg-rose-50 border-rose-200'}`}>
+                                                <span className="font-bold">Catatan Validasi:</span> {formatFailureReason(c.failure_reason)}
+                                            </div>
                                         )}
                                     </div>
 

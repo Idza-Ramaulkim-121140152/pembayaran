@@ -1012,7 +1012,7 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
         try {
             await msg.getChat().catch(() => null);
             const media = await msg.downloadMedia();
-            if (media && media.data && media.mimetype && media.data.length > 8000) {
+            if (media && media.data && media.mimetype && media.data.length > 1500) {
                 console.log(`✅ [Media] Berhasil unduh gambar resolusi penuh via whatsapp-web.js (${media.mimetype}, length: ${media.data.length})`);
                 return media;
             }
@@ -1038,8 +1038,8 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
 
                         const md = msgModel.mediaData;
 
-                        // Jika mediaData sudah memiliki base64 data langsung (resolusi penuh > 8000 chars)
-                        if (md && md.data && typeof md.data === 'string' && md.data.length > 8000) {
+                        // Jika mediaData sudah memiliki base64 data langsung (resolusi penuh > 1500 chars)
+                        if (md && md.data && typeof md.data === 'string' && md.data.length > 1500) {
                             return {
                                 data: md.data.replace(/^data:[^;]+;base64,/, ''),
                                 mimetype: msgModel.mimetype || md.mimetype || 'image/jpeg',
@@ -1074,7 +1074,7 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
                                     reader.onloadend = () => res(reader.result ? reader.result.split(',')[1] : null);
                                     reader.readAsDataURL(blob);
                                 });
-                                if (b64 && b64.length > 8000) {
+                                if (b64 && b64.length > 1500) {
                                     return {
                                         data: b64,
                                         mimetype: msgModel.mimetype || md.mimetype || 'image/jpeg',
@@ -1117,7 +1117,7 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
                                         });
                                     }
 
-                                    if (b64 && b64.length > 8000) {
+                                    if (b64 && b64.length > 1500) {
                                         return {
                                             data: b64,
                                             mimetype: msgModel.mimetype || 'image/jpeg',
@@ -1134,7 +1134,7 @@ async function downloadMediaWithRetry(msg, maxAttempts = 5, delayMs = 1500) {
                     }
                 }, msg.id._serialized, msg.id.id);
 
-                if (browserMedia && browserMedia.data && browserMedia.data.length > 8000) {
+                if (browserMedia && browserMedia.data && browserMedia.data.length > 1500) {
                     console.log(`✅ [Media] Berhasil diekstrak via Puppeteer store WA Web (${browserMedia.mimetype}, length: ${browserMedia.data.length})`);
                     return browserMedia;
                 }
@@ -1163,6 +1163,7 @@ function getWebhookCandidateUrls() {
         const appUrl = process.env.APP_URL.trim().replace(/\/+$/, '');
         urls.push(`${appUrl}/api/whatsapp/webhooks/payments`);
     }
+    urls.push('https://rumahkitanet.my.id/api/whatsapp/webhooks/payments');
     urls.push('http://127.0.0.1/api/whatsapp/webhooks/payments');
     urls.push('http://localhost/api/whatsapp/webhooks/payments');
     urls.push('http://127.0.0.1:8000/api/whatsapp/webhooks/payments');

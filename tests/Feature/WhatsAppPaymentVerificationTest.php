@@ -1252,6 +1252,58 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertFalse($parsedComplaint['is_payment_proof']);
     }
 
+    public function test_incoming_payment_proof_is_retained_in_needs_review_when_ai_vision_fails_or_is_unreadable(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'notification_recipients' => [
+                [
+                    'id' => 'admin-review',
+                    'name' => 'Admin Review',
+                    'phone' => '082222222222',
+                    'is_active' => true,
+                    'receive_auto_approved' => true,
+                    'receive_needs_review' => true,
+                ],
+            ],
+        ]);
+
+        // Simulate AI Vision failure (e.g. OpenRouter 402 Insufficient credits)
+        Http::fake([
+            'https://openrouter.ai/*' => Http::response([
+                'error' => ['message' => 'Insufficient credits', 'code' => 402],
+            ], 402),
+            '*send-bulk' => Http::response(['results' => [['phone' => '082222222222', 'success' => true]]]),
+        ]);
+
+        $response = $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-unreadable-receipt',
+            'sender_phone' => $customer->phone,
+            'sent_at' => '2026-10-29T08:00:00+07:00',
+            'media_base64' => base64_encode('fake-receipt-binary'),
+            'caption' => '',
+            'mime_type' => 'image/jpeg',
+        ]);
+
+        $response->assertStatus(202);
+
+        // Capture record MUST NOT be deleted! It must stay in needs_review for manual admin review
+        $capture = BillingPaymentCapture::query()->first();
+        $this->assertNotNull($capture);
+        $this->assertSame('needs_review', $capture->match_status);
+        $this->assertSame('ai_unreadable', data_get($capture->meta, 'validation.failure_reason'));
+
+        // Notification must be dispatched to admin so admin can manually verify
+        $adminReviewLog = NotificationLog::query()
+            ->where('phone', '082222222222')
+            ->where('meta->type', 'billing_payment_capture_review')
+            ->first();
+        $this->assertNotNull($adminReviewLog);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

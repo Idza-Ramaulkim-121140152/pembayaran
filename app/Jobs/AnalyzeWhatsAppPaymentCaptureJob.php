@@ -119,7 +119,13 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
         $validation = $validationService->validate($capture, $analysis, $capture->customer, $capture->invoice);
 
         // Filter out non-payment photos (e.g. street photos, broken cables, router lights, speedtests, memes, complaints)
-        if (empty($analysis['is_payment_proof']) || $validation['failure_reason'] === 'not_payment_proof') {
+        // HANYA hapus jika AI vision berhasil memproses TANPA error dan dengan yakin menyatakan bukan bukti pembayaran!
+        $isDefiniteNonPayment = empty($analysis['ai_error'])
+            && ($analysis['provider_used'] ?? '') !== 'local_heuristic'
+            && empty($analysis['is_payment_proof'])
+            && $validation['failure_reason'] === 'not_payment_proof';
+
+        if ($isDefiniteNonPayment) {
             Log::info('Non-payment proof image discarded from payment verification', [
                 'capture_id' => $capture->id,
                 'customer_id' => $capture->customer_id,

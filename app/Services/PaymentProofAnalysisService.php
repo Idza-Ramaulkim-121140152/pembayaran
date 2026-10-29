@@ -233,6 +233,7 @@ PROMPT;
 
         $modelsToTry = array_values(array_unique([
             $model,
+            'nvidia/nemotron-3.5-super-vl:free',
             'google/gemini-2.5-flash',
             'openai/gpt-4o-mini',
             'google/gemini-3.5-flash',
@@ -303,14 +304,15 @@ PROMPT;
         string $prompt,
         array $config
     ): ?array {
-        $preferredModel = (string) ($config['gemini_model'] ?? 'gemini-3.5-flash');
-        if ($preferredModel === 'gemini-1.5-flash' || $preferredModel === 'gemini-2.0-flash') {
-            $preferredModel = 'gemini-3.5-flash';
+        $preferredModel = (string) ($config['gemini_model'] ?? 'gemini-2.5-flash');
+        if (empty($preferredModel)) {
+            $preferredModel = 'gemini-2.5-flash';
         }
         $models = array_values(array_unique([
             $preferredModel,
-            'gemini-3.5-flash',
-            'gemini-3.8-flash',
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
         ]));
 
         foreach ($models as $model) {
@@ -471,6 +473,10 @@ PROMPT;
         $isPaymentProof = (bool) $parsed['is_payment_proof'];
 
         if (!$isPaymentProof) {
+            $rawSummary = $this->lastAiError
+                ? 'AI tidak dapat membaca bukti bayar (' . $this->lastAiError . '). Perlu review manual.'
+                : 'Bukan bukti pembayaran (tidak ditemukan tanda transaksi transfer/struk)';
+
             return [
                 'is_payment_proof' => false,
                 'amount' => 0,
@@ -496,7 +502,7 @@ PROMPT;
                     'success_status' => 0.0,
                 ],
                 'ocr_raw_text' => $ocrText,
-                'raw_summary' => 'Bukan bukti pembayaran (tidak ditemukan tanda transaksi transfer/struk)',
+                'raw_summary' => $rawSummary,
                 'provider_used' => $ocrProvider,
                 'ai_error' => $this->lastAiError,
             ];

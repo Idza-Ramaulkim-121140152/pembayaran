@@ -132,7 +132,10 @@ class PaymentProofValidationService
         $failureReason = null;
         $status = 'needs_review';
 
-        if (!$flags['is_payment_proof']) {
+        if (!empty($analysis['ai_error'])) {
+            $failureReason = 'ai_unreadable';
+            $status = 'needs_review';
+        } elseif (!$flags['is_payment_proof']) {
             $failureReason = 'not_payment_proof';
             $status = 'rejected';
         } elseif ($flags['is_duplicate_reference']) {
