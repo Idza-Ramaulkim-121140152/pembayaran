@@ -29,6 +29,8 @@ function InvoicePage() {
     const [fileInfo, setFileInfo] = useState(null);
     const [dynamicQris, setDynamicQris] = useState(null);
     const [loadingQris, setLoadingQris] = useState(false);
+    const [checkingPayment, setCheckingPayment] = useState(false);
+    const [refreshNotice, setRefreshNotice] = useState(null);
 
     const isCurrentPaid = invoice?.status === 'paid';
     const isCurrentCancelled = invoice?.status === 'cancelled';
@@ -37,11 +39,11 @@ function InvoicePage() {
         fetchData();
     }, [invoiceLink]);
 
-    // Fetch dynamic QRIS jika metode pembayaran QRIS dipilih
-    const fetchDynamicQris = async (forceRegenerate = false) => {
+    // Fetch dynamic QRIS jika metode pembayaran QRIS dipilih (kode unik baku & tetap)
+    const fetchDynamicQris = async () => {
         try {
             setLoadingQris(true);
-            const res = await fetch(`/api/invoice/${invoiceLink}/dynamic-qris${forceRegenerate ? '?regenerate=1' : ''}`);
+            const res = await fetch(`/api/invoice/${invoiceLink}/dynamic-qris`);
             if (res.ok) {
                 const json = await res.json();
                 if (json.status === 'success' && json.data) {
@@ -55,6 +57,34 @@ function InvoicePage() {
             console.warn('Gagal memuat Dynamic QRIS:', err);
         } finally {
             setLoadingQris(false);
+        }
+    };
+
+    // Tombol manual untuk cek status pelunasan QRIS tanpa mengubah kode unik
+    const handleRefreshStatus = async () => {
+        try {
+            setCheckingPayment(true);
+            setRefreshNotice(null);
+            const res = await fetch(`/api/invoice/${invoiceLink}/check-status`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.is_paid) {
+                    setInvoice((prev) => ({
+                        ...prev,
+                        status: 'paid',
+                        paid_at: data.paid_at,
+                        qris_sender: data.sender,
+                    }));
+                    setSuccess('🎉 Pembayaran QRIS berhasil diterima & diverifikasi otomatis!');
+                } else {
+                    setRefreshNotice('Belum ada pembayaran masuk. Menunggu transfer...');
+                    setTimeout(() => setRefreshNotice(null), 3500);
+                }
+            }
+        } catch (err) {
+            console.warn('Gagal memeriksa status:', err);
+        } finally {
+            setCheckingPayment(false);
         }
     };
 
@@ -601,25 +631,32 @@ function InvoicePage() {
                                     Buka aplikasi <b>GoPay, BCA, Mandiri, DANA, ShopeePay, atau m-Banking</b> apa saja, lalu scan QR di atas.
                                 </p>
 
-                                <div className="flex items-center justify-center gap-2">
-                                    <a
-                                        href={dynamicQris?.qr_data_uri || (selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg')}
-                                        download={`QRIS-${invoiceLink}.svg`}
-                                        className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all"
-                                    >
-                                        <Download size={18} />
-                                        Unduh QRIS
-                                    </a>
-                                    <button
-                                        type="button"
-                                        onClick={() => fetchDynamicQris(true)}
-                                        disabled={loadingQris}
-                                        className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition"
-                                        title="Muat ulang QRIS"
-                                    >
-                                        <RefreshCw size={16} className={loadingQris ? 'animate-spin' : ''} />
-                                        Segarkan
-                                    </button>
+                                <div className="flex flex-col items-center justify-center gap-2">
+                                    <div className="flex items-center justify-center gap-2">
+                                        <a
+                                            href={dynamicQris?.qr_data_uri || (selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg')}
+                                            download={`QRIS-${invoiceLink}.svg`}
+                                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg transition-all"
+                                        >
+                                            <Download size={18} />
+                                            Unduh QRIS
+                                        </a>
+                                        <button
+                                            type="button"
+                                            onClick={handleRefreshStatus}
+                                            disabled={checkingPayment}
+                                            className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition disabled:opacity-50"
+                                            title="Periksa apakah pembayaran sudah masuk"
+                                        >
+                                            <RefreshCw size={16} className={checkingPayment ? 'animate-spin' : ''} />
+                                            {checkingPayment ? 'Memeriksa...' : 'Cek Status'}
+                                        </button>
+                                    </div>
+                                    {refreshNotice && (
+                                        <p className="text-xs text-amber-600 font-medium animate-pulse mt-1">
+                                            {refreshNotice}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         ) : (

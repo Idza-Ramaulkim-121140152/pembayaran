@@ -104,6 +104,18 @@ class DynamicQrisPaymentTest extends TestCase
         $this->assertEquals($result['expected_amount'], (int) $freshInvoice->qris_expected_amount);
         $this->assertNotNull($freshInvoice->qris_dynamic_payload);
         $this->assertNotNull($freshInvoice->qris_expired_at);
+
+        // Uji konsistensi kode unik: pemanggilan ulang berkali-kali harus BAKU & tidak pernah berubah
+        $resultSecond = $service->generateForInvoice($freshInvoice);
+        $this->assertEquals($result['unique_code'], $resultSecond['unique_code'], 'Kode unik harus baku dan tidak boleh berubah');
+        $this->assertEquals($result['expected_amount'], $resultSecond['expected_amount']);
+        $this->assertEquals($result['payload'], $resultSecond['payload']);
+
+        // Uji pemanggilan via HTTP API publik
+        $apiRes1 = $this->getJson("/api/invoice/{$invoice->invoice_link}/dynamic-qris");
+        $apiRes2 = $this->getJson("/api/invoice/{$invoice->invoice_link}/dynamic-qris");
+        $this->assertEquals($result['unique_code'], $apiRes1->json('data.unique_code'));
+        $this->assertEquals($result['unique_code'], $apiRes2->json('data.unique_code'));
     }
 
     public function test_webhook_rejects_unauthorized_requests(): void

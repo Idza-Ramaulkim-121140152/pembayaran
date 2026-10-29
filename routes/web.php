@@ -105,8 +105,6 @@ Route::post('/api/area-incident/{token}/send-notification', [WhatsAppController:
 
 // Route publik untuk akses invoice tanpa login
 Route::get('/api/invoice/{invoice_link}', [BillingController::class, 'showInvoiceApi'])->name('api.invoice.show');
-Route::get('/api/invoice/{invoice_link}/dynamic-qris', [\App\Http\Controllers\QrisWebhookController::class, 'getDynamicQris'])->name('web.invoice.dynamic-qris');
-Route::get('/api/invoice/{invoice_link}/check-status', [\App\Http\Controllers\QrisWebhookController::class, 'checkInvoiceStatus'])->name('web.invoice.check-status');
 Route::get('/invoice/{invoice_link}/print', [InvoiceDocumentController::class, 'showPrint'])->name('invoice.public.print');
 Route::get('/invoice-documents/{token}/download', [InvoiceDocumentController::class, 'download'])->name('invoice-documents.public.download');
 Route::get('/invoice-documents/{token}/verify', [InvoiceDocumentController::class, 'verify'])->name('invoice-documents.public.verify');

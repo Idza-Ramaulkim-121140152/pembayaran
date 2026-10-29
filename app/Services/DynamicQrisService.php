@@ -143,22 +143,21 @@ class DynamicQrisService
 
     /**
      * Mempersiapkan QRIS Dinamis lengkap untuk sebuah Invoice.
+     * Kode unik bersifat BAKU (permanen & tidak berubah-ubah) untuk invoice tersebut.
      */
     public function generateForInvoice(Invoice $invoice, bool $forceRegenerate = false): array
     {
-        $now = now();
         $baseAmount = (int) round((float) $invoice->amount);
 
-        // Jika invoice sudah memiliki expected_amount yang masih berlaku dan tidak dipaksa regenerate
+        // 1. Jika invoice sudah memiliki kode unik baku dan payload yang sudah siap, selalu gunakan yang sudah ada (baku & permanen)
         if (
-            !$forceRegenerate &&
+            $invoice->qris_unique_code &&
             $invoice->qris_expected_amount &&
             $invoice->qris_dynamic_payload &&
-            $invoice->qris_expired_at &&
-            $invoice->qris_expired_at->isAfter($now)
+            ((int) round((float) $invoice->qris_expected_amount) - (int) $invoice->qris_unique_code === $baseAmount)
         ) {
             $expectedAmount = (int) round((float) $invoice->qris_expected_amount);
-            $uniqueCode = (int) ($invoice->qris_unique_code ?? ($expectedAmount - $baseAmount));
+            $uniqueCode = (int) $invoice->qris_unique_code;
             $payload = $invoice->qris_dynamic_payload;
 
             return [
@@ -167,22 +166,28 @@ class DynamicQrisService
                 'base_amount' => $baseAmount,
                 'unique_code' => $uniqueCode,
                 'expected_amount' => $expectedAmount,
-                'expired_at' => $invoice->qris_expired_at->toIso8601String(),
+                'expired_at' => $invoice->qris_expired_at?->toIso8601String() ?? now()->addYears(1)->toIso8601String(),
                 'payload' => $payload,
                 'qr_data_uri' => $this->renderQrDataUri($payload),
             ];
         }
 
-        // Generate kode unik dan hitung expected amount
-        $uniqueCode = $this->generateUniqueCode($baseAmount, $invoice->id);
+        // 2. Jika kode unik sudah pernah dibuat sebelumnya, pertahankan kode unik baku tersebut (tidak boleh diacak ulang)
+        if ($invoice->qris_unique_code) {
+            $uniqueCode = (int) $invoice->qris_unique_code;
+        } else {
+            // Hanya buat kode unik baru jika invoice benar-benar belum memiliki kode unik
+            $uniqueCode = $this->generateUniqueCode($baseAmount, $invoice->id);
+        }
+
         $expectedAmount = $baseAmount + $uniqueCode;
-        $expHours = (int) SiteSetting::get(self::SETTING_EXPIRATION_HOURS, 3);
-        $expiredAt = $now->copy()->addHours($expHours);
+        $expHours = (int) SiteSetting::get(self::SETTING_EXPIRATION_HOURS, 24);
+        $expiredAt = now()->addHours($expHours);
 
         $staticPayload = $this->getStaticPayload();
         $dynamicPayload = $this->convertStaticToDynamic($staticPayload, $expectedAmount);
 
-        // Simpan ke database invoice
+        // Simpan ke database invoice secara permanen
         $invoice->update([
             'qris_unique_code' => $uniqueCode,
             'qris_expected_amount' => $expectedAmount,

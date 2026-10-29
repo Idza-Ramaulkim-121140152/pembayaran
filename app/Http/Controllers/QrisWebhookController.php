@@ -93,8 +93,7 @@ class QrisWebhookController extends Controller
             ]);
         }
 
-        $forceRegenerate = $request->boolean('regenerate', false);
-        $dynamicData = $this->dynamicQrisService->generateForInvoice($invoice, $forceRegenerate);
+        $dynamicData = $this->dynamicQrisService->generateForInvoice($invoice);
 
         return response()->json([
             'status' => 'success',
