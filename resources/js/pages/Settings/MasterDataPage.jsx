@@ -1,4 +1,4 @@
-import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText, Wallet, QrCode } from 'lucide-react';
+import { CreditCard, MapPin, Network, Package, Shield, Megaphone, Target, FileText, Wallet, QrCode, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const role = window.appUserRole || 'admin';
@@ -65,6 +65,13 @@ const MASTER_MENU = [
         description: 'Otomasi verifikasi QRIS via push notifikasi GoBiz HP Android (MacroDroid).',
         icon: QrCode,
         path: '/settings/qris',
+        roles: ['superadmin', 'admin', 'finance'],
+    },
+    {
+        title: 'Laporan Eksekutif WhatsApp',
+        description: 'Ringkasan harian 21:00, kewajiban kas (H-3/H-1), dan tutup buku bulanan ke WA Owner.',
+        icon: Sparkles,
+        path: '/settings/executive-reports',
         roles: ['superadmin', 'admin', 'finance'],
     },
     {

@@ -68,4 +68,21 @@ Schedule::command('jobs:send-morning-reminders')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
+// Executive WhatsApp Intelligence Suite for Owner
+Schedule::command('executive:send-daily-report')
+    ->dailyAt('21:00')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+Schedule::command('finance:send-obligation-alert')
+    ->dailyAt('08:30')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+Schedule::command('finance:send-monthly-pnl')
+    ->monthlyOn(1, '08:00')
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
+
 

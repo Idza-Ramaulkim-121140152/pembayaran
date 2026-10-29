@@ -830,6 +830,12 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/settings/qris', [\App\Http\Controllers\QrisWebhookController::class, 'getSettings'])->name('api.settings.qris');
         Route::post('/api/settings/qris', [\App\Http\Controllers\QrisWebhookController::class, 'updateSettings'])->name('api.settings.qris.update');
         Route::post('/api/settings/qris/test-parser', [\App\Http\Controllers\QrisWebhookController::class, 'testParser'])->name('api.settings.qris.test-parser');
+
+        // Executive Reports WhatsApp Settings for Owner
+        Route::get('/settings/executive-reports', fn() => view('app'))->name('settings.executive-reports');
+        Route::get('/api/settings/executive-reports', [\App\Http\Controllers\ExecutiveReportController::class, 'getConfig'])->name('api.settings.executive-reports');
+        Route::post('/api/settings/executive-reports', [\App\Http\Controllers\ExecutiveReportController::class, 'updateConfig'])->name('api.settings.executive-reports.update');
+        Route::post('/api/settings/executive-reports/test-send', [\App\Http\Controllers\ExecutiveReportController::class, 'testSend'])->name('api.settings.executive-reports.test-send');
     }); // end admin settings
 
     // Superadmin-only routes (User Management)
