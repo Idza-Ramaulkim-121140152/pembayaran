@@ -383,24 +383,8 @@ class QrisWebhookService
             return false;
         }
 
-        $activeUntil = '-';
-        if (!empty($customer->due_date)) {
-            try {
-                $activeUntil = Carbon::parse((string) $customer->due_date)->format('d/m/Y');
-            } catch (\Throwable) {
-                $activeUntil = '-';
-            }
-        }
-
-        $message = "🎉 *PEMBAYARAN DITERIMA & LUNAS* 🎉\n\n" .
-            "Halo kak *{$customer->name}*,\n" .
-            "Terima kasih, pembayaran tagihan internet Anda via *QRIS Dinamis* telah berhasil diverifikasi otomatis oleh sistem.\n\n" .
-            "📄 *No. Invoice:* {$invoice->invoice_link}\n" .
-            "💰 *Nominal Dibayar:* Rp " . number_format($amount, 0, ',', '.') . "\n" .
-            "📦 *Paket:* " . ($customer->package_type ?: '-') . "\n" .
-            "📅 *Masa Aktif s/d:* {$activeUntil}\n" .
-            "🔖 *No. Ref:* {$refCode}\n\n" .
-            "Layanan internet Anda tetap aktif optimal. Terima kasih telah setia bersama Rumah Kita Network!";
+        // Pesan konfirmasi resmi terpadu dan konsisten (sama persis dengan konfirmasi tagihan utama)
+        $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true);
 
         $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
 

@@ -82,10 +82,7 @@ class PaymentCaptureNotificationService
             return;
         }
 
-        $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true)
-            . "\n\nNominal: Rp " . number_format((float) $capture->amount, 0, ',', '.')
-            . "\nWaktu: " . ((string) data_get($capture->meta, 'analysis.paid_date', now()->toDateString()))
-            . ' ' . ((string) data_get($capture->meta, 'analysis.paid_time', now()->format('H:i')));
+        $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true);
 
         try {
             $response = Http::timeout(60)->post(rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/') . '/send-bulk', [
