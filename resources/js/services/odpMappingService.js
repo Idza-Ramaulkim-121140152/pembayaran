@@ -8,6 +8,8 @@ const odpMappingService = {
     createOdp: (payload) => apiClient.post('/odp', payload),
     backfill: () => apiClient.post('/odp-mapping/backfill'),
     qualityAudit: () => apiClient.get('/odp-mapping/quality-audit'),
+    getAiSuggestions: (params = {}) => apiClient.get('/odp-mapping/ai-suggestions', { params }),
+    applyAiSuggestions: (payload) => apiClient.post('/odp-mapping/ai-apply', payload),
 };
 
 export default odpMappingService;

@@ -396,6 +396,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/odp-mapping/unassign', [OdpMappingController::class, 'unassign'])->middleware('permission:odp.mapping.assign')->name('api.odp-mapping.unassign');
         Route::post('/api/odp-mapping/backfill', [OdpMappingController::class, 'backfill'])->middleware('permission:odp.mapping.assign')->name('api.odp-mapping.backfill');
         Route::get('/api/odp-mapping/quality-audit', [OdpMappingController::class, 'qualityAudit'])->middleware('permission:odp.mapping.view')->name('api.odp-mapping.quality-audit');
+        Route::get('/api/odp-mapping/ai-suggestions', [OdpMappingController::class, 'aiSuggestions'])->middleware('permission:odp.mapping.view')->name('api.odp-mapping.ai-suggestions');
+        Route::post('/api/odp-mapping/ai-apply', [OdpMappingController::class, 'aiApply'])->middleware('permission:odp.mapping.assign')->name('api.odp-mapping.ai-apply');
         Route::get('/api/odps/options', [OdpMappingController::class, 'options'])->middleware('permission:odp.mapping.view')->name('api.odp.options');
 
         // Complaints API
@@ -478,11 +480,11 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         // Incident engine and incident management
         Route::get('/api/network-incidents', [NetworkIncidentController::class, 'index'])->middleware('permission:incident.view')->name('api.network-incidents.index');
         Route::post('/api/network-incidents', [NetworkIncidentController::class, 'store'])->middleware('permission:incident.manage')->name('api.network-incidents.store');
-        Route::post('/api/network-incidents/{networkIncident}/acknowledge', [NetworkIncidentController::class, 'acknowledge'])->middleware('permission:incident.manage')->name('api.network-incidents.acknowledge');
-        Route::post('/api/network-incidents/{networkIncident}/escalate', [NetworkIncidentController::class, 'escalate'])->middleware('permission:incident.manage')->name('api.network-incidents.escalate');
-        Route::post('/api/network-incidents/{networkIncident}/mitigate', [NetworkIncidentController::class, 'mitigate'])->middleware('permission:incident.manage')->name('api.network-incidents.mitigate');
-        Route::post('/api/network-incidents/{networkIncident}/resolve', [NetworkIncidentController::class, 'resolve'])->middleware('permission:incident.manage')->name('api.network-incidents.resolve');
-        Route::post('/api/network-incidents/{networkIncident}/postmortem', [NetworkIncidentController::class, 'postmortem'])->middleware('permission:incident.manage')->name('api.network-incidents.postmortem');
+        Route::post('/api/network-incidents/{incident}/acknowledge', [NetworkIncidentController::class, 'acknowledge'])->middleware('permission:incident.manage')->name('api.network-incidents.acknowledge');
+        Route::post('/api/network-incidents/{incident}/escalate', [NetworkIncidentController::class, 'escalate'])->middleware('permission:incident.manage')->name('api.network-incidents.escalate');
+        Route::post('/api/network-incidents/{incident}/mitigate', [NetworkIncidentController::class, 'mitigate'])->middleware('permission:incident.manage')->name('api.network-incidents.mitigate');
+        Route::post('/api/network-incidents/{incident}/resolve', [NetworkIncidentController::class, 'resolve'])->middleware('permission:incident.manage')->name('api.network-incidents.resolve');
+        Route::post('/api/network-incidents/{incident}/postmortem', [NetworkIncidentController::class, 'postmortem'])->middleware('permission:incident.manage')->name('api.network-incidents.postmortem');
         Route::post('/api/network-incidents/run-engine', [NetworkIncidentController::class, 'runEngine'])->middleware('permission:incident.run_engine')->name('api.network-incidents.run-engine');
 
         // Installation workflow

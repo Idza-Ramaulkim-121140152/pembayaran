@@ -7,6 +7,7 @@ use App\Models\Odp;
 use App\Models\OdpMappingAnomaly;
 use App\Services\AuditLogService;
 use App\Services\FeatureService;
+use App\Services\OdpAiSuggestionService;
 use App\Services\OdpQualityAuditService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +18,7 @@ class OdpMappingController extends Controller
         private FeatureService $featureService,
         private AuditLogService $auditLogService,
         private OdpQualityAuditService $odpQualityAuditService,
+        private OdpAiSuggestionService $aiSuggestionService,
     ) {
     }
 
@@ -286,6 +288,52 @@ class OdpMappingController extends Controller
 
         return response()->json([
             'data' => $this->odpQualityAuditService->audit(),
+        ]);
+    }
+
+    public function aiSuggestions(Request $request)
+    {
+        if (!$this->featureService->enabled('odp_mapping_v2')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        $validated = $request->validate([
+            'customer_ids' => 'nullable|array',
+            'customer_ids.*' => 'integer|exists:customers,id',
+            'status' => 'nullable|in:assigned,unassigned,mismatch',
+            'min_confidence' => 'nullable|numeric|min:0|max:100',
+            'limit' => 'nullable|integer|min:1|max:300',
+            'search' => 'nullable|string|max:100',
+        ]);
+
+        $result = $this->aiSuggestionService->generateSuggestions($validated);
+
+        return response()->json([
+            'data' => $result['suggestions'],
+            'meta' => [
+                'summary' => $result['summary'],
+            ],
+        ]);
+    }
+
+    public function aiApply(Request $request)
+    {
+        if (!$this->featureService->enabled('odp_mapping_v2')) {
+            return response()->json(['message' => 'Feature nonaktif.'], 404);
+        }
+
+        $validated = $request->validate([
+            'assignments' => 'required|array|min:1',
+            'assignments.*.customer_id' => 'required|integer|exists:customers,id',
+            'assignments.*.odp_id' => 'required|integer|exists:odps,id',
+        ]);
+
+        $userId = auth()->id() ?? 1;
+        $result = $this->aiSuggestionService->applyBatch($validated['assignments'], $userId);
+
+        return response()->json([
+            'message' => "Berhasil menerapkan {$result['applied_count']} pemetaan ODP via AI.",
+            'data' => $result,
         ]);
     }
 }

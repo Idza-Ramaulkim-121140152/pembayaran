@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->string('title');
             $table->enum('severity', ['low', 'medium', 'high', 'critical'])->default('medium');
-            $table->enum('status', ['open', 'resolved'])->default('open');
+            $table->enum('status', ['open', 'acknowledged', 'escalated', 'mitigated', 'resolved'])->default('open');
             $table->timestamp('started_at');
             $table->timestamp('resolved_at')->nullable();
             $table->enum('detected_by', ['auto', 'manual'])->default('auto');
@@ -33,7 +33,7 @@ return new class extends Migration
         Schema::create('incident_events', function (Blueprint $table) {
             $table->id();
             $table->foreignId('network_incident_id')->constrained('network_incidents')->cascadeOnDelete();
-            $table->enum('event_type', ['opened', 'resolved', 'manual_update', 'notice_published']);
+            $table->enum('event_type', ['opened', 'resolved', 'manual_update', 'notice_published', 'acknowledged', 'escalated', 'mitigated', 'postmortem_added']);
             $table->text('message')->nullable();
             $table->json('meta')->nullable();
             $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();

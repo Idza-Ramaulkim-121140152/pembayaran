@@ -1,8 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
+import {
+    Sparkles,
+    MapPin,
+    CheckCircle2,
+    AlertTriangle,
+    Layers,
+    ArrowRight,
+    Search,
+    Check,
+    RefreshCw,
+    X,
+    Info,
+    CheckSquare,
+    Square,
+} from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MapPicker from '../../components/common/MapPicker';
+import Modal from '../../components/common/Modal';
 import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import masterWilayahService from '../../services/masterWilayahService';
 import odpMappingService from '../../services/odpMappingService';
@@ -67,6 +83,16 @@ function OdpMappingPage() {
         latitude: DEFAULT_ODP_COORDINATE.latitude,
         longitude: DEFAULT_ODP_COORDINATE.longitude,
     });
+
+    // AI Auto-Suggest state
+    const [aiModalOpen, setAiModalOpen] = useState(false);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiApplying, setAiApplying] = useState(false);
+    const [aiSummary, setAiSummary] = useState(null);
+    const [aiSuggestions, setAiSuggestions] = useState([]);
+    const [aiSelectedIds, setAiSelectedIds] = useState(new Set());
+    const [aiCustomAssignments, setAiCustomAssignments] = useState({});
+    const [aiFilterTab, setAiFilterTab] = useState('all'); // 'all' | 'high' | 'has_gps'
 
     useEffect(() => {
         fetchInitial();
@@ -154,6 +180,99 @@ function OdpMappingPage() {
             setLoading(false);
         }
     };
+
+    const openAiModal = async (specificIds = null) => {
+        setAiModalOpen(true);
+        setAiLoading(true);
+        try {
+            const params = {
+                limit: 150,
+                min_confidence: 25,
+            };
+            if (Array.isArray(specificIds) && specificIds.length > 0) {
+                params.customer_ids = specificIds;
+            }
+            const res = await odpMappingService.getAiSuggestions(params);
+            const suggestions = res?.data?.data || [];
+            const summary = res?.data?.meta?.summary || null;
+            setAiSuggestions(suggestions);
+            setAiSummary(summary);
+
+            const highIds = new Set(
+                suggestions.filter((s) => s.confidence === 'high').map((s) => s.customer_id)
+            );
+            setAiSelectedIds(highIds.size > 0 ? highIds : new Set(suggestions.map((s) => s.customer_id)));
+            setAiCustomAssignments({});
+        } catch (err) {
+            setError('Gagal memuat rekomendasi AI ODP: ' + (err?.response?.data?.message || err.message));
+        } finally {
+            setAiLoading(false);
+        }
+    };
+
+    const toggleAiSelect = (customerId) => {
+        setAiSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(customerId)) {
+                next.delete(customerId);
+            } else {
+                next.add(customerId);
+            }
+            return next;
+        });
+    };
+
+    const selectAllHighConfidence = () => {
+        const highIds = new Set(
+            aiSuggestions.filter((s) => s.confidence === 'high').map((s) => s.customer_id)
+        );
+        setAiSelectedIds(highIds);
+    };
+
+    const selectAllSuggestions = () => {
+        setAiSelectedIds(new Set(filteredAiSuggestions.map((s) => s.customer_id)));
+    };
+
+    const deselectAllSuggestions = () => {
+        setAiSelectedIds(new Set());
+    };
+
+    const handleApplyAiSuggestions = async () => {
+        if (aiSelectedIds.size === 0) return;
+        setAiApplying(true);
+        try {
+            const assignments = [];
+            aiSuggestions.forEach((s) => {
+                if (aiSelectedIds.has(s.customer_id)) {
+                    const assignedOdpId = aiCustomAssignments[s.customer_id] || s.suggested_odp_id;
+                    assignments.push({
+                        customer_id: s.customer_id,
+                        odp_id: Number(assignedOdpId),
+                    });
+                }
+            });
+
+            const res = await odpMappingService.applyAiSuggestions({ assignments });
+            setSuccess(res?.data?.message || `Berhasil menerapkan ${assignments.length} pemetaan ODP via AI!`);
+            setAiModalOpen(false);
+            await reloadCustomers();
+            fetchQualityAudit();
+        } catch (err) {
+            setError('Gagal menerapkan rekomendasi AI: ' + (err?.response?.data?.message || err.message));
+        } finally {
+            setAiApplying(false);
+        }
+    };
+
+    const filteredAiSuggestions = useMemo(() => {
+        if (aiFilterTab === 'high') {
+            return aiSuggestions.filter((s) => s.confidence === 'high');
+        }
+        if (aiFilterTab === 'has_gps') {
+            return aiSuggestions.filter((s) => s.has_coordinates);
+        }
+        return aiSuggestions;
+    }, [aiSuggestions, aiFilterTab]);
 
     const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -278,6 +397,29 @@ function OdpMappingPage() {
                     ? `${row.latitude}, ${row.longitude}`
                     : '-'
             ),
+        },
+        {
+            key: 'ai_action',
+            label: 'Aksi AI',
+            render: (row) => {
+                if (row.odp_master_name) {
+                    return (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200">
+                            <CheckCircle2 size={12} /> Terpetakan
+                        </span>
+                    );
+                }
+                return (
+                    <button
+                        type="button"
+                        onClick={() => openAiModal([row.id])}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg border border-indigo-200 transition"
+                        title="Dapatkan rekomendasi ODP dari AI untuk pelanggan ini"
+                    >
+                        <Sparkles size={12} /> Cari ODP AI
+                    </button>
+                );
+            },
         },
     ];
 
@@ -473,9 +615,19 @@ function OdpMappingPage() {
 
     return (
         <div className="space-y-6">
-            <div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pemetaan ODP</h1>
-                <p className="text-gray-600 mt-1">Kelola mapping pelanggan ke ODP secara aman dan terukur.</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pemetaan ODP</h1>
+                    <p className="text-gray-600 mt-1">Kelola mapping pelanggan ke ODP secara aman, akurat, dan terukur.</p>
+                </div>
+                <button
+                    type="button"
+                    onClick={() => openAiModal()}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:from-indigo-700 hover:to-pink-700 transition"
+                >
+                    <Sparkles size={18} />
+                    ✨ AI Auto-Suggest Mapping
+                </button>
             </div>
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
@@ -660,6 +812,48 @@ function OdpMappingPage() {
                     </div>
                 </div>
 
+                {/* AI Auto-Suggest Quick Banner */}
+                <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-pink-50/50 p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="flex items-start gap-3">
+                            <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-2.5 text-white shadow-md">
+                                <Sparkles size={22} className="animate-pulse" />
+                            </div>
+                            <div>
+                                <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+                                    AI Auto-Suggest ODP Mapping
+                                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                        Pencocokan Cerdas
+                                    </span>
+                                </h3>
+                                <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
+                                    Menganalisis koordinat GPS tiang, nama legacy, dan port PON OLT untuk memetakan {stats.unassigned + stats.mismatch} pelanggan tanpa survei manual.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            {selectedIds.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => openAiModal(selectedIds)}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50 transition"
+                                >
+                                    <Sparkles size={15} />
+                                    Analisis ({selectedIds.length}) Terpilih
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => openAiModal()}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition"
+                            >
+                                <Sparkles size={15} />
+                                Buka Rekomendasi AI
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3">
                     <select
                         value={selectedOdpId}
@@ -693,6 +887,303 @@ function OdpMappingPage() {
                     />
                 )}
             </div>
+
+            {/* AI Auto-Suggest Modal */}
+            <Modal
+                isOpen={aiModalOpen}
+                onClose={() => setAiModalOpen(false)}
+                title={
+                    <div className="flex items-center gap-2 text-indigo-900">
+                        <Sparkles size={22} className="text-indigo-600" />
+                        <span>Kecerdasan AI Pemetaan ODP</span>
+                    </div>
+                }
+                size="5xl"
+            >
+                <div className="space-y-4 p-1">
+                    {/* Header Banner */}
+                    <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/80 via-purple-50/50 to-pink-50/30 p-3 sm:p-4">
+                        <p className="text-xs sm:text-sm text-gray-700">
+                            Mesin AI menganalisis koordinat GPS tiang, kedekatan jarak dropcore, kesesuaian nama legacy ODP, serta jalur Port PON OLT untuk merekonstruksi topologi secara otomatis tanpa perlu survei manual tiang satu per satu.
+                        </p>
+                    </div>
+
+                    {/* Summary KPI Cards */}
+                    {aiSummary && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                            <div className="rounded-xl border border-gray-200 bg-white p-3 shadow-xs">
+                                <p className="text-xs font-medium text-gray-500">Total Dianalisis</p>
+                                <p className="text-lg sm:text-xl font-bold text-gray-900 mt-1">{aiSummary.total_analyzed}</p>
+                                <p className="text-[11px] text-gray-400">dari {aiSummary.total_unmapped} unmapped</p>
+                            </div>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 shadow-xs">
+                                <p className="text-xs font-semibold text-emerald-800 flex items-center gap-1">
+                                    <CheckCircle2 size={13} /> Keyakinan Tinggi
+                                </p>
+                                <p className="text-lg sm:text-xl font-bold text-emerald-700 mt-1">{aiSummary.high_confidence_count}</p>
+                                <p className="text-[11px] text-emerald-600">Sangat akurat (1-klik)</p>
+                            </div>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 shadow-xs">
+                                <p className="text-xs font-semibold text-amber-800 flex items-center gap-1">
+                                    <AlertTriangle size={13} /> Keyakinan Sedang
+                                </p>
+                                <p className="text-lg sm:text-xl font-bold text-amber-700 mt-1">{aiSummary.medium_confidence_count}</p>
+                                <p className="text-[11px] text-amber-600">Jarak/nama terindikasi</p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 shadow-xs">
+                                <p className="text-xs font-medium text-slate-500">Keyakinan Rendah</p>
+                                <p className="text-lg sm:text-xl font-bold text-slate-700 mt-1">{aiSummary.low_confidence_count}</p>
+                                <p className="text-[11px] text-slate-400">Perlu cek tiang fisik</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Filter and Quick Select Toolbar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-gray-100 pb-3">
+                        <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-xl">
+                            <button
+                                type="button"
+                                onClick={() => setAiFilterTab('all')}
+                                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                    aiFilterTab === 'all'
+                                        ? 'bg-white text-gray-900 shadow-xs'
+                                        : 'text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Semua Saran ({aiSuggestions.length})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAiFilterTab('high')}
+                                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                    aiFilterTab === 'high'
+                                        ? 'bg-white text-emerald-700 shadow-xs'
+                                        : 'text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Keyakinan Tinggi ({aiSummary?.high_confidence_count || 0})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAiFilterTab('has_gps')}
+                                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                    aiFilterTab === 'has_gps'
+                                        ? 'bg-white text-indigo-700 shadow-xs'
+                                        : 'text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Berdasarkan GPS Tiang
+                            </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <button
+                                type="button"
+                                onClick={selectAllHighConfidence}
+                                className="px-2.5 py-1 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold hover:bg-emerald-100 transition"
+                            >
+                                ✓ Pilih Semua Tinggi
+                            </button>
+                            <button
+                                type="button"
+                                onClick={selectAllSuggestions}
+                                className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-700 font-medium hover:bg-gray-50 transition"
+                            >
+                                Pilih Semua
+                            </button>
+                            <button
+                                type="button"
+                                onClick={deselectAllSuggestions}
+                                className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-500 font-medium hover:bg-gray-50 transition"
+                            >
+                                Batal Pilih
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Suggestions Content */}
+                    {aiLoading ? (
+                        <div className="py-12 text-center">
+                            <LoadingSpinner text="AI sedang merekayasa balik topologi & mencocokkan ODP..." />
+                        </div>
+                    ) : filteredAiSuggestions.length === 0 ? (
+                        <div className="py-12 text-center text-gray-500">
+                            <Sparkles size={36} className="mx-auto text-gray-300 mb-2" />
+                            <p className="font-semibold text-gray-700">Tidak ada saran ODP yang cocok.</p>
+                            <p className="text-sm mt-1 text-gray-500">
+                                Semua pelanggan yang diperiksa mungkin sudah terpetakan atau tidak memiliki data wilayah/GPS/legacy yang dapat dianalisis.
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+                            {filteredAiSuggestions.map((item) => {
+                                const isSelected = aiSelectedIds.has(item.customer_id);
+                                const chosenOdpId = aiCustomAssignments[item.customer_id] || item.suggested_odp_id;
+                                const isCapacityFull = item.flags?.includes('odp_full');
+
+                                return (
+                                    <div
+                                        key={item.customer_id}
+                                        className={`rounded-xl border p-3 sm:p-3.5 transition ${
+                                            isSelected
+                                                ? 'border-indigo-300 bg-indigo-50/40 shadow-xs'
+                                                : 'border-gray-200 bg-white hover:border-gray-300'
+                                        }`}
+                                    >
+                                        <div className="flex items-start gap-3">
+                                            <input
+                                                type="checkbox"
+                                                checked={isSelected}
+                                                onChange={() => toggleAiSelect(item.customer_id)}
+                                                className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+
+                                            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
+                                                {/* Customer Info */}
+                                                <div className="lg:col-span-4">
+                                                    <p className="font-bold text-gray-900 text-sm">{item.customer_name}</p>
+                                                    <p className="text-xs text-gray-500 mt-0.5 font-mono">
+                                                        {item.pppoe_username ? `PPPoE: ${item.pppoe_username}` : `Telp: ${item.phone || '-'}`}
+                                                    </p>
+                                                    <p className="text-xs text-gray-600 mt-1 line-clamp-1">
+                                                        {item.address || 'Alamat tidak tercatat'}
+                                                    </p>
+                                                    <div className="mt-1 flex flex-wrap gap-1">
+                                                        {item.legacy_odp ? (
+                                                            <span className="inline-flex items-center text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">
+                                                                Catatan: {item.legacy_odp}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[11px] text-gray-400 italic">ODP kosong</span>
+                                                        )}
+                                                        {item.has_coordinates && (
+                                                            <span className="inline-flex items-center gap-0.5 text-[11px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded">
+                                                                <MapPin size={10} /> GPS Aktif
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* Arrow */}
+                                                <div className="hidden lg:flex lg:col-span-1 justify-center items-center pt-2 text-indigo-400">
+                                                    <ArrowRight size={20} />
+                                                </div>
+
+                                                {/* AI Recommendation */}
+                                                <div className="lg:col-span-7 bg-white/90 rounded-xl border border-gray-200/80 p-3">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-gray-900 text-sm">
+                                                                {item.suggested_odp_name}
+                                                            </span>
+                                                            <span
+                                                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
+                                                                    item.confidence === 'high'
+                                                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                                                        : item.confidence === 'medium'
+                                                                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                                                                        : 'bg-slate-100 text-slate-700 border-slate-300'
+                                                                }`}
+                                                            >
+                                                                <Sparkles size={11} />
+                                                                {item.score}% {item.confidence === 'high' ? 'Yakin' : item.confidence === 'medium' ? 'Sedang' : 'Rendah'}
+                                                            </span>
+                                                        </div>
+
+                                                        {item.distance_meters !== null && (
+                                                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">
+                                                                <MapPin size={11} /> {Math.round(item.distance_meters)} meter
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Reasons list */}
+                                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                                        {item.reasons?.map((reason, idx) => (
+                                                            <span
+                                                                key={idx}
+                                                                className="inline-flex items-center text-[11px] text-gray-700 bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-md"
+                                                            >
+                                                                ✓ {reason}
+                                                            </span>
+                                                        ))}
+                                                        {isCapacityFull && (
+                                                            <span className="inline-flex items-center text-[11px] text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md font-semibold">
+                                                                ⚠️ ODP Penuh ({item.occupied_ports}/{item.total_ports})
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Alternative ODP Selector */}
+                                                    {item.alternatives?.length > 0 && (
+                                                        <div className="mt-2.5 pt-2 border-t border-gray-100 flex items-center gap-2 text-xs">
+                                                            <span className="text-gray-500 font-medium">Alternatif:</span>
+                                                            <select
+                                                                value={chosenOdpId}
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value;
+                                                                    setAiCustomAssignments((prev) => ({
+                                                                        ...prev,
+                                                                        [item.customer_id]: val,
+                                                                    }));
+                                                                }}
+                                                                className="px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 text-xs font-medium focus:ring-1 focus:ring-indigo-500"
+                                                            >
+                                                                <option value={item.suggested_odp_id}>
+                                                                    (Utama) {item.suggested_odp_name} — {item.score}%
+                                                                </option>
+                                                                {item.alternatives.map((alt) => (
+                                                                    <option key={alt.odp_id} value={alt.odp_id}>
+                                                                        (Alt) {alt.odp_name} {alt.distance_meters ? `(${Math.round(alt.distance_meters)}m)` : ''} — {alt.score}%
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Modal Footer */}
+                    <div className="pt-3 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <div className="text-xs text-gray-600">
+                            Terpilih: <span className="font-bold text-indigo-700">{aiSelectedIds.size}</span> dari {filteredAiSuggestions.length} saran
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                onClick={() => setAiModalOpen(false)}
+                                disabled={aiApplying}
+                            >
+                                Batal
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="primary"
+                                onClick={handleApplyAiSuggestions}
+                                disabled={aiSelectedIds.size === 0 || aiApplying}
+                                className="!bg-gradient-to-r !from-indigo-600 !to-purple-600 hover:!from-indigo-700 hover:!to-purple-700"
+                            >
+                                {aiApplying ? (
+                                    <span className="flex items-center gap-1.5">
+                                        <RefreshCw size={14} className="animate-spin" /> Menerapkan...
+                                    </span>
+                                ) : (
+                                    <span className="flex items-center gap-1.5 font-bold">
+                                        <Sparkles size={15} /> Terapkan ({aiSelectedIds.size}) Pemetaan Terpilih
+                                    </span>
+                                )}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }
