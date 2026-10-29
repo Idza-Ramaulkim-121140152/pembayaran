@@ -142,7 +142,14 @@ class PaymentVerificationConfigService
                 'application/pdf',
             ],
             'destination_whitelist' => [
-                'qris' => [],
+                'qris' => [
+                    [
+                        'name' => 'Rumah Kita Net',
+                        'merchant_id' => 'ID1024339131558',
+                        'aliases' => ['Rumah Kita Net , KALIANDA', 'Rumah Kita Network', 'COM.GO-JEK.WWW', 'GoPay', 'GoBiz'],
+                        'active' => true,
+                    ],
+                ],
                 'transfer_bank' => [],
             ],
             'notification_recipients' => [],

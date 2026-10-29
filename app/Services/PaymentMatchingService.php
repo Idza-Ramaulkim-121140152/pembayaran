@@ -353,7 +353,14 @@ class PaymentMatchingService
 
             $autoThreshold = (float) data_get(app(PaymentVerificationConfigService::class)->getConfig(), 'confidence_thresholds.auto_approve', 80);
 
-            $amountMatchesTop = $top && abs((float) $top['invoice']->amount - (float) $capture->amount) <= 0.01 && (float) $capture->amount > 0;
+            $topInvoice = $top['invoice'] ?? null;
+            $amountMatchesTop = false;
+            if ($topInvoice && (float) $capture->amount > 0) {
+                $captAmt = (float) $capture->amount;
+                $matchesBase = abs((float) $topInvoice->amount - $captAmt) <= 0.01;
+                $matchesQris = $topInvoice->qris_expected_amount && abs((float) $topInvoice->qris_expected_amount - $captAmt) <= 0.01;
+                $amountMatchesTop = $matchesBase || $matchesQris;
+            }
             $destinationOk = (bool) data_get($capture->meta, 'validation.flags.destination_whitelisted', true);
 
             $canAutoApply = $autoApply
@@ -491,6 +498,21 @@ class PaymentMatchingService
                 ]]);
             }
 
+            // Also check if web_public invoice was already settled recently:
+            $paidInvoice = Invoice::query()
+                ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
+                ->where('id', $capture->invoice_id)
+                ->where('status', 'paid')
+                ->first();
+
+            if ($paidInvoice) {
+                return collect([[
+                    'invoice' => $paidInvoice,
+                    'score' => 95.0,
+                    'reason' => 'already_settled_web_public',
+                ]]);
+            }
+
             return collect();
         }
 
@@ -505,11 +527,51 @@ class PaymentMatchingService
                 ->get();
 
             if ($customerInvoices->isEmpty()) {
+                // If customer has no unpaid invoices, check if an invoice was already settled recently (e.g. by Jalur 1 MacroDroid push)
+                $recentlyPaidInvoice = null;
+                if ($capture->invoice_id) {
+                    $recentlyPaidInvoice = Invoice::query()
+                        ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
+                        ->where('id', $capture->invoice_id)
+                        ->where('customer_id', $capture->customer_id)
+                        ->where('status', 'paid')
+                        ->first();
+                }
+
+                if (!$recentlyPaidInvoice) {
+                    $recentlyPaidInvoice = Invoice::query()
+                        ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
+                        ->where('customer_id', $capture->customer_id)
+                        ->where('status', 'paid')
+                        ->where('updated_at', '>=', now()->subHours(24))
+                        ->where(function ($q) use ($amount) {
+                            if ($amount > 0) {
+                                $q->whereBetween('amount', [$amount - 0.01, $amount + 0.01])
+                                  ->orWhereBetween('qris_expected_amount', [$amount - 0.01, $amount + 0.01]);
+                            }
+                        })
+                        ->latest('updated_at')
+                        ->first();
+                }
+
+                if ($recentlyPaidInvoice) {
+                    return collect([[
+                        'invoice' => $recentlyPaidInvoice,
+                        'score' => 95.0,
+                        'reason' => 'already_settled_by_primary_channel',
+                    ]]);
+                }
+
                 return collect();
             }
 
-            // Find invoices matching exact amount
-            $exactMatches = $customerInvoices->filter(fn ($inv) => $amount > 0 && abs((float) $inv->amount - $amount) <= 0.01);
+            // Find invoices matching exact amount (either base amount or QRIS dynamic expected amount)
+            $exactMatches = $customerInvoices->filter(function ($inv) use ($amount) {
+                if ($amount <= 0) return false;
+                $matchesBase = abs((float) $inv->amount - $amount) <= 0.01;
+                $matchesQris = $inv->qris_expected_amount && abs((float) $inv->qris_expected_amount - $amount) <= 0.01;
+                return $matchesBase || $matchesQris;
+            });
 
             if ($exactMatches->isNotEmpty()) {
                 // If there is an exact match for this customer, return ONLY this customer's matching invoice(s)!
@@ -545,19 +607,23 @@ class PaymentMatchingService
         }
 
         // 3. Unknown / Unregistered Sender (e.g. WhatsApp from unknown number):
-        // Query unpaid invoices matching exact amount for manual admin review
+        // Query unpaid invoices matching exact amount for manual admin review or QRIS unique auto-match
         if ($amount > 0) {
             $amountMatches = Invoice::query()
                 ->with('customer:id,name,phone,pppoe_username,billing_auto_disabled,due_date,is_service_isolated,service_isolated_at,service_isolated_by,isolation_restore_profile,package_id,mikrotik_profile')
                 ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
-                ->whereBetween('amount', [$amount - 0.01, $amount + 0.01])
+                ->where(function ($q) use ($amount) {
+                    $q->whereBetween('amount', [$amount - 0.01, $amount + 0.01])
+                      ->orWhereBetween('qris_expected_amount', [$amount - 0.01, $amount + 0.01]);
+                })
                 ->orderBy('due_date')
                 ->limit(15)
                 ->get();
 
             foreach ($amountMatches as $invoice) {
-                $score = 70.0;
-                $reasons = ['amount_exact'];
+                $isQrisUnique = $invoice->qris_expected_amount && abs((float) $invoice->qris_expected_amount - $amount) <= 0.01;
+                $score = $isQrisUnique ? 90.0 : 70.0;
+                $reasons = [$isQrisUnique ? 'qris_unique_amount_exact' : 'amount_exact'];
 
                 if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
                     $score += 15;
@@ -622,7 +688,9 @@ class PaymentMatchingService
                 $financeUserId = null;
             }
 
-            if ($invoice->status !== 'paid') {
+            $wasAlreadyPaid = strtolower((string) $invoice->status) === 'paid';
+
+            if (!$wasAlreadyPaid) {
                 $invoice->amount = (float) $capture->amount > 0 ? (float) $capture->amount : (float) $invoice->amount;
                 $invoice->status = 'paid';
                 $invoice->paid_at = $paidTimestamp;
@@ -681,6 +749,11 @@ class PaymentMatchingService
                 }
 
                 $invoice->save();
+            } else {
+                if (empty($invoice->bukti_pembayaran) && !empty($mediaPath)) {
+                    $invoice->bukti_pembayaran = $mediaPath;
+                    $invoice->save();
+                }
             }
 
             $customer = $invoice->customer()->first() ?: $invoice->customer;
@@ -709,15 +782,20 @@ class PaymentMatchingService
             $capture->match_confidence = $score;
             $capture->reviewed_by = $actorId;
             $capture->reviewed_at = now();
-            $capture->meta = array_merge((array) $capture->meta, [
+            $captureMeta = array_merge((array) $capture->meta, [
                 'auto_applied' => $autoApplied,
                 'approved_invoice_id' => $invoice->id,
                 'rollback_data' => $rollbackData,
             ]);
+            if ($wasAlreadyPaid) {
+                $captureMeta['already_settled_by_primary'] = true;
+                $captureMeta['settlement_note'] = 'Tagihan telah dilunasi sebelumnya via jalur utama (GoBiz Push / Webhook). Bukti bayar WhatsApp berhasil disimpan sebagai arsip verifikasi cadangan.';
+            }
+            $capture->meta = $captureMeta;
             $capture->save();
 
-            // Update customer due date & un-isolate service
-            if ($customer) {
+            // Update customer due date & un-isolate service (hanya jika belum dilunasi sebelumnya)
+            if ($customer && !$wasAlreadyPaid) {
                 if ($wasIsolated) {
                     $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
                 } elseif (!empty($previousDueDate)) {
@@ -757,9 +835,11 @@ class PaymentMatchingService
                 }
             }
 
-            // Sync with financial ledger / mutations as Admin Finance
-            $effectiveActor = $financeUserId ?: $actorId;
-            $this->ledgerService->syncInvoicePayment($invoice->fresh(), $effectiveActor);
+            // Sync with financial ledger / mutations as Admin Finance (hanya jika belum dilunasi sebelumnya)
+            if (!$wasAlreadyPaid) {
+                $effectiveActor = $financeUserId ?: $actorId;
+                $this->ledgerService->syncInvoicePayment($invoice->fresh(), $effectiveActor);
+            }
 
             // Dispatch customer payment confirmation
             try {

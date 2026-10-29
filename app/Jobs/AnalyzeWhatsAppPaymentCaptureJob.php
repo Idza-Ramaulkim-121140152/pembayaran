@@ -81,6 +81,32 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                 }
             }
 
+            // Attempt customer resolution by unique QRIS expected amount (if payment receipt has exact 3-digit unique code)
+            if (!$capture->customer_id || !$capture->customer) {
+                $detectedAmount = isset($analysis['amount']) ? (float) $analysis['amount'] : 0;
+                if ($detectedAmount > 0) {
+                    $qrisInvoice = \App\Models\Invoice::query()
+                        ->with('customer')
+                        ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
+                        ->where(function ($q) {
+                            $q->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                              ->orWhere(function ($sq) {
+                                  $sq->where('status', 'paid')
+                                     ->where('updated_at', '>=', now()->subHours(24));
+                              });
+                        })
+                        ->latest('updated_at')
+                        ->first();
+
+                    if ($qrisInvoice?->customer) {
+                        $capture->customer_id = $qrisInvoice->customer->id;
+                        $capture->invoice_id = $qrisInvoice->id;
+                        $capture->save();
+                        $capture->load(['customer', 'invoice']);
+                    }
+                }
+            }
+
             if ($capture->customer) {
                 $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
                 $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
@@ -101,15 +127,36 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
             if ($capture->invoice_id && ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))) {
                 // Keep existing invoice_id
             } else {
-                // Try to find exact amount match among customer's active unpaid invoices
+                // Try to find exact amount match among customer's active unpaid invoices (base amount OR QRIS expected amount)
                 $matchingInvoice = $detectedAmount > 0
-                    ? $activeInvoices->first(fn ($inv) => abs((float) $inv->amount - $detectedAmount) <= 0.01)
+                    ? $activeInvoices->first(function ($inv) use ($detectedAmount) {
+                        $matchesBase = abs((float) $inv->amount - $detectedAmount) <= 0.01;
+                        $matchesQris = $inv->qris_expected_amount && abs((float) $inv->qris_expected_amount - $detectedAmount) <= 0.01;
+                        return $matchesBase || $matchesQris;
+                    })
                     : null;
 
                 if ($matchingInvoice) {
                     $capture->invoice_id = $matchingInvoice->id;
                 } elseif (!$capture->invoice_id && $activeInvoices->isNotEmpty()) {
                     $capture->invoice_id = $activeInvoices->first()->id;
+                } elseif (!$capture->invoice_id || ($capture->invoice && $capture->invoice->status === 'paid')) {
+                    // Check if invoice was already settled recently (e.g. by Jalur 1 GoBiz push)
+                    $alreadyPaidInvoice = $capture->customer->invoices()
+                        ->where('status', 'paid')
+                        ->where('updated_at', '>=', now()->subHours(24))
+                        ->where(function ($q) use ($detectedAmount) {
+                            if ($detectedAmount > 0) {
+                                $q->whereBetween('amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
+                                  ->orWhereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01]);
+                            }
+                        })
+                        ->latest('updated_at')
+                        ->first();
+
+                    if ($alreadyPaidInvoice) {
+                        $capture->invoice_id = $alreadyPaidInvoice->id;
+                    }
                 }
                 $capture->save();
             }

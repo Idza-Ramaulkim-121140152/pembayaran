@@ -92,9 +92,13 @@ class PaymentProofValidationService
 
         $isDuplicate = $isDuplicateRef || $isDuplicateImage;
 
-        $amountMatchesInvoice = $invoice && isset($analysis['amount']) && (float) $analysis['amount'] > 0
-            ? abs((float) $invoice->amount - (float) $analysis['amount']) <= 0.01
-            : false;
+        $amountMatchesInvoice = false;
+        if ($invoice && isset($analysis['amount']) && (float) $analysis['amount'] > 0) {
+            $detectedAmt = (float) $analysis['amount'];
+            $matchesBase = abs((float) $invoice->amount - $detectedAmt) <= 0.01;
+            $matchesQris = $invoice->qris_expected_amount && abs((float) $invoice->qris_expected_amount - $detectedAmt) <= 0.01;
+            $amountMatchesInvoice = $matchesBase || $matchesQris;
+        }
 
         $hasWhitelistConfigured = (bool) ($destinationMatch['configured'] ?? false);
         if ($hasWhitelistConfigured) {
