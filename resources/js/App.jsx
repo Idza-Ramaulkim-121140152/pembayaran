@@ -432,9 +432,9 @@ function App() {
                     
                     {/* ODP */}
                     <Route path="/odp" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage />} />} />
-                    <Route path="/odp-mapping" element={<GuardedRoute permissionKey="odp.mapping.view" element={<OdpMappingPage />} />} />
-                    <Route path="/odp-scanner" element={<GuardedRoute permissionKey="odp.view" element={<OdpPortScannerPage />} />} />
-                    <Route path="/odp-scanner/:id" element={<GuardedRoute permissionKey="odp.view" element={<OdpPortScannerPage />} />} />
+                    <Route path="/odp-mapping" element={<GuardedRoute permissionKey="odp.mapping.view" element={<OdpPage defaultTab="mapping" />} />} />
+                    <Route path="/odp-scanner" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage defaultTab="scanner" />} />} />
+                    <Route path="/odp-scanner/:id" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage defaultTab="scanner" />} />} />
                     
                     {/* Pengeluaran */}
                     <Route path="/pengeluaran" element={<GuardedRoute permissionKey="finance.expense.manage" element={<PengeluaranPage />} />} />

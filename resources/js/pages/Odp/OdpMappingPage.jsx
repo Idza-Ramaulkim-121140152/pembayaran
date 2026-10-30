@@ -56,7 +56,7 @@ function buildQuickCreateNamePreview({ kecamatanId, desaId, dusunId, kecamatanOp
     return `${prefix}-${String(maxSequence + 1).padStart(3, '0')}`;
 }
 
-function OdpMappingPage() {
+function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
@@ -68,7 +68,7 @@ function OdpMappingPage() {
     const [selectedOdpId, setSelectedOdpId] = useState('');
     const [stats, setStats] = useState({ assigned: 0, unassigned: 0, mismatch: 0 });
     const [qualityAudit, setQualityAudit] = useState(null);
-    const [filters, setFilters] = useState({ search: '', status: '', odp_id: '' });
+    const [filters, setFilters] = useState({ search: '', status: '', odp_id: initialOdpFilter || '' });
     const [searchInput, setSearchInput] = useState('');
     const [kecamatanOptions, setKecamatanOptions] = useState([]);
     const [desaOptions, setDesaOptions] = useState([]);
@@ -98,6 +98,17 @@ function OdpMappingPage() {
         fetchInitial();
         fetchKecamatanOptions();
     }, []);
+
+    useEffect(() => {
+        if (initialOdpFilter !== undefined && initialOdpFilter !== null) {
+            setFilters((prev) => {
+                if (String(prev.odp_id || '') === String(initialOdpFilter)) return prev;
+                const next = { ...prev, odp_id: String(initialOdpFilter) };
+                reloadCustomers(next);
+                return next;
+            });
+        }
+    }, [initialOdpFilter]);
 
     const fetchInitial = async () => {
         try {
@@ -615,20 +626,44 @@ function OdpMappingPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pemetaan ODP</h1>
-                    <p className="text-gray-600 mt-1">Kelola mapping pelanggan ke ODP secara aman, akurat, dan terukur.</p>
+            {!embedded ? (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pemetaan ODP</h1>
+                        <p className="text-gray-600 mt-1">Kelola mapping pelanggan ke ODP secara aman, akurat, dan terukur.</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => openAiModal()}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:from-indigo-700 hover:to-pink-700 transition"
+                    >
+                        <Sparkles size={18} />
+                        ✨ AI Auto-Suggest Mapping
+                    </button>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => openAiModal()}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:from-indigo-700 hover:to-pink-700 transition"
-                >
-                    <Sparkles size={18} />
-                    ✨ AI Auto-Suggest Mapping
-                </button>
-            </div>
+            ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-gray-100">
+                    <div>
+                        <h2 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <span>Pemetaan Pelanggan ke ODP</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold">
+                                AI Assisted
+                            </span>
+                        </h2>
+                        <p className="text-xs text-gray-500">
+                            Kelola relasi dropcore pelanggan, audit anomali ODP, dan terapkan rekomendasi AI 1-klik.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => openAiModal()}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:from-indigo-700 hover:to-pink-700 transition"
+                    >
+                        <Sparkles size={16} />
+                        ✨ Rekomendasi AI
+                    </button>
+                </div>
+            )}
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
             {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}

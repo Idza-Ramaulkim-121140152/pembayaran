@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin, QrCode } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Plus, Edit2, Trash2, Search, Eye, Users, X, Upload, Image, MapPin, QrCode, Sparkles, FolderKanban } from 'lucide-react';
+import { Link, useSearchParams, useParams } from 'react-router-dom';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -20,6 +20,8 @@ import MapPicker from '../../components/common/MapPicker';
 import apiClient from '../../services/api';
 import odpService from '../../services/odpService';
 import masterWilayahService from '../../services/masterWilayahService';
+import OdpMappingPage from './OdpMappingPage';
+import OdpPortScannerPage from './OdpPortScannerPage';
 
 function extractOdpSequence(name, prefix) {
     const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -239,7 +241,29 @@ const OdpForm = ({
     </form>
 );
 
-function OdpPage() {
+function OdpPage({ defaultTab = 'list' }) {
+    const { id: paramOdpId } = useParams();
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    const activeTab = useMemo(() => {
+        const tab = searchParams.get('tab');
+        if (tab && ['list', 'mapping', 'scanner'].includes(tab)) {
+            return tab;
+        }
+        if (paramOdpId) {
+            return 'scanner';
+        }
+        return defaultTab || 'list';
+    }, [searchParams, defaultTab, paramOdpId]);
+
+    const handleTabChange = (newTab) => {
+        setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set('tab', newTab);
+            return next;
+        });
+    };
+
     const [odps, setOdps] = useState([]);
     const [customers, setCustomers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -616,140 +640,249 @@ function OdpPage() {
         setCustomerSearch(customerName || '');
     };
 
-    if (loading) {
-        return (
-            <div className="flex justify-center items-center min-h-[60vh]">
-                <LoadingSpinner text="Memuat data ODP..." />
-            </div>
-        );
-    }
-
     return (
         <div className="space-y-6">
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Manajemen ODP</h1>
-                    <p className="text-gray-600 mt-1">Kelola Optical Distribution Point & Port Kabel</p>
+                    <p className="text-gray-600 mt-1">
+                        Pusat kendali ODP, pemetaan pelanggan berbasis AI, dan manajemen port kabel & stiker QR.
+                    </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Link
-                        to="/odp-scanner"
-                        className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-cyan-500 transition"
-                    >
-                        <QrCode size={18} />
-                        Scanner Port ODP
-                    </Link>
-                    <Button variant="primary" onClick={() => { resetForm(); setCreateModal(true); }} className={adminConsoleButtonClassNames.primary}>
-                        <Plus size={20} className="mr-2" />
-                        Tambah ODP
-                    </Button>
-                </div>
-            </div>
 
-            {/* Alerts */}
-            {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
-            {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
-
-            {/* Search */}
-            <AdminConsoleSurface accent="cyan" className="p-4">
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
-                    <input
-                        type="text"
-                        placeholder="Cari nama ODP..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className={`${adminConsoleInputClassName} pl-10`}
-                    />
-                </div>
-            </AdminConsoleSurface>
-
-            {/* ODP Cards Grid */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {filteredOdps.length === 0 ? (
-                    <AdminConsoleSurface accent="slate" className="col-span-full py-12 text-center">
-                        <Image className="mx-auto mb-4 h-12 w-12 text-slate-500" />
-                        <h3 className="text-lg font-medium text-white">Tidak ada ODP</h3>
-                        <p className="mt-1 text-slate-400">Mulai dengan menambahkan ODP pertama.</p>
-                    </AdminConsoleSurface>
-                ) : (
-                    filteredOdps.map((odp) => (
-                        <div key={odp.id} className="overflow-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(2,6,23,0.92))] shadow-[0_24px_55px_rgba(2,6,23,0.24)] transition duration-300 hover:-translate-y-1 hover:border-white/15">
-                            <div className="aspect-video bg-slate-950/80 relative">
-                                {odp.foto ? (
-                                    <img 
-                                        src={`/storage/${odp.foto}`} 
-                                        alt={odp.nama}
-                                        className="w-full h-full object-cover"
-                                    />
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center">
-                                        <Image className="h-12 w-12 text-slate-500" />
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <div className="p-4">
-                                <h3 className="mb-2 font-semibold text-white">{odp.nama}</h3>
-                                <div className="space-y-1 text-sm text-slate-300">
-                                    <div className="flex justify-between">
-                                        <span>Rasio Distribusi:</span>
-                                        <span className="font-medium">{odp.rasio_distribusi}</span>
-                                    </div>
-                                    {odp.rasio_spesial && (
-                                        <div className="flex justify-between">
-                                            <span>Rasio Spesial:</span>
-                                            <span className="font-medium">{odp.rasio_spesial}</span>
-                                        </div>
-                                    )}
-                                    <div className="flex justify-between items-center">
-                                        <span>Pelanggan:</span>
-                                        <span className="inline-flex items-center rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-200">
-                                            <Users size={12} className="mr-1" />
-                                            {odp.customers_count || 0}
-                                        </span>
-                                    </div>
-                                </div>
-                                
-                                <div className="mt-4 flex gap-2 border-t border-white/10 pt-4">
-                                    <Button 
-                                        size="sm" 
-                                        variant="secondary"
-                                        onClick={() => handleOpenView(odp)}
-                                        className={`flex-1 ${adminConsoleButtonClassNames.secondary}`}
-                                    >
-                                        <Eye size={14} className="mr-1" /> Detail
-                                    </Button>
-                                    <Link
-                                        to={`/odp-scanner?id=${odp.id}`}
-                                        className="p-2 rounded-xl bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 border border-cyan-500/20 transition grid place-items-center"
-                                        title="Buka Scanner Port & Stiker QR"
-                                    >
-                                        <QrCode size={15} />
-                                    </Link>
-                                    <Button 
-                                        size="sm" 
-                                        variant="primary"
-                                        onClick={() => openEditModal(odp)}
-                                        className={adminConsoleButtonClassNames.primary}
-                                    >
-                                        <Edit2 size={14} />
-                                    </Button>
-                                    <Button 
-                                        size="sm" 
-                                        variant="danger"
-                                        onClick={() => setDeleteModal({ open: true, odp })}
-                                        className={adminConsoleButtonClassNames.danger}
-                                    >
-                                        <Trash2 size={14} />
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
-                    ))
+                {activeTab === 'list' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                            variant="primary"
+                            onClick={() => { resetForm(); setCreateModal(true); }}
+                            className={adminConsoleButtonClassNames.primary}
+                        >
+                            <Plus size={18} className="mr-1.5" />
+                            Tambah ODP
+                        </Button>
+                    </div>
                 )}
             </div>
+
+            {/* Tab Navigation Hub */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 dark:border-white/10 pb-4">
+                <div className="inline-flex flex-wrap items-center gap-1.5 p-1.5 rounded-2xl bg-gray-100/90 dark:bg-slate-900/60 border border-gray-200/80 dark:border-white/10">
+                    <button
+                        type="button"
+                        onClick={() => handleTabChange('list')}
+                        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                            activeTab === 'list'
+                                ? 'bg-white dark:bg-slate-800 text-indigo-700 dark:text-cyan-300 shadow-sm'
+                                : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <FolderKanban size={16} />
+                        <span>Daftar & Kelola ODP</span>
+                        {odps.length > 0 && (
+                            <span className={`px-2 py-0.5 rounded-full text-xs ${
+                                activeTab === 'list' 
+                                    ? 'bg-indigo-50 dark:bg-cyan-950 text-indigo-700 dark:text-cyan-300 font-bold' 
+                                    : 'bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-300'
+                            }`}>
+                                {odps.length}
+                            </span>
+                        )}
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleTabChange('mapping')}
+                        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                            activeTab === 'mapping'
+                                ? 'bg-white dark:bg-slate-800 text-purple-700 dark:text-purple-300 shadow-sm'
+                                : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <Sparkles size={16} className={activeTab === 'mapping' ? 'text-purple-600 animate-pulse' : 'text-purple-500'} />
+                        <span>Pemetaan Pelanggan & AI</span>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-extrabold uppercase tracking-wider">
+                            AI Suggest
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => handleTabChange('scanner')}
+                        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                            activeTab === 'scanner'
+                                ? 'bg-white dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 shadow-sm'
+                                : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <QrCode size={16} className={activeTab === 'scanner' ? 'text-cyan-600' : 'text-cyan-500'} />
+                        <span>Scanner & Alokasi Port</span>
+                    </button>
+                </div>
+
+                {activeTab === 'list' && (
+                    <div className="hidden lg:flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => handleTabChange('mapping')}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition"
+                        >
+                            <Sparkles size={14} />
+                            <span>Buka AI Mapping</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => handleTabChange('scanner')}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-cyan-50 text-cyan-700 hover:bg-cyan-100 border border-cyan-200 transition"
+                        >
+                            <QrCode size={14} />
+                            <span>Buka Scanner Port</span>
+                        </button>
+                    </div>
+                )}
+            </div>
+
+            {/* TAB 1: Daftar & Kelola ODP */}
+            {activeTab === 'list' && (
+                <>
+                    {/* Alerts */}
+                    {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
+                    {success && <Alert type="success" message={success} onClose={() => setSuccess(null)} />}
+
+                    {loading ? (
+                        <div className="flex justify-center items-center min-h-[40vh]">
+                            <LoadingSpinner text="Memuat data ODP..." />
+                        </div>
+                    ) : (
+                        <>
+                            {/* Search */}
+                            <AdminConsoleSurface accent="cyan" className="p-4">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
+                                    <input
+                                        type="text"
+                                        placeholder="Cari nama ODP..."
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        className={`${adminConsoleInputClassName} pl-10`}
+                                    />
+                                </div>
+                            </AdminConsoleSurface>
+
+                            {/* ODP Cards Grid */}
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                {filteredOdps.length === 0 ? (
+                                    <AdminConsoleSurface accent="slate" className="col-span-full py-12 text-center">
+                                        <Image className="mx-auto mb-4 h-12 w-12 text-slate-500" />
+                                        <h3 className="text-lg font-medium text-white">Tidak ada ODP</h3>
+                                        <p className="mt-1 text-slate-400">Mulai dengan menambahkan ODP pertama.</p>
+                                    </AdminConsoleSurface>
+                                ) : (
+                                    filteredOdps.map((odp) => (
+                                        <div key={odp.id} className="overflow-hidden rounded-[24px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.86),rgba(2,6,23,0.92))] shadow-[0_24px_55px_rgba(2,6,23,0.24)] transition duration-300 hover:-translate-y-1 hover:border-white/15">
+                                            <div className="aspect-video bg-slate-950/80 relative">
+                                                {odp.foto ? (
+                                                    <img 
+                                                        src={`/storage/${odp.foto}`} 
+                                                        alt={odp.nama}
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex items-center justify-center">
+                                                        <Image className="h-12 w-12 text-slate-500" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            <div className="p-4">
+                                                <h3 className="mb-2 font-semibold text-white">{odp.nama}</h3>
+                                                <div className="space-y-1 text-sm text-slate-300">
+                                                    <div className="flex justify-between">
+                                                        <span>Rasio Distribusi:</span>
+                                                        <span className="font-medium">{odp.rasio_distribusi}</span>
+                                                    </div>
+                                                    {odp.rasio_spesial && (
+                                                        <div className="flex justify-between">
+                                                            <span>Rasio Spesial:</span>
+                                                            <span className="font-medium">{odp.rasio_spesial}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex justify-between items-center">
+                                                        <span>Pelanggan:</span>
+                                                        <span className="inline-flex items-center rounded-full border border-cyan-300/20 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-200">
+                                                            <Users size={12} className="mr-1" />
+                                                            {odp.customers_count || 0}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mt-4 flex items-center gap-1.5 border-t border-white/10 pt-4">
+                                                    <Button 
+                                                        size="sm" 
+                                                        variant="secondary"
+                                                        onClick={() => handleOpenView(odp)}
+                                                        className={`flex-1 ${adminConsoleButtonClassNames.secondary}`}
+                                                    >
+                                                        <Eye size={14} className="mr-1" /> Detail
+                                                    </Button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSearchParams({ tab: 'mapping', odp_id: odp.id })}
+                                                        className="p-2 rounded-xl bg-purple-500/15 text-purple-300 hover:bg-purple-500/25 border border-purple-500/20 transition grid place-items-center"
+                                                        title="Petakan Pelanggan (AI Mapping)"
+                                                    >
+                                                        <Sparkles size={15} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSearchParams({ tab: 'scanner', id: odp.id })}
+                                                        className="p-2 rounded-xl bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 border border-cyan-500/20 transition grid place-items-center"
+                                                        title="Buka Scanner Port & Stiker QR"
+                                                    >
+                                                        <QrCode size={15} />
+                                                    </button>
+                                                    <Button 
+                                                        size="sm" 
+                                                        variant="primary"
+                                                        onClick={() => openEditModal(odp)}
+                                                        className={adminConsoleButtonClassNames.primary}
+                                                    >
+                                                        <Edit2 size={14} />
+                                                    </Button>
+                                                    <Button 
+                                                        size="sm" 
+                                                        variant="danger"
+                                                        onClick={() => setDeleteModal({ open: true, odp })}
+                                                        className={adminConsoleButtonClassNames.danger}
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </>
+                    )}
+                </>
+            )}
+
+            {/* TAB 2: AI Auto-Suggest Mapping */}
+            {activeTab === 'mapping' && (
+                <OdpMappingPage
+                    embedded={true}
+                    initialOdpFilter={searchParams.get('odp_id') || ''}
+                />
+            )}
+
+            {/* TAB 3: Scanner Port & Alokasi Dropcore */}
+            {activeTab === 'scanner' && (
+                <OdpPortScannerPage
+                    embedded={true}
+                    initialOdpIdProp={paramOdpId || searchParams.get('id') || searchParams.get('odp_id') || null}
+                />
+            )}
 
             {/* Create Modal */}
             <Modal isOpen={createModal} onClose={() => { setCreateModal(false); resetForm(); }} title="Tambah ODP Baru" theme="dashboard">

@@ -27,9 +27,9 @@ import {
 import Modal from '../../components/common/Modal';
 import odpPortService from '../../services/odpPortService';
 
-export default function OdpPortScannerPage() {
+export default function OdpPortScannerPage({ embedded = false, initialOdpIdProp = null }) {
     const urlParams = new URLSearchParams(window.location.search);
-    const initialOdpId = urlParams.get('odp_id') || '';
+    const initialOdpId = initialOdpIdProp || urlParams.get('odp_id') || urlParams.get('id') || '';
 
     const [odps, setOdps] = useState([]);
     const [selectedOdpId, setSelectedOdpId] = useState(initialOdpId);
@@ -71,6 +71,13 @@ export default function OdpPortScannerPage() {
             fetchOdpPorts(initialOdpId);
         }
     }, []);
+
+    useEffect(() => {
+        if (initialOdpIdProp && String(initialOdpIdProp) !== String(selectedOdpId)) {
+            setSelectedOdpId(String(initialOdpIdProp));
+            fetchOdpPorts(initialOdpIdProp);
+        }
+    }, [initialOdpIdProp]);
 
     // Clean up camera stream on unmount
     useEffect(() => {
@@ -305,59 +312,117 @@ export default function OdpPortScannerPage() {
     return (
         <div className="space-y-6 pb-16">
             {/* Header */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
-                        <QrCode className="h-8 w-8 text-indigo-600" />
-                        ODP Port & QR Scanner
-                    </h1>
-                    <p className="mt-1 text-sm text-gray-500">
-                        Scan stiker QR code di tiang ODP, kelola alokasi port kabel dropcore pelanggan, dan cetak label stiker tiang.
-                    </p>
-                </div>
+            {!embedded ? (
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h1 className="flex items-center gap-3 text-2xl font-bold text-gray-900 sm:text-3xl">
+                            <QrCode className="h-8 w-8 text-indigo-600" />
+                            ODP Port & QR Scanner
+                        </h1>
+                        <p className="mt-1 text-sm text-gray-500">
+                            Scan stiker QR code di tiang ODP, kelola alokasi port kabel dropcore pelanggan, dan cetak label stiker tiang.
+                        </p>
+                    </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            if (isScanning) {
-                                stopCamera();
-                            } else {
-                                startCamera();
-                            }
-                        }}
-                        className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-md transition ${
-                            isScanning ? 'bg-rose-600 hover:bg-rose-700' : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700'
-                        }`}
-                    >
-                        {isScanning ? <CameraOff size={18} /> : <Camera size={18} />}
-                        <span>{isScanning ? 'Tutup Kamera' : '📷 Scan QR Kamera'}</span>
-                    </button>
-
-                    {odpData && (
+                    <div className="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
-                            onClick={() => setIsPrintModalOpen(true)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 shadow-sm transition"
+                            onClick={() => {
+                                if (isScanning) {
+                                    stopCamera();
+                                } else {
+                                    startCamera();
+                                }
+                            }}
+                            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-md transition ${
+                                isScanning ? 'bg-rose-600 hover:bg-rose-700' : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700'
+                            }`}
                         >
-                            <Printer size={16} />
-                            <span>Cetak Stiker Tiang</span>
+                            {isScanning ? <CameraOff size={18} /> : <Camera size={18} />}
+                            <span>{isScanning ? 'Tutup Kamera' : '📷 Scan QR Kamera'}</span>
                         </button>
-                    )}
 
-                    {odpData && (
+                        {odpData && (
+                            <button
+                                type="button"
+                                onClick={() => setIsPrintModalOpen(true)}
+                                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 shadow-sm transition"
+                            >
+                                <Printer size={16} />
+                                <span>Cetak Stiker Tiang</span>
+                            </button>
+                        )}
+
+                        {odpData && (
+                            <button
+                                type="button"
+                                onClick={() => fetchOdpPorts(odpData.id)}
+                                disabled={loading}
+                                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
+                            >
+                                <RefreshCw size={16} className={loading ? 'animate-spin text-indigo-600' : ''} />
+                                <span>Refresh</span>
+                            </button>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-gray-100">
+                    <div>
+                        <h2 className="text-base sm:text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <span>Scanner & Alokasi Port ODP</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800 font-semibold">
+                                Port Manager
+                            </span>
+                        </h2>
+                        <p className="text-xs text-gray-500">
+                            Scan stiker QR tiang, alokasikan port dropcore ke pelanggan, atau cetak barcode QR ODP.
+                        </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
                         <button
                             type="button"
-                            onClick={() => fetchOdpPorts(odpData.id)}
-                            disabled={loading}
-                            className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
+                            onClick={() => {
+                                if (isScanning) {
+                                    stopCamera();
+                                } else {
+                                    startCamera();
+                                }
+                            }}
+                            className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-bold text-white shadow-sm transition ${
+                                isScanning ? 'bg-rose-600 hover:bg-rose-700' : 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-700 hover:to-indigo-700'
+                            }`}
                         >
-                            <RefreshCw size={16} className={loading ? 'animate-spin text-indigo-600' : ''} />
-                            <span>Refresh</span>
+                            {isScanning ? <CameraOff size={16} /> : <Camera size={16} />}
+                            <span>{isScanning ? 'Tutup Kamera' : 'Scan QR Kamera'}</span>
                         </button>
-                    )}
+
+                        {odpData && (
+                            <button
+                                type="button"
+                                onClick={() => setIsPrintModalOpen(true)}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-xs transition"
+                            >
+                                <Printer size={15} />
+                                <span>Cetak Label</span>
+                            </button>
+                        )}
+
+                        {odpData && (
+                            <button
+                                type="button"
+                                onClick={() => fetchOdpPorts(odpData.id)}
+                                disabled={loading}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition"
+                            >
+                                <RefreshCw size={15} className={loading ? 'animate-spin text-indigo-600' : ''} />
+                                <span>Refresh</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Notifications */}
             {message && (
