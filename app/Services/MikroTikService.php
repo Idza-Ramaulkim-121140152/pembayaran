@@ -1359,17 +1359,30 @@ class MikroTikService
     public function unrestrictUser($username, $targetProfile)
     {
         try {
-            $secret = $this->getPPPoESecret($username);
+            $username = trim((string) $username);
+            $targetProfile = trim((string) $targetProfile);
+
+            if (strtolower($targetProfile) === 'isolir') {
+                throw new Exception("Target profile cannot be 'isolir' for unrestrictUser");
+            }
+
+            $secret = $this->getPPPoESecret($username, true);
             if (!$secret) {
                 throw new Exception("Secret not found for username: {$username}");
             }
 
-            $secretId = $secret['id'];
+            $secretId = $secret['id'] ?? null;
+            $params = [
+                'profile' => $targetProfile,
+            ];
 
-            $this->command('/ppp/secret/set', [
-                '.id' => $secretId,
-                'profile' => $targetProfile
-            ]);
+            if ($secretId) {
+                $params['.id'] = $secretId;
+            } else {
+                $params['numbers'] = $username;
+            }
+
+            $this->command('/ppp/secret/set', $params);
 
             $this->disconnectActiveSession($username);
             $this->clearMikrotikCache();
@@ -1393,13 +1406,14 @@ class MikroTikService
     private function disconnectActiveSession(string $username): void
     {
         try {
+            $cleanUser = trim($username);
             $activeSessions = $this->command('/ppp/active/print', [], false);
             foreach ($activeSessions as $session) {
-                if (isset($session['name']) && $session['name'] === $username) {
+                if (isset($session['name']) && strcasecmp(trim((string) $session['name']), $cleanUser) === 0) {
                     $sessionId = $session['.id'] ?? null;
                     if ($sessionId) {
                         $this->command('/ppp/active/remove', ['.id' => $sessionId]);
-                        Log::info('Disconnected active session', ['username' => $username, 'session_id' => $sessionId]);
+                        Log::info('Disconnected active session', ['username' => $cleanUser, 'session_id' => $sessionId]);
                     }
                 }
             }

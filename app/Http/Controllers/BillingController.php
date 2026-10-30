@@ -1169,142 +1169,15 @@ class BillingController extends Controller
             ];
         }
 
-        $secret = null;
-        $mikrotik = null;
-        $isolationRestored = false;
-        $restoredProfile = null;
-        $isolationRestoreFailed = false;
-        $isolationRestoreError = null;
-
-        if ($customer->pppoe_username) {
-            $mikrotik = $this->makeMikroTik();
-
-            try {
-                $mikrotik->connect();
-            } catch (\Throwable $e) {
-                Log::warning('Failed to connect MikroTik before payment confirmation check', [
-                    'username' => $customer->pppoe_username,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-
-            try {
-                $secret = $mikrotik->getPPPoESecret($customer->pppoe_username);
-            } catch (\Throwable $e) {
-                Log::warning('Failed to inspect PPP secret while confirming payment', [
-                    'username' => $customer->pppoe_username,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
-
-        $isCurrentlyIsolated = $this->isCustomerCurrentlyIsolated($customer, $secret);
-        $customer->due_date = $this->computeConfirmedDueDate($customer, $isCurrentlyIsolated, $confirmedAt);
-
-        $markRestoreFailure = function (?string $targetProfile, string $error) use (
-            $customer,
-            $invoice,
-            $confirmedAt,
-            &$isolationRestoreFailed,
-            &$isolationRestoreError
-        ): void {
-            $isolationRestoreFailed = true;
-            $isolationRestoreError = $error ?: 'Gagal mencabut isolir pelanggan dari MikroTik.';
-
-            Log::error('Failed to restore isolated user after payment confirmation', [
-                'invoice_id' => $invoice->id,
-                'customer_id' => $customer->id,
-                'username' => $customer->pppoe_username,
-                'target_profile' => $targetProfile,
-                'error' => $isolationRestoreError,
-            ]);
-
-            $this->auditLogService->log('billing.customer_unisolation_failed_after_payment', $customer, [
-                'customer_id' => $customer->id,
-                'invoice_id' => $invoice->id,
-                'pppoe_username' => $customer->pppoe_username,
-                'target_profile' => $targetProfile,
-                'error' => $isolationRestoreError,
-                'confirmed_at' => $confirmedAt->toIso8601String(),
-            ], Auth::id());
-        };
-
-        if ($isCurrentlyIsolated) {
-            $targetProfile = $this->resolveCustomerTargetProfile($customer);
-
-            if (!$customer->pppoe_username) {
-                $markRestoreFailure($targetProfile, 'Pelanggan sedang isolir tetapi tidak memiliki username PPPoE untuk dipulihkan.');
-            } else {
-                $mikrotik ??= $this->makeMikroTik();
-
-                try {
-                    $profiles = $mikrotik->command('/ppp/profile/print');
-                    $availableProfiles = array_map(fn ($p) => $p['name'] ?? '', $profiles);
-                    $resolvedProfile = $this->resolveBestMatchingProfile($targetProfile, $availableProfiles);
-                    if ($resolvedProfile !== null) {
-                        $targetProfile = $resolvedProfile;
-                    }
-                } catch (\Throwable $profileErr) {
-                    Log::warning('Could not validate profile list while restoring isolated user', [
-                        'username' => $customer->pppoe_username,
-                        'target_profile' => $targetProfile,
-                        'error' => $profileErr->getMessage(),
-                    ]);
-                }
-
-                try {
-                    $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-
-                    $customer->is_service_isolated = false;
-                    $customer->service_isolated_at = null;
-                    $customer->service_isolated_by = null;
-                    $customer->isolation_restore_profile = null;
-
-                    $isolationRestored = true;
-                    $restoredProfile = $targetProfile;
-
-                    $this->auditLogService->log('billing.customer_unisolated_after_payment', $customer, [
-                        'customer_id' => $customer->id,
-                        'invoice_id' => $invoice->id,
-                        'pppoe_username' => $customer->pppoe_username,
-                        'restored_profile' => $targetProfile,
-                        'confirmed_at' => $confirmedAt->toIso8601String(),
-                    ], Auth::id());
-
-                    Log::info('User restored from isolation after payment confirmation', [
-                        'username' => $customer->pppoe_username,
-                        'restored_profile' => $targetProfile,
-                        'new_due_date' => $customer->due_date,
-                    ]);
-                } catch (\Throwable $restoreErr) {
-                    $markRestoreFailure(
-                        $targetProfile,
-                        $restoreErr->getMessage() ?: 'Gagal mencabut isolir pelanggan dari MikroTik.'
-                    );
-                }
-            }
-        }
-
-        $customer->save();
-        $this->customerUsageSnapshotService->resetPeriodByCustomerId((int) $customer->id);
-
-        if ($mikrotik) {
-            try {
-                $mikrotik->disconnect();
-            } catch (\Throwable $e) {
-                Log::warning('Failed to disconnect MikroTik after payment confirmation', [
-                    'username' => $customer->pppoe_username,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        $customerIsolationService = app(\App\Services\CustomerIsolationService::class);
+        $result = $customerIsolationService->unisolateCustomer($customer, $confirmedAt, $invoice, Auth::id());
 
         return [
-            'isolation_restored' => $isolationRestored,
-            'restored_profile' => $restoredProfile,
-            'is_isolated' => $isCurrentlyIsolated,
-            'isolation_restore_failed' => $isolationRestoreFailed,
-            'isolation_restore_error' => $isolationRestoreError,
+            'isolation_restored' => (bool) ($result['isolation_restored'] ?? false),
+            'restored_profile' => $result['restored_profile'] ?? null,
+            'is_isolated' => (bool) ($result['is_isolated'] ?? false),
+            'isolation_restore_failed' => (bool) ($result['isolation_restore_failed'] ?? false),
+            'isolation_restore_error' => $result['isolation_restore_error'] ?? null,
         ];
     }
 

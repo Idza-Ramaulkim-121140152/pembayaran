@@ -796,43 +796,8 @@ class PaymentMatchingService
 
             // Update customer due date & un-isolate service (hanya jika belum dilunasi sebelumnya)
             if ($customer && !$wasAlreadyPaid) {
-                if ($wasIsolated) {
-                    $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
-                } elseif (!empty($previousDueDate)) {
-                    $customer->due_date = Carbon::parse($previousDueDate)->startOfDay()->addDays(30)->toDateString();
-                } else {
-                    $customer->due_date = $paidTimestamp->copy()->startOfDay()->addDays(30)->toDateString();
-                }
-
-                $customer->is_service_isolated = false;
-                $customer->service_isolated_at = null;
-                $customer->service_isolated_by = null;
-                $customer->isolation_restore_profile = null;
-                $customer->save();
-
-                // Reset usage snapshot
-                if (class_exists(\App\Services\CustomerUsageSnapshotService::class)) {
-                    try {
-                        app(\App\Services\CustomerUsageSnapshotService::class)->resetPeriodByCustomerId((int) $customer->id);
-                    } catch (\Throwable $snapEx) {
-                        // ignore
-                    }
-                }
-
-                // MikroTik un-isolation
-                if ($customer->pppoe_username) {
-                    try {
-                        $mikrotik = app(\App\Services\MikroTikService::class);
-                        $package = $customer->package;
-                        $targetProfile = $customer->mikrotik_profile ?: ($package?->mikrotik_profile ?: $package?->name ?: 'default');
-                        $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                    } catch (\Throwable $mikrotikEx) {
-                        \Illuminate\Support\Facades\Log::warning('MikroTik un-isolation skipped or failed during payment capture approval', [
-                            'customer_id' => $invoice->customer_id,
-                            'error' => $mikrotikEx->getMessage(),
-                        ]);
-                    }
-                }
+                $unisolirResult = app(CustomerIsolationService::class)->unisolateCustomer($customer, $paidTimestamp, $invoice, $actorId);
+                $wasIsolated = (bool) ($unisolirResult['is_isolated'] ?? $wasIsolated);
             }
 
             // Sync with financial ledger / mutations as Admin Finance (hanya jika belum dilunasi sebelumnya)

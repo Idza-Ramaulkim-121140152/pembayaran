@@ -19,8 +19,11 @@ class QrisWebhookService
     public function __construct(
         protected PaymentReceiverService $paymentReceiverService,
         protected FinancialLedgerService $financialLedgerService,
-        protected BillingMessageTemplateService $billingMessageTemplateService
-    ) {}
+        protected BillingMessageTemplateService $billingMessageTemplateService,
+        protected ?CustomerIsolationService $customerIsolationService = null
+    ) {
+        $this->customerIsolationService = $customerIsolationService ?? app(CustomerIsolationService::class);
+    }
 
     /**
      * Verifikasi secret key webhook.
@@ -304,50 +307,11 @@ class QrisWebhookService
         // 2. Pulihkan Layanan & Cabut Isolir jika pelanggan terisolir
         $customer = $invoice->customer;
         $isolationRestored = false;
+        $unisolirResult = [];
 
         if ($customer) {
-            $wasIsolated = (bool) ($customer->is_service_isolated ?? false);
-
-            // Perpanjang Jatuh Tempo (+30 Hari)
-            if ($wasIsolated) {
-                $customer->due_date = $now->copy()->startOfDay()->addDays(30)->toDateString();
-            } elseif (!empty($customer->due_date)) {
-                $customer->due_date = Carbon::parse($customer->due_date)->startOfDay()->addDays(30)->toDateString();
-            } else {
-                $customer->due_date = $now->copy()->startOfDay()->addDays(30)->toDateString();
-            }
-
-            // Cabut status isolir pada database
-            $customer->is_service_isolated = false;
-            $customer->service_isolated_at = null;
-            $customer->service_isolated_by = null;
-            $customer->isolation_restore_profile = null;
-            $customer->save();
-
-            // Reset usage snapshot jika modul aktif
-            if (class_exists(\App\Services\CustomerUsageSnapshotService::class)) {
-                try {
-                    app(\App\Services\CustomerUsageSnapshotService::class)->resetPeriodByCustomerId((int) $customer->id);
-                } catch (\Throwable $snapEx) {
-                    Log::warning('DynamicQris settle: snapshot reset warning: ' . $snapEx->getMessage());
-                }
-            }
-
-            // Buka isolir di MikroTik (kembalikan profil asli pelanggan)
-            if ($customer->pppoe_username) {
-                try {
-                    $mikrotik = app(\App\Services\MikroTikService::class);
-                    $package = $customer->package;
-                    $targetProfile = $customer->mikrotik_profile ?: ($package?->mikrotik_profile ?: $package?->name ?: 'default');
-                    $mikrotik->unrestrictUser($customer->pppoe_username, $targetProfile);
-                    $isolationRestored = true;
-                } catch (\Throwable $mikEx) {
-                    Log::warning('DynamicQris settle: MikroTik unrestrict warning: ' . $mikEx->getMessage(), [
-                        'customer_id' => $customer->id,
-                        'username' => $customer->pppoe_username,
-                    ]);
-                }
-            }
+            $unisolirResult = $this->customerIsolationService->unisolateCustomer($customer, $now, $invoice);
+            $isolationRestored = (bool) ($unisolirResult['isolation_restored'] ?? false);
         }
 
         // 3. Sinkronisasi Buku Kas / Mutasi Keuangan
@@ -360,7 +324,7 @@ class QrisWebhookService
         // 4. Kirim Kuitansi / Bukti Bayar WhatsApp ke Pelanggan
         $waSent = false;
         if ($customer && !empty($customer->phone)) {
-            $waSent = $this->sendPaymentConfirmationWhatsApp($customer, $invoice, $amount, $refCode);
+            $waSent = $this->sendPaymentConfirmationWhatsApp($customer->fresh(), $invoice, $amount, $refCode);
         }
 
         return [
@@ -368,6 +332,7 @@ class QrisWebhookService
             'amount' => $amount,
             'ref_code' => $refCode,
             'isolation_restored' => $isolationRestored,
+            'unisolir_result' => $unisolirResult,
             'whatsapp_sent' => $waSent,
             'settled_at' => $now->toIso8601String(),
         ];

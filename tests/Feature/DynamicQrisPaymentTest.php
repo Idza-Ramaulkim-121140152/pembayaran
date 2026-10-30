@@ -207,6 +207,98 @@ class DynamicQrisPaymentTest extends TestCase
         ]);
     }
 
+    public function test_webhook_unisolates_customer_even_when_profile_is_isolir_or_stored_in_restore_profile(): void
+    {
+        SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
+
+        $package = Package::create([
+            'name' => 'Home 20 Mbps',
+            'price' => 250000,
+            'speed' => '20M',
+            'mikrotik_profile' => 'PAKET-20M',
+        ]);
+
+        // Pelanggan dengan mikrotik_profile 'isolir' dan isolation_restore_profile 'PAKET-20M'
+        $customer = Customer::create([
+            'name' => 'Bambang Sudarsono',
+            'phone' => '085112345678',
+            'package_id' => $package->id,
+            'package_type' => 'Home 20 Mbps',
+            'status' => 'active',
+            'is_service_isolated' => true,
+            'service_isolated_at' => now()->subDays(3),
+            'isolation_restore_profile' => 'PAKET-20M',
+            'mikrotik_profile' => 'isolir',
+            'pppoe_username' => 'bambang_s',
+            'due_date' => now()->subDays(3),
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'INV-TEST-ISOLIR-001',
+            'amount' => 250000,
+            'qris_unique_code' => 310,
+            'qris_expected_amount' => 250310,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDays(5),
+            'due_date' => now()->subDays(3),
+        ]);
+
+        $capturedUnrestrictProfile = null;
+        $mockMikrotik = \Mockery::mock(MikroTikService::class);
+        $mockMikrotik->shouldReceive('connect')->byDefault();
+        $mockMikrotik->shouldReceive('command')->with('/ppp/profile/print', [], false)->andReturn([
+            ['name' => 'default'],
+            ['name' => 'isolir'],
+            ['name' => 'PAKET-20M'],
+        ]);
+        $mockMikrotik->shouldReceive('getPPPoESecret')->with('bambang_s', true)->andReturn([
+            'id' => '*1A',
+            'name' => 'bambang_s',
+            'profile' => 'isolir',
+        ]);
+        $mockMikrotik->shouldReceive('unrestrictUser')->with('bambang_s', \Mockery::on(function ($prof) use (&$capturedUnrestrictProfile) {
+            $capturedUnrestrictProfile = $prof;
+            return strtolower($prof) !== 'isolir';
+        }))->once()->andReturn([
+            'success' => true,
+            'username' => 'bambang_s',
+            'profile' => 'PAKET-20M',
+        ]);
+        $mockMikrotik->shouldReceive('clearMikrotikCache')->byDefault();
+        $mockMikrotik->shouldReceive('disconnect')->byDefault();
+        $this->app->instance(MikroTikService::class, $mockMikrotik);
+
+        $pushText = "Pembayaran QRIS sebesar Rp 250.310 berhasil diterima dari BAMBANG. Ref: GOPAY112233";
+
+        $response = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz - Transaksi Masuk',
+            'text' => $pushText,
+            'device_name' => 'Android-Admin',
+        ], [
+            'X-QRIS-SECRET' => 'valid-secret',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'status' => 'settled',
+            'invoice_id' => $invoice->id,
+        ]);
+
+        // Verifikasi unrestrict dipanggil dengan profil asli, BUKAN 'isolir'
+        $this->assertEquals('PAKET-20M', $capturedUnrestrictProfile);
+
+        // Verifikasi status customer di DB sudah dicabut isolirnya
+        $freshCustomer = $customer->fresh();
+        $this->assertFalse((bool) $freshCustomer->is_service_isolated);
+        $this->assertNull($freshCustomer->service_isolated_at);
+        $this->assertNull($freshCustomer->isolation_restore_profile);
+        $this->assertEquals('PAKET-20M', $freshCustomer->mikrotik_profile);
+        $this->assertGreaterThan(now()->addDays(20)->toDateString(), (string) $freshCustomer->due_date);
+    }
+
     public function test_multi_device_deduplication_ignores_duplicate_webhook_safely(): void
     {
         SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
