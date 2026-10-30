@@ -113,12 +113,15 @@ function MapPicker({
     const resizeObserverRef = useRef(null);
     const tileFallbackRef = useRef(null);
     const onLocationChangeRef = useRef(onLocationChange);
+    const isInternalUpdateRef = useRef(false);
     const [isLoadingLocation, setIsLoadingLocation] = useState(false);
     const [usingFallbackTiles, setUsingFallbackTiles] = useState(false);
+    const [isMapReady, setIsMapReady] = useState(false);
 
     const defaultCenter = useMemo(() => getDefaultCenter(existingOdps), [existingOdps]);
     const validCoords = toValidCoordinatePair(latitude, longitude);
     const initialCoordinates = validCoords || defaultCenter;
+    const initialCoordinatesRef = useRef(initialCoordinates);
     const [currentLocation, setCurrentLocation] = useState(initialCoordinates);
 
     useEffect(() => {
@@ -130,6 +133,11 @@ function MapPicker({
         const valid = toValidCoordinatePair(latitude, longitude);
         if (!valid) {
             setCurrentLocation(defaultCenter);
+            if (mapInstanceRef.current && markerRef.current) {
+                const newLatLng = L.latLng(defaultCenter.lat, defaultCenter.lng);
+                markerRef.current.setLatLng(newLatLng);
+                mapInstanceRef.current.setView(newLatLng, 15);
+            }
             if (typeof onLocationChangeRef.current === 'function') {
                 onLocationChangeRef.current(defaultCenter.lat, defaultCenter.lng);
             }
@@ -147,7 +155,7 @@ function MapPicker({
         for (const odp of existingOdps) {
             const lat = parseFloat(odp.latitude);
             const lng = parseFloat(odp.longitude);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+            if (!Number.isFinite(lat) || !Number.isFinite(lng) || (Math.abs(lat) <= 0.0001 && Math.abs(lng) <= 0.0001)) continue;
 
             const dist = calculateDistanceMeters(currentLocation.lat, currentLocation.lng, lat, lng);
             if (dist < minDistance) {
@@ -158,12 +166,14 @@ function MapPicker({
         return nearest;
     }, [currentLocation, existingOdps]);
 
+    // Initialize Leaflet Map once on mount
     useEffect(() => {
         if (!mapRef.current || mapInstanceRef.current) return undefined;
 
+        const startCenter = initialCoordinatesRef.current;
         const map = L.map(mapRef.current, {
-            center: [initialCoordinates.lat, initialCoordinates.lng],
-            zoom: 14,
+            center: [startCenter.lat, startCenter.lng],
+            zoom: 15,
             scrollWheelZoom: true,
             dragging: true,
             zoomControl: true,
@@ -173,9 +183,10 @@ function MapPicker({
             onFallback: () => setUsingFallbackTiles(true),
         });
 
-        const marker = L.marker([initialCoordinates.lat, initialCoordinates.lng], {
+        const marker = L.marker([startCenter.lat, startCenter.lng], {
             draggable: true,
             icon: createPickerIcon(),
+            zIndexOffset: 1000,
         }).addTo(map);
 
         marker.on('dragend', (event) => {
@@ -184,6 +195,7 @@ function MapPicker({
             const lng = Number(position.lng.toFixed(9));
             setCurrentLocation({ lat, lng });
 
+            isInternalUpdateRef.current = true;
             if (typeof onLocationChangeRef.current === 'function') {
                 onLocationChangeRef.current(lat, lng);
             }
@@ -195,6 +207,7 @@ function MapPicker({
             const lng = Number(event.latlng.lng.toFixed(9));
             setCurrentLocation({ lat, lng });
 
+            isInternalUpdateRef.current = true;
             if (typeof onLocationChangeRef.current === 'function') {
                 onLocationChangeRef.current(lat, lng);
             }
@@ -202,6 +215,7 @@ function MapPicker({
 
         mapInstanceRef.current = map;
         markerRef.current = marker;
+        setIsMapReady(true);
 
         if (window.ResizeObserver && mapRef.current) {
             resizeObserverRef.current = new ResizeObserver(() => {
@@ -230,23 +244,28 @@ function MapPicker({
             map.remove();
             mapInstanceRef.current = null;
             markerRef.current = null;
+            setIsMapReady(false);
         };
-    }, [initialCoordinates.lat, initialCoordinates.lng]);
+    }, []);
 
-    // Render existing ODPs on the map
+    // Render existing ODPs on the map (persists across pin clicks)
     useEffect(() => {
-        if (!mapInstanceRef.current) return;
+        if (!mapInstanceRef.current || !isMapReady) return;
         const map = mapInstanceRef.current;
 
         // Clean up previous existing ODP layers
-        existingLayersRef.current.forEach((layer) => map.removeLayer(layer));
+        existingLayersRef.current.forEach((layer) => {
+            if (map.hasLayer(layer)) {
+                map.removeLayer(layer);
+            }
+        });
         existingLayersRef.current = [];
 
         if (Array.isArray(existingOdps)) {
             existingOdps.forEach((odp) => {
                 const lat = parseFloat(odp.latitude);
                 const lng = parseFloat(odp.longitude);
-                if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+                if (!Number.isFinite(lat) || !Number.isFinite(lng) || (Math.abs(lat) <= 0.0001 && Math.abs(lng) <= 0.0001)) return;
 
                 // 1. Coverage Radius Circle
                 if (showCoverageRadius) {
@@ -254,8 +273,8 @@ function MapPicker({
                         radius: coverageRadiusMeters,
                         color: '#6366f1',
                         fillColor: '#818cf8',
-                        fillOpacity: 0.12,
-                        weight: 1,
+                        fillOpacity: 0.14,
+                        weight: 1.5,
                         dashArray: '3, 4',
                     }).addTo(map);
                     existingLayersRef.current.push(circle);
@@ -264,6 +283,7 @@ function MapPicker({
                 // 2. Existing ODP Marker
                 const odpMarker = L.marker([lat, lng], {
                     icon: createExistingOdpIcon(odp),
+                    zIndexOffset: 100,
                 }).addTo(map);
 
                 odpMarker.bindPopup(`
@@ -283,7 +303,7 @@ function MapPicker({
                 existingLayersRef.current.push(odpMarker);
             });
         }
-    }, [existingOdps, showCoverageRadius, coverageRadiusMeters]);
+    }, [isMapReady, existingOdps, showCoverageRadius, coverageRadiusMeters]);
 
     useEffect(() => {
         if (!mapInstanceRef.current) return undefined;
@@ -300,13 +320,24 @@ function MapPicker({
         };
     }, [isOpen, height]);
 
+    // Synchronize marker position from external props (without destroying existing layers or jerking camera if clicked internally)
     useEffect(() => {
         const nextCoordinates = toValidCoordinatePair(latitude, longitude);
         if (!nextCoordinates || !mapInstanceRef.current || !markerRef.current) return;
 
-        const newLatLng = L.latLng(nextCoordinates.lat, nextCoordinates.lng);
-        markerRef.current.setLatLng(newLatLng);
-        mapInstanceRef.current.setView(newLatLng, mapInstanceRef.current.getZoom(), { animate: false });
+        const currentMarkerPos = markerRef.current.getLatLng();
+        const isSame =
+            Math.abs(currentMarkerPos.lat - nextCoordinates.lat) < 0.0000001 &&
+            Math.abs(currentMarkerPos.lng - nextCoordinates.lng) < 0.0000001;
+
+        if (!isSame) {
+            const newLatLng = L.latLng(nextCoordinates.lat, nextCoordinates.lng);
+            markerRef.current.setLatLng(newLatLng);
+            if (!isInternalUpdateRef.current) {
+                mapInstanceRef.current.panTo(newLatLng);
+            }
+        }
+        isInternalUpdateRef.current = false;
         setCurrentLocation(nextCoordinates);
     }, [latitude, longitude]);
 
