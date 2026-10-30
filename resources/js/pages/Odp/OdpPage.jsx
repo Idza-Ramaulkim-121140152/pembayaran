@@ -80,6 +80,8 @@ const OdpForm = ({
     handleKecamatanChange,
     handleDesaChange,
     generatedNamePreview,
+    existingOdps = [],
+    onAdoptNearestWilayah = null,
 }) => (
     <form onSubmit={onSubmit} className="space-y-4">
         <AdminConsoleField label="Nama ODP (Auto)">
@@ -172,7 +174,7 @@ const OdpForm = ({
             />
         </AdminConsoleField>
         
-        {/* Map Picker */}
+        {/* Map Picker with neighboring ODP context */}
         <MapPicker
             key={mapKey}
             latitude={formData.latitude}
@@ -180,8 +182,10 @@ const OdpForm = ({
             onLocationChange={(lat, lng) => {
                 setFormData(prev => ({ ...prev, latitude: lat, longitude: lng }));
             }}
-            height="300px"
+            height="320px"
             isOpen={isModalOpen}
+            existingOdps={existingOdps}
+            onAdoptNearestWilayah={onAdoptNearestWilayah}
         />
         
         <div>
@@ -428,6 +432,31 @@ function OdpPage({ defaultTab = 'list' }) {
             setDusunOptions(response?.data?.data || []);
         } catch (err) {
             setError('Gagal memuat dusun untuk desa terpilih.');
+        }
+    };
+
+    const handleAdoptNearestWilayah = async (nearest) => {
+        if (!nearest) return;
+        setFormData((prev) => ({
+            ...prev,
+            kecamatan_id: nearest.kecamatan_id ? String(nearest.kecamatan_id) : prev.kecamatan_id,
+            desa_id: nearest.desa_id ? String(nearest.desa_id) : prev.desa_id,
+            dusun_id: nearest.dusun_id ? String(nearest.dusun_id) : prev.dusun_id,
+            alamat_detail: prev.alamat_detail || `Dekat ${nearest.nama}${nearest.alamat_detail ? ` (${nearest.alamat_detail})` : ''}`,
+        }));
+
+        if (nearest.kecamatan_id) {
+            try {
+                const desaRes = await masterWilayahService.getDesas(Number(nearest.kecamatan_id));
+                const desas = desaRes?.data?.data || [];
+                setDesaOptions(desas);
+                if (nearest.desa_id) {
+                    const dusunRes = await masterWilayahService.getDusuns(Number(nearest.desa_id));
+                    setDusunOptions(dusunRes?.data?.data || []);
+                }
+            } catch (err) {
+                console.error('Gagal mengambil wilayah otomatis:', err);
+            }
         }
     };
 
@@ -904,6 +933,8 @@ function OdpPage({ defaultTab = 'list' }) {
                     handleKecamatanChange={handleKecamatanChange}
                     handleDesaChange={handleDesaChange}
                     generatedNamePreview={createGeneratedNamePreview}
+                    existingOdps={odps}
+                    onAdoptNearestWilayah={handleAdoptNearestWilayah}
                 />
             </Modal>
 
@@ -927,6 +958,8 @@ function OdpPage({ defaultTab = 'list' }) {
                     handleKecamatanChange={handleKecamatanChange}
                     handleDesaChange={handleDesaChange}
                     generatedNamePreview={editGeneratedNamePreview}
+                    existingOdps={odps}
+                    onAdoptNearestWilayah={handleAdoptNearestWilayah}
                 />
             </Modal>
 

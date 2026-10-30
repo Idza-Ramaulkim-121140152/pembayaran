@@ -22,6 +22,7 @@ import Modal from '../../components/common/Modal';
 import ResponsiveDataView from '../../components/common/ResponsiveDataView';
 import masterWilayahService from '../../services/masterWilayahService';
 import odpMappingService from '../../services/odpMappingService';
+import OdpSpatialNetworkMap from './OdpSpatialNetworkMap';
 
 const DEFAULT_ODP_COORDINATE = {
     latitude: -5.632727646,
@@ -83,6 +84,9 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
         latitude: DEFAULT_ODP_COORDINATE.latitude,
         longitude: DEFAULT_ODP_COORDINATE.longitude,
     });
+
+    // View Mode: 'map' (Peta Spasial Jaringan) vs 'table' (Tabel Pelanggan)
+    const [viewMode, setViewMode] = useState('map');
 
     // AI Auto-Suggest state
     const [aiModalOpen, setAiModalOpen] = useState(false);
@@ -590,6 +594,70 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
         }
     };
 
+    const handleMapAssignCustomer = async (customerId, odpId) => {
+        try {
+            setSubmitting(true);
+            await odpMappingService.assign({
+                customer_ids: [customerId],
+                odp_id: Number(odpId),
+            });
+            setSuccess('Pelanggan berhasil dipetakan ke ODP.');
+            // Background reload
+            const [customersRes, optionsRes] = await Promise.all([
+                odpMappingService.listCustomers({ ...filters, per_page: 200 }),
+                odpMappingService.options(),
+            ]);
+            setRows(customersRes?.data?.data?.data || []);
+            setStats(customersRes?.data?.meta?.stats || stats);
+            setOdps(optionsRes?.data?.data || []);
+        } catch (err) {
+            setError(err?.response?.data?.message || 'Gagal memetakan pelanggan.');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleMapCreateOdp = async (payload) => {
+        try {
+            setSubmitting(true);
+            const res = await odpMappingService.createOdp(payload);
+            setSuccess(res?.data?.message || 'ODP baru berhasil dipasang.');
+            // Background reload
+            const [customersRes, optionsRes] = await Promise.all([
+                odpMappingService.listCustomers({ ...filters, per_page: 200 }),
+                odpMappingService.options(),
+            ]);
+            setRows(customersRes?.data?.data?.data || []);
+            setOdps(optionsRes?.data?.data || []);
+        } catch (err) {
+            setError(err?.response?.data?.message || 'Gagal memasang ODP baru.');
+            throw err;
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleAdoptNearestWilayahQuick = async (nearest) => {
+        if (!nearest) return;
+        setQuickCreate((prev) => ({
+            ...prev,
+            kecamatan_id: nearest.kecamatan_id ? String(nearest.kecamatan_id) : prev.kecamatan_id,
+            desa_id: nearest.desa_id ? String(nearest.desa_id) : prev.desa_id,
+            dusun_id: nearest.dusun_id ? String(nearest.dusun_id) : prev.dusun_id,
+            alamat_detail: prev.alamat_detail || `Dekat ${nearest.nama}${nearest.alamat_detail ? ` (${nearest.alamat_detail})` : ''}`,
+            latitude: prev.latitude ?? nearest.latitude,
+            longitude: prev.longitude ?? nearest.longitude,
+        }));
+        setHasMapInteraction(true);
+
+        if (nearest.kecamatan_id) {
+            await fetchDesaOptions(nearest.kecamatan_id);
+            if (nearest.desa_id) {
+                await fetchDusunOptions(nearest.desa_id);
+            }
+        }
+    };
+
     const handleSearchSubmit = async (event) => {
         event.preventDefault();
         const nextFilters = {
@@ -702,6 +770,101 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                 </section>
             )}
 
+            {/* 3 Summary Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-white dark:bg-slate-900 border border-emerald-100 dark:border-emerald-950/60 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Terpetakan (Assigned)</p>
+                        <p className="text-2xl font-extrabold text-emerald-600 mt-0.5">{stats.assigned}</p>
+                        <p className="text-[11px] text-slate-400">Sudah terhubung ke ODP</p>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 flex items-center justify-center font-bold">
+                        <CheckCircle2 size={22} />
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-slate-900 border border-amber-100 dark:border-amber-950/60 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Belum Terpetakan</p>
+                        <p className="text-2xl font-extrabold text-amber-600 mt-0.5">{stats.unassigned}</p>
+                        <p className="text-[11px] text-amber-600 font-medium">Bisa dipetakan 1-klik di peta</p>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center font-bold">
+                        <AlertTriangle size={22} />
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-slate-900 border border-rose-100 dark:border-rose-950/60 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                    <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Mismatch / Anomali</p>
+                        <p className="text-2xl font-extrabold text-rose-600 mt-0.5">{stats.mismatch}</p>
+                        <p className="text-[11px] text-rose-500 font-medium">Perlu verifikasi tiang ODP</p>
+                    </div>
+                    <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 flex items-center justify-center font-bold">
+                        <Users size={22} />
+                    </div>
+                </div>
+            </div>
+
+            {/* View Mode Switcher Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-1.5 bg-gray-100/90 dark:bg-slate-900/60 rounded-2xl border border-gray-200/80 dark:border-white/10">
+                <div className="inline-flex flex-wrap items-center gap-1.5">
+                    <button
+                        type="button"
+                        onClick={() => setViewMode('map')}
+                        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                            viewMode === 'map'
+                                ? 'bg-white dark:bg-slate-800 text-indigo-700 dark:text-cyan-300 shadow-sm'
+                                : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <MapPin size={16} className={viewMode === 'map' ? 'text-cyan-500' : ''} />
+                        <span>🗺️ Peta Spasial Jaringan (Visual)</span>
+                        <span className="px-2 py-0.5 rounded-full text-[11px] bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 font-extrabold">
+                            Rekomendasi
+                        </span>
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={() => setViewMode('table')}
+                        className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                            viewMode === 'table'
+                                ? 'bg-white dark:bg-slate-800 text-indigo-700 dark:text-cyan-300 shadow-sm'
+                                : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <Users size={16} />
+                        <span>📋 Daftar Tabel & Bulk Mapping ({rows.length})</span>
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-2 pr-1">
+                    <button
+                        type="button"
+                        onClick={() => openAiModal()}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-xs shadow-xs hover:from-indigo-700 hover:to-purple-700 transition"
+                    >
+                        <Sparkles size={14} />
+                        <span>✨ AI Auto-Suggest ({stats.unassigned + stats.mismatch})</span>
+                    </button>
+                </div>
+            </div>
+
+            {/* VIEW MODE 1: Interactive Spatial Network Map */}
+            {viewMode === 'map' && (
+                <OdpSpatialNetworkMap
+                    odps={odps}
+                    customers={rows}
+                    onAssignCustomer={handleMapAssignCustomer}
+                    onCreateOdp={handleMapCreateOdp}
+                    kecamatanOptions={kecamatanOptions}
+                    desaOptions={desaOptions}
+                    dusunOptions={dusunOptions}
+                    onRefresh={fetchInitial}
+                />
+            )}
+
             <form onSubmit={handleQuickCreate} className="bg-white border border-gray-100 rounded-lg p-4 space-y-3">
                 <div>
                     <h2 className="text-lg font-semibold text-gray-900">Quick Create ODP</h2>
@@ -782,8 +945,10 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                         setQuickCreate((prev) => ({ ...prev, latitude: lat, longitude: lng }));
                         setHasMapInteraction(true);
                     }}
-                    height="280px"
+                    height="300px"
                     showCoordinateInputs={false}
+                    existingOdps={odps}
+                    onAdoptNearestWilayah={handleAdoptNearestWilayahQuick}
                 />
                 <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
                     Koordinat terpilih: {quickCreate.latitude !== null && quickCreate.longitude !== null
@@ -798,130 +963,120 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                 </div>
             </form>
 
-            <div className="bg-white border border-gray-100 rounded-lg p-4 space-y-4">
-                <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                    <input
-                        type="text"
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        placeholder="Search pelanggan: nama/PPPoE/telepon/alamat"
-                        className="px-3 py-2 border border-gray-300 rounded-lg md:col-span-2"
-                    />
-                    <select
-                        value={filters.status}
-                        onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Semua status</option>
-                        <option value="assigned">Assigned</option>
-                        <option value="unassigned">Unassigned</option>
-                        <option value="mismatch">Mismatch</option>
-                    </select>
-                    <select
-                        value={filters.odp_id}
-                        onChange={(e) => setFilters((prev) => ({ ...prev, odp_id: e.target.value }))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Semua ODP</option>
-                        {odps.map((odp) => (
-                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
-                        ))}
-                    </select>
-                    <Button type="submit" variant="primary">Cari Pelanggan</Button>
-                    <Button type="button" variant="secondary" onClick={handleSearchReset}>Reset Search</Button>
-                    <Button type="button" variant="secondary" onClick={() => reloadCustomers()}>Terapkan Filter</Button>
-                </form>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white border border-gray-100 rounded-lg p-4">
-                        <p className="text-sm text-gray-500">Assigned</p>
-                        <p className="text-2xl font-bold text-green-600">{stats.assigned}</p>
-                    </div>
-                    <div className="bg-white border border-gray-100 rounded-lg p-4">
-                        <p className="text-sm text-gray-500">Unassigned</p>
-                        <p className="text-2xl font-bold text-amber-600">{stats.unassigned}</p>
-                    </div>
-                    <div className="bg-white border border-gray-100 rounded-lg p-4">
-                        <p className="text-sm text-gray-500">Mismatch</p>
-                        <p className="text-2xl font-bold text-red-600">{stats.mismatch}</p>
-                    </div>
-                </div>
-
-                {/* AI Auto-Suggest Quick Banner */}
-                <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-pink-50/50 p-4 shadow-sm">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div className="flex items-start gap-3">
-                            <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-2.5 text-white shadow-md">
-                                <Sparkles size={22} className="animate-pulse" />
-                            </div>
-                            <div>
-                                <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
-                                    AI Auto-Suggest ODP Mapping
-                                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                                        Pencocokan Cerdas
-                                    </span>
-                                </h3>
-                                <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
-                                    Menganalisis koordinat GPS tiang, nama legacy, dan port PON OLT untuk memetakan {stats.unassigned + stats.mismatch} pelanggan tanpa survei manual.
-                                </p>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                            {selectedIds.length > 0 && (
-                                <button
-                                    type="button"
-                                    onClick={() => openAiModal(selectedIds)}
-                                    className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50 transition"
-                                >
-                                    <Sparkles size={15} />
-                                    Analisis ({selectedIds.length}) Terpilih
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                onClick={() => openAiModal()}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition"
+            {/* VIEW MODE 2: Customer Table & Bulk Mapping */}
+            {viewMode === 'table' && (
+                <div className="space-y-4">
+                    <div className="bg-white border border-gray-100 rounded-lg p-4 space-y-4">
+                        <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                            <input
+                                type="text"
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                                placeholder="Search pelanggan: nama/PPPoE/telepon/alamat"
+                                className="px-3 py-2 border border-gray-300 rounded-lg md:col-span-2"
+                            />
+                            <select
+                                value={filters.status}
+                                onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value }))}
+                                className="px-3 py-2 border border-gray-300 rounded-lg"
                             >
-                                <Sparkles size={15} />
-                                Buka Rekomendasi AI
-                            </button>
+                                <option value="">Semua status</option>
+                                <option value="assigned">Assigned</option>
+                                <option value="unassigned">Unassigned</option>
+                                <option value="mismatch">Mismatch</option>
+                            </select>
+                            <select
+                                value={filters.odp_id}
+                                onChange={(e) => setFilters((prev) => ({ ...prev, odp_id: e.target.value }))}
+                                className="px-3 py-2 border border-gray-300 rounded-lg"
+                            >
+                                <option value="">Semua ODP</option>
+                                {odps.map((odp) => (
+                                    <option key={odp.id} value={odp.id}>{odp.nama}</option>
+                                ))}
+                            </select>
+                            <Button type="submit" variant="primary">Cari Pelanggan</Button>
+                            <Button type="button" variant="secondary" onClick={handleSearchReset}>Reset Search</Button>
+                            <Button type="button" variant="secondary" onClick={() => reloadCustomers()}>Terapkan Filter</Button>
+                        </form>
+
+                        {/* AI Auto-Suggest Quick Banner */}
+                        <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/90 via-purple-50/70 to-pink-50/50 p-4 shadow-sm">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div className="flex items-start gap-3">
+                                    <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-purple-600 p-2.5 text-white shadow-md">
+                                        <Sparkles size={22} className="animate-pulse" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm sm:text-base font-bold text-gray-900 flex items-center gap-2">
+                                            AI Auto-Suggest ODP Mapping
+                                            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                                                Pencocokan Cerdas
+                                            </span>
+                                        </h3>
+                                        <p className="text-xs sm:text-sm text-gray-600 mt-0.5">
+                                            Menganalisis koordinat GPS tiang, nama legacy, dan port PON OLT untuk memetakan {stats.unassigned + stats.mismatch} pelanggan tanpa survei manual.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {selectedIds.length > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openAiModal(selectedIds)}
+                                            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs sm:text-sm font-semibold text-indigo-700 shadow-sm hover:bg-indigo-50 transition"
+                                        >
+                                            <Sparkles size={15} />
+                                            Analisis ({selectedIds.length}) Terpilih
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => openAiModal()}
+                                        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition"
+                                    >
+                                        <Sparkles size={15} />
+                                        Buka Rekomendasi AI
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3">
+                            <select
+                                value={selectedOdpId}
+                                onChange={(e) => setSelectedOdpId(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-lg"
+                            >
+                                <option value="">Pilih ODP tujuan bulk assign</option>
+                                {odps.map((odp) => (
+                                    <option key={odp.id} value={odp.id}>{odp.nama}</option>
+                                ))}
+                            </select>
+                            <Button type="button" variant="primary" onClick={handleAssign} disabled={submitting}>Bulk Assign</Button>
+                            <Button type="button" variant="danger" onClick={handleUnassign} disabled={submitting}>Bulk Unassign</Button>
+                            <Button type="button" variant="secondary" onClick={handleBackfill} disabled={submitting}>Backfill</Button>
                         </div>
                     </div>
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto_auto] gap-3">
-                    <select
-                        value={selectedOdpId}
-                        onChange={(e) => setSelectedOdpId(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg"
-                    >
-                        <option value="">Pilih ODP tujuan bulk assign</option>
-                        {odps.map((odp) => (
-                            <option key={odp.id} value={odp.id}>{odp.nama}</option>
-                        ))}
-                    </select>
-                    <Button type="button" variant="primary" onClick={handleAssign} disabled={submitting}>Bulk Assign</Button>
-                    <Button type="button" variant="danger" onClick={handleUnassign} disabled={submitting}>Bulk Unassign</Button>
-                    <Button type="button" variant="secondary" onClick={handleBackfill} disabled={submitting}>Backfill</Button>
-                </div>
-            </div>
-
-            <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
-                {loading ? (
-                    <div className="p-8">
-                        <LoadingSpinner text="Memuat pelanggan..." />
+                    <div className="bg-white border border-gray-100 rounded-lg overflow-hidden">
+                        {loading ? (
+                            <div className="p-8">
+                                <LoadingSpinner text="Memuat pelanggan..." />
+                            </div>
+                        ) : (
+                            <ResponsiveDataView
+                                rows={displayRows}
+                                columns={customerColumns}
+                                keyField="id"
+                                priorityFields={['name', 'pppoe_username', 'phone', 'odp_master_name']}
+                                emptyMessage="Tidak ada data pelanggan."
+                                rowClassName={(row) => selectedSet.has(row.id) ? 'bg-blue-50' : ''}
+                            />
+                        )}
                     </div>
-                ) : (
-                    <ResponsiveDataView
-                        rows={displayRows}
-                        columns={customerColumns}
-                        keyField="id"
-                        priorityFields={['name', 'pppoe_username', 'phone', 'odp_master_name']}
-                        emptyMessage="Tidak ada data pelanggan."
-                        rowClassName={(row) => selectedSet.has(row.id) ? 'bg-blue-50' : ''}
-                    />
-                )}
-            </div>
+                </div>
+            )}
 
             {/* AI Auto-Suggest Modal */}
             <Modal

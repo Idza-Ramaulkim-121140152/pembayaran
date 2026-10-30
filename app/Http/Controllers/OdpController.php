@@ -119,6 +119,52 @@ class OdpController extends Controller
 
     public function apiStore(Request $request)
     {
+        // Smart auto-inference for rapid 1-click map creation:
+        $rawLat = $request->input('latitude');
+        $rawLng = $request->input('longitude');
+
+        if ($rawLat !== null && $rawLng !== null && (! $request->filled('desa_id') || ! $request->filled('dusun_id'))) {
+            $latVal = (float) $rawLat;
+            $lngVal = (float) $rawLng;
+            $candidateOdps = Odp::query()
+                ->whereNotNull('desa_id')
+                ->whereNotNull('dusun_id')
+                ->whereNotNull('latitude')
+                ->whereNotNull('longitude')
+                ->get();
+
+            $nearest = null;
+            $minDist = PHP_FLOAT_MAX;
+            foreach ($candidateOdps as $candidate) {
+                $dLat = (float) $candidate->latitude - $latVal;
+                $dLng = (float) $candidate->longitude - $lngVal;
+                $dist = ($dLat * $dLat) + ($dLng * $dLng);
+                if ($dist < $minDist) {
+                    $minDist = $dist;
+                    $nearest = $candidate;
+                }
+            }
+
+            if ($nearest) {
+                if (! $request->filled('kecamatan_id') && $nearest->kecamatan_id) {
+                    $request->merge(['kecamatan_id' => $nearest->kecamatan_id]);
+                }
+                if (! $request->filled('desa_id')) {
+                    $request->merge(['desa_id' => $nearest->desa_id]);
+                }
+                if (! $request->filled('dusun_id')) {
+                    $request->merge(['dusun_id' => $nearest->dusun_id]);
+                }
+                if (! $request->filled('alamat_detail')) {
+                    $request->merge(['alamat_detail' => 'Sekitar ' . $nearest->nama . ($nearest->alamat_detail ? ' (' . $nearest->alamat_detail . ')' : '')]);
+                }
+            }
+        }
+
+        if (! $request->filled('alamat_detail') && $rawLat !== null && $rawLng !== null) {
+            $request->merge(['alamat_detail' => 'Titik Koordinat (' . round((float) $rawLat, 6) . ', ' . round((float) $rawLng, 6) . ')']);
+        }
+
         $validated = $request->validate([
             'rasio_spesial' => 'nullable|string',
             'rasio_distribusi' => 'nullable|in:1:2,1:4,1:8,1:16',

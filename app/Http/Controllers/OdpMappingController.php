@@ -221,11 +221,15 @@ class OdpMappingController extends Controller
         }
 
         $items = $query
+            ->withCount(['customers'])
             ->orderBy('nama')
             ->get([
                 'id',
                 'nama',
                 'rasio_distribusi',
+                'rasio_spesial',
+                'latitude',
+                'longitude',
                 'kecamatan_id',
                 'desa_id',
                 'dusun_id',
