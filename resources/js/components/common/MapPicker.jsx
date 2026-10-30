@@ -9,14 +9,39 @@ const LAMPUNG_DEFAULT = {
 };
 
 function toValidCoordinatePair(latitude, longitude) {
+    if (
+        latitude === null ||
+        latitude === undefined ||
+        latitude === '' ||
+        longitude === null ||
+        longitude === undefined ||
+        longitude === ''
+    ) {
+        return null;
+    }
+
     const lat = Number(latitude);
     const lng = Number(longitude);
 
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    if (
+        Number.isFinite(lat) &&
+        Number.isFinite(lng) &&
+        (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001)
+    ) {
         return { lat, lng };
     }
 
     return null;
+}
+
+function getDefaultCenter(existingOdps) {
+    if (Array.isArray(existingOdps)) {
+        for (const odp of existingOdps) {
+            const valid = toValidCoordinatePair(odp.latitude, odp.longitude);
+            if (valid) return valid;
+        }
+    }
+    return LAMPUNG_DEFAULT;
 }
 
 function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
@@ -91,12 +116,25 @@ function MapPicker({
     const [isLoadingLocation, setIsLoadingLocation] = useState(false);
     const [usingFallbackTiles, setUsingFallbackTiles] = useState(false);
 
-    const initialCoordinates = toValidCoordinatePair(latitude, longitude) || LAMPUNG_DEFAULT;
+    const defaultCenter = useMemo(() => getDefaultCenter(existingOdps), [existingOdps]);
+    const validCoords = toValidCoordinatePair(latitude, longitude);
+    const initialCoordinates = validCoords || defaultCenter;
     const [currentLocation, setCurrentLocation] = useState(initialCoordinates);
 
     useEffect(() => {
         onLocationChangeRef.current = onLocationChange;
     }, [onLocationChange]);
+
+    // Pre-populate coordinates with network default if currently empty/invalid
+    useEffect(() => {
+        const valid = toValidCoordinatePair(latitude, longitude);
+        if (!valid) {
+            setCurrentLocation(defaultCenter);
+            if (typeof onLocationChangeRef.current === 'function') {
+                onLocationChangeRef.current(defaultCenter.lat, defaultCenter.lng);
+            }
+        }
+    }, [defaultCenter, latitude, longitude]);
 
     // Calculate nearest ODP
     const nearestOdp = useMemo(() => {

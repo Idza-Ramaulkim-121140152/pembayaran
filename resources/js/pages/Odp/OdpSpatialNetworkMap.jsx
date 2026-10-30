@@ -127,12 +127,12 @@ export default function OdpSpatialNetworkMap({
     // Assigning state
     const [actionLoadingId, setActionLoadingId] = useState(null);
 
-    // Filter customers with valid coordinates
+    // Filter customers with valid coordinates (exclude 0,0 Null Island)
     const customersWithCoords = useMemo(() => {
         return customers.filter((c) => {
             const lat = parseFloat(c.latitude);
             const lng = parseFloat(c.longitude);
-            return Number.isFinite(lat) && Number.isFinite(lng);
+            return Number.isFinite(lat) && Number.isFinite(lng) && (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001);
         });
     }, [customers]);
 
@@ -148,7 +148,7 @@ export default function OdpSpatialNetworkMap({
         return odps.filter((o) => {
             const lat = parseFloat(o.latitude);
             const lng = parseFloat(o.longitude);
-            return Number.isFinite(lat) && Number.isFinite(lng);
+            return Number.isFinite(lat) && Number.isFinite(lng) && (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001);
         });
     }, [odps]);
 
