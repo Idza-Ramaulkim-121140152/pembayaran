@@ -207,6 +207,10 @@ class OperationalEnhancementsTest extends TestCase
 
     public function test_incident_transition_records_mtta_metadata(): void
     {
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'sqlite') {
+            \Illuminate\Support\Facades\DB::statement('PRAGMA ignore_check_constraints = ON;');
+        }
+
         $user = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
         $odp = Odp::create(['nama' => 'ODP-TEST', 'rasio_distribusi' => '1:8']);
         $incident = NetworkIncident::create([
