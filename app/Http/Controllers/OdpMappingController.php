@@ -304,10 +304,11 @@ class OdpMappingController extends Controller
         $validated = $request->validate([
             'customer_ids' => 'nullable|array',
             'customer_ids.*' => 'integer|exists:customers,id',
-            'status' => 'nullable|in:assigned,unassigned,mismatch',
+            'status' => 'nullable|in:assigned,unassigned,mismatch,spatial_anomaly,all',
             'min_confidence' => 'nullable|numeric|min:0|max:100',
             'limit' => 'nullable|integer|min:1|max:300',
             'search' => 'nullable|string|max:100',
+            'include_spatial_mismatch' => 'nullable|boolean',
         ]);
 
         $result = $this->aiSuggestionService->generateSuggestions($validated);

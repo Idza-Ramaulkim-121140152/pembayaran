@@ -202,8 +202,9 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
         setAiLoading(true);
         try {
             const params = {
-                limit: 150,
+                limit: 200,
                 min_confidence: 25,
+                include_spatial_mismatch: true,
             };
             if (Array.isArray(specificIds) && specificIds.length > 0) {
                 params.customer_ids = specificIds;
@@ -286,6 +287,12 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
         }
         if (aiFilterTab === 'has_gps') {
             return aiSuggestions.filter((s) => s.has_coordinates);
+        }
+        if (aiFilterTab === 'unmapped') {
+            return aiSuggestions.filter((s) => !s.is_reassignment);
+        }
+        if (aiFilterTab === 'reassign') {
+            return aiSuggestions.filter((s) => Boolean(s.is_reassignment));
         }
         return aiSuggestions;
     }, [aiSuggestions, aiFilterTab]);
@@ -595,12 +602,13 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
         }
     };
 
-    const handleMapAssignCustomer = async (customerId, odpId) => {
+    const handleMapAssignCustomer = async (customerId, odpId, force = true) => {
         try {
             setSubmitting(true);
             await odpMappingService.assign({
                 customer_ids: [customerId],
                 odp_id: Number(odpId),
+                force_reassign: Boolean(force),
             });
             setSuccess('Pelanggan berhasil dipetakan ke ODP.');
             // Background reload
@@ -1156,6 +1164,28 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                             </button>
                             <button
                                 type="button"
+                                onClick={() => setAiFilterTab('unmapped')}
+                                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                    aiFilterTab === 'unmapped'
+                                        ? 'bg-white text-blue-700 shadow-xs'
+                                        : 'text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Belum Terpetakan ({aiSuggestions.filter((s) => !s.is_reassignment).length})
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAiFilterTab('reassign')}
+                                className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+                                    aiFilterTab === 'reassign'
+                                        ? 'bg-white text-amber-700 shadow-xs'
+                                        : 'text-gray-600 hover:text-gray-900'
+                                }`}
+                            >
+                                Koreksi Salah ODP ({aiSuggestions.filter((s) => s.is_reassignment).length})
+                            </button>
+                            <button
+                                type="button"
                                 onClick={() => setAiFilterTab('has_gps')}
                                 className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
                                     aiFilterTab === 'has_gps'
@@ -1240,12 +1270,16 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                                                         {item.address || 'Alamat tidak tercatat'}
                                                     </p>
                                                     <div className="mt-1 flex flex-wrap gap-1">
-                                                        {item.legacy_odp ? (
+                                                        {item.is_reassignment ? (
+                                                            <span className="inline-flex items-center text-[11px] bg-red-100 text-red-800 font-semibold px-2 py-0.5 rounded">
+                                                                ⚠️ Salah ODP: <span className="line-through ml-1">{item.current_odp_name}</span> {item.current_distance_meters ? `(${item.current_distance_meters}m)` : ''}
+                                                            </span>
+                                                        ) : item.legacy_odp ? (
                                                             <span className="inline-flex items-center text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">
                                                                 Catatan: {item.legacy_odp}
                                                             </span>
                                                         ) : (
-                                                            <span className="text-[11px] text-gray-400 italic">ODP kosong</span>
+                                                            <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-medium">Belum Terpetakan</span>
                                                         )}
                                                         {item.has_coordinates && (
                                                             <span className="inline-flex items-center gap-0.5 text-[11px] bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded">
@@ -1267,6 +1301,11 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
                                                             <span className="font-bold text-gray-900 text-sm">
                                                                 {item.suggested_odp_name}
                                                             </span>
+                                                            {item.distance_saving_meters ? (
+                                                                <span className="text-[11px] bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+                                                                    ✨ Lebih dekat {item.distance_saving_meters}m
+                                                                </span>
+                                                            ) : null}
                                                             <span
                                                                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border ${
                                                                     item.confidence === 'high'

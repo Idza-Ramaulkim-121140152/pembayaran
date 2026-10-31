@@ -67,11 +67,15 @@ function createOdpMarkerIcon(odp) {
     });
 }
 
-function createCustomerMarkerIcon(customer, isUnassigned) {
-    const color = isUnassigned ? '#f59e0b' : '#10b981';
-    const pulseHtml = isUnassigned
-        ? '<div style="position:absolute;width:24px;height:24px;border-radius:9999px;background:#f59e0b;opacity:0.4;animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div>'
-        : '';
+function createCustomerMarkerIcon(customer, isUnassigned, isSpatialAnomaly = false) {
+    let color = isUnassigned ? '#f59e0b' : (isSpatialAnomaly ? '#ea580c' : '#10b981');
+    let pulseHtml = '';
+
+    if (isUnassigned) {
+        pulseHtml = '<div style="position:absolute;width:24px;height:24px;border-radius:9999px;background:#f59e0b;opacity:0.4;animation:ping 1.5s cubic-bezier(0,0,0.2,1) infinite;"></div>';
+    } else if (isSpatialAnomaly) {
+        pulseHtml = '<div style="position:absolute;width:26px;height:26px;border-radius:9999px;background:#ea580c;opacity:0.5;animation:ping 1.2s cubic-bezier(0,0,0.2,1) infinite;"></div>';
+    }
 
     return L.divIcon({
         className: '',
@@ -81,8 +85,8 @@ function createCustomerMarkerIcon(customer, isUnassigned) {
                 <div style="width:14px;height:14px;border-radius:9999px;background:${color};border:2px solid #ffffff;box-shadow:0 2px 4px rgba(0,0,0,0.35);z-index:2;"></div>
             </div>
         `,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
     });
 }
 
@@ -151,6 +155,28 @@ export default function OdpSpatialNetworkMap({
             return Number.isFinite(lat) && Number.isFinite(lng) && (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001);
         });
     }, [odps]);
+
+    // Calculate customers assigned to distant ODPs when a closer ODP exists <= 150m (Spatial Mismatch)
+    const spatialAnomalies = useMemo(() => {
+        const odpMap = new Map(odpsWithCoords.map((o) => [Number(o.id), o]));
+        return assignedCustomers.filter((cust) => {
+            const lat = parseFloat(cust.latitude);
+            const lng = parseFloat(cust.longitude);
+            const currentOdp = odpMap.get(Number(cust.odp_id));
+            let currentDist = null;
+            if (currentOdp && Number.isFinite(parseFloat(currentOdp.latitude)) && Number.isFinite(parseFloat(currentOdp.longitude))) {
+                currentDist = calculateDistanceMeters(lat, lng, parseFloat(currentOdp.latitude), parseFloat(currentOdp.longitude));
+            }
+            let minDist = Infinity;
+            odpsWithCoords.forEach((o) => {
+                if (Number(o.id) !== Number(cust.odp_id)) {
+                    const d = calculateDistanceMeters(lat, lng, parseFloat(o.latitude), parseFloat(o.longitude));
+                    if (d < minDist) minDist = d;
+                }
+            });
+            return minDist <= 150 && (currentDist === null || currentDist > 180 || (currentDist - minDist) >= 60);
+        });
+    }, [assignedCustomers, odpsWithCoords]);
 
     // Initialize Leaflet Map
     useEffect(() => {
@@ -358,29 +384,100 @@ export default function OdpSpatialNetworkMap({
             });
         }
 
-        // 4. Render Assigned Customers (🟢) & Topology Lines
+        // 4. Render Assigned Customers (🟢 / 🔴 Anomaly) & Topology Lines
         if (showAssigned) {
             assignedCustomers.forEach((cust) => {
                 const lat = parseFloat(cust.latitude);
                 const lng = parseFloat(cust.longitude);
-
-                const marker = L.marker([lat, lng], {
-                    icon: createCustomerMarkerIcon(cust, false),
-                }).addTo(map);
-
                 const odp = odpById.get(Number(cust.odp_id));
 
-                marker.bindPopup(`
-                    <div style="font-family:sans-serif;font-size:12px;padding:4px;min-width:180px;">
-                        <span style="background:#dcfce7;color:#166534;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;">Terhubung</span>
+                let distToAssigned = null;
+                if (odp && Number.isFinite(parseFloat(odp.latitude)) && Number.isFinite(parseFloat(odp.longitude))) {
+                    distToAssigned = calculateDistanceMeters(lat, lng, parseFloat(odp.latitude), parseFloat(odp.longitude));
+                }
+
+                // Find nearest ODP among all ODPs
+                let nearest = null;
+                let minDist = Infinity;
+                odpsWithCoords.forEach((o) => {
+                    const dist = calculateDistanceMeters(lat, lng, parseFloat(o.latitude), parseFloat(o.longitude));
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearest = { ...o, distanceMeters: Math.round(dist) };
+                    }
+                });
+
+                const isSpatialAnomaly = nearest && nearest.distanceMeters <= 150 && (
+                    distToAssigned === null ||
+                    distToAssigned > 180 ||
+                    (distToAssigned - nearest.distanceMeters) >= 60
+                ) && (Number(nearest.id) !== Number(cust.odp_id));
+
+                const marker = L.marker([lat, lng], {
+                    icon: createCustomerMarkerIcon(cust, false, isSpatialAnomaly),
+                }).addTo(map);
+
+                const popupDiv = document.createElement('div');
+                popupDiv.style.fontFamily = 'sans-serif';
+                popupDiv.style.fontSize = '12px';
+                popupDiv.style.padding = '4px';
+                popupDiv.style.minWidth = '230px';
+
+                popupDiv.innerHTML = `
+                    <div style="margin-bottom:6px;">
+                        <span style="background:${isSpatialAnomaly ? '#fee2e2' : '#dcfce7'};color:${isSpatialAnomaly ? '#991b1b' : '#166534'};font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;">
+                            ${isSpatialAnomaly ? '⚠️ Jarak Tidak Sesuai (Jauh)' : 'Terhubung'}
+                        </span>
                         <div style="font-weight:800;color:#0f172a;font-size:13px;margin-top:3px;">${cust.name}</div>
                         <div style="font-size:11px;color:#64748b;">${cust.pppoe_username ? `PPPoE: ${cust.pppoe_username}` : cust.phone || '-'}</div>
                         <div style="margin-top:6px;font-size:11px;color:#475569;">
-                            <strong>ODP:</strong> ${cust.odp_master_name || odp?.nama || cust.odp || '-'}
+                            <strong>ODP Saat Ini:</strong> ${cust.odp_master_name || odp?.nama || cust.odp || '-'}
+                            ${distToAssigned !== null ? `<span style="font-weight:700;color:${distToAssigned > 150 ? '#dc2626' : '#059669'};"> (${Math.round(distToAssigned)}m)</span>` : ' (Tanpa GPS)'}
                         </div>
                     </div>
-                `);
+                    ${
+                        isSpatialAnomaly && nearest
+                            ? `
+                        <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px;margin-bottom:8px;">
+                            <div style="font-size:10px;color:#92400e;font-weight:700;">Rekomendasi ODP Terdekat (Jarak ~0m):</div>
+                            <div style="font-size:12px;font-weight:800;color:#b45309;display:flex;justify-content:space-between;margin-top:2px;">
+                                <span>${nearest.nama}</span>
+                                <span>${nearest.distanceMeters} meter</span>
+                            </div>
+                            ${distToAssigned !== null ? `<div style="font-size:10px;color:#059669;margin-top:2px;">✨ Lebih dekat ${Math.max(0, Math.round(distToAssigned - nearest.distanceMeters))}m dropcore</div>` : ''}
+                        </div>
+                    `
+                            : ''
+                    }
+                `;
 
+                if (nearest && Number(nearest.id) !== Number(cust.odp_id) && typeof onAssignCustomer === 'function') {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.innerText = `⚡ Pindahkan ke ${nearest.nama} (${nearest.distanceMeters}m)`;
+                    btn.style.width = '100%';
+                    btn.style.padding = '6px 10px';
+                    btn.style.backgroundColor = isSpatialAnomaly ? '#ea580c' : '#4f46e5';
+                    btn.style.color = '#ffffff';
+                    btn.style.fontWeight = '700';
+                    btn.style.fontSize = '11px';
+                    btn.style.borderRadius = '6px';
+                    btn.style.border = 'none';
+                    btn.style.cursor = 'pointer';
+
+                    btn.onclick = async () => {
+                        setActionLoadingId(cust.id);
+                        try {
+                            await onAssignCustomer(cust.id, nearest.id, true);
+                            map.closePopup();
+                        } finally {
+                            setActionLoadingId(null);
+                        }
+                    };
+                    popupDiv.appendChild(btn);
+                }
+
+                marker.bindPopup(popupDiv);
                 layersRef.current.customerMarkers.push(marker);
 
                 // Polyline connecting customer to their assigned ODP
@@ -394,10 +491,10 @@ export default function OdpSpatialNetworkMap({
                                 [odpLat, odpLng],
                             ],
                             {
-                                color: '#10b981',
-                                weight: 1.5,
-                                opacity: 0.6,
-                                dashArray: '4, 4',
+                                color: isSpatialAnomaly ? '#ef4444' : '#10b981',
+                                weight: isSpatialAnomaly ? 2 : 1.5,
+                                opacity: 0.7,
+                                dashArray: isSpatialAnomaly ? '3, 6' : '4, 4',
                             }
                         ).addTo(map);
                         layersRef.current.topologyLines.push(line);
@@ -523,6 +620,12 @@ export default function OdpSpatialNetworkMap({
                         />
                         <span className="text-emerald-300">🟢 Terhubung ({assignedCustomers.length})</span>
                     </label>
+
+                    {spatialAnomalies.length > 0 && (
+                        <div className="flex items-center gap-1.5 bg-amber-950/80 text-amber-300 px-2.5 py-1 rounded-lg border border-amber-700/60 font-semibold animate-pulse" title="Pelanggan terhubung ke ODP jauh padahal ada ODP di dekatnya">
+                            <span>⚠️ Salah ODP ({spatialAnomalies.length})</span>
+                        </div>
+                    )}
 
                     <label className="flex items-center gap-1.5 cursor-pointer bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-700 hover:bg-slate-800 transition">
                         <input

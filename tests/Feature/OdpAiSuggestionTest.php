@@ -296,4 +296,89 @@ class OdpAiSuggestionTest extends TestCase
 
         $response->assertStatus(422);
     }
+
+    public function test_ai_suggestions_detects_spatial_distance_mismatch_for_assigned_customers(): void
+    {
+        // ODP A: -5.63200, 105.54800 (Far ODP: ~1.2 km away)
+        $farOdp = Odp::create([
+            'nama' => 'ODP-FAR-001',
+            'latitude' => -5.6420000,
+            'longitude' => 105.5580000,
+            'rasio_distribusi' => '1:8',
+            'total_ports' => 8,
+        ]);
+
+        // ODP B: -5.63200, 105.54800 (Nearby ODP: 15 meters away)
+        $nearOdp = Odp::create([
+            'nama' => 'ODP-NEAR-002',
+            'latitude' => -5.6320000,
+            'longitude' => 105.5480000,
+            'rasio_distribusi' => '1:8',
+            'total_ports' => 8,
+        ]);
+
+        // Customer currently assigned to far ODP, but physically 15m from near ODP
+        $customer = Customer::create([
+            'name' => 'Pak Joko Jarak Dekat',
+            'phone' => '081299990001',
+            'latitude' => -5.6320800,
+            'longitude' => 105.5480800,
+            'odp_id' => $farOdp->id,
+            'odp' => $farOdp->nama,
+            'due_date' => now()->toDateString(),
+            'is_active' => true,
+        ]);
+
+        $service = app(OdpAiSuggestionService::class);
+        $result = $service->generateSuggestions([
+            'customer_ids' => [$customer->id],
+            'include_spatial_mismatch' => true,
+        ]);
+
+        $this->assertNotEmpty($result['suggestions']);
+        $suggestion = $result['suggestions'][0];
+
+        $this->assertEquals($customer->id, $suggestion['customer_id']);
+        $this->assertEquals($nearOdp->id, $suggestion['suggested_odp_id']);
+        $this->assertTrue($suggestion['is_reassignment']);
+        $this->assertEquals($farOdp->id, $suggestion['current_odp_id']);
+        $this->assertEquals('high', $suggestion['confidence']);
+        $this->assertLessThan(25, $suggestion['distance_meters']);
+        $this->assertGreaterThan(500, $suggestion['distance_saving_meters']);
+    }
+
+    public function test_ai_suggestions_recommends_nearby_odp_for_unmapped_without_legacy_name(): void
+    {
+        $odp = Odp::create([
+            'nama' => 'KAL-TAM-KBS-004',
+            'latitude' => -5.6320000,
+            'longitude' => 105.5480000,
+            'rasio_distribusi' => '1:8',
+            'total_ports' => 8,
+        ]);
+
+        // Customer has no legacy odp, no PON port, but GPS is 20m from ODP
+        $customer = Customer::create([
+            'name' => 'Warga Depan Tiang',
+            'phone' => '081299990002',
+            'latitude' => -5.6321200,
+            'longitude' => 105.5480500,
+            'due_date' => now()->toDateString(),
+            'is_active' => true,
+        ]);
+
+        $service = app(OdpAiSuggestionService::class);
+        $result = $service->generateSuggestions([
+            'customer_ids' => [$customer->id],
+        ]);
+
+        $this->assertNotEmpty($result['suggestions']);
+        $suggestion = $result['suggestions'][0];
+
+        $this->assertEquals($customer->id, $suggestion['customer_id']);
+        $this->assertEquals($odp->id, $suggestion['suggested_odp_id']);
+        $this->assertEquals('high', $suggestion['confidence']);
+        $this->assertLessThan(40, $suggestion['distance_meters']);
+        $this->assertFalse($suggestion['is_reassignment']);
+    }
 }

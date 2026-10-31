@@ -21,60 +21,15 @@ class OdpAiSuggestionService
     public function generateSuggestions(array $options = []): array
     {
         $customerIds = $options['customer_ids'] ?? null;
-        $minConfidence = (float) ($options['min_confidence'] ?? 30.0);
+        $minConfidence = (float) ($options['min_confidence'] ?? 25.0);
         $limit = min(300, max(1, (int) ($options['limit'] ?? 150)));
         $status = $options['status'] ?? null;
         $search = trim((string) ($options['search'] ?? ''));
+        $includeSpatialMismatch = isset($options['include_spatial_mismatch'])
+            ? (bool) $options['include_spatial_mismatch']
+            : ($status === null || $status === 'all' || $status === 'spatial_anomaly');
 
-        // 1. Fetch target customers
-        $customerQuery = Customer::query()
-            ->with(['onu', 'ponPort', 'olt'])
-            ->select([
-                'id',
-                'name',
-                'phone',
-                'pppoe_username',
-                'address',
-                'latitude',
-                'longitude',
-                'odp',
-                'odp_id',
-                'olt_id',
-                'pon_port_id',
-                'olt_onu_id',
-                'desa_id',
-                'dusun_id',
-                'kecamatan_id',
-            ]);
-
-        if (!empty($customerIds)) {
-            $customerQuery->whereIn('id', $customerIds);
-        } else {
-            if ($status === 'mismatch') {
-                $customerQuery->whereNull('odp_id')->whereNotNull('odp')->where('odp', '!=', '');
-            } elseif ($status === 'unassigned') {
-                $customerQuery->whereNull('odp_id')->where(function ($q) {
-                    $q->whereNull('odp')->orWhere('odp', '');
-                });
-            } else {
-                // Default: all without odp_id
-                $customerQuery->whereNull('odp_id');
-            }
-        }
-
-        if ($search !== '') {
-            $customerQuery->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('pppoe_username', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%")
-                    ->orWhere('address', 'like', "%{$search}%")
-                    ->orWhere('odp', 'like', "%{$search}%");
-            });
-        }
-
-        $customers = $customerQuery->orderBy('name')->take($limit)->get();
-
-        // 2. Fetch all active ODPs with customer counts
+        // 1. Fetch all active ODPs with customer counts
         $odps = Odp::query()
             ->withCount('customers')
             ->get([
@@ -92,21 +47,119 @@ class OdpAiSuggestionService
                 'dusun_id',
                 'alamat_detail',
             ]);
+        $odpsById = $odps->keyBy('id');
+
+        // 2. Build target customers list
+        $customers = collect();
+
+        if (!empty($customerIds)) {
+            $customers = Customer::query()
+                ->with(['onu', 'ponPort', 'olt'])
+                ->select([
+                    'id', 'name', 'phone', 'pppoe_username', 'address',
+                    'latitude', 'longitude', 'odp', 'odp_id',
+                    'olt_id', 'pon_port_id', 'olt_onu_id',
+                    'desa_id', 'dusun_id', 'kecamatan_id',
+                ])
+                ->whereIn('id', $customerIds)
+                ->get();
+        } else {
+            // Unassigned / Mismatch customers
+            if ($status !== 'spatial_anomaly') {
+                $unmappedQuery = Customer::query()
+                    ->with(['onu', 'ponPort', 'olt'])
+                    ->select([
+                        'id', 'name', 'phone', 'pppoe_username', 'address',
+                        'latitude', 'longitude', 'odp', 'odp_id',
+                        'olt_id', 'pon_port_id', 'olt_onu_id',
+                        'desa_id', 'dusun_id', 'kecamatan_id',
+                    ])
+                    ->whereNull('odp_id');
+
+                if ($status === 'mismatch') {
+                    $unmappedQuery->whereNotNull('odp')->where('odp', '!=', '');
+                } elseif ($status === 'unassigned') {
+                    $unmappedQuery->where(function ($q) {
+                        $q->whereNull('odp')->orWhere('odp', '');
+                    });
+                }
+
+                if ($search !== '') {
+                    $unmappedQuery->where(function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('pppoe_username', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%")
+                            ->orWhere('address', 'like', "%{$search}%")
+                            ->orWhere('odp', 'like', "%{$search}%");
+                    });
+                }
+
+                $customers = $customers->concat($unmappedQuery->orderBy('name')->take($limit)->get());
+            }
+
+            // Spatial mismatch candidates (assigned customers with GPS far from current ODP)
+            if ($includeSpatialMismatch && $customers->count() < $limit) {
+                $assignedQuery = Customer::query()
+                    ->with(['onu', 'ponPort', 'olt'])
+                    ->select([
+                        'id', 'name', 'phone', 'pppoe_username', 'address',
+                        'latitude', 'longitude', 'odp', 'odp_id',
+                        'olt_id', 'pon_port_id', 'olt_onu_id',
+                        'desa_id', 'dusun_id', 'kecamatan_id',
+                    ])
+                    ->whereNotNull('odp_id')
+                    ->whereNotNull('latitude')
+                    ->whereNotNull('longitude');
+
+                if ($search !== '') {
+                    $assignedQuery->where(function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('pppoe_username', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%")
+                            ->orWhere('address', 'like', "%{$search}%")
+                            ->orWhere('odp', 'like', "%{$search}%");
+                    });
+                }
+
+                $assignedPool = $assignedQuery->take(200)->get();
+                $customers = $customers->concat($assignedPool);
+            }
+        }
 
         $suggestions = [];
         $highCount = 0;
         $mediumCount = 0;
         $lowCount = 0;
+        $unmappedCount = 0;
+        $reassignmentCount = 0;
 
         foreach ($customers as $customer) {
+            $isAssigned = !empty($customer->odp_id);
+            $currentOdp = $isAssigned ? $odpsById->get((int) $customer->odp_id) : null;
+            $currentDist = null;
+
+            if ($isAssigned && $this->isValidCoord($customer->latitude, $customer->longitude) && $currentOdp && $this->isValidCoord($currentOdp->latitude, $currentOdp->longitude)) {
+                $currentDist = $this->distanceInMeters(
+                    (float) $customer->latitude,
+                    (float) $customer->longitude,
+                    (float) $currentOdp->latitude,
+                    (float) $currentOdp->longitude
+                );
+            }
+
             $candidateScores = [];
 
             foreach ($odps as $odp) {
+                // If assigned, skip currently assigned ODP to find better alternatives
+                if ($isAssigned && (int) $odp->id === (int) $customer->odp_id) {
+                    continue;
+                }
+
                 $distance = $this->distanceInMeters(
-                    $customer->latitude ? (float) $customer->latitude : null,
-                    $customer->longitude ? (float) $customer->longitude : null,
-                    $odp->latitude ? (float) $odp->latitude : null,
-                    $odp->longitude ? (float) $odp->longitude : null
+                    (float) $customer->latitude,
+                    (float) $customer->longitude,
+                    (float) $odp->latitude,
+                    (float) $odp->longitude
                 );
 
                 $analysis = $this->evaluateMatch($customer, $odp, $distance);
@@ -130,17 +183,46 @@ class OdpAiSuggestionService
             // Sort candidate ODPs by score descending
             usort($candidateScores, fn ($a, $b) => $b['score'] <=> $a['score']);
 
-            if (!empty($candidateScores) && $candidateScores[0]['score'] >= $minConfidence) {
-                $bestMatch = $candidateScores[0];
-                $alternatives = array_slice($candidateScores, 1, 2);
+            if (empty($candidateScores)) {
+                continue;
+            }
 
-                if ($bestMatch['confidence'] === 'high') {
-                    $highCount++;
-                } elseif ($bestMatch['confidence'] === 'medium') {
-                    $mediumCount++;
-                } else {
-                    $lowCount++;
+            $bestMatch = $candidateScores[0];
+            $bestDist = $bestMatch['distance_meters'];
+
+            // For ASSIGNED customers: only suggest if it is a true Spatial Mismatch
+            if ($isAssigned) {
+                // Criteria:
+                // 1. Best candidate is within dropcore range (<= 150m)
+                // 2. AND either current ODP has no GPS, or current ODP is far (> 180m), or saving is >= 60m
+                $isSpatialMismatch = false;
+                if ($bestDist !== null && $bestDist <= 150) {
+                    if ($currentDist === null) {
+                        $isSpatialMismatch = true;
+                    } elseif ($currentDist > 180) {
+                        $isSpatialMismatch = true;
+                    } elseif (($currentDist - $bestDist) >= 60) {
+                        $isSpatialMismatch = true;
+                    }
                 }
+
+                if (!$isSpatialMismatch) {
+                    continue;
+                }
+
+                $savingMeters = $currentDist !== null ? max(0, round($currentDist - $bestDist)) : null;
+                $reasons = [
+                    "Koreksi Jarak: ODP saat ini (" . ($currentOdp?->nama ?? 'ODP Lama') . ") berjarak " . ($currentDist !== null ? round($currentDist) . "m" : "tanpa GPS") . ", sedangkan ODP {$bestMatch['odp_name']} tepat di dekat pelanggan (" . round($bestDist) . "m" . ($savingMeters ? ", hemat {$savingMeters}m kabel" : "") . ")!",
+                    ...$bestMatch['reasons'],
+                ];
+
+                $confidence = $bestDist <= 70 ? 'high' : 'medium';
+                if ($confidence === 'high') {
+                    $highCount++;
+                } else {
+                    $mediumCount++;
+                }
+                $reassignmentCount++;
 
                 $suggestions[] = [
                     'customer_id' => $customer->id,
@@ -149,21 +231,68 @@ class OdpAiSuggestionService
                     'phone' => $customer->phone,
                     'address' => $customer->address,
                     'legacy_odp' => $customer->odp,
-                    'has_coordinates' => !empty($customer->latitude) && !empty($customer->longitude),
+                    'has_coordinates' => $this->isValidCoord($customer->latitude, $customer->longitude),
                     'latitude' => $customer->latitude,
                     'longitude' => $customer->longitude,
                     'suggested_odp_id' => $bestMatch['odp_id'],
                     'suggested_odp_name' => $bestMatch['odp_name'],
-                    'score' => $bestMatch['score'],
-                    'confidence' => $bestMatch['confidence'],
-                    'distance_meters' => $bestMatch['distance_meters'],
-                    'reasons' => $bestMatch['reasons'],
-                    'flags' => $bestMatch['flags'],
+                    'score' => max(75, $bestMatch['score']),
+                    'confidence' => $confidence,
+                    'distance_meters' => $bestDist,
+                    'reasons' => $reasons,
+                    'flags' => array_unique([...$bestMatch['flags'], 'spatial_mismatch_correction']),
                     'total_ports' => $bestMatch['total_ports'],
                     'available_ports' => $bestMatch['available_ports'],
                     'occupied_ports' => $bestMatch['occupied_ports'],
-                    'alternatives' => $alternatives,
+                    'alternatives' => array_slice($candidateScores, 1, 2),
+                    'is_reassignment' => true,
+                    'current_odp_id' => $currentOdp?->id,
+                    'current_odp_name' => $currentOdp?->nama ?? $customer->odp ?? '-',
+                    'current_distance_meters' => $currentDist ? round($currentDist) : null,
+                    'distance_saving_meters' => $savingMeters,
                 ];
+            } else {
+                // UNASSIGNED customer
+                if ($bestMatch['score'] >= $minConfidence) {
+                    $alternatives = array_slice($candidateScores, 1, 2);
+
+                    if ($bestMatch['confidence'] === 'high') {
+                        $highCount++;
+                    } elseif ($bestMatch['confidence'] === 'medium') {
+                        $mediumCount++;
+                    } else {
+                        $lowCount++;
+                    }
+                    $unmappedCount++;
+
+                    $suggestions[] = [
+                        'customer_id' => $customer->id,
+                        'customer_name' => $customer->name,
+                        'pppoe_username' => $customer->pppoe_username,
+                        'phone' => $customer->phone,
+                        'address' => $customer->address,
+                        'legacy_odp' => $customer->odp,
+                        'has_coordinates' => $this->isValidCoord($customer->latitude, $customer->longitude),
+                        'latitude' => $customer->latitude,
+                        'longitude' => $customer->longitude,
+                        'suggested_odp_id' => $bestMatch['odp_id'],
+                        'suggested_odp_name' => $bestMatch['odp_name'],
+                        'score' => $bestMatch['score'],
+                        'confidence' => $bestMatch['confidence'],
+                        'distance_meters' => $bestMatch['distance_meters'],
+                        'reasons' => $bestMatch['reasons'],
+                        'flags' => $bestMatch['flags'],
+                        'total_ports' => $bestMatch['total_ports'],
+                        'available_ports' => $bestMatch['available_ports'],
+                        'occupied_ports' => $bestMatch['occupied_ports'],
+                        'alternatives' => $alternatives,
+                        'is_reassignment' => false,
+                        'current_odp_id' => null,
+                        'current_odp_name' => null,
+                        'current_distance_meters' => null,
+                        'distance_saving_meters' => null,
+                    ];
+                }
             }
         }
 
@@ -177,6 +306,8 @@ class OdpAiSuggestionService
                 'high_confidence_count' => $highCount,
                 'medium_confidence_count' => $mediumCount,
                 'low_confidence_count' => $lowCount,
+                'unmapped_suggestions_count' => $unmappedCount,
+                'reassignment_suggestions_count' => $reassignmentCount,
             ],
             'suggestions' => $suggestions,
         ];
@@ -191,29 +322,38 @@ class OdpAiSuggestionService
         $reasons = [];
         $flags = [];
 
-        // 1. Distance vector (Max 65 points)
+        // 1. Distance vector (Primary physical dropcore proximity)
         if ($distanceMeters !== null) {
-            if ($distanceMeters <= 40) {
+            if ($distanceMeters <= 30) {
+                // Tiang tepat di depan rumah/lokasi pelanggan (jarak ~0m)
+                $score += 85;
+                $reasons[] = "Jarak sangat dekat: " . round($distanceMeters) . " meter (tiang tepat di lokasi pelanggan)";
+            } elseif ($distanceMeters <= 60) {
+                // Jarak dekat (1 gawang tiang ideal)
+                $score += 75;
+                $reasons[] = "Jarak dekat: " . round($distanceMeters) . " meter (tiang terdekat)";
+            } elseif ($distanceMeters <= 100) {
+                // Jangkauan dropcore optimal
                 $score += 65;
-                $reasons[] = "Jarak sangat dekat: " . round($distanceMeters) . " meter (tiang terdekat)";
-            } elseif ($distanceMeters <= 80) {
-                $score += 50;
-                $reasons[] = "Jarak dekat: " . round($distanceMeters) . " meter (jangkauan dropcore optimal)";
-            } elseif ($distanceMeters <= 140) {
-                $score += 35;
-                $reasons[] = "Jarak jangkauan normal: " . round($distanceMeters) . " meter";
-            } elseif ($distanceMeters <= 220) {
-                $score += 22;
+                $reasons[] = "Jarak jangkauan dropcore optimal: " . round($distanceMeters) . " meter";
+            } elseif ($distanceMeters <= 150) {
+                // Radius standar ODP (150m)
+                $score += 55;
+                $reasons[] = "Dalam radius standar jangkauan ODP: " . round($distanceMeters) . " meter";
+            } elseif ($distanceMeters <= 250) {
+                // Jarak moderat (masih bisa ditarik dropcore)
+                $score += 40;
                 $reasons[] = "Jarak jangkauan moderat: " . round($distanceMeters) . " meter";
-            } elseif ($distanceMeters <= 350) {
-                $score += 12;
+            } elseif ($distanceMeters <= 400) {
+                // Jarak jangkauan luar
+                $score += 25;
                 $reasons[] = "Jarak jangkauan luar: " . round($distanceMeters) . " meter";
             } else {
                 $flags[] = "distance_far";
             }
         }
 
-        // 2. Fuzzy name matching vector (Max 60 points)
+        // 2. Fuzzy name matching vector (Max 65 points)
         $legacyName = trim((string) $customer->odp);
         $odpName = trim((string) $odp->nama);
 
@@ -223,10 +363,10 @@ class OdpAiSuggestionService
 
             if ($normLegacy !== '' && $normOdp !== '') {
                 if ($normLegacy === $normOdp) {
-                    $score += 60;
+                    $score += 65;
                     $reasons[] = "Nama ODP lama cocok sempurna ('{$legacyName}')";
                 } elseif (str_contains($normOdp, $normLegacy) || str_contains($normLegacy, $normOdp)) {
-                    $score += 48;
+                    $score += 50;
                     $reasons[] = "Nama ODP lama selaras dengan master ('{$legacyName}')";
                 } else {
                     similar_text($normLegacy, $normOdp, $percent);
@@ -241,21 +381,27 @@ class OdpAiSuggestionService
             }
         }
 
-        // 3. PON Port & OLT vector (Max 25 points or penalty)
+        // 3. PON Port & OLT vector
         $customerPon = $customer->pon_port_id ?? $customer->onu?->pon_port_id;
         $customerOlt = $customer->olt_id ?? $customer->onu?->olt_id;
 
         if (!empty($customerPon) && !empty($odp->pon_port_id)) {
             if ((int) $customerPon === (int) $odp->pon_port_id) {
-                $score += 25;
+                $score += 20;
                 $reasons[] = "Satu jalur Port PON OLT yang sama";
             } elseif (!empty($customerOlt) && !empty($odp->olt_id) && (int) $customerOlt === (int) $odp->olt_id) {
-                $score -= 35;
-                $flags[] = "different_pon_port";
+                // Port PON berbeda di OLT yang sama: penalti ringan agar tidak menghancurkan fakta fisik tiang ODP
+                if ($distanceMeters !== null && $distanceMeters <= 150) {
+                    $score -= 5;
+                    $flags[] = "different_pon_port";
+                } else {
+                    $score -= 15;
+                    $flags[] = "different_pon_port";
+                }
             }
         }
 
-        // 4. Regional / Wilayah matching (Max 15 points)
+        // 4. Regional / Wilayah matching (Max 25 points)
         if (!empty($customer->dusun_id) && !empty($odp->dusun_id) && (int) $customer->dusun_id === (int) $odp->dusun_id) {
             $score += 15;
             $reasons[] = "Dusun yang sama";
@@ -272,9 +418,10 @@ class OdpAiSuggestionService
         if ($availablePorts <= 0) {
             $flags[] = "odp_full";
             $score -= 15;
+            $reasons[] = "Port ODP penuh ({$occupied}/{$totalPorts} port terpakai)";
         } else {
             $score += 10;
-            $reasons[] = "Kapasitas longgar ({$availablePorts} dari {$totalPorts} port tersedia)";
+            $reasons[] = "Kapasitas tersedia ({$availablePorts} dari {$totalPorts} port kosong)";
         }
 
         $score = max(0, min(100, $score));
@@ -289,6 +436,40 @@ class OdpAiSuggestionService
             'occupied_ports' => $occupied,
             'available_ports' => $availablePorts,
         ];
+    }
+
+    /**
+     * Check whether coordinates are valid (non-null and outside Null Island).
+     */
+    public function isValidCoord($lat, $lng): bool
+    {
+        if ($lat === null || $lng === null) {
+            return false;
+        }
+        $fLat = (float) $lat;
+        $fLng = (float) $lng;
+        return is_finite($fLat) && is_finite($fLng) && (abs($fLat) > 0.0001 || abs($fLng) > 0.0001);
+    }
+
+    /**
+     * Calculate haversine distance between two coordinates in meters.
+     */
+    public function distanceInMeters(?float $lat1, ?float $lng1, ?float $lat2, ?float $lng2): ?float
+    {
+        if (!$this->isValidCoord($lat1, $lng1) || !$this->isValidCoord($lat2, $lng2)) {
+            return null;
+        }
+
+        $earthRadius = 6371000.0; // meters
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+
+        $a = sin($dLat / 2) * sin($dLat / 2) +
+             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
+             sin($dLng / 2) * sin($dLng / 2);
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return round($earthRadius * $c, 1);
     }
 
     /**
@@ -366,27 +547,6 @@ class OdpAiSuggestionService
             'failed_count' => $failed,
             'errors' => $errors,
         ];
-    }
-
-    /**
-     * Calculate haversine distance between two coordinates in meters.
-     */
-    public function distanceInMeters(?float $lat1, ?float $lng1, ?float $lat2, ?float $lng2): ?float
-    {
-        if ($lat1 === null || $lng1 === null || $lat2 === null || $lng2 === null) {
-            return null;
-        }
-
-        $earthRadius = 6371000.0; // meters
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLng = deg2rad($lng2 - $lng1);
-
-        $a = sin($dLat / 2) * sin($dLat / 2) +
-             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-             sin($dLng / 2) * sin($dLng / 2);
-        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-
-        return round($earthRadius * $c, 1);
     }
 
     /**
