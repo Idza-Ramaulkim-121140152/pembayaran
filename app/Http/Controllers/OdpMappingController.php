@@ -308,8 +308,12 @@ class OdpMappingController extends Controller
             'min_confidence' => 'nullable|numeric|min:0|max:100',
             'limit' => 'nullable|integer|min:1|max:300',
             'search' => 'nullable|string|max:100',
-            'include_spatial_mismatch' => 'nullable|boolean',
+            'include_spatial_mismatch' => 'nullable',
         ]);
+
+        if ($request->has('include_spatial_mismatch')) {
+            $validated['include_spatial_mismatch'] = filter_var($request->input('include_spatial_mismatch'), FILTER_VALIDATE_BOOLEAN);
+        }
 
         $result = $this->aiSuggestionService->generateSuggestions($validated);
 

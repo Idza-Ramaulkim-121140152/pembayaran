@@ -26,7 +26,7 @@ class OdpAiSuggestionService
         $status = $options['status'] ?? null;
         $search = trim((string) ($options['search'] ?? ''));
         $includeSpatialMismatch = isset($options['include_spatial_mismatch'])
-            ? (bool) $options['include_spatial_mismatch']
+            ? filter_var($options['include_spatial_mismatch'], FILTER_VALIDATE_BOOLEAN)
             : ($status === null || $status === 'all' || $status === 'spatial_anomaly');
 
         // 1. Fetch all active ODPs with customer counts

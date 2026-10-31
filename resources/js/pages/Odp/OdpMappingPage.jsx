@@ -204,7 +204,7 @@ function OdpMappingPage({ embedded = false, initialOdpFilter = '' }) {
             const params = {
                 limit: 200,
                 min_confidence: 25,
-                include_spatial_mismatch: true,
+                include_spatial_mismatch: 1,
             };
             if (Array.isArray(specificIds) && specificIds.length > 0) {
                 params.customer_ids = specificIds;

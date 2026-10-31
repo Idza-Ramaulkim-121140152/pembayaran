@@ -221,7 +221,7 @@ class OdpAiSuggestionTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->actingAs($this->admin)->getJson('/api/odp-mapping/ai-suggestions');
+        $response = $this->actingAs($this->admin)->getJson('/api/odp-mapping/ai-suggestions?include_spatial_mismatch=true');
 
         $response->assertOk();
         $response->assertJsonStructure([
