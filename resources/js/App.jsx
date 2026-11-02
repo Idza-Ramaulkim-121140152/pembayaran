@@ -88,6 +88,7 @@ const InstallationReportPage = lazy(() => import('./pages/Reports/InstallationRe
 const InactiveCustomerReportPage = lazy(() => import('./pages/Reports/InactiveCustomerReportPage'));
 const ProjectReportPage = lazy(() => import('./pages/Reports/ProjectReportPage'));
 const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLinksPage'));
+const CustomerDismantlePage = lazy(() => import('./pages/CustomerDismantle/CustomerDismantlePage'));
 const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
 const AreaIncidentActionPage = lazy(() => import('./pages/AreaIncidentActionPage'));
 const MonitoringPekerjaanPage = lazy(() => import('./pages/TechnicianJobs/MonitoringPekerjaanPage'));
@@ -429,6 +430,9 @@ function App() {
                     
                     {/* Monitoring Pekerjaan */}
                     <Route path="/monitoring-pekerjaan" element={<GuardedRoute permissionKey="monitoring.view" fallbackRoles={['superadmin', 'admin', 'teknisi']} element={<MonitoringPekerjaanPage />} />} />
+
+                    {/* Alat Pelanggan Yang Bisa Dicopot */}
+                    <Route path="/alat-bisa-dicopot" element={<GuardedRoute permissionKey="customer.view" fallbackRoles={['superadmin', 'admin', 'teknisi']} element={<CustomerDismantlePage />} />} />
                     
                     {/* ODP */}
                     <Route path="/odp" element={<GuardedRoute permissionKey="odp.view" element={<OdpPage />} />} />

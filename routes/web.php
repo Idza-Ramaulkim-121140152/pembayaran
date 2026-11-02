@@ -531,6 +531,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/{job}/cancel', [\App\Http\Controllers\TechnicianJobController::class, 'cancel'])->name('api.technician-jobs.cancel');
             Route::get('/{job}/copy-text', [\App\Http\Controllers\TechnicianJobController::class, 'copyText'])->name('api.technician-jobs.copy-text');
         });
+
+        // Alat Pelanggan Yang Bisa Dicopot (Customer Equipment Dismantling)
+        Route::get('/alat-bisa-dicopot', fn() => view('app'))->name('customer-dismantle.index');
+        Route::prefix('api/customer-dismantle')->group(function () {
+            Route::get('/', [\App\Http\Controllers\CustomerDismantleController::class, 'index'])->name('api.customer-dismantle.index');
+            Route::post('/{customerId}/status', [\App\Http\Controllers\CustomerDismantleController::class, 'updateStatus'])->name('api.customer-dismantle.status');
+            Route::get('/{customerId}/share-text', [\App\Http\Controllers\CustomerDismantleController::class, 'shareText'])->name('api.customer-dismantle.share-text');
+        });
     }); // end teknisi routes
 
     // Billing/Penagihan API (permission-driven, role-agnostic)

@@ -37,6 +37,7 @@ import {
     Trash2,
     TrendingUp,
     Network,
+    Unplug,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import accessControlService from '../../services/accessControlService';
@@ -79,6 +80,7 @@ const ACCESS = {
     monitoringGenieAcs: ['superadmin', 'admin', 'teknisi'],
     remoteOnt: ['superadmin', 'admin', 'teknisi'],
     isolir: ['superadmin', 'admin', 'teknisi'],
+    customerDismantle: ['superadmin', 'admin', 'teknisi'],
     complaints: ['superadmin', 'admin', 'teknisi'],
     networkNotices: ['superadmin', 'admin', 'teknisi'],
     waNotification: ['superadmin', 'admin'],
@@ -143,6 +145,7 @@ const MENU_PERMISSION_MAP = {
     monitoringGenieAcs: 'monitoring.view',
     remoteOnt: 'monitoring.view',
     isolir: 'isolir.view',
+    customerDismantle: 'customer.view',
     complaints: 'complaint.view',
     networkNotices: 'master.network_notice.manage',
     waNotification: 'master.wa_notification.manage',
@@ -192,6 +195,7 @@ const MENU_GROUPS = [
             { key: 'monitoringGenieAcs', label: 'Monitoring GenieACS', to: '/monitoring-genieacs', icon: Wifi, match: (p) => p.startsWith('/monitoring-genieacs') || p.startsWith('/genieacs') },
             { key: 'remoteOnt', label: 'Remote ONT', to: '/remote-ont', icon: Router, match: (p) => p.startsWith('/remote-ont') },
             { key: 'isolir', label: 'Isolir & Telat', to: '/isolir', icon: AlertTriangle, match: (p) => p.startsWith('/isolir') },
+            { key: 'customerDismantle', label: 'Alat Bisa Dicopot', to: '/alat-bisa-dicopot', icon: Unplug, match: (p) => p.startsWith('/alat-bisa-dicopot') },
         ],
     },
     {

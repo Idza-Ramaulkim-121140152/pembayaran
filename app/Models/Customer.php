@@ -265,6 +265,11 @@ class Customer extends Model
         return $this->hasOne(CustomerPaymentBehaviorProfile::class);
     }
 
+    public function dismantleRecord()
+    {
+        return $this->hasOne(CustomerDismantleRecord::class, 'customer_id')->latestOfMany();
+    }
+
     public function getFotoDepanRumahAttribute(): ?string
     {
         // 1. Kolom langsung di tabel customers jika ada
