@@ -24,39 +24,52 @@ class QrisWebhookController extends Controller
      */
     public function webhook(Request $request): JsonResponse
     {
-        // Tangkap secret token dari berbagai variasi header / parameter
-        $secret = $request->header('X-QRIS-SECRET')
-            ?: $request->header('X-Webhook-Secret')
-            ?: $request->header('Authorization')
-            ?: $request->input('secret')
-            ?: $request->query('secret');
+        try {
+            // Tangkap secret token dari berbagai variasi header / parameter
+            $secret = $request->header('X-QRIS-SECRET')
+                ?: $request->header('X-Webhook-Secret')
+                ?: $request->header('Authorization')
+                ?: $request->input('secret')
+                ?: $request->query('secret');
 
-        // Bersihkan prefix 'Bearer ' jika dikirim via Authorization header
-        if ($secret && str_starts_with(strtolower($secret), 'bearer ')) {
-            $secret = trim(substr($secret, 7));
-        }
-
-        $payload = $request->all();
-
-        // Tangani jika dikirim berupa raw string JSON atau form urlencoded
-        if (empty($payload)) {
-            $rawContent = $request->getContent();
-            $decoded = json_decode($rawContent, true);
-            if (is_array($decoded)) {
-                $payload = $decoded;
-            } else {
-                $payload = [
-                    'text' => $rawContent,
-                ];
+            // Bersihkan prefix 'Bearer ' jika dikirim via Authorization header
+            if ($secret && str_starts_with(strtolower($secret), 'bearer ')) {
+                $secret = trim(substr($secret, 7));
             }
+
+            $payload = $request->all();
+
+            // Tangani jika dikirim berupa raw string JSON atau form urlencoded
+            if (empty($payload)) {
+                $rawContent = $request->getContent();
+                $decoded = json_decode($rawContent, true);
+                if (is_array($decoded)) {
+                    $payload = $decoded;
+                } else {
+                    $payload = [
+                        'text' => $rawContent,
+                    ];
+                }
+            }
+
+            // Jalankan pemrosesan webhook & settlement otomatis
+            $result = $this->webhookService->processWebhook($payload, $secret);
+
+            $httpCode = $result['http_code'] ?? ($result['success'] ? 200 : 400);
+
+            return response()->json($result, $httpCode);
+        } catch (\Throwable $e) {
+            Log::error('QRIS Webhook Controller unhandled exception: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'status' => 'server_error',
+                'http_code' => 500,
+                'message' => 'Terjadi kesalahan sistem saat memproses notifikasi webhook: ' . $e->getMessage(),
+            ], 500);
         }
-
-        // Jalankan pemrosesan webhook & settlement otomatis
-        $result = $this->webhookService->processWebhook($payload, $secret);
-
-        $httpCode = $result['http_code'] ?? ($result['success'] ? 200 : 400);
-
-        return response()->json($result, $httpCode);
     }
 
     /**

@@ -189,9 +189,7 @@ Route::post('/api/whatsapp/webhooks/night-support', [\App\Http\Controllers\Whats
 Route::get('/api/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
     ->name('api.whatsapp.night-support.status');
 
-// QRIS Dynamic Notification Webhook (GoBiz / MacroDroid) - Mendukung prefix /api/qris/webhook maupun /qris/webhook
-Route::post('/api/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
-    ->name('web.api.qris.webhook');
+// QRIS Dynamic Notification Webhook (GoBiz / MacroDroid) - Fallback jika pengirim tidak menyertakan prefix /api
 Route::post('/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
     ->name('web.qris.webhook');
 

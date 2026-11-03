@@ -144,12 +144,12 @@ class QrisWebhookService
         $amount = $parsed['amount'];
 
         if (!$amount) {
-            QrisWebhookLog::create([
+            $this->safeLog([
                 'device_name' => $deviceName,
                 'raw_title' => $rawTitle ?: null,
                 'raw_text' => $rawText ?: null,
-                'extracted_amount' => null,
-                'status' => 'invalid_payload',
+                'extracted_amount' => 0,
+                'status' => 'unmatched',
                 'meta' => [
                     'reason' => 'Nominal transaksi tidak dapat diekstrak dari teks notifikasi.',
                     'parsed' => $parsed,
@@ -166,10 +166,7 @@ class QrisWebhookService
 
         // 3. Multi-Device Deduplication & Concurrency Lock
         // Mencegah duplikasi jika 2 HP admin menangkap notifikasi GoBiz yang sama
-        $lockKey = "qris_settle_lock_{$amount}";
-        $lock = Cache::lock($lockKey, 15);
-
-        return $lock->get(function () use ($amount, $parsed, $deviceName, $rawTitle, $rawText) {
+        $processExecution = function () use ($amount, $parsed, $deviceName, $rawTitle, $rawText) {
             // A. Cek apakah ada invoice yang cocok dengan nominal unik QRIS ini
             $invoice = Invoice::query()
                 ->where('status', '!=', 'paid')
@@ -195,7 +192,7 @@ class QrisWebhookService
 
                 if ($recentlyPaid) {
                     // Catat ke log sebagai duplicate_ignored (berhasil diterima, tapi abaikan duplikasi)
-                    QrisWebhookLog::create([
+                    $this->safeLog([
                         'device_name' => $deviceName,
                         'raw_title' => $rawTitle ?: null,
                         'raw_text' => $rawText ?: null,
@@ -219,7 +216,7 @@ class QrisWebhookService
                 }
 
                 // C. Jika benar-benar tidak ditemukan tagihan
-                QrisWebhookLog::create([
+                $this->safeLog([
                     'device_name' => $deviceName,
                     'raw_title' => $rawTitle ?: null,
                     'raw_text' => $rawText ?: null,
@@ -244,7 +241,7 @@ class QrisWebhookService
             $settleResult = $this->settleInvoice($invoice, $amount, $parsed, $deviceName);
 
             // E. Simpan Log Sukses
-            QrisWebhookLog::create([
+            $this->safeLog([
                 'device_name' => $deviceName,
                 'raw_title' => $rawTitle ?: null,
                 'raw_text' => $rawText ?: null,
@@ -268,12 +265,21 @@ class QrisWebhookService
                 'customer_name' => $invoice->customer?->name,
                 'isolation_restored' => $settleResult['isolation_restored'] ?? false,
             ];
-        }) ?? [
-            'success' => false,
-            'status' => 'locked',
-            'http_code' => 429,
-            'message' => 'Transaksi sedang diproses bersamaan oleh sistem. Silakan coba sesaat lagi.',
-        ];
+        };
+
+        $lockKey = "qris_settle_lock_{$amount}";
+        try {
+            $lock = Cache::lock($lockKey, 15);
+            return $lock->get($processExecution) ?? [
+                'success' => false,
+                'status' => 'locked',
+                'http_code' => 429,
+                'message' => 'Transaksi sedang diproses bersamaan oleh sistem. Silakan coba sesaat lagi.',
+            ];
+        } catch (\Throwable $lockEx) {
+            Log::info("Cache lock not supported or failed, executing settlement directly: " . $lockEx->getMessage());
+            return $processExecution();
+        }
     }
 
     /**
@@ -388,6 +394,22 @@ class QrisWebhookService
         } catch (\Throwable $e) {
             Log::warning('DynamicQris sendPaymentConfirmationWhatsApp warning: ' . $e->getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Simpan log webhook dengan aman tanpa menyebabkan 500 jika terjadi kegagalan skema / database.
+     */
+    protected function safeLog(array $attributes): ?QrisWebhookLog
+    {
+        try {
+            if (!isset($attributes['extracted_amount']) || $attributes['extracted_amount'] === null) {
+                $attributes['extracted_amount'] = 0;
+            }
+            return QrisWebhookLog::create($attributes);
+        } catch (\Throwable $e) {
+            Log::warning('QrisWebhookLog creation failed: ' . $e->getMessage(), ['attributes' => $attributes]);
+            return null;
         }
     }
 }
