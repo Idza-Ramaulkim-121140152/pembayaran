@@ -515,9 +515,7 @@ class OdpAiSuggestionService
                 $oldOdp = $customer->odp;
                 $oldOdpId = $customer->odp_id;
 
-                $customer->odp_id = $odp->id;
-                $customer->odp = $odp->nama;
-                $customer->save();
+                app(\App\Services\OdpPortService::class)->autoAssignCustomer($customer, $odp);
 
                 // Resolve anomaly if any
                 OdpMappingAnomaly::query()

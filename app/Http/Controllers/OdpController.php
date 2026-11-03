@@ -7,6 +7,7 @@ use App\Models\MasterWilayahDusun;
 use App\Models\Odp;
 use App\Services\AuditLogService;
 use App\Services\OdpNameGeneratorService;
+use App\Services\OdpPortService;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Storage;
@@ -17,6 +18,7 @@ class OdpController extends Controller
     public function __construct(
         private AuditLogService $auditLogService,
         private OdpNameGeneratorService $odpNameGeneratorService,
+        private OdpPortService $odpPortService,
     )
     {
     }
@@ -364,20 +366,24 @@ class OdpController extends Controller
         $customer = \App\Models\Customer::findOrFail($validated['customer_id']);
         $oldOdp = $customer->odp;
         $oldOdpId = $customer->odp_id;
-        $customer->odp_id = $odp->id;
-        $customer->odp = $odp->nama;
-        $customer->save();
+
+        // Auto-assign customer to the lowest available free port
+        $assignedPort = $this->odpPortService->autoAssignCustomer($customer, $odp);
 
         $this->auditLogService->log('odp.customer_assigned', $customer, [
             'old_odp' => $oldOdp,
             'old_odp_id' => $oldOdpId,
             'new_odp' => $odp->nama,
             'new_odp_id' => $odp->id,
+            'assigned_port' => $assignedPort,
         ], auth()->id());
 
+        $portMsg = $assignedPort ? " dan otomatis dicolok ke Port #{$assignedPort}" : "";
+
         return response()->json([
-            'message' => 'Pelanggan berhasil ditambahkan ke ODP',
+            'message' => "Pelanggan {$customer->name} berhasil ditambahkan ke ODP {$odp->nama}{$portMsg}.",
             'data' => $customer,
+            'assigned_port' => $assignedPort,
         ]);
     }
 
@@ -391,13 +397,17 @@ class OdpController extends Controller
         if ((int) $customer->odp_id === (int) $odp->id || $customer->odp === $odp->nama) {
             $oldOdp = $customer->odp;
             $oldOdpId = $customer->odp_id;
+            $oldPort = $customer->odp_port_number;
+
             $customer->odp_id = null;
             $customer->odp = null;
+            $customer->odp_port_number = null;
             $customer->save();
 
             $this->auditLogService->log('odp.customer_unassigned', $customer, [
                 'old_odp' => $oldOdp,
                 'old_odp_id' => $oldOdpId,
+                'old_port' => $oldPort,
                 'new_odp' => null,
                 'new_odp_id' => null,
             ], auth()->id());
@@ -462,6 +472,31 @@ class OdpController extends Controller
                 $customerByPort[$portNum] = $c;
             } else {
                 $unallocatedCustomers[] = $c;
+            }
+        }
+
+        // Auto-assign any unallocated customers if there are free ports in this ODP
+        if (!empty($unallocatedCustomers)) {
+            $this->odpPortService->autoAssignOdpPorts($odp);
+
+            // Reload fresh customer list
+            $customers = \App\Models\Customer::query()
+                ->where(function ($q) use ($odp) {
+                    $q->where('odp_id', $odp->id)
+                      ->orWhere('odp', $odp->nama);
+                })
+                ->with(['package:id,name,price'])
+                ->get();
+
+            $customerByPort = [];
+            $unallocatedCustomers = [];
+            foreach ($customers as $c) {
+                $portNum = (int) ($c->odp_port_number ?? 0);
+                if ($portNum >= 1 && $portNum <= $capacity) {
+                    $customerByPort[$portNum] = $c;
+                } else {
+                    $unallocatedCustomers[] = $c;
+                }
             }
         }
 
@@ -697,6 +732,32 @@ class OdpController extends Controller
 
         return response()->json([
             'message' => "Kabel Port #{$fromPort} dan Port #{$toPort} berhasil dipindahkan/ditukar.",
+        ]);
+    }
+
+    /**
+     * Auto-assign all unallocated customers in this ODP to free ports
+     */
+    public function apiAutoAssignPorts(Odp $odp)
+    {
+        $result = $this->odpPortService->autoAssignOdpPorts($odp);
+
+        return response()->json([
+            'message' => "Penyelarasan port ODP {$odp->nama} berhasil. {$result['assigned_count']} pelanggan otomatis dicolok ke port.",
+            'data' => $result,
+        ]);
+    }
+
+    /**
+     * Auto-assign all unallocated customers across all ODPs in the network
+     */
+    public function apiAutoAssignAllPorts()
+    {
+        $result = $this->odpPortService->autoAssignAllOdpPorts();
+
+        return response()->json([
+            'message' => "Penyelarasan seluruh ODP selesai. {$result['total_assigned']} pelanggan otomatis dicolok ke port.",
+            'data' => $result,
         ]);
     }
 }

@@ -37,6 +37,16 @@ class BackfillCustomerRelationsCommand extends Command
                         $customer->odp_id = (int) $mappedOdpId;
                         $dirty = true;
                         $odpUpdated++;
+
+                        if (empty($customer->odp_port_number)) {
+                            $targetOdp = Odp::find($mappedOdpId);
+                            if ($targetOdp) {
+                                $port = app(\App\Services\OdpPortService::class)->getNextAvailablePort($targetOdp, $customer->id);
+                                if ($port) {
+                                    $customer->odp_port_number = $port;
+                                }
+                            }
+                        }
                     } else {
                         OdpMappingAnomaly::updateOrCreate(
                             [

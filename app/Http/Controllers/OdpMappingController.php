@@ -128,9 +128,7 @@ class OdpMappingController extends Controller
                 $oldOdp = $customer->odp;
                 $oldOdpId = $customer->odp_id;
 
-                $customer->odp_id = $odp->id;
-                $customer->odp = $odp->nama;
-                $customer->save();
+                app(\App\Services\OdpPortService::class)->autoAssignCustomer($customer, $odp);
 
                 OdpMappingAnomaly::query()
                     ->where('customer_id', $customer->id)

@@ -50,6 +50,7 @@ import { Link } from 'react-router-dom';
 import Alert from '../../components/common/Alert';
 import Modal from '../../components/common/Modal';
 import apiClient from '../../services/api';
+import odpPortService from '../../services/odpPortService';
 import masterOltService from '../../services/masterOltService';
 import { attachSatelliteLayerWithFallback } from '../../utils/leafletTileFallback';
 import OdpInternalSchematic from './components/OdpInternalSchematic';
@@ -2805,6 +2806,22 @@ export default function SuperPanelPage() {
                                                 {odp.unassigned_customers && odp.unassigned_customers.length > 0 && (
                                                     <div className="mt-2 p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px] flex items-center justify-between">
                                                         <span>⚠️ {odp.unassigned_customers.length} Pelanggan belum dimapping ke port</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={async (e) => {
+                                                                e.stopPropagation();
+                                                                try {
+                                                                    await odpPortService.autoAssignPorts(odp.id);
+                                                                    fetchOdpStock();
+                                                                    fetchNodes();
+                                                                } catch (err) {
+                                                                    alert('Gagal auto colok: ' + (err.response?.data?.message || err.message));
+                                                                }
+                                                            }}
+                                                            className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 font-bold transition flex items-center gap-1"
+                                                        >
+                                                            ⚡ Auto Colok
+                                                        </button>
                                                     </div>
                                                 )}
                                             </div>

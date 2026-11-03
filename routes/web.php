@@ -389,6 +389,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/odp/{odp}/ports/assign', [OdpController::class, 'apiAssignPort'])->name('api.odp.ports.assign');
         Route::post('/api/odp/{odp}/ports/unassign', [OdpController::class, 'apiUnassignPort'])->name('api.odp.ports.unassign');
         Route::post('/api/odp/{odp}/ports/swap', [OdpController::class, 'apiSwapPort'])->name('api.odp.ports.swap');
+        Route::post('/api/odp/{odp}/ports/auto-assign', [OdpController::class, 'apiAutoAssignPorts'])->name('api.odp.ports.auto-assign');
+        Route::post('/api/odp/ports/auto-assign-all', [OdpController::class, 'apiAutoAssignAllPorts'])->name('api.odp.ports.auto-assign-all');
 
         // ODP Mapping v2 API
         Route::get('/api/odp-mapping/customers', [OdpMappingController::class, 'customers'])->middleware('permission:odp.mapping.view')->name('api.odp-mapping.customers');

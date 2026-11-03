@@ -63,6 +63,7 @@ export default function OdpPortScannerPage({ embedded = false, initialOdpIdProp 
 
     // Modal: Print Sticker
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+    const [autoAssigning, setAutoAssigning] = useState(false);
 
     // Load ODPs list on mount
     useEffect(() => {
@@ -295,6 +296,22 @@ export default function OdpPortScannerPage({ embedded = false, initialOdpIdProp 
             setError(err.response?.data?.message || 'Gagal memindahkan kabel port.');
         } finally {
             setSwapping(false);
+        }
+    };
+
+    // Auto-assign all unallocated customers to free ports
+    const handleAutoAssignPorts = async () => {
+        if (!odpData?.id) return;
+        try {
+            setAutoAssigning(true);
+            setError('');
+            const res = await odpPortService.autoAssignPorts(odpData.id);
+            setMessage(res.data?.message || 'Semua pelanggan berhasil otomatis dicolok ke port kosong!');
+            await fetchOdpPorts(odpData.id);
+        } catch (err) {
+            setError(err.response?.data?.message || 'Gagal melakukan auto-colok pelanggan.');
+        } finally {
+            setAutoAssigning(false);
         }
     };
 
@@ -617,10 +634,19 @@ export default function OdpPortScannerPage({ embedded = false, initialOdpIdProp 
                                         Terdapat {unallocated.length} pelanggan terdaftar di ODP ini tetapi belum memiliki nomor port kabel fisik.
                                     </p>
                                     <p className="text-gray-600 mt-0.5">
-                                        Tekan tombol "+ Colok Kabel" pada port kosong di bawah untuk menempatkan pelanggan.
+                                        Sistem dapat otomatis memetakan dan mencolok pelanggan ke port kosong terendah (P1, P2, dst).
                                     </p>
                                 </div>
                             </div>
+                            <button
+                                type="button"
+                                onClick={handleAutoAssignPorts}
+                                disabled={autoAssigning}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold px-3.5 py-2 text-xs shadow transition shrink-0 disabled:opacity-50"
+                            >
+                                <RefreshCw size={14} className={autoAssigning ? 'animate-spin' : ''} />
+                                <span>{autoAssigning ? 'Menyelaraskan...' : '⚡ Auto Colok ke Port Kosong'}</span>
+                            </button>
                         </div>
                     )}
 

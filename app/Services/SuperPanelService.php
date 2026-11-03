@@ -566,7 +566,22 @@ class SuperPanelService
                 }
             }
 
-            // DO NOT auto-fill unassigned customers into free slots!
+            // Auto-assign any unassigned customers into available free ports
+            if (!empty($unassignedCustomers)) {
+                app(\App\Services\OdpPortService::class)->autoAssignOdpPorts($odp);
+                $customers = $odp->customers()->with(['onu', 'package'])->orderBy('odp_port_number')->get();
+                $customerByPort = [];
+                $unassignedCustomers = [];
+                foreach ($customers as $cust) {
+                    $portNum = (int) $cust->odp_port_number;
+                    if ($portNum > 0 && !isset($customerByPort[$portNum])) {
+                        $customerByPort[$portNum] = $cust;
+                    } else {
+                        $unassignedCustomers[] = $cust;
+                    }
+                }
+            }
+
             $mappedCustCount = count($customerByPort);
             $odpPortsUsed = count($childPorts);
             $usedCount = $mappedCustCount + $odpPortsUsed;
@@ -1270,7 +1285,14 @@ class SuperPanelService
         $customer = Customer::query()->findOrFail($customerId);
 
         $targetOdpId = $data['odp_id'] ?? $customer->odp_id;
-        $targetPort = isset($data['odp_port_number']) ? (int) $data['odp_port_number'] : $customer->odp_port_number;
+        $targetPort = isset($data['odp_port_number']) && $data['odp_port_number'] !== '' ? (int) $data['odp_port_number'] : $customer->odp_port_number;
+
+        if ($targetOdpId && empty($targetPort)) {
+            $targetOdp = Odp::find($targetOdpId);
+            if ($targetOdp) {
+                $targetPort = app(\App\Services\OdpPortService::class)->getNextAvailablePort($targetOdp, $customer->id);
+            }
+        }
 
         if ($targetOdpId && $targetPort) {
             $childOdpUsingPort = Odp::where('parent_id', $targetOdpId)
@@ -1291,7 +1313,9 @@ class SuperPanelService
             $customer->odp_id = $data['odp_id'];
         }
         if (array_key_exists('odp_port_number', $data)) {
-            $customer->odp_port_number = !empty($data['odp_port_number']) ? (int) $data['odp_port_number'] : null;
+            $customer->odp_port_number = !empty($data['odp_port_number']) ? (int) $data['odp_port_number'] : $targetPort;
+        } elseif ($targetPort) {
+            $customer->odp_port_number = $targetPort;
         }
         if (isset($data['dropcore_cable_length_meters'])) {
             $customer->dropcore_cable_length_meters = (int) $data['dropcore_cable_length_meters'];

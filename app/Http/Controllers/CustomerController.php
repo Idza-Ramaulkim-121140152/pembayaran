@@ -1121,14 +1121,30 @@ class CustomerController extends Controller
             if (!empty($validated['odp_id'])) {
                 $odp = Odp::query()->find((int) $validated['odp_id']);
                 $validated['odp'] = $odp?->nama;
+                if (empty($validated['odp_port_number']) && (! $customer || (int) $customer->odp_id !== (int) $validated['odp_id'] || empty($customer->odp_port_number))) {
+                    if ($odp) {
+                        $nextPort = app(\App\Services\OdpPortService::class)->getNextAvailablePort($odp, $customer?->id);
+                        if ($nextPort) {
+                            $validated['odp_port_number'] = $nextPort;
+                        }
+                    }
+                }
             } else {
                 $validated['odp'] = null;
+                $validated['odp_port_number'] = null;
             }
         } elseif (!empty($validated['odp'])) {
             $odp = Odp::query()->where('nama', $validated['odp'])->first();
             $validated['odp_id'] = $odp?->id;
+            if ($odp && empty($validated['odp_port_number'])) {
+                $nextPort = app(\App\Services\OdpPortService::class)->getNextAvailablePort($odp, $customer?->id);
+                if ($nextPort) {
+                    $validated['odp_port_number'] = $nextPort;
+                }
+            }
         } elseif ($customer && array_key_exists('odp', $validated) && empty($validated['odp'])) {
             $validated['odp_id'] = null;
+            $validated['odp_port_number'] = null;
         }
 
         if (array_key_exists('package_id', $validated)) {

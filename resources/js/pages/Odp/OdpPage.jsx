@@ -614,13 +614,29 @@ function OdpPage({ defaultTab = 'list' }) {
         try {
             setManagerSubmitting(true);
             setManagerError(null);
-            await apiClient.post(`/odp/${viewModal.odp.id}/customers`, {
+            const res = await apiClient.post(`/odp/${viewModal.odp.id}/customers`, {
                 customer_id: selectedCustomerId,
             });
             await Promise.all([loadSelectedOdp(viewModal.odp.id), fetchOdps(), fetchCustomers()]);
-            setSuccess('Pelanggan berhasil ditambahkan ke ODP');
+            setSuccess(res.data?.message || 'Pelanggan berhasil ditambahkan ke ODP');
         } catch (err) {
             setManagerError(err.response?.data?.message || 'Gagal menambahkan pelanggan ke ODP');
+        } finally {
+            setManagerSubmitting(false);
+        }
+    };
+
+    const handleAutoAssignCurrentOdp = async () => {
+        if (!viewModal.odp?.id) return;
+
+        try {
+            setManagerSubmitting(true);
+            setManagerError(null);
+            const res = await apiClient.post(`/odp/${viewModal.odp.id}/ports/auto-assign`);
+            await Promise.all([loadSelectedOdp(viewModal.odp.id), fetchOdps()]);
+            setSuccess(res.data?.message || 'Semua pelanggan berhasil otomatis dicolok ke port');
+        } catch (err) {
+            setManagerError(err.response?.data?.message || 'Gagal auto-colok port ODP');
         } finally {
             setManagerSubmitting(false);
         }
@@ -1084,7 +1100,20 @@ function OdpPage({ defaultTab = 'list' }) {
                             </div>
 
                             <div className="mt-4">
-                                <h4 className="font-semibold text-white">Pelanggan Terhubung</h4>
+                                <div className="flex items-center justify-between mb-2">
+                                    <h4 className="font-semibold text-white">Pelanggan Terhubung ({selectedOdpCustomers.length})</h4>
+                                    {selectedOdpCustomers.some(c => !c.odp_port_number) && (
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            onClick={handleAutoAssignCurrentOdp}
+                                            disabled={managerSubmitting}
+                                            className="!text-xs !py-1 !px-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30"
+                                        >
+                                            ⚡ Auto Colok Semua Port
+                                        </Button>
+                                    )}
+                                </div>
                                 <div className="mt-2 max-h-64 overflow-y-auto rounded-[20px] border border-white/10 bg-slate-950/60">
                                     {selectedOdpCustomers.length === 0 ? (
                                         <div className="p-4 text-sm text-slate-400">Belum ada pelanggan pada ODP ini.</div>
@@ -1094,6 +1123,7 @@ function OdpPage({ defaultTab = 'list' }) {
                                                 <tr>
                                                     <th className="px-3 py-2 text-left">Nama</th>
                                                     <th className="px-3 py-2 text-left">PPPoE</th>
+                                                    <th className="px-3 py-2 text-center">Port Colokan</th>
                                                     <th className="px-3 py-2 text-right">Aksi</th>
                                                 </tr>
                                             </thead>
@@ -1102,6 +1132,17 @@ function OdpPage({ defaultTab = 'list' }) {
                                                     <tr key={customer.id}>
                                                         <td className="px-3 py-2">{customer.name}</td>
                                                         <td className="px-3 py-2">{customer.pppoe_username || '-'}</td>
+                                                        <td className="px-3 py-2 text-center">
+                                                            {customer.odp_port_number ? (
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30">
+                                                                    Port #{customer.odp_port_number}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold border border-amber-500/30">
+                                                                    Belum dicolok
+                                                                </span>
+                                                            )}
+                                                        </td>
                                                         <td className="px-3 py-2 text-right">
                                                             <Button
                                                                 type="button"

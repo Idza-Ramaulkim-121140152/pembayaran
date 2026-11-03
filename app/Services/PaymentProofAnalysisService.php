@@ -761,10 +761,6 @@ PROMPT;
         $prePaymentKeywords = [
             'saldo tersedia',
             'ubah limit',
-            'biaya transaksi gratis',
-            'biaya transaksi : gratis',
-            'biaya transaksi: gratis',
-            'nama acquirer',
             'sumber dana',
             'pilih sumber dana',
             'pilih rekening',
@@ -782,10 +778,18 @@ PROMPT;
         ];
 
         $isPrePaymentScreen = false;
-        foreach ($prePaymentKeywords as $pk) {
-            if (str_contains($normalized, $pk)) {
-                $isPrePaymentScreen = true;
-                break;
+        // If the text explicitly states the transfer or transaction is already successful, it's not a pre-payment review screen
+        $hasExplicitSuccessStatement = str_contains($normalized, 'transfer berhasil')
+            || str_contains($normalized, 'transaksi berhasil')
+            || str_contains($normalized, 'pembayaran berhasil')
+            || str_contains($normalized, 'transaksi sukses');
+
+        if (!$hasExplicitSuccessStatement) {
+            foreach ($prePaymentKeywords as $pk) {
+                if (str_contains($normalized, $pk)) {
+                    $isPrePaymentScreen = true;
+                    break;
+                }
             }
         }
 
