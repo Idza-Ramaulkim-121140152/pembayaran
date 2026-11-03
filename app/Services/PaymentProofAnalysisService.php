@@ -128,7 +128,7 @@ Pedoman Khusus Klasifikasi & Akurasi (PENTING PENYARINGAN BUKTI BAYAR):
   5. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada struk/m-banking (contoh '16 Okt 2026, 09:17' -> paid_date: '2026-10-16', paid_time: '09:17:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
   6. payment_channel: Deteksi bank / e-wallet (contoh: BCA, BRI / BRImo, Mandiri / Livin, BNI, SeaBank, Dana, GoPay, OVO, ShopeePay, QRIS, Agen).
   7. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer m-banking/QRIS/agen/EDC/ATM yang TELAH SELESAI DIBAYAR.
-  8. success_status=true HANYA jika transaksi dinyatakan secara tegas telah BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti transfer yang sah dari bank/e-wallet. JIKA masih berupa layar konfirmasi sebelum bayar / saldo tersedia / menunggu pembayaran / pending / gagal, WAJIB diisi false!
+  8. success_status=true jika transaksi dinyatakan secara tegas telah BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti transfer/QRIS yang sah dan telah selesai diproses dari bank/e-wallet (memiliki Ref ID / No Transaksi / Terminal ID / Merchant PAN / jam transaksi lengkap dengan detik seperti "11:26:31 WIB"). JIKA masih berupa layar konfirmasi sebelum bayar / saldo tersedia / ubah limit / menunggu pembayaran / pending / gagal, WAJIB diisi false!
   9. confidence memakai skala angka 0 s.d 100.
   10. ocr_raw_text: Salin seluruh teks yang terbaca pada struk (nama, angka, tanggal, nomor referensi) agar sistem dapat memverifikasi silang.
 PROMPT;
@@ -729,7 +729,7 @@ PROMPT;
 
         // 3. Payment Channel
         $channel = null;
-        if (str_contains($normalized, 'qris')) {
+        if (str_contains($normalized, 'qris') || str_contains($normalized, 'merchant pan') || str_contains($normalized, 'nama acquirer') || str_contains($normalized, 'detail merchant') || str_contains($normalized, 'dompet anak bangsa')) {
             $channel = 'QRIS';
         } elseif (str_contains($normalized, 'bca') || str_contains($normalized, 'mybca') || str_contains($normalized, 'klikbca')) {
             $channel = 'BCA Mobile';
@@ -761,7 +761,6 @@ PROMPT;
         $prePaymentKeywords = [
             'saldo tersedia',
             'ubah limit',
-            'sumber dana',
             'pilih sumber dana',
             'pilih rekening',
             'pilih metode',
@@ -777,12 +776,25 @@ PROMPT;
             'bisa di scan lalu di bayarkan',
         ];
 
+        // Completed transaction indicators (e.g. BNI Mobile with Ref ID, Terminal ID, or Merchant PAN)
+        $hasReceiptStructure = !empty($ref) && (
+            str_contains($normalized, 'merchant id')
+            || str_contains($normalized, 'merchant pan')
+            || str_contains($normalized, 'terminal id')
+            || str_contains($normalized, 'detail merchant')
+            || str_contains($normalized, 'detail pembayaran')
+            || str_contains($normalized, 'acquirer')
+            || str_contains($normalized, 'wib')
+        );
+
         $isPrePaymentScreen = false;
-        // If the text explicitly states the transfer or transaction is already successful, it's not a pre-payment review screen
+        // If the text explicitly states the transfer or transaction is already successful, or has a formal completed receipt structure, it's not a pre-payment review screen
         $hasExplicitSuccessStatement = str_contains($normalized, 'transfer berhasil')
             || str_contains($normalized, 'transaksi berhasil')
             || str_contains($normalized, 'pembayaran berhasil')
-            || str_contains($normalized, 'transaksi sukses');
+            || str_contains($normalized, 'transaksi sukses')
+            || str_contains($normalized, 'pembayaran sukses')
+            || $hasReceiptStructure;
 
         if (!$hasExplicitSuccessStatement) {
             foreach ($prePaymentKeywords as $pk) {
@@ -829,8 +841,9 @@ PROMPT;
             || str_contains($normalized, 'kadaluarsa')
             || str_contains($normalized, 'expired');
 
-        // MUST have explicit success keyword AND MUST NOT be a pre-payment review screen or portal screenshot
-        $isSuccess = $hasSuccessKeyword && !$isPrePaymentScreen && !$isPortalScreenshot && !$isFailedOrPending;
+        // MUST have explicit success keyword OR legitimate completed receipt structure (e.g. BNI Mobile with Ref ID & Merchant PAN)
+        // AND MUST NOT be a pre-payment review screen or portal screenshot or failed
+        $isSuccess = ($hasSuccessKeyword || $hasReceiptStructure) && !$isPrePaymentScreen && !$isPortalScreenshot && !$isFailedOrPending;
 
         // 6. Date & Time
         $paidDate = null;
@@ -927,7 +940,16 @@ PROMPT;
 
         // 7. Sender Extraction
         $senderName = null;
-        if (preg_match('~\b(?:dari|pengirim|sender|atas\s*nama|a\.?n\b|an\b)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})~i', $text, $m)) {
+        if (preg_match('~\b(?:dari|pengirim|sender|atas\s*nama|a\.?n\b|an\b|sumber\s*dana)\s*[:#\.\s]?\s*([a-zA-Z\s]{3,35})~i', $text, $m)) {
+            $candName = trim($m[1]);
+            $candName = preg_replace('~\s*(?:\(|-)?\s*(?:seabank|bca|bri|bni|mandiri|bank|[0-9*]{4,}).*$~i', '', $candName);
+            $candName = trim($candName);
+            $stopWords = ['bank', 'rekening', 'anda', 'kamu', 'qris', 'seabank', 'bca', 'bri', 'bni', 'mandiri', 'dana', 'gopay', 'ovo', 'shopeepay'];
+            if (strlen($candName) >= 3 && !in_array(strtolower($candName), $stopWords, true)) {
+                $senderName = $candName;
+            }
+        }
+        if (!$senderName && preg_match('~sumber\s*dana\s*[\r\n]+\s*([a-zA-Z\s]{3,35})~i', $text, $m)) {
             $candName = trim($m[1]);
             $candName = preg_replace('~\s*(?:\(|-)?\s*(?:seabank|bca|bri|bni|mandiri|bank|[0-9*]{4,}).*$~i', '', $candName);
             $candName = trim($candName);

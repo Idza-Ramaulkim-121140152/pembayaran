@@ -146,7 +146,16 @@ class PaymentVerificationConfigService
                     [
                         'name' => 'Rumah Kita Net',
                         'merchant_id' => 'ID1024339131558',
-                        'aliases' => ['Rumah Kita Net , KALIANDA', 'Rumah Kita Network', 'COM.GO-JEK.WWW', 'GoPay', 'GoBiz'],
+                        'aliases' => [
+                            'Rumah Kita Net , KALIANDA',
+                            'Rumah Kita Network',
+                            'COM.GO-JEK.WWW',
+                            'GoPay',
+                            'GoBiz',
+                            'DOMPET ANAK BANGSA',
+                            'G848826679',
+                            '9360091438488266793',
+                        ],
                         'active' => true,
                     ],
                 ],

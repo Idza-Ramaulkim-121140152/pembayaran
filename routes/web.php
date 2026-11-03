@@ -189,6 +189,12 @@ Route::post('/api/whatsapp/webhooks/night-support', [\App\Http\Controllers\Whats
 Route::get('/api/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
     ->name('api.whatsapp.night-support.status');
 
+// QRIS Dynamic Notification Webhook (GoBiz / MacroDroid) - Mendukung prefix /api/qris/webhook maupun /qris/webhook
+Route::post('/api/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
+    ->name('web.api.qris.webhook');
+Route::post('/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
+    ->name('web.qris.webhook');
+
 // iPaymu Payment Gateway Public Callbacks & Webhook (Tanpa Login)
 Route::match(['get', 'post'], '/api/ipaymu/return', [IpaymuIntegrationController::class, 'handleReturn'])->name('api.ipaymu.return');
 Route::match(['get', 'post'], '/api/ipaymu/cancel', [IpaymuIntegrationController::class, 'handleCancel'])->name('api.ipaymu.cancel');

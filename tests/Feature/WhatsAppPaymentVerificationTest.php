@@ -735,6 +735,38 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertTrue($parsed['success_status']);
     }
 
+    public function test_bni_mobile_dynamic_qris_receipt_extracts_and_verifies_success(): void
+    {
+        $service = app(\App\Services\PaymentProofAnalysisService::class);
+        $reflection = new \ReflectionClass($service);
+        $method = $reflection->getMethod('parseReceiptPatterns');
+        $method->setAccessible(true);
+
+        $receiptText = "03 Nov 2026 • 11:26:31 WIB •\nRef ID: 20261103112555000658\nPenerima\nRumah Kita Net , KALIANDA\nLAMPUNG SELATAN, 35551, ID\nSumber dana\nRODIAH\n******654\nDetail pembayaran\nNominal Rp200.468\nTotal Rp200.468\nDetail merchant\nMerchant ID G848826679\nMerchant PAN 9360091438488266793\nTerminal ID A01\nNama acquirer DOMPET ANAK BANGSA";
+
+        $parsed = $method->invoke($service, $receiptText);
+
+        $this->assertEquals('2026-11-03', $parsed['paid_date']);
+        $this->assertEquals('11:26:31', $parsed['paid_time']);
+        $this->assertEquals('20261103112555000658', $parsed['reference_code']);
+        $this->assertEquals('RODIAH', $parsed['sender_name']);
+        $this->assertSame('QRIS', $parsed['payment_channel']);
+        $this->assertEquals(200468, $parsed['amount']);
+        $this->assertTrue($parsed['success_status'], 'BNI receipt with Ref ID and Merchant PAN must have success_status=true');
+        $this->assertFalse($parsed['is_pre_payment_screen'], 'BNI completed receipt must NOT be flagged as pre-payment screen');
+    }
+
+    public function test_qris_webhook_service_parses_gobiz_notification_with_order_count_and_amount(): void
+    {
+        $service = app(\App\Services\QrisWebhookService::class);
+
+        $text = "1 transaksi baru sebesar Rp 200.468 dari RODIAH berhasil diterima";
+        $parsed = $service->parseNotificationText($text, "GoBiz");
+
+        $this->assertEquals(200468, $parsed['amount']);
+        $this->assertEquals('RODIAH', $parsed['sender']);
+    }
+
     public function test_receipt_without_time_does_not_fabricate_fake_current_time(): void
     {
         $service = app(\App\Services\PaymentProofAnalysisService::class);
@@ -1577,6 +1609,101 @@ class WhatsAppPaymentVerificationTest extends TestCase
             ->where('message', 'like', '%TERIMA KASIH ATAS PEMBAYARANNYA%')
             ->first();
         $this->assertNull($customerConfirmationLog);
+    }
+
+    public function test_bni_mobile_dynamic_qris_receipt_end_to_end_auto_approves_invoice(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->qris_unique_code = 468;
+        $invoice->qris_expected_amount = 200468;
+        $invoice->save();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [[
+                    'name' => 'Rumah Kita Net',
+                    'merchant_id' => 'G848826679',
+                    'aliases' => ['Rumah Kita Net , KALIANDA', 'DOMPET ANAK BANGSA'],
+                    'active' => true,
+                ]],
+                'transfer_bank' => [],
+            ],
+            'notification_recipients' => [],
+        ]);
+
+        $receiptOcr = "03 Nov 2026 • 11:26:31 WIB •\nRef ID: 20261103112555000658\nPenerima\nRumah Kita Net , KALIANDA\nLAMPUNG SELATAN, 35551, ID\nSumber dana\nRODIAH\n******654\nDetail pembayaran\nNominal Rp200.468\nTotal Rp200.468\nDetail merchant\nMerchant ID G848826679\nMerchant PAN 9360091438488266793\nTerminal ID A01\nNama acquirer DOMPET ANAK BANGSA";
+
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => true,
+                            'amount' => 200468,
+                            'paid_date' => '2026-11-03',
+                            'paid_time' => '11:26:31',
+                            'reference_code' => '20261103112555000658',
+                            'payment_channel' => 'QRIS',
+                            'destination_identity' => [
+                                'name' => 'Rumah Kita Net , KALIANDA',
+                                'account_number' => null,
+                                'merchant_id' => 'G848826679',
+                                'raw' => 'Rumah Kita Net , KALIANDA / G848826679',
+                            ],
+                            'success_status' => true,
+                            'confidence_overall' => 98,
+                            'confidence_by_field' => [
+                                'payment_proof' => 99,
+                                'amount' => 100,
+                                'date' => 97,
+                                'time' => 96,
+                                'destination' => 99,
+                                'success_status' => 99,
+                            ],
+                            'ocr_raw_text' => $receiptOcr,
+                            'raw_summary' => 'Struk bukti bayar QRIS BNI Mobile ke Rumah Kita Net Kalianda sebesar Rp200.468',
+                        ]),
+                    ],
+                ]],
+            ]),
+            '*send-bulk' => Http::response(['results' => [['success' => true]]]),
+        ]);
+
+        $payload = [
+            'message_id' => 'msg-bni-qris-001',
+            'sender_phone' => '081234567890',
+            'sent_at' => now()->toISOString(),
+            'media_base64' => base64_encode('fake-bni-receipt-image'),
+            'mime_type' => 'image/jpeg',
+            'caption' => 'Sudah saya bayar ya min',
+        ];
+
+        $response = $this->postJson(
+            route('api.whatsapp.webhooks.payments'),
+            $payload,
+            $this->webhookHeaders
+        );
+
+        $response->assertStatus(202);
+
+        // Verification assertions
+        $capture = BillingPaymentCapture::query()->first();
+        $this->assertNotNull($capture);
+        $this->assertSame('approved', $capture->match_status);
+        $this->assertSame($invoice->id, $capture->invoice_id);
+
+        $invoice->refresh();
+        $this->assertSame('paid', $invoice->status);
+        $this->assertNotNull($invoice->paid_at);
+
+        // Check confirmation message sent to customer
+        $confirmationLog = NotificationLog::query()
+            ->where('phone', '081234567890')
+            ->where('message', 'like', '%TERIMA KASIH ATAS PEMBAYARANNYA%')
+            ->first();
+        $this->assertNotNull($confirmationLog);
     }
 
     private function makeCustomerInvoice(): array

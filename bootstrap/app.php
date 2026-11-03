@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/whatsapp/webhooks/night-support',
             'api/qris/webhook',
             'api/qris/webhook/*',
+            'qris/webhook',
+            'qris/webhook/*',
             'api/public/*',
             'api/customer/*',
             'api/ipaymu/*',

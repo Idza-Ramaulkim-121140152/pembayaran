@@ -48,24 +48,8 @@ class QrisWebhookService
         $combined = trim(($title ? $title . ' ' : '') . $text);
 
         // 1. Ekstrak Nominal Rupiah
-        // Contoh pattern: "Rp 150.124", "Rp. 150.124", "IDR 150124", "sebesar 150.124", "Rp 150.000,00"
-        $amount = null;
-        $matchedNominal = null;
-
-        if (preg_match('/(?:Rp|IDR)?\.?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+)/i', $combined, $matches)) {
-            $rawNumber = $matches[1];
-            // Format Indonesia: titik pemisah ribuan, koma pemisah desimal
-            $cleaned = str_replace('.', '', $rawNumber);
-            $cleaned = str_replace(',', '.', $cleaned);
-            $val = (float) $cleaned;
-            if ($val >= 1000) { // minimal Rp 1.000 untuk tagihan internet
-                $amount = (int) round($val);
-                $matchedNominal = $rawNumber;
-            }
-        }
-
-        // Fallback jika belum ketemu (misal ada tulisan "sebesar 150124")
-        if (!$amount && preg_match('/(?:sebesar|nominal|total|masuk|berhasil)\s*(?:Rp|IDR)?\.?\s*([0-9\.\,]+)/i', $combined, $matches)) {
+        // Prioritas 1: Format tegas dengan prefix mata uang Rp / IDR (mencegah salah tangkap digit angka '1 transaksi', tanggal, jam, dll)
+        if (preg_match('/(?:Rp|IDR)\.?\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{2})?|[0-9]{4,})/i', $combined, $matches)) {
             $rawNumber = $matches[1];
             $cleaned = str_replace('.', '', $rawNumber);
             $cleaned = str_replace(',', '.', $cleaned);
@@ -76,9 +60,35 @@ class QrisWebhookService
             }
         }
 
-        // 2. Ekstrak Nama Pengirim jika ada (contoh: "...dari BUDI SANTOSO", "dari SITI via GoPay")
+        // Prioritas 2: Format dengan kata kunci transaksi (sebesar, diterima, masuk, berhasil, nominal, total, pembayaran)
+        if (!$amount && preg_match('/(?:sebesar|nominal|total|masuk|berhasil|diterima|terima|bayar|pembayaran)\s*(?:sebesar)?\s*(?:Rp|IDR)?\.?\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{2})?|[0-9]{4,})/i', $combined, $matches)) {
+            $rawNumber = $matches[1];
+            $cleaned = str_replace('.', '', $rawNumber);
+            $cleaned = str_replace(',', '.', $cleaned);
+            $val = (float) $cleaned;
+            if ($val >= 1000) {
+                $amount = (int) round($val);
+                $matchedNominal = $rawNumber;
+            }
+        }
+
+        // Prioritas 3: Fallback scan seluruh kumpulan angka yang valid >= 1000 (menghindari angka kecil di depan seperti '1 transaksi')
+        if (!$amount && preg_match_all('/(?:Rp|IDR)?\.?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?|[0-9]+)/i', $combined, $allMatches)) {
+            foreach ($allMatches[1] as $candidate) {
+                $cleaned = str_replace('.', '', $candidate);
+                $cleaned = str_replace(',', '.', $cleaned);
+                $val = (float) $cleaned;
+                if ($val >= 1000) {
+                    $amount = (int) round($val);
+                    $matchedNominal = $candidate;
+                    break;
+                }
+            }
+        }
+
+        // 2. Ekstrak Nama Pengirim jika ada (contoh: "...dari BUDI SANTOSO", "sumber dana RODIAH", "dari SITI via GoPay")
         $sender = null;
-        if (preg_match('/(?:dari|from)\s+([A-Za-z0-9\s\.\'\-]+?)(?:\.|\s+(?:via|pada|sebesar|berhasil|dengan|di|ref|id)|$)/i', $combined, $matches)) {
+        if (preg_match('/(?:dari|from|sumber\s*dana)\s*[:#]?\s+([A-Za-z0-9\s\.\'\-]+?)(?:\.|\s+(?:via|pada|sebesar|berhasil|dengan|di|ref|id)|$)/i', $combined, $matches)) {
             $cleanSender = trim($matches[1], " \t\n\r\0\x0B.");
             if (strlen($cleanSender) > 2 && !preg_match('/^(?:qris|gobiz|gopay|bca|dana|bank)$/i', $cleanSender)) {
                 $sender = $cleanSender;

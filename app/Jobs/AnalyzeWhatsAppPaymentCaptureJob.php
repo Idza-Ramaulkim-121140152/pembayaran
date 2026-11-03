@@ -55,7 +55,31 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
 
         $analysis = $analysisService->analyze($capture);
 
-        // If customer was still not identified, attempt resolution with newly extracted OCR text or sender_name
+        // Prioritas 1: Resolusi pelanggan & invoice berdasarkan nominal unik QRIS dinamis (karena 3-digit kode unik bersifat eksklusif per tagihan)
+        $detectedAmount = isset($analysis['amount']) ? (float) $analysis['amount'] : 0;
+        if ($detectedAmount > 0) {
+            $qrisInvoice = \App\Models\Invoice::query()
+                ->with('customer')
+                ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
+                ->where(function ($q) {
+                    $q->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                      ->orWhere(function ($sq) {
+                          $sq->where('status', 'paid')
+                             ->where('updated_at', '>=', now()->subHours(24));
+                      });
+                })
+                ->latest('updated_at')
+                ->first();
+
+            if ($qrisInvoice?->customer) {
+                $capture->customer_id = $qrisInvoice->customer->id;
+                $capture->invoice_id = $qrisInvoice->id;
+                $capture->save();
+                $capture->load(['customer', 'invoice']);
+            }
+        }
+
+        // Prioritas 2: Jika belum ketemu, coba cari dari teks OCR (PPPoE username, ID Pelanggan, dll)
         if (!$capture->customer_id || !$capture->customer) {
             $ocrText = (string) ($analysis['ocr_raw_text'] ?? '');
             if ($ocrText !== '') {
@@ -66,55 +90,30 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                     $capture->load(['customer']);
                 }
             }
+        }
 
-            if (!$capture->customer_id || !$capture->customer) {
-                $senderName = trim((string) ($analysis['sender_name'] ?? ''));
-                if ($senderName !== '' && strlen($senderName) >= 3) {
-                    $resolvedCustomer = \App\Models\Customer::query()
-                        ->where('name', 'like', "%{$senderName}%")
-                        ->first();
-                    if ($resolvedCustomer) {
-                        $capture->customer_id = $resolvedCustomer->id;
-                        $capture->save();
-                        $capture->load(['customer']);
-                    }
+        // Prioritas 3: Cari berdasarkan kemiripan nama pengirim struk
+        if (!$capture->customer_id || !$capture->customer) {
+            $senderName = trim((string) ($analysis['sender_name'] ?? ''));
+            if ($senderName !== '' && strlen($senderName) >= 3) {
+                $resolvedCustomer = \App\Models\Customer::query()
+                    ->where('name', 'like', "%{$senderName}%")
+                    ->first();
+                if ($resolvedCustomer) {
+                    $capture->customer_id = $resolvedCustomer->id;
+                    $capture->save();
+                    $capture->load(['customer']);
                 }
             }
+        }
 
-            // Attempt customer resolution by unique QRIS expected amount (if payment receipt has exact 3-digit unique code)
-            if (!$capture->customer_id || !$capture->customer) {
-                $detectedAmount = isset($analysis['amount']) ? (float) $analysis['amount'] : 0;
-                if ($detectedAmount > 0) {
-                    $qrisInvoice = \App\Models\Invoice::query()
-                        ->with('customer')
-                        ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
-                        ->where(function ($q) {
-                            $q->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
-                              ->orWhere(function ($sq) {
-                                  $sq->where('status', 'paid')
-                                     ->where('updated_at', '>=', now()->subHours(24));
-                              });
-                        })
-                        ->latest('updated_at')
-                        ->first();
-
-                    if ($qrisInvoice?->customer) {
-                        $capture->customer_id = $qrisInvoice->customer->id;
-                        $capture->invoice_id = $qrisInvoice->id;
-                        $capture->save();
-                        $capture->load(['customer', 'invoice']);
-                    }
-                }
-            }
-
-            if ($capture->customer) {
-                $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
-                $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
-                if ($senderLid !== '') {
-                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderLid);
-                } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
-                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderPhone);
-                }
+        if ($capture->customer) {
+            $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+            $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+            if ($senderLid !== '') {
+                $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderLid);
+            } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+                $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderPhone);
             }
         }
 
@@ -127,14 +126,31 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
             if ($capture->invoice_id && ($capture->source === 'web_public' || str_starts_with((string) $capture->source, 'web'))) {
                 // Keep existing invoice_id
             } else {
-                // Try to find exact amount match among customer's active unpaid invoices (base amount OR QRIS expected amount)
+                // Try to find exact amount match among customer's active unpaid invoices (QRIS expected amount OR base amount)
                 $matchingInvoice = $detectedAmount > 0
                     ? $activeInvoices->first(function ($inv) use ($detectedAmount) {
-                        $matchesBase = abs((float) $inv->amount - $detectedAmount) <= 0.01;
                         $matchesQris = $inv->qris_expected_amount && abs((float) $inv->qris_expected_amount - $detectedAmount) <= 0.01;
-                        return $matchesBase || $matchesQris;
+                        $matchesBase = abs((float) $inv->amount - $detectedAmount) <= 0.01;
+                        return $matchesQris || $matchesBase;
                     })
                     : null;
+
+                // Jika belum ketemu di tagihan aktif pelanggan saat ini, periksa apakah nominal unik QRIS ini milik tagihan aktif lain di sistem
+                if (!$matchingInvoice && $detectedAmount > 0) {
+                    $qrisInvoice = \App\Models\Invoice::query()
+                        ->with('customer')
+                        ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
+                        ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
+                        ->latest('updated_at')
+                        ->first();
+
+                    if ($qrisInvoice) {
+                        $matchingInvoice = $qrisInvoice;
+                        if ($qrisInvoice->customer) {
+                            $capture->customer_id = $qrisInvoice->customer->id;
+                        }
+                    }
+                }
 
                 if ($matchingInvoice) {
                     $capture->invoice_id = $matchingInvoice->id;
