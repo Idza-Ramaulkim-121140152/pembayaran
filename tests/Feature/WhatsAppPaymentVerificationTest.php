@@ -1304,6 +1304,281 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertNotNull($adminReviewLog);
     }
 
+    public function test_pre_payment_review_screen_is_never_auto_approved_and_sends_no_thank_you_message(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->amount = 200000;
+        $invoice->qris_expected_amount = 200459;
+        $invoice->save();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [[
+                    'name' => 'Rumah Kita Net',
+                    'merchant_id' => 'G141935892',
+                    'aliases' => ['rumahkitanet', 'gopay'],
+                    'active' => true,
+                ]],
+            ],
+            'notification_recipients' => [
+                [
+                    'id' => 'admin-1',
+                    'name' => 'Admin Review Only',
+                    'phone' => '082222222222',
+                    'is_active' => true,
+                    'receive_auto_approved' => false,
+                    'receive_needs_review' => true,
+                ],
+            ],
+        ]);
+
+        // Mock AI returning review screen (before payment)
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => false,
+                            'amount' => 200459,
+                            'paid_date' => null,
+                            'paid_time' => null,
+                            'reference_code' => null,
+                            'payment_channel' => 'GoPay',
+                            'destination_identity' => [
+                                'name' => 'Rumah Kita Net',
+                                'account_number' => null,
+                                'merchant_id' => null,
+                                'raw' => 'Rumah Kita Net, KALIANDA',
+                            ],
+                            'success_status' => false,
+                            'confidence_overall' => 0,
+                            'confidence_by_field' => [
+                                'payment_proof' => 0,
+                                'amount' => 85,
+                                'date' => 0,
+                                'time' => 0,
+                                'destination' => 90,
+                                'success_status' => 0,
+                            ],
+                            'ocr_raw_text' => "Rumah Kita Net, KALIANDA\nNominal Transaksi Rp 200.459\nSaldo Tersedia: Rp 1.383.861\nBiaya Transaksi GRATIS\nNama Acquirer GoPay\nGini ya bang",
+                            'raw_summary' => 'Layar konfirmasi sebelum pembayaran (pelanggan belum bayar)',
+                        ]),
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $payload = [
+            'message_id' => 'msg-pre-payment-001',
+            'sender_phone' => '081234567890',
+            'sent_at' => now()->toISOString(),
+            'media_base64' => base64_encode('fake-image-binary'),
+            'mime_type' => 'image/jpeg',
+            'caption' => 'Gini ya bang',
+        ];
+
+        $response = $this->postJson(
+            route('api.whatsapp.webhooks.payments'),
+            $payload,
+            $this->webhookHeaders
+        );
+
+        $response->assertStatus(202);
+
+        // Either capture was discarded (deleted) as non-payment OR kept in review (never auto-approved)
+        $capture = BillingPaymentCapture::query()->first();
+        if ($capture) {
+            $this->assertNotSame('approved', $capture->match_status);
+        }
+
+        // Invoice MUST STILL BE UNPAID!
+        $invoice->refresh();
+        $this->assertSame('unpaid', $invoice->status);
+        $this->assertNull($invoice->paid_at);
+
+        // Customer MUST NOT receive "TERIMA KASIH ATAS PEMBAYARANNYA" message
+        $customerConfirmationLog = NotificationLog::query()
+            ->where('phone', '081234567890')
+            ->where('message', 'like', '%TERIMA KASIH ATAS PEMBAYARANNYA%')
+            ->first();
+        $this->assertNull($customerConfirmationLog);
+    }
+
+    public function test_subsequent_screenshot_of_already_paid_invoice_does_not_send_duplicate_thank_you(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->status = 'paid';
+        $invoice->paid_at = now()->subMinutes(10);
+        $invoice->amount = 200000;
+        $invoice->save();
+
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => false,
+                            'amount' => 200000,
+                            'paid_date' => now()->toDateString(),
+                            'paid_time' => now()->format('H:i'),
+                            'reference_code' => null,
+                            'payment_channel' => 'Web Portal',
+                            'destination_identity' => [
+                                'name' => 'Rumah Kita Net',
+                                'account_number' => null,
+                                'merchant_id' => null,
+                                'raw' => 'rumahkitanet.my.id',
+                            ],
+                            'success_status' => false,
+                            'confidence_overall' => 0,
+                            'confidence_by_field' => [
+                                'payment_proof' => 0,
+                                'amount' => 90,
+                                'date' => 90,
+                                'time' => 90,
+                                'destination' => 90,
+                                'success_status' => 0,
+                            ],
+                            'ocr_raw_text' => "rumahkitanet.my.id/portal\nLunas\nPaket 20 Mbps\nKok gini bng",
+                            'raw_summary' => 'Tangkapan layar portal pelanggan (bukan bukti bayar)',
+                        ]),
+                    ],
+                ]],
+            ]),
+        ]);
+
+        $payload = [
+            'message_id' => 'msg-portal-screenshot-002',
+            'sender_phone' => '081234567890',
+            'sent_at' => now()->toISOString(),
+            'media_base64' => base64_encode('fake-image-binary-2'),
+            'mime_type' => 'image/jpeg',
+            'caption' => 'Kok gini bng',
+        ];
+
+        $response = $this->postJson(
+            route('api.whatsapp.webhooks.payments'),
+            $payload,
+            $this->webhookHeaders
+        );
+
+        $response->assertStatus(202);
+
+        // Must NOT send another "TERIMA KASIH ATAS PEMBAYARANNYA" message
+        $customerConfirmationLog = NotificationLog::query()
+            ->where('phone', '081234567890')
+            ->where('message', 'like', '%TERIMA KASIH ATAS PEMBAYARANNYA%')
+            ->first();
+        $this->assertNull($customerConfirmationLog);
+    }
+
+    public function test_payment_proof_with_unconfirmed_success_status_is_held_in_review_and_never_auto_approved(): void
+    {
+        Storage::fake('public');
+
+        [$customer, $invoice] = $this->makeCustomerInvoice();
+        $invoice->amount = 200000;
+        $invoice->qris_expected_amount = 200459;
+        $invoice->save();
+
+        app(PaymentVerificationConfigService::class)->updateConfig([
+            'destination_whitelist' => [
+                'qris' => [[
+                    'name' => 'Rumah Kita Net',
+                    'merchant_id' => 'G141935892',
+                    'aliases' => ['rumahkitanet', 'gopay'],
+                    'active' => true,
+                ]],
+            ],
+            'notification_recipients' => [
+                [
+                    'id' => 'admin-1',
+                    'name' => 'Admin Review Only',
+                    'phone' => '082222222222',
+                    'is_active' => true,
+                    'receive_auto_approved' => false,
+                    'receive_needs_review' => true,
+                ],
+            ],
+        ]);
+
+        // Simulates payment proof with valid bank receipt, but status is pending/processing in bank
+        Http::fake([
+            'https://api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'is_payment_proof' => true,
+                            'amount' => 200459,
+                            'paid_date' => now()->toDateString(),
+                            'paid_time' => now()->format('H:i'),
+                            'reference_code' => 'PRE-998877',
+                            'payment_channel' => 'BCA Mobile',
+                            'destination_identity' => [
+                                'name' => 'Rumah Kita Net',
+                                'account_number' => null,
+                                'merchant_id' => 'G141935892',
+                                'raw' => 'Rumah Kita Net, KALIANDA',
+                            ],
+                            'success_status' => false, // <--- PENDING / NOT COMPLETED
+                            'confidence_overall' => 88,
+                            'confidence_by_field' => [
+                                'payment_proof' => 85,
+                                'amount' => 95,
+                                'date' => 90,
+                                'time' => 85,
+                                'destination' => 90,
+                                'success_status' => 0,
+                            ],
+                            'ocr_raw_text' => "BCA Mobile Transfer\nKe: Rumah Kita Net\nNominal: Rp 200.459\nStatus: PENDING TRANSAKSI SEDANG DIPROSES\nRef: PRE-998877",
+                            'raw_summary' => 'Struk transfer BCA Mobile (status masih pending diproses bank)',
+                        ]),
+                    ],
+                ]],
+            ]),
+            '*send-bulk' => Http::response(['results' => [['success' => true]]]),
+        ]);
+
+        $payload = [
+            'message_id' => 'msg-unconfirmed-status-003',
+            'sender_phone' => '081234567890',
+            'sent_at' => now()->toISOString(),
+            'media_base64' => base64_encode('fake-image-binary-3'),
+            'mime_type' => 'image/jpeg',
+            'caption' => 'Ini sudah ya?',
+        ];
+
+        $response = $this->postJson(
+            route('api.whatsapp.webhooks.payments'),
+            $payload,
+            $this->webhookHeaders
+        );
+
+        $response->assertStatus(202);
+
+        // Capture record MUST be held in needs_review with failure_reason = payment_status_not_success
+        $capture = BillingPaymentCapture::query()->first();
+        $this->assertNotNull($capture);
+        $this->assertSame('needs_review', $capture->match_status);
+        $this->assertSame('payment_status_not_success', data_get($capture->meta, 'validation.failure_reason'));
+
+        // Invoice MUST REMAIN UNPAID
+        $invoice->refresh();
+        $this->assertSame('unpaid', $invoice->status);
+        $this->assertNull($invoice->paid_at);
+
+        // No thank you message sent to customer
+        $customerConfirmationLog = NotificationLog::query()
+            ->where('phone', '081234567890')
+            ->where('message', 'like', '%TERIMA KASIH ATAS PEMBAYARANNYA%')
+            ->first();
+        $this->assertNull($customerConfirmationLog);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([

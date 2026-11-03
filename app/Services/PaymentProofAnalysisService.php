@@ -93,9 +93,19 @@ Analisis media bukti pembayaran/transfer berikut dan kembalikan JSON valid tanpa
   "raw_summary": string|null
 }
 Pedoman Khusus Klasifikasi & Akurasi (PENTING PENYARINGAN BUKTI BAYAR):
-- KRITERIA UTAMA: APAKAH INI BUKTI PEMBAYARAN ATAU BUKAN?
-  * is_payment_proof = true HANYA JIKA gambar adalah bukti transaksi finansial yang sah (tangkapan layar transfer m-banking seperti BCA/BRImo/Livin/SeaBank/Dana/GoPay/OVO/ShopeePay/BSI/BNI, struk transfer ATM/EDC/agen BRILink/teller, bukti pembayaran QRIS, atau mutasi rekening).
+- KRITERIA UTAMA: APAKAH INI BUKTI TRANSAKSI YANG SUDAH BERHASIL DIBAYAR?
+  * PERINGATAN KERAS TENTANG "LAYAR KONFIRMASI / PERSIAPAN / REVIEW SEBELUM BAYAR":
+    - Tampilan layar sebelum bayar yang menampilkan "Saldo Tersedia", "Ubah Limit", "Biaya Transaksi", "Pilih Sumber Dana", "Pilih Rekening", "Pilih Metode Pembayaran", tombol "Bayar" / "Konfirmasi & Bayar", atau tampilan sebelum memasukkan PIN.
+    - Pelanggan yang baru saja memindai QRIS dan sedang melihat pratinjau nominal di layar HP sebelum menekan tombol bayar / PIN.
+    - INI BUKANLAH BUKTI PEMBAYARAN! Uang belum berpindah dan transaksi belum terjadi!
+    - JIKA MENEMUKAN CIRI INI: Set is_payment_proof = false, success_status = false, confidence_overall = 0, raw_summary = "Layar konfirmasi sebelum pembayaran (transaksi belum dilakukan/belum berhasil)".
+  * PERINGATAN TENTANG TANGKAPAN LAYAR PORTAL / INVOICE WEBSITE ISP:
+    - Tangkapan layar website rumahkitanet.my.id, halaman invoice sistem, portal pelanggan, atau screenshot yang menampilkan logo Rumah Kita Net dari browser web.
+    - INI BUKAN BUKTI TRANSFER BANK / E-WALLET! Set is_payment_proof = false, success_status = false, confidence_overall = 0, raw_summary = "Tangkapan layar portal invoice/website ISP (bukan bukti transfer bank/e-wallet)".
+  * is_payment_proof = true HANYA JIKA gambar adalah bukti transaksi finansial yang TELAH SELESAI / BERHASIL dari bank / e-wallet (tangkapan layar transfer m-banking BCA/BRImo/Livin/SeaBank/Dana/GoPay/OVO/ShopeePay/BSI/BNI, struk transfer ATM/EDC/agen BRILink/teller, bukti pembayaran QRIS yang telah sukses, atau mutasi rekening).
   * is_payment_proof = false JIKA gambar BUKAN bukti pembayaran, misalnya:
+    - Foto layar persiapan bayar / checkout / review QRIS sebelum input PIN
+    - Foto portal invoice website Rumah Kita Net
     - Foto jalanan / aspal / lingkungan / pemandangan
     - Foto tiang kabel internet, kabel fiber optik, kabel putus / menjuntai
     - Foto router / modem / ONT / lampu indikator (seperti lampu LOS merah, lampu mati, adaptor, perangkat keras)
@@ -117,8 +127,8 @@ Pedoman Khusus Klasifikasi & Akurasi (PENTING PENYARINGAN BUKTI BAYAR):
   4. reference_code: Cari nomor transaksi unik bank / e-wallet (No. Transaksi, Nomor Referensi, ID Transaksi, RRN, No. Jurnal). PENTING: JANGAN PERNAH mengisi reference_code dengan nomor invoice sistem ISP (seperti 'inv_...'). Jika tidak ada nomor unik dari bank/e-wallet, isi null.
   5. paid_date & paid_time: Ekstrak tanggal dan jam transaksi yang tercetak asli pada struk/m-banking (contoh '16 Okt 2026, 09:17' -> paid_date: '2026-10-16', paid_time: '09:17:00'). Ubah nama bulan Indonesia (Jan, Feb, Mar, Apr, Mei, Jun, Jul, Agu/Agt, Sep, Okt, Nov, Des) ke format YYYY-MM-DD. JANGAN gunakan tanggal hari ini jika tertera tanggal di struk.
   6. payment_channel: Deteksi bank / e-wallet (contoh: BCA, BRI / BRImo, Mandiri / Livin, BNI, SeaBank, Dana, GoPay, OVO, ShopeePay, QRIS, Agen).
-  7. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer m-banking/QRIS/agen/EDC/ATM.
-  8. success_status=true jika transaksi dinyatakan BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti transfer yang sah.
+  7. is_payment_proof=true jika gambar adalah struk/mutasi/bukti transfer m-banking/QRIS/agen/EDC/ATM yang TELAH SELESAI DIBAYAR.
+  8. success_status=true HANYA jika transaksi dinyatakan secara tegas telah BERHASIL / SUKSES / LUNAS / SELESAI / TERKIRIM atau merupakan struk bukti transfer yang sah dari bank/e-wallet. JIKA masih berupa layar konfirmasi sebelum bayar / saldo tersedia / menunggu pembayaran / pending / gagal, WAJIB diisi false!
   9. confidence memakai skala angka 0 s.d 100.
   10. ocr_raw_text: Salin seluruh teks yang terbaca pada struk (nama, angka, tanggal, nomor referensi) agar sistem dapat memverifikasi silang.
 PROMPT;
@@ -508,11 +518,15 @@ PROMPT;
             ];
         }
 
-        if (!$amount && $activeInvoice) {
+        if (!$amount && $activeInvoice && $isPaymentProof) {
             $amount = (float) $activeInvoice->amount;
         }
 
-        $successStatus = $parsed['success_status'] || $activeInvoice !== null;
+        $successStatus = (bool) ($parsed['success_status'] ?? false);
+        if (!empty($parsed['is_pre_payment_screen']) || !empty($parsed['is_portal_screenshot'])) {
+            $successStatus = false;
+            $isPaymentProof = false;
+        }
         $channel = $parsed['payment_channel'] ?: ($activeInvoice ? 'Transfer Bank / QRIS' : 'Transfer Bank');
         $referenceCode = $parsed['reference_code'] ?: null;
         if ($referenceCode !== null) {
@@ -743,17 +757,78 @@ PROMPT;
             $channel = 'LinkAja';
         }
 
-        // 4. Success Status
-        $isSuccess = str_contains($normalized, 'berhasil')
+        // 4. Pre-Payment Screen & ISP Portal Detection (CRITICAL SECURITY GUARD)
+        $prePaymentKeywords = [
+            'saldo tersedia',
+            'ubah limit',
+            'biaya transaksi gratis',
+            'biaya transaksi : gratis',
+            'biaya transaksi: gratis',
+            'nama acquirer',
+            'sumber dana',
+            'pilih sumber dana',
+            'pilih rekening',
+            'pilih metode',
+            'masukkan pin',
+            'masukan pin',
+            'konfirmasi & bayar',
+            'konfirmasi pembayaran',
+            'review pembayaran',
+            'rincian pembayaran',
+            'total yang harus dibayar',
+            'total tagihan',
+            'gini ya bang',
+            'bisa di scan lalu di bayarkan',
+        ];
+
+        $isPrePaymentScreen = false;
+        foreach ($prePaymentKeywords as $pk) {
+            if (str_contains($normalized, $pk)) {
+                $isPrePaymentScreen = true;
+                break;
+            }
+        }
+
+        // ISP invoice portal / website screenshot indicators
+        $portalKeywords = [
+            'rumahkitanet.my.id',
+            'link invoice',
+            'portal pelanggan',
+            'detail tagihan',
+            'butuh bantuan?',
+            'hubungi cs',
+            'pesan ini dikirim automatis',
+        ];
+
+        $isPortalScreenshot = false;
+        foreach ($portalKeywords as $pk) {
+            if (str_contains($normalized, $pk)) {
+                $isPortalScreenshot = true;
+                break;
+            }
+        }
+
+        // 5. Success Status
+        $hasSuccessKeyword = str_contains($normalized, 'berhasil')
             || str_contains($normalized, 'sukses')
             || str_contains($normalized, 'success')
             || str_contains($normalized, 'lunas')
             || str_contains($normalized, 'selesai')
-            || str_contains($normalized, 'terkirim')
-            || str_contains($normalized, 'transfer')
-            || str_contains($normalized, 'qris');
+            || str_contains($normalized, 'terkirim');
 
-        // 5. Date & Time
+        $isFailedOrPending = str_contains($normalized, 'gagal')
+            || str_contains($normalized, 'failed')
+            || str_contains($normalized, 'menunggu pembayaran')
+            || str_contains($normalized, 'pending')
+            || str_contains($normalized, 'belum dibayar')
+            || str_contains($normalized, 'dibatalkan')
+            || str_contains($normalized, 'kadaluarsa')
+            || str_contains($normalized, 'expired');
+
+        // MUST have explicit success keyword AND MUST NOT be a pre-payment review screen or portal screenshot
+        $isSuccess = $hasSuccessKeyword && !$isPrePaymentScreen && !$isPortalScreenshot && !$isFailedOrPending;
+
+        // 6. Date & Time
         $paidDate = null;
         $paidTime = null;
 
@@ -873,7 +948,7 @@ PROMPT;
         }
 
         $hasReceiptMarkers = false;
-        if (!$isNegative) {
+        if (!$isNegative && !$isPrePaymentScreen && !$isPortalScreenshot) {
             if ($amount !== null && ($channel !== null || !empty($ref) || $isSuccess)) {
                 $hasReceiptMarkers = true;
             } elseif ($channel !== null && (!empty($ref) || $isSuccess)) {
@@ -885,6 +960,8 @@ PROMPT;
 
         return [
             'is_payment_proof' => $isPaymentProof,
+            'is_pre_payment_screen' => $isPrePaymentScreen,
+            'is_portal_screenshot' => $isPortalScreenshot,
             'amount' => $amount,
             'reference_code' => $ref,
             'payment_channel' => $channel,
@@ -981,19 +1058,33 @@ PROMPT;
             if (!$channel && !empty($parsed['payment_channel'])) {
                 $channel = $parsed['payment_channel'];
             }
-            if (!$successStatus && $parsed['success_status']) {
+            if (array_key_exists('success_status', $decoded) && !$decoded['success_status']) {
+                $successStatus = false;
+            } elseif (!$successStatus && $parsed['success_status'] && empty($parsed['is_pre_payment_screen']) && empty($parsed['is_portal_screenshot'])) {
                 $successStatus = true;
             }
-            if (!$isPaymentProof && $parsed['is_payment_proof']) {
+            if (array_key_exists('is_payment_proof', $decoded) && !$decoded['is_payment_proof']) {
+                $isPaymentProof = false;
+            } elseif (!$isPaymentProof && $parsed['is_payment_proof']) {
                 $isPaymentProof = true;
+            }
+
+            // Strict override if pre-payment screen or portal screenshot detected
+            if (!empty($parsed['is_pre_payment_screen']) || !empty($parsed['is_portal_screenshot'])) {
+                $successStatus = false;
+                $isPaymentProof = false;
             }
         }
 
-        $conf = $this->normalizeConfidence($decoded['confidence_overall'] ?? 0);
-        if ($conf <= 0 && $amount && $amount > 0) {
-            $conf = 90.0;
-        } elseif ($conf <= 0 && $isPaymentProof) {
-            $conf = 75.0;
+        if (!$isPaymentProof || !$successStatus) {
+            $conf = 0.0;
+        } else {
+            $conf = $this->normalizeConfidence($decoded['confidence_overall'] ?? 0);
+            if ($conf <= 0 && $amount && $amount > 0) {
+                $conf = 90.0;
+            } elseif ($conf <= 0 && $isPaymentProof) {
+                $conf = 75.0;
+            }
         }
 
         return [

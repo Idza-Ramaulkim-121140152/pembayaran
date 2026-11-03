@@ -362,11 +362,15 @@ class PaymentMatchingService
                 $amountMatchesTop = $matchesBase || $matchesQris;
             }
             $destinationOk = (bool) data_get($capture->meta, 'validation.flags.destination_whitelisted', true);
+            $isSuccessConfirmed = (bool) data_get($capture->meta, 'validation.flags.success_status', false);
+            $isPaymentProof = (bool) data_get($capture->meta, 'validation.flags.is_payment_proof', false);
 
             $canAutoApply = $autoApply
                 && $topScore >= $autoThreshold
                 && $amountMatchesTop
                 && $destinationOk
+                && $isSuccessConfirmed
+                && $isPaymentProof
                 && (
                     $candidates->count() === 1 ||
                     ($capture->customer_id && $top['invoice']->customer_id === $capture->customer_id && (
@@ -806,14 +810,16 @@ class PaymentMatchingService
                 $this->ledgerService->syncInvoicePayment($invoice->fresh(), $effectiveActor);
             }
 
-            // Dispatch customer payment confirmation
-            try {
-                app(\App\Services\PaymentCaptureNotificationService::class)->notifyAutoApproved($capture->fresh(['customer', 'invoice']));
-            } catch (\Throwable $notifEx) {
-                \Illuminate\Support\Facades\Log::warning('Payment capture notification failed', [
-                    'capture_id' => $capture->id,
-                    'error' => $notifEx->getMessage(),
-                ]);
+            // Dispatch customer payment confirmation HANYA jika tagihan memang baru pertama kali dilunasi oleh bukti ini
+            if (!$wasAlreadyPaid) {
+                try {
+                    app(\App\Services\PaymentCaptureNotificationService::class)->notifyAutoApproved($capture->fresh(['customer', 'invoice']));
+                } catch (\Throwable $notifEx) {
+                    \Illuminate\Support\Facades\Log::warning('Payment capture notification failed', [
+                        'capture_id' => $capture->id,
+                        'error' => $notifEx->getMessage(),
+                    ]);
+                }
             }
         });
     }

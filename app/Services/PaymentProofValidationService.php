@@ -142,6 +142,9 @@ class PaymentProofValidationService
         } elseif (!$flags['is_payment_proof']) {
             $failureReason = 'not_payment_proof';
             $status = 'rejected';
+        } elseif (!$flags['success_status']) {
+            $failureReason = 'payment_status_not_success';
+            $status = 'needs_review';
         } elseif ($flags['is_duplicate_reference']) {
             $failureReason = 'duplicate_reference_code';
             $status = 'rejected';

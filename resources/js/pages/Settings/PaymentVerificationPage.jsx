@@ -116,6 +116,8 @@ export default function PaymentVerificationPage() {
                 return 'AI belum dapat membaca otomatis bukti bayar ini. Silakan review gambar struk dan konfirmasi secara manual.';
             case 'not_payment_proof':
                 return 'Bukan bukti pembayaran (foto keluhan/perangkat/non-transaksi).';
+            case 'payment_status_not_success':
+                return 'Status transaksi belum berhasil / Layar konfirmasi sebelum bayar (belum ada bukti pembayaran sukses/selesai).';
             case 'duplicate_reference_code':
                 return 'Nomor referensi terdeteksi duplikat / sudah pernah dipakai pada transaksi sebelumnya.';
             case 'unknown_customer':
