@@ -104,6 +104,44 @@ class FinancialTransactionController extends Controller
             $baseQuery->where('status', $request->string('status'));
         }
 
+        if ($request->filled('confirmation_via')) {
+            $confVia = (string) $request->string('confirmation_via');
+            if ($confVia === 'unique_code') {
+                $baseQuery->where(function ($q) {
+                    $q->where('meta->confirmation_method', 'unique_code')
+                        ->orWhere('meta->settled_via', 'qris_webhook')
+                        ->orWhere('meta->qris_transaction_number', 'like', 'QG-%')
+                        ->orWhere('meta->qris_sender', 'GoPay QRIS');
+                });
+            } elseif ($confVia === 'wa_photo') {
+                $baseQuery->where(function ($q) {
+                    $q->where('meta->confirmation_method', 'wa_photo')
+                        ->orWhere('meta->payment_proof->source', 'whatsapp_webhook')
+                        ->orWhereNotNull('meta->payment_proof->capture_id');
+                });
+            } elseif ($confVia === 'manual') {
+                $baseQuery->where(function ($q) {
+                    $q->where('meta->confirmation_method', 'manual')
+                        ->orWhere(function ($sq) {
+                            $sq->whereNull('meta->confirmation_method')
+                                ->where(function ($ssq) {
+                                    $ssq->whereNull('meta->payment_proof->capture_id')
+                                        ->where('meta->payment_proof->source', '!=', 'whatsapp_webhook')
+                                        ->orWhereNull('meta->payment_proof');
+                                })
+                                ->where(function ($ssq) {
+                                    $ssq->where('meta->qris_transaction_number', 'not like', 'QG-%')
+                                        ->orWhereNull('meta->qris_transaction_number');
+                                })
+                                ->where(function ($ssq) {
+                                    $ssq->where('meta->qris_sender', '!=', 'GoPay QRIS')
+                                        ->orWhereNull('meta->qris_sender');
+                                });
+                        });
+                });
+            }
+        }
+
         if ($request->filled('start_date')) {
             $baseQuery->whereDate('transaction_date', '>=', $request->string('start_date'));
         }

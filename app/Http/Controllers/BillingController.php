@@ -1448,7 +1448,7 @@ class BillingController extends Controller
         }
 
         $invoice->save();
-        $mutation = $this->ledgerService->syncInvoicePayment($invoice, Auth::id(), $mutationStatus);
+        $mutation = $this->ledgerService->syncInvoicePayment($invoice, Auth::id(), $mutationStatus, 'manual');
         $invoice->loadMissing('receivedViaPaymentMethod');
         $invoice->loadMissing('receivedViaPaymentReceiptOption');
         $invoice->loadMissing('paymentReceiver');

@@ -367,10 +367,13 @@ function InvoicePage() {
 
     if (loading) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+            <div 
+                className="min-h-screen invoice-public-container bg-slate-100 flex items-center justify-center p-4"
+                style={{ colorScheme: 'light', backgroundColor: '#f1f5f9', color: '#0f172a' }}
+            >
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-white border-t-transparent mx-auto mb-4"></div>
-                    <p className="text-white/80">Memuat invoice...</p>
+                    <div className="animate-spin rounded-full h-16 w-16 border-4 border-indigo-600 border-t-transparent mx-auto mb-4"></div>
+                    <p className="text-slate-600 font-medium">Memuat invoice...</p>
                 </div>
             </div>
         );
@@ -378,8 +381,14 @@ function InvoicePage() {
 
     if (error && !invoice) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center">
+            <div 
+                className="min-h-screen invoice-public-container bg-slate-100 flex items-center justify-center p-4"
+                style={{ colorScheme: 'light', backgroundColor: '#f1f5f9', color: '#0f172a' }}
+            >
+                <div 
+                    className="bg-white invoice-card-light rounded-3xl shadow-xl p-8 max-w-md w-full text-center border border-slate-200"
+                    style={{ colorScheme: 'light', backgroundColor: '#ffffff', color: '#0f172a' }}
+                >
                     <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <XCircle className="text-red-500" size={40} />
                     </div>
@@ -398,10 +407,16 @@ function InvoicePage() {
     const canSubmit = !submitting && (file || noProofIntent);
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900 py-6 sm:py-8 px-3 sm:px-4 overflow-x-clip">
-            <div className="max-w-lg mx-auto">
+        <div 
+            className="min-h-screen invoice-public-container bg-slate-100 py-6 sm:py-8 px-3 sm:px-4 overflow-x-clip"
+            style={{ colorScheme: 'light', backgroundColor: '#f1f5f9', color: '#0f172a' }}
+        >
+            <div className="max-w-lg mx-auto shadow-xl rounded-3xl overflow-hidden border border-slate-200/80">
                 {/* Header Card */}
-                <div className="bg-white rounded-t-3xl pt-8 px-6 pb-6 relative overflow-hidden">
+                <div 
+                    className="bg-white invoice-card-light rounded-t-3xl pt-8 px-6 pb-6 relative overflow-hidden"
+                    style={{ colorScheme: 'light', backgroundColor: '#ffffff', color: '#0f172a' }}
+                >
                     {/* Background Pattern */}
                     <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-full -translate-y-1/2 translate-x-1/2 opacity-50"></div>
                     <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-purple-100 to-pink-100 rounded-full translate-y-1/2 -translate-x-1/2 opacity-50"></div>
@@ -525,7 +540,10 @@ function InvoicePage() {
 
                 {/* Payment Methods Section - Only show if not paid */}
                 {!isPaid && !isCancelled && (
-                    <div className="bg-gray-50 px-6 py-6">
+                    <div 
+                        className="bg-slate-50 invoice-card-muted px-6 py-6 border-t border-slate-100"
+                        style={{ colorScheme: 'light', backgroundColor: '#f8fafc', color: '#0f172a' }}
+                    >
                         <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                             <CreditCard size={20} className="text-indigo-600" />
                             Pilih Metode Pembayaran
@@ -538,9 +556,10 @@ function InvoicePage() {
                                     onClick={() => setSelectedMethod(method)}
                                     className={`w-full p-4 rounded-2xl border-2 transition-all text-left ${
                                         selectedMethod?.id === method.id 
-                                            ? 'border-indigo-500 bg-indigo-50 shadow-lg shadow-indigo-500/20' 
-                                            : 'border-gray-200 bg-white hover:border-gray-300'
+                                            ? 'border-indigo-500 bg-indigo-50/80 shadow-md shadow-indigo-500/10' 
+                                            : 'border-slate-200 bg-white hover:border-slate-300'
                                     }`}
+                                    style={{ colorScheme: 'light' }}
                                 >
                                     <div className="flex items-center gap-4">
                                         <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
@@ -580,7 +599,10 @@ function InvoicePage() {
 
                 {/* Payment Details - Only show if not paid and method selected */}
                 {!isPaid && !isCancelled && selectedMethod && (
-                    <div className="bg-white px-6 py-6 border-t border-gray-100">
+                    <div 
+                        className="bg-white invoice-card-light px-6 py-6 border-t border-slate-100"
+                        style={{ colorScheme: 'light', backgroundColor: '#ffffff', color: '#0f172a' }}
+                    >
                         {selectedMethod.type === 'qris' ? (
                             <div className="text-center">
                                 {/* Auto-Konfirmasi Active Badge */}
@@ -593,7 +615,10 @@ function InvoicePage() {
                                 </div>
 
                                 {/* QR Code Display */}
-                                <div className="bg-white border-2 border-emerald-200 rounded-3xl p-4 inline-block shadow-xl shadow-emerald-500/10 mb-4 relative">
+                                <div 
+                                    className="invoice-qris-box bg-white border-2 border-emerald-400 rounded-3xl p-4 inline-block shadow-xl shadow-emerald-500/15 mb-4 relative"
+                                    style={{ colorScheme: 'light', backgroundColor: '#ffffff', isolation: 'isolate' }}
+                                >
                                     {loadingQris ? (
                                         <div className="w-60 h-60 flex flex-col items-center justify-center gap-2">
                                             <LoadingSpinner size="lg" />
@@ -603,7 +628,8 @@ function InvoicePage() {
                                         <img 
                                             src={dynamicQris?.qr_data_uri || (selectedMethod.qris_image ? `/storage/${selectedMethod.qris_image}` : '/qr.jpg')} 
                                             alt="QRIS Dinamis" 
-                                            className="w-60 h-60 object-contain mx-auto rounded-xl"
+                                            className="w-60 h-60 object-contain mx-auto rounded-xl p-1 bg-white"
+                                            style={{ backgroundColor: '#ffffff', colorScheme: 'light', filter: 'none', WebkitFilter: 'none' }}
                                         />
                                     )}
                                 </div>
@@ -725,7 +751,10 @@ function InvoicePage() {
 
                 {/* Confirmation Button - Only show if not paid and method selected */}
                 {!isPaid && !isCancelled && selectedMethod && (invoice?.status === 'unpaid' || isRejected) && (
-                    <div className="bg-white px-6 pb-6">
+                    <div 
+                        className="bg-white invoice-card-light px-6 pb-6"
+                        style={{ colorScheme: 'light', backgroundColor: '#ffffff' }}
+                    >
                         <button
                             onClick={() => {
                                 setFormError('');
@@ -742,7 +771,10 @@ function InvoicePage() {
                 )}
 
                 {/* Footer */}
-                <div className="bg-white rounded-b-3xl px-6 py-6 border-t border-gray-100">
+                <div 
+                    className="bg-white invoice-card-light rounded-b-3xl px-6 py-6 border-t border-slate-100"
+                    style={{ colorScheme: 'light', backgroundColor: '#ffffff', color: '#0f172a' }}
+                >
                     <div className="text-center">
                         <p className="text-sm text-gray-500 mb-3">Butuh bantuan?</p>
                         <a

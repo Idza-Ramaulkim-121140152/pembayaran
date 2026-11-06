@@ -96,6 +96,7 @@ function MutasiPage() {
         status: '',
         source: '',
         received_via: '',
+        confirmation_via: '',
         start_date: currentMonthStart,
         end_date: currentMonthEnd,
         keyword: '',
@@ -150,6 +151,7 @@ function MutasiPage() {
             if (activeFilters.status) params.status = activeFilters.status;
             if (activeFilters.source) params.source = activeFilters.source;
             if (activeFilters.received_via) params.received_via = activeFilters.received_via;
+            if (activeFilters.confirmation_via) params.confirmation_via = activeFilters.confirmation_via;
             if (activeFilters.start_date) params.start_date = activeFilters.start_date;
             if (activeFilters.end_date) params.end_date = activeFilters.end_date;
             if (activeFilters.keyword?.trim()) params.keyword = activeFilters.keyword.trim();
@@ -273,6 +275,48 @@ function MutasiPage() {
         }
     };
 
+    const renderConfirmationViaBadge = (row) => {
+        if (row?.type === 'expense') {
+            return <span className="text-slate-400 text-xs">-</span>;
+        }
+
+        const method = row?.confirmation_via || row?.meta?.confirmation_method || 'manual';
+
+        if (method === 'unique_code') {
+            return (
+                <span 
+                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 shadow-xs whitespace-nowrap"
+                    title="Otomatis terkonfirmasi via kode unik QRIS dinamis"
+                >
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Kode Unik
+                </span>
+            );
+        }
+
+        if (method === 'wa_photo') {
+            return (
+                <span 
+                    className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 shadow-xs whitespace-nowrap"
+                    title="Terkonfirmasi via verifikasi foto bukti transfer di WhatsApp"
+                >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Kirim Foto WA
+                </span>
+            );
+        }
+
+        return (
+            <span 
+                className="inline-flex items-center gap-1.5 rounded-full border border-blue-300 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 shadow-xs whitespace-nowrap"
+                title="Dikonfirmasi secara manual oleh admin kantor"
+            >
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                Konfirmasi Manual
+            </span>
+        );
+    };
+
     const mutationColumns = [
         {
             key: 'created_at',
@@ -328,6 +372,13 @@ function MutasiPage() {
                     {row.description || '-'}
                 </button>
             ),
+        },
+        {
+            key: 'confirmation_via',
+            label: 'Konfirmasi Via',
+            headerClassName: 'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap',
+            cellClassName: 'px-4 py-3 text-sm font-medium text-slate-700 whitespace-nowrap',
+            render: (row) => renderConfirmationViaBadge(row),
         },
         { key: 'received_via', label: 'Penerimaan Via', render: (row) => getReceivedViaName(row) },
         { key: 'creator_name', label: 'Penanggung Jawab', render: (row) => row.creator?.name || 'Sistem' },
@@ -519,6 +570,7 @@ function MutasiPage() {
             status: '',
             source: '',
             received_via: '',
+            confirmation_via: '',
             start_date: currentMonthStart,
             end_date: currentMonthEnd,
             keyword: '',
@@ -636,7 +688,7 @@ function MutasiPage() {
 
             <AdminConsoleSurface accent="violet" className="relative z-20 overflow-visible p-4">
             <form onSubmit={applyFilter}>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
                     <AdminConsoleField label="Jenis">
                         <select
                             value={filters.type}
@@ -702,6 +754,18 @@ function MutasiPage() {
                                     ))}
                                 </optgroup>
                             )}
+                        </select>
+                    </AdminConsoleField>
+                    <AdminConsoleField label="Konfirmasi Via">
+                        <select
+                            value={filters.confirmation_via}
+                            onChange={(e) => setFilters((p) => ({ ...p, confirmation_via: e.target.value }))}
+                            className={adminConsoleSelectClassName}
+                        >
+                            <option value="">Semua</option>
+                            <option value="unique_code">Kode Unik (Hijau)</option>
+                            <option value="manual">Konfirmasi Manual (Biru)</option>
+                            <option value="wa_photo">Kirim Foto WA (Orange)</option>
                         </select>
                     </AdminConsoleField>
                     <div className="block space-y-2 lg:col-span-1">
@@ -845,7 +909,7 @@ function MutasiPage() {
                     columns={themedMutationColumns}
                     keyField="id"
                     onRowClick={(row) => openDetailModal(row)}
-                    priorityFields={['created_at', 'type', 'source', 'income', 'expense']}
+                    priorityFields={['created_at', 'type', 'source', 'confirmation_via', 'income', 'expense']}
                     emptyMessage="Belum ada mutasi."
                     tableClassName="w-full text-sm md:min-w-[1180px]"
                     headClassName="border-b border-slate-200 bg-slate-50"
@@ -1432,6 +1496,10 @@ function MutasiPage() {
                                         <User size={14} className="text-indigo-600" /> Penanggung Jawab & Penerimaan
                                     </p>
                                     <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between items-start gap-2">
+                                            <span className="text-slate-500 text-xs font-medium">Konfirmasi Via:</span>
+                                            <div>{renderConfirmationViaBadge(item)}</div>
+                                        </div>
                                         <div className="flex justify-between items-start gap-2">
                                             <span className="text-slate-500 text-xs font-medium">Penerimaan Via:</span>
                                             <span className="font-semibold text-slate-800 text-right">{getReceivedViaName(item)}</span>

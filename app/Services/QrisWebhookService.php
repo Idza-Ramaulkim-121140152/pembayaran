@@ -330,9 +330,14 @@ class QrisWebhookService
             $isolationRestored = (bool) ($unisolirResult['isolation_restored'] ?? false);
         }
 
-        // 3. Sinkronisasi Buku Kas / Mutasi Keuangan
+        // 3. Sinkronisasi Buku Kas / Mutasi Keuangan (Konfirmasi via Kode Unik QRIS Dinamis)
         try {
-            $this->financialLedgerService->syncInvoicePayment($invoice->fresh(), $defaultFinanceId);
+            $this->financialLedgerService->syncInvoicePayment(
+                $invoice->fresh(), 
+                $defaultFinanceId, 
+                \App\Models\FinancialTransaction::STATUS_CONFIRMED, 
+                'unique_code'
+            );
         } catch (\Throwable $ledgerEx) {
             Log::error('DynamicQris settle: FinancialLedgerService error: ' . $ledgerEx->getMessage());
         }

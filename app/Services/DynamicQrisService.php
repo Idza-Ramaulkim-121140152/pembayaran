@@ -220,6 +220,12 @@ class DynamicQrisService
             $writer = new Writer($renderer);
             $svg = $writer->writeString($payload);
 
+            // Pastikan SVG memiliki latar belakang putih pekat (#FFFFFF) solid
+            // agar modul QR selalu berkontras tinggi dan bisa di-scan meskipun HP pelanggan dalam mode Dark Mode
+            if (!str_contains($svg, '<rect')) {
+                $svg = preg_replace('/(<svg[^>]*>)/i', '$1<rect width="100%" height="100%" fill="#FFFFFF"/>', $svg, 1);
+            }
+
             return 'data:image/svg+xml;base64,' . base64_encode($svg);
         } catch (\Throwable $e) {
             Log::warning('DynamicQrisService renderQrDataUri error: ' . $e->getMessage());

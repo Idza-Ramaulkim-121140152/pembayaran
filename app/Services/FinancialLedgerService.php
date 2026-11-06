@@ -16,7 +16,12 @@ use Illuminate\Support\Facades\Schema;
 
 class FinancialLedgerService
 {
-    public function syncInvoicePayment(Invoice $invoice, ?int $actorId = null, string $transactionStatus = FinancialTransaction::STATUS_CONFIRMED): ?FinancialTransaction
+    public function syncInvoicePayment(
+        Invoice $invoice, 
+        ?int $actorId = null, 
+        string $transactionStatus = FinancialTransaction::STATUS_CONFIRMED,
+        ?string $confirmationMethod = null
+    ): ?FinancialTransaction
     {
         if (!$this->isReady()) {
             return null;
@@ -130,6 +135,24 @@ class FinancialLedgerService
             ];
         }
 
+        // Tentukan metode konfirmasi: unique_code (Kode Unik), wa_photo (Kirim Foto WA), atau manual
+        if (!$confirmationMethod) {
+            if ($capture && in_array($capture->source, ['whatsapp_webhook', 'whatsapp'], true)) {
+                $confirmationMethod = 'wa_photo';
+            } elseif ($paymentProofData && data_get($paymentProofData, 'source') === 'whatsapp_webhook') {
+                $confirmationMethod = 'wa_photo';
+            } elseif (
+                (class_exists(\App\Models\QrisWebhookLog::class) && Schema::hasTable('qris_webhook_logs') && \App\Models\QrisWebhookLog::where('invoice_id', $invoice->id)->where('status', 'settled')->exists())
+                || str_starts_with((string) $invoice->qris_transaction_number, 'QG-')
+                || $invoice->qris_sender === 'GoPay QRIS'
+                || ((int) $invoice->qris_unique_code > 0 && $invoice->qris_payment_time && !$capture)
+            ) {
+                $confirmationMethod = 'unique_code';
+            } else {
+                $confirmationMethod = 'manual';
+            }
+        }
+
         return $query->updateOrCreate(
             [
                 'source' => 'invoice_payment',
@@ -150,6 +173,7 @@ class FinancialLedgerService
                     'customer_id' => $invoice->customer_id,
                     'pppoe_username' => $pppoeUsername,
                     'status' => $invoice->status,
+                    'confirmation_method' => $confirmationMethod,
                     'received_via_id' => $receivedViaOption?->id,
                     'received_via_name' => $receivedViaName,
                     'payment_receiver_user_id' => $paymentReceiver?->id,

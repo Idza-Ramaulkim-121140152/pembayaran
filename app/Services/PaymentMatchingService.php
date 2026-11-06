@@ -804,10 +804,15 @@ class PaymentMatchingService
                 $wasIsolated = (bool) ($unisolirResult['is_isolated'] ?? $wasIsolated);
             }
 
-            // Sync with financial ledger / mutations as Admin Finance (hanya jika belum dilunasi sebelumnya)
+            // Sync with financial ledger / mutations as Admin Finance (hanya jika belum dilunasi sebelumnya, Konfirmasi via Foto WA)
             if (!$wasAlreadyPaid) {
                 $effectiveActor = $financeUserId ?: $actorId;
-                $this->ledgerService->syncInvoicePayment($invoice->fresh(), $effectiveActor);
+                $this->ledgerService->syncInvoicePayment(
+                    $invoice->fresh(), 
+                    $effectiveActor, 
+                    \App\Models\FinancialTransaction::STATUS_CONFIRMED, 
+                    'wa_photo'
+                );
             }
 
             // Dispatch customer payment confirmation HANYA jika tagihan memang baru pertama kali dilunasi oleh bukti ini

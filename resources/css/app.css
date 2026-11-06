@@ -1,10 +1,12 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
+    color-scheme: light;
+    supported-color-schemes: light;
     --app-bg: #f5f9fc;
     --app-bg-accent: #eef7ff;
     --app-card: #ffffff;
@@ -389,4 +391,46 @@
     .app-content .mobile-table-auto td.mobile-empty-row::before {
         content: none;
     }
+}
+
+/* Proteksi Tampilan Halaman Invoice Publik terhadap Mode Gelap (Dark Mode) HP Android/iOS */
+.invoice-public-container,
+.invoice-public-container * {
+    color-scheme: light !important;
+    forced-color-adjust: none !important;
+}
+
+.invoice-public-container {
+    color-scheme: light !important;
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+
+.invoice-public-container .invoice-card-light {
+    color-scheme: light !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+.invoice-public-container .invoice-card-muted {
+    color-scheme: light !important;
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+}
+
+.invoice-qris-box {
+    background-color: #ffffff !important;
+    color-scheme: light !important;
+    forced-color-adjust: none !important;
+    isolation: isolate !important;
+    box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.15), 0 8px 10px -6px rgba(16, 185, 129, 0.1) !important;
+}
+
+.invoice-qris-box img {
+    background-color: #ffffff !important;
+    color-scheme: light !important;
+    forced-color-adjust: none !important;
+    filter: none !important;
+    -webkit-filter: none !important;
+    mix-blend-mode: normal !important;
 }
