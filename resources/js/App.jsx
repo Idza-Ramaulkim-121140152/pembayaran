@@ -65,6 +65,8 @@ const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage
 const RemoteOntPage = lazy(() => import('./pages/RemoteOnt/RemoteOntPage'));
 const OdpPortScannerPage = lazy(() => import('./pages/Odp/OdpPortScannerPage'));
 const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
+const CustomerIsolirPortalPage = lazy(() => import('./pages/Portal/CustomerIsolirPortalPage'));
+const MassOutagePage = lazy(() => import('./pages/Portal/MassOutagePage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
 const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
 const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
@@ -390,6 +392,14 @@ function App() {
                     
                     {/* Public Invoice */}
                     <Route path="/invoice/:invoiceLink" element={<RouteSuspense><InvoicePage /></RouteSuspense>} />
+
+                    {/* Public Customer Isolation Portal (Captive Portal) */}
+                    <Route path="/isolir" element={<RouteSuspense><CustomerIsolirPortalPage /></RouteSuspense>} />
+                    <Route path="/portal/isolir" element={<RouteSuspense><CustomerIsolirPortalPage /></RouteSuspense>} />
+
+                    {/* Public Mass Outage Portal */}
+                    <Route path="/gangguan" element={<RouteSuspense><MassOutagePage /></RouteSuspense>} />
+                    <Route path="/gangguan-massal" element={<RouteSuspense><MassOutagePage /></RouteSuspense>} />
                     
                     {/* Public Customer Self-Service Portal (Tanpa Login) */}
                     <Route path="/portal-pelanggan/:token" element={<RouteSuspense><CustomerPublicPortalPage /></RouteSuspense>} />

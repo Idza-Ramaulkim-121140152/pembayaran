@@ -1,6 +1,8 @@
 
 <?php
 use App\Http\Controllers\CustomerController;
+use App\Http\Controllers\CustomerIsolationPortalController;
+use App\Http\Controllers\MassOutageController;
 use App\Http\Controllers\OntProxyController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\Route;
@@ -77,6 +79,29 @@ Route::get('/', function () {
 Route::get('/status-jaringan', function () {
     return view('app');
 })->name('network.status');
+
+// Public Customer Isolation Portal (Tanpa Login / Captive Portal)
+Route::get('/isolir', fn() => view('app'))->name('portal.isolir');
+Route::get('/portal/isolir', fn() => redirect('/isolir'));
+Route::get('/blocked', fn() => redirect('/isolir'));
+
+// Captive Portal OS Probes (Auto-trigger pop-up "Masuk ke Jaringan Wi-Fi" di Android, iOS, Windows)
+Route::get('/generate_204', fn() => redirect('/isolir', 302));
+Route::get('/gen_204', fn() => redirect('/isolir', 302));
+Route::get('/hotspot-detect.html', fn() => redirect('/isolir', 302));
+Route::get('/ncsi.txt', fn() => redirect('/isolir', 302));
+Route::get('/connecttest.txt', fn() => redirect('/isolir', 302));
+
+// Public Mass Outage Portal (Tanpa Login)
+Route::get('/gangguan', fn() => view('app'))->name('portal.gangguan');
+Route::get('/gangguan-massal', fn() => view('app'))->name('portal.gangguan-massal');
+Route::get('/outage', fn() => redirect('/gangguan'));
+
+// APIs for Isolir Portal & Mass Outage
+Route::get('/api/public/isolir/check', [CustomerIsolationPortalController::class, 'check'])->name('api.public.isolir.check');
+Route::post('/api/public/isolir/refresh-status', [CustomerIsolationPortalController::class, 'checkPaymentStatus'])->name('api.public.isolir.refresh-status');
+Route::get('/api/public/mikrotik/isolir-rules', [CustomerIsolationPortalController::class, 'getMikrotikRulesScript'])->name('api.public.mikrotik.isolir-rules');
+Route::get('/api/public/gangguan/status', [MassOutageController::class, 'status'])->name('api.public.gangguan.status');
 
 // Invoice Page (Public - tanpa login, untuk pelanggan bayar tagihan)
 Route::get('/invoice/{invoice_link}', function () {

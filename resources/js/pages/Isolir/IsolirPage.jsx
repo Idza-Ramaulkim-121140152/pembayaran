@@ -18,7 +18,10 @@ import {
     X, 
     AlertTriangle,
     CreditCard,
-    ShieldAlert
+    ShieldAlert,
+    Terminal,
+    Copy,
+    Check
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
@@ -46,6 +49,65 @@ function IsolirPage() {
 
     // History Modal
     const [selectedDeviceForHistory, setSelectedDeviceForHistory] = useState(null);
+
+    // MikroTik Script Modal
+    const [showMikrotikScriptModal, setShowMikrotikScriptModal] = useState(false);
+    const [copiedScript, setCopiedScript] = useState(false);
+
+    const mikrotikScript = `# =========================================================================
+# SCRIPT FIREWALL MIKROTIK: ISOLIR REDIRECT & GANGGUAN MASSAL
+# Router: Mikrotik x86 (10.1.0.1) -> Web Server Ubuntu: 10.1.0.5
+# =========================================================================
+
+# 1. Pastikan Profile PPP "isolir" otomatis memasukkan pelanggan ke address-list "isolir"
+/ppp profile set [find name="isolir"] address-list="isolir"
+
+# 2. FIREWALL NAT: Redirect Port 80 (HTTP) Pelanggan Isolir ke Server Ubuntu 10.1.0.5
+/ip firewall nat
+add chain=dstnat protocol=tcp dst-port=80 src-address-list="isolir" \\
+    action=dst-nat to-addresses=10.1.0.5 to-ports=80 \\
+    comment="1. REDIRECT HTTP PELANGGAN ISOLIR KE HALAMAN ISOLIR SERVER" place-before=0
+
+# 3. FIREWALL FILTER: Izinkan DNS (Port 53 UDP & TCP) agar browser HP bisa resolve captive portal
+/ip firewall filter
+add chain=forward protocol=udp dst-port=53 src-address-list="isolir" \\
+    action=accept comment="2. ALLOW DNS ISOLIR (UDP)" place-before=0
+add chain=forward protocol=tcp dst-port=53 src-address-list="isolir" \\
+    action=accept comment="3. ALLOW DNS ISOLIR (TCP)" place-before=1
+
+# 4. FIREWALL FILTER: Izinkan Akses Penuh ke IP Server Ubuntu (Port 80 & 443) untuk Bayar / Buka Portal
+add chain=forward dst-address=10.1.0.5 src-address-list="isolir" \\
+    action=accept comment="4. ALLOW AKSES KE SERVER UBUNTU UNTUK ISOLIR" place-before=2
+
+# 5. FIREWALL FILTER: Blokir (Drop) SEMUA sisa akses internet pelanggan isolir
+add chain=forward src-address-list="isolir" \\
+    action=drop comment="5. DROP SISA INTERNET PELANGGAN ISOLIR" place-before=3
+
+# =========================================================================
+# GANGGUAN MASSAL (UPSTREAM / INTERNET DOWN)
+# =========================================================================
+
+# Rule NAT khusus untuk Gangguan Massal (Default dalam keadaan DISABLED)
+/ip firewall nat
+add chain=dstnat protocol=tcp dst-port=80 src-address-list=!"isolir" dst-address=!10.1.0.5 \\
+    action=dst-nat to-addresses=10.1.0.5 to-ports=80 \\
+    comment="REDIRECT GANGGUAN MASSAL KE SERVER" disabled=yes
+
+# NETWATCH: Otomatis mendeteksi saat internet upline down dan mengaktifkan redirect
+/tool netwatch
+add host=8.8.8.8 interval=10s timeout=2s comment="MONITOR UPLINE INTERNET" \\
+    down-script='/ip firewall nat enable [find comment="REDIRECT GANGGUAN MASSAL KE SERVER"]; :log error "UPLINE INTERNET DOWN - MENGALIHKAN PELANGGAN KE HALAMAN GANGGUAN MASSAL"' \\
+    up-script='/ip firewall nat disable [find comment="REDIRECT GANGGUAN MASSAL KE SERVER"]; :log info "UPLINE INTERNET PULIH KEMBALI - INTERNET NORMAL"'`;
+
+    const handleCopyScript = async () => {
+        try {
+            await navigator.clipboard.writeText(mikrotikScript);
+            setCopiedScript(true);
+            setTimeout(() => setCopiedScript(false), 3000);
+        } catch (err) {
+            console.error('Failed to copy script:', err);
+        }
+    };
 
     useEffect(() => {
         fetchDevices();
@@ -326,14 +388,42 @@ _Rumah Kita Network_`;
                         Daftar perangkat yang diisolir dan pelanggan yang telat bayar serta manajemen notifikasi WhatsApp penagihan / pencopotan alat.
                     </p>
                 </div>
-                <button
-                    onClick={handleRefresh}
-                    disabled={refreshing}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm font-semibold text-sm"
-                >
-                    <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
-                    {refreshing ? 'Memuat...' : 'Refresh MikroTik & Data'}
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                        type="button"
+                        onClick={() => setShowMikrotikScriptModal(true)}
+                        className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 text-white rounded-xl hover:bg-slate-900 transition-colors shadow-sm font-semibold text-xs sm:text-sm"
+                    >
+                        <Terminal size={16} className="text-emerald-400" />
+                        <span>Script Firewall MikroTik</span>
+                    </button>
+                    <a
+                        href="/isolir"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl hover:bg-rose-100 transition-colors font-semibold text-xs sm:text-sm"
+                    >
+                        <ExternalLink size={14} />
+                        <span>Halaman Isolir</span>
+                    </a>
+                    <a
+                        href="/gangguan"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 transition-colors font-semibold text-xs sm:text-sm"
+                    >
+                        <ExternalLink size={14} />
+                        <span>Halaman Gangguan</span>
+                    </a>
+                    <button
+                        onClick={handleRefresh}
+                        disabled={refreshing}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 shadow-sm font-semibold text-sm"
+                    >
+                        <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                        {refreshing ? 'Memuat...' : 'Refresh MikroTik'}
+                    </button>
+                </div>
             </div>
 
             {error && (
@@ -986,6 +1076,88 @@ _Rumah Kita Network_`;
                                 type="button"
                                 onClick={() => setSelectedDeviceForHistory(null)}
                                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition"
+                            >
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
+            {/* Modal Panduan & Script MikroTik Isolir & Gangguan */}
+            {showMikrotikScriptModal && (
+                <Modal
+                    isOpen={showMikrotikScriptModal}
+                    onClose={() => setShowMikrotikScriptModal(false)}
+                    title="Script Firewall MikroTik: Redirect Isolir & Gangguan Massal"
+                    size="xl"
+                >
+                    <div className="space-y-4">
+                        <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-900 space-y-2">
+                            <p className="font-bold flex items-center gap-1.5">
+                                <Info size={15} className="text-blue-600" />
+                                Penjelasan Alur Redirect:
+                            </p>
+                            <ul className="list-disc list-inside space-y-1 text-slate-700 pl-1">
+                                <li><strong>DNS (Port 53 UDP/TCP)</strong> wajib di-ACCEPT agar browser HP dapat me-resolve alamat dan memunculkan pop-up Captive Portal otomatis saat tersambung Wi-Fi.</li>
+                                <li><strong>Akses Web Server Ubuntu (10.1.0.5)</strong> di-ACCEPT agar pelanggan bisa membuka halaman pembayaran, QRIS, dan panduan.</li>
+                                <li><strong>Port 80 (HTTP)</strong> dari address-list <code>isolir</code> di-DSTNAT ke <code>10.1.0.5:80</code>.</li>
+                                <li>Semua traffic internet lainnya di-DROP sehingga kuota/internet pelanggan tetap mati.</li>
+                                <li>Untuk <strong>Gangguan Massal</strong>, Netwatch otomatis mengaktifkan redirect saat upline internet (8.8.8.8) mati, kecuali untuk pelanggan isolir.</li>
+                            </ul>
+                        </div>
+
+                        <div className="relative">
+                            <div className="flex items-center justify-between bg-slate-900 px-4 py-2.5 rounded-t-xl text-xs text-slate-300 font-mono">
+                                <span>MikroTik RouterOS Terminal Script</span>
+                                <button
+                                    type="button"
+                                    onClick={handleCopyScript}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold transition border border-slate-700"
+                                >
+                                    {copiedScript ? (
+                                        <>
+                                            <Check size={14} className="text-emerald-400" />
+                                            <span className="text-emerald-300">Tersalin!</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Copy size={14} />
+                                            <span>Salin Script</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                            <pre className="p-4 bg-slate-950 text-emerald-400 font-mono text-[11px] leading-relaxed rounded-b-xl overflow-x-auto max-h-80 overflow-y-auto whitespace-pre selection:bg-emerald-900 selection:text-white">
+                                {mikrotikScript}
+                            </pre>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-3 border-t border-slate-200">
+                            <div className="flex gap-2">
+                                <a
+                                    href="/isolir"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                >
+                                    <ExternalLink size={12} />
+                                    <span>Tes Portal Isolir</span>
+                                </a>
+                                <a
+                                    href="/gangguan"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                >
+                                    <ExternalLink size={12} />
+                                    <span>Tes Portal Gangguan</span>
+                                </a>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowMikrotikScriptModal(false)}
+                                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition"
                             >
                                 Tutup
                             </button>
