@@ -1127,6 +1127,35 @@ class MikroTikService
     }
 
     /**
+     * Cek apakah sebuah IP ada di address list MikroTik (default: 'ip-isolir')
+     */
+    public function isIpInAddressList(string $ip, string $listName = 'ip-isolir'): bool
+    {
+        try {
+            $cleanIp = trim($ip);
+            if ($cleanIp === '') {
+                return false;
+            }
+
+            $items = Cache::remember("mikrotik:addr_list_{$listName}", 10, function () use ($listName) {
+                return $this->command('/ip/firewall/address-list/print', [
+                    '?list' => $listName,
+                ], false) ?? [];
+            });
+
+            foreach ($items as $item) {
+                if (trim((string) ($item['address'] ?? '')) === $cleanIp) {
+                    return true;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Failed checking address list {$listName}: " . $e->getMessage());
+        }
+
+        return false;
+    }
+
+    /**
      * Get last used IP address from PPPoE secrets
      */
     public function getLastIpAddress()
