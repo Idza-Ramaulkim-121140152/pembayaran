@@ -205,6 +205,12 @@ function AppLayout({ children }) {
         '/customer/login',
         '/customer/dashboard',
         '/status-jaringan',
+        '/isolir',
+        '/portal/isolir',
+        '/blocked',
+        '/gangguan',
+        '/gangguan-massal',
+        '/outage',
         '/registrasi',
         '/daftar',
         '/promo',
@@ -224,7 +230,8 @@ function AppLayout({ children }) {
     const isPublicRegistration = location.pathname.startsWith('/registrasi') || location.pathname.startsWith('/daftar');
     const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
     const isAreaIncidentPage = location.pathname.startsWith('/area-incident/');
-    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal || isAreaIncidentPage;
+    const isPublicIsolirPage = location.pathname.startsWith('/isolir') || location.pathname.startsWith('/portal/isolir') || location.pathname.startsWith('/blocked') || location.pathname.startsWith('/gangguan');
+    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal || isAreaIncidentPage || isPublicIsolirPage;
     const showNavbar = !isPublicPage;
 
     const shouldCheckWhatsAppConnection = showNavbar
@@ -505,8 +512,9 @@ function App() {
                     <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringGenieAcsPage />} />} />
                     <Route path="/remote-ont" element={<GuardedRoute permissionKey="monitoring.view" element={<RemoteOntPage />} />} />
                     
-                    {/* Isolir */}
-                    <Route path="/isolir" element={<GuardedRoute permissionKey="isolir.view" element={<IsolirPage />} />} />
+                    {/* Isolir (Admin) */}
+                    <Route path="/pelanggan-terisolir" element={<GuardedRoute permissionKey="isolir.view" element={<IsolirPage />} />} />
+                    <Route path="/admin/isolir" element={<GuardedRoute permissionKey="isolir.view" element={<IsolirPage />} />} />
                     
                     {/* Payroll */}
                     <Route path="/payroll" element={<GuardedRoute permissionKey="payroll.view" element={<PayrollPage />} />} />

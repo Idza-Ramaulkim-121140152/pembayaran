@@ -194,7 +194,7 @@ const MENU_GROUPS = [
             { key: 'monitoringMaps', label: 'Monitoring Maps', to: '/monitoring-maps', icon: MapPin, match: (p) => p === '/monitoring-maps' },
             { key: 'monitoringGenieAcs', label: 'Monitoring GenieACS', to: '/monitoring-genieacs', icon: Wifi, match: (p) => p.startsWith('/monitoring-genieacs') || p.startsWith('/genieacs') },
             { key: 'remoteOnt', label: 'Remote ONT', to: '/remote-ont', icon: Router, match: (p) => p.startsWith('/remote-ont') },
-            { key: 'isolir', label: 'Isolir & Telat', to: '/isolir', icon: AlertTriangle, match: (p) => p.startsWith('/isolir') },
+            { key: 'isolir', label: 'Isolir & Telat', to: '/pelanggan-terisolir', icon: AlertTriangle, match: (p) => p.startsWith('/pelanggan-terisolir') || p.startsWith('/admin/isolir') },
             { key: 'customerDismantle', label: 'Alat Bisa Dicopot', to: '/alat-bisa-dicopot', icon: Unplug, match: (p) => p.startsWith('/alat-bisa-dicopot') },
         ],
     },

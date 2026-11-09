@@ -316,6 +316,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
     Route::get('/monitoring-genieacs', fn() => view('app'))->name('monitoring.genieacs');
     Route::get('/odp-scanner', fn() => view('app'))->name('odp.scanner');
     Route::get('/remote-ont', fn() => view('app'))->name('remote-ont');
+    Route::get('/pelanggan-terisolir', fn() => view('app'))->name('admin.isolir');
+    Route::get('/admin/isolir', fn() => view('app'))->name('admin.isolir.alias');
     Route::get('/settings/master-data', fn() => view('app'))->name('settings.master-data');
     Route::get('/settings/expense-categories', fn() => view('app'))->name('settings.expense-categories');
     Route::get('/settings/customer-package-management', fn() => view('app'))->name('settings.customer-package-management');
