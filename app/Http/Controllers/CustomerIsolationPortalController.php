@@ -65,8 +65,7 @@ class CustomerIsolationPortalController extends Controller
                 // Fallback pencocokan ke database Customer (jika IP tersimpan di data customer)
                 if (!$matchedCustomer) {
                     $matchedCustomer = Customer::query()
-                        ->where('ip_address', $clientIp)
-                        ->orWhere('static_ip', $clientIp)
+                        ->where('home_router_host', $clientIp)
                         ->first();
 
                     if ($matchedCustomer) {

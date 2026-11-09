@@ -417,4 +417,59 @@ class DynamicQrisPaymentTest extends TestCase
         $resStatus2->assertStatus(200);
         $this->assertTrue($resStatus2->json('is_paid'));
     }
+
+    public function test_public_isolir_check_endpoint_handles_unknown_ip_safely(): void
+    {
+        // Panggil endpoint /api/public/isolir/check dengan IP yang tidak dikenal (misal IP publik / admin)
+        $response = $this->withServerVariables(['REMOTE_ADDR' => '41.216.186.255'])
+            ->getJson('/api/public/isolir/check');
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'matched' => false,
+            'client_ip' => '41.216.186.255',
+        ]);
+        $this->assertStringContainsString('41.216.186.255', $response->json('message'));
+    }
+
+    public function test_public_isolir_check_endpoint_with_search_returns_invoice_and_qris(): void
+    {
+        $customer = Customer::create([
+            'name' => 'Faisal Basri',
+            'phone' => '081399887766',
+            'pppoe_username' => 'faisal_basri',
+            'status' => 'active',
+            'is_service_isolated' => true,
+            'due_date' => now()->subDays(2),
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'INV-ISOLIR-CHECK-001',
+            'invoice_number' => 'INV/2026/11/001',
+            'amount' => 200000,
+            'status' => 'overdue',
+            'invoice_date' => now()->subDays(10),
+            'due_date' => now()->subDays(2),
+        ]);
+
+        // Cari via parameter ?search=faisal_basri
+        $response = $this->getJson('/api/public/isolir/check?search=faisal_basri');
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'matched' => true,
+            'match_method' => 'manual_search',
+            'customer' => [
+                'name' => 'Faisal Basri',
+                'pppoe_username' => 'faisal_basri',
+            ],
+            'invoice' => [
+                'id' => $invoice->id,
+                'amount' => 200000,
+            ],
+        ]);
+    }
 }
