@@ -62,66 +62,50 @@ function IsolirPage() {
 # =========================================================================
 
 # -------------------------------------------------------------------------
-# LANGKAH 1: FIREWALL FILTER (Urutan Sangat Menentukan!)
+# LANGKAH 1: PEMBERSIHAN RULE PROXY LAMA
+# -------------------------------------------------------------------------
+/ip firewall nat remove [find comment~"PROXY"]
+/ip firewall nat remove [find comment~"8080"]
+/ip proxy set enabled=no
+
+# -------------------------------------------------------------------------
+# LANGKAH 2: FIREWALL FILTER (Urutan Sangat Menentukan!)
 # -------------------------------------------------------------------------
 /ip firewall filter
-
-# 1.1 Izinkan DNS (Port 53 UDP & TCP) agar browser HP dapat resolve Captive Portal
 add chain=forward protocol=udp dst-port=53 src-address-list="ip-isolir" \\
     action=accept comment="1. ISOLIR: ALLOW DNS UDP" place-before=0
 
 add chain=forward protocol=tcp dst-port=53 src-address-list="ip-isolir" \\
     action=accept comment="2. ISOLIR: ALLOW DNS TCP" place-before=1
 
-# 1.2 Izinkan Akses Penuh ke Server Ubuntu (10.1.0.5) untuk Halaman Pembayaran & QRIS
 add chain=forward dst-address=10.1.0.5 src-address-list="ip-isolir" \\
     action=accept comment="3. ISOLIR: ALLOW WEB SERVER 10.1.0.5" place-before=2
 
-# 1.3 Tolak HTTPS (Port 443) dengan TCP-RESET agar HP langsung memicu Pop-up Captive Portal seketika
 add chain=forward protocol=tcp dst-port=443 src-address-list="ip-isolir" \\
     action=reject reject-with=tcp-reset comment="4. ISOLIR: REJECT HTTPS INSTANT RST" place-before=3
 
-# 1.4 Blokir SEMUA sisa internet pelanggan isolir (internet mati, akses portal pembayaran lancar)
 add chain=forward src-address-list="ip-isolir" \\
     action=drop comment="5. ISOLIR: DROP ALL OTHER INTERNET" place-before=4
 
-
 # -------------------------------------------------------------------------
-# LANGKAH 2: FIREWALL NAT REDIRECT ISOLIR (Pilih Metode A atau B)
+# LANGKAH 3: FIREWALL NAT REDIRECT ISOLIR (DST-NAT LANGSUNG KE 10.1.0.5)
 # -------------------------------------------------------------------------
-
-# METODE A: WEB-PROXY 302 REDIRECT (SANGAT DIREKOMENDASIKAN)
-# Keunggulan: Otomatis mengubah URL di browser pelanggan menjadi "http://10.1.0.5/isolir"
-/ip proxy set enabled=yes port=8080 max-cache-size=none
-/ip proxy access
-add action=deny redirect-to="10.1.0.5/isolir" src-address-list="ip-isolir" \\
-    comment="REDIRECT HTTP ISOLIR KE PORTAL" place-before=0
-add action=deny redirect-to="10.1.0.5/gangguan" src-address-list=!"ip-isolir" dst-host=!10.1.0.5 \\
-    comment="REDIRECT GANGGUAN MASSAL" disabled=yes place-before=1
-
 /ip firewall nat
 add chain=dstnat protocol=tcp dst-port=80 src-address-list="ip-isolir" dst-address=!10.1.0.5 \\
-    action=redirect to-ports=8080 comment="REDIRECT ISOLIR VIA PROXY 8080" place-before=0
+    action=dst-nat to-addresses=10.1.0.5 to-ports=80 \\
+    comment="REDIRECT HTTP ISOLIR KE SERVER 10.1.0.5" place-before=0
 
-
-# METODE B (ALTERNATIF): DST-NAT LANGSUNG KE 10.1.0.5:80 (Jika tidak memakai Web-Proxy)
-# /ip firewall nat add chain=dstnat protocol=tcp dst-port=80 src-address-list="ip-isolir" dst-address=!10.1.0.5 action=dst-nat to-addresses=10.1.0.5 to-ports=80 comment="REDIRECT ISOLIR DST-NAT" place-before=0
-
-
-# -------------------------------------------------------------------------
-# LANGKAH 3: GANGGUAN MASSAL OTOMATIS (NETWATCH ROUTEROS V7)
-# -------------------------------------------------------------------------
-
-# Rule NAT Gangguan Massal (Otomatis aktif saat upline down, kecuali pelanggan isolir)
-/ip firewall nat
 add chain=dstnat protocol=tcp dst-port=80 src-address-list=!"ip-isolir" dst-address=!10.1.0.5 \\
-    action=redirect to-ports=8080 comment="PROXY REDIRECT GANGGUAN MASSAL" disabled=yes place-before=1
+    action=dst-nat to-addresses=10.1.0.5 to-ports=80 \\
+    comment="REDIRECT GANGGUAN MASSAL KE SERVER 10.1.0.5" disabled=yes place-before=1
 
-# Netwatch RouterOS v7 memantau IP Upline Internet (8.8.8.8)
+# -------------------------------------------------------------------------
+# LANGKAH 4: GANGGUAN MASSAL OTOMATIS (NETWATCH ROUTEROS V7)
+# -------------------------------------------------------------------------
 /tool netwatch
 add host=8.8.8.8 type=icmp interval=10s timeout=2s comment="MONITOR UPLINE INTERNET" \\
-    down-script='/ip firewall nat enable [find comment="PROXY REDIRECT GANGGUAN MASSAL"]; /ip proxy access enable [find comment="REDIRECT GANGGUAN MASSAL"]; :log error "UPLINE INTERNET DOWN: REDIRECT GANGGUAN MASSAL DIAKTIFKAN"' \\
-    up-script='/ip firewall nat disable [find comment="PROXY REDIRECT GANGGUAN MASSAL"]; /ip proxy access disable [find comment="REDIRECT GANGGUAN MASSAL"]; :log info "UPLINE INTERNET PULIH: REDIRECT GANGGUAN DINONAKTIFKAN"'`;
+    down-script="/ip firewall nat enable [find comment=\\"REDIRECT GANGGUAN MASSAL KE SERVER 10.1.0.5\\"]; :log error \\"UPLINE DOWN: REDIRECT GANGGUAN MASSAL DIAKTIFKAN\\"" \\
+    up-script="/ip firewall nat disable [find comment=\\"REDIRECT GANGGUAN MASSAL KE SERVER 10.1.0.5\\"]; :log info \\"UPLINE NORMAL: REDIRECT GANGGUAN MASSAL DINONAKTIFKAN\\""`;
 
     const handleCopyScript = async () => {
         try {

@@ -68,7 +68,31 @@ use App\Http\Controllers\SuperPanelController;
 use App\Http\Controllers\AttendanceController;
 
 // Root domain redirect: ke /dashboard jika sudah login, ke /login jika belum login
-Route::get('/', function () {
+// Menangani juga intercept captive portal / isolir jika diakses via host non-standar
+Route::get('/', function (\Illuminate\Http\Request $request) {
+    $host = strtolower($request->getHost());
+    $isStandardHost = in_array($host, ['rumahkitanet.my.id', 'www.rumahkitanet.my.id', 'localhost', '127.0.0.1']);
+
+    if (!$isStandardHost) {
+        $clientIp = $request->header('X-Forwarded-For') 
+            ? trim(explode(',', (string) $request->header('X-Forwarded-For'))[0]) 
+            : ((string) $request->header('X-Real-IP') ?: (string) $request->ip());
+
+        $isIsolir = false;
+        try {
+            $mikrotik = new \App\Services\MikroTikService();
+            $isIsolir = $mikrotik->isIpInAddressList($clientIp, 'ip-isolir');
+        } catch (\Throwable $e) {}
+
+        if ($isIsolir) {
+            return redirect('http://10.1.0.5/isolir', 302);
+        }
+
+        if ($host !== '10.1.0.5') {
+            return redirect('http://10.1.0.5/gangguan', 302);
+        }
+    }
+
     if (auth()->check()) {
         return redirect()->route('dashboard');
     }
@@ -86,11 +110,14 @@ Route::get('/portal/isolir', fn() => redirect('/isolir'));
 Route::get('/blocked', fn() => redirect('/isolir'));
 
 // Captive Portal OS Probes (Auto-trigger pop-up "Masuk ke Jaringan Wi-Fi" di Android, iOS, Windows)
-Route::get('/generate_204', fn() => redirect('/isolir', 302));
-Route::get('/gen_204', fn() => redirect('/isolir', 302));
-Route::get('/hotspot-detect.html', fn() => redirect('/isolir', 302));
-Route::get('/ncsi.txt', fn() => redirect('/isolir', 302));
-Route::get('/connecttest.txt', fn() => redirect('/isolir', 302));
+Route::get('/generate_204', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/gen_204', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/hotspot-detect.html', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/ncsi.txt', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/connecttest.txt', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/canonical.html', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/success.txt', fn() => redirect('http://10.1.0.5/isolir', 302));
+Route::get('/mobile/status.php', fn() => redirect('http://10.1.0.5/isolir', 302));
 
 // Public Mass Outage Portal (Tanpa Login)
 Route::get('/gangguan', fn() => view('app'))->name('portal.gangguan');
@@ -1002,6 +1029,27 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         }
 
         if ($request->isMethod('GET')) {
+            $host = strtolower($request->getHost());
+            $isStandardHost = in_array($host, ['rumahkitanet.my.id', 'www.rumahkitanet.my.id', 'localhost', '127.0.0.1']);
+            if (!$isStandardHost) {
+                $clientIp = $request->header('X-Forwarded-For') 
+                    ? trim(explode(',', (string) $request->header('X-Forwarded-For'))[0]) 
+                    : ((string) $request->header('X-Real-IP') ?: (string) $request->ip());
+
+                $isIsolir = false;
+                try {
+                    $mikrotik = new \App\Services\MikroTikService();
+                    $isIsolir = $mikrotik->isIpInAddressList($clientIp, 'ip-isolir');
+                } catch (\Throwable $e) {}
+
+                if ($isIsolir) {
+                    return redirect('http://10.1.0.5/isolir', 302);
+                }
+
+                if ($host !== '10.1.0.5') {
+                    return redirect('http://10.1.0.5/gangguan', 302);
+                }
+            }
             return view('app');
         }
 

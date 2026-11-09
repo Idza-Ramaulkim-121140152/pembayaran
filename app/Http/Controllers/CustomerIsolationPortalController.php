@@ -282,70 +282,65 @@ class CustomerIsolationPortalController extends Controller
 # SCRIPT FIREWALL MIKROTIK: ISOLIR REDIRECT & GANGGUAN MASSAL
 # RouterOS: v7.20.8 (x86 HP ProLiant DL380 G7)
 # Router IP: 10.1.0.1  |  Ubuntu Server: 10.1.0.5
-# Dynamic Address List: ip-isolir (dari profile PPP isolir)
+# Dynamic Address List: {$isolirAddressList} (dari profile PPP isolir)
 # =========================================================================
 
 # -------------------------------------------------------------------------
-# LANGKAH 1: FIREWALL FILTER (Urutan Sangat Menentukan!)
+# LANGKAH 1: PEMBERSIHAN RULE PROXY LAMA (Jalankan Jika Ada Rule Sebelumnya)
+# -------------------------------------------------------------------------
+/ip firewall nat remove [find comment~"PROXY"]
+/ip firewall nat remove [find comment~"8080"]
+/ip proxy set enabled=no
+
+
+# -------------------------------------------------------------------------
+# LANGKAH 2: FIREWALL FILTER (Urutan Sangat Menentukan!)
 # -------------------------------------------------------------------------
 /ip firewall filter
 
-# 1.1 Izinkan DNS (Port 53 UDP & TCP) agar browser HP pelanggan dapat resolve Captive Portal
+# 2.1 Izinkan DNS (Port 53 UDP & TCP) agar browser HP bisa resolve Captive Portal
 add chain=forward protocol=udp dst-port=53 src-address-list="{$isolirAddressList}" \
     action=accept comment="1. ISOLIR: ALLOW DNS UDP" place-before=0
 
 add chain=forward protocol=tcp dst-port=53 src-address-list="{$isolirAddressList}" \
     action=accept comment="2. ISOLIR: ALLOW DNS TCP" place-before=1
 
-# 1.2 Izinkan Akses Penuh ke Server Ubuntu (10.1.0.5) untuk Halaman Pembayaran & QRIS
+# 2.2 Izinkan Akses Penuh ke Server Ubuntu (10.1.0.5) untuk Halaman Pembayaran & QRIS
 add chain=forward dst-address={$serverIp} src-address-list="{$isolirAddressList}" \
     action=accept comment="3. ISOLIR: ALLOW WEB SERVER 10.1.0.5" place-before=2
 
-# 1.3 Tolak HTTPS (Port 443) dengan TCP-RESET agar HP langsung memicu Pop-up Captive Portal seketika
+# 2.3 Tolak HTTPS (Port 443) dengan TCP-RESET agar HP langsung memicu Pop-up Captive Portal seketika
 add chain=forward protocol=tcp dst-port=443 src-address-list="{$isolirAddressList}" \
     action=reject reject-with=tcp-reset comment="4. ISOLIR: REJECT HTTPS INSTANT RST" place-before=3
 
-# 1.4 Blokir SEMUA sisa internet pelanggan isolir (internet mati, akses portal pembayaran lancar)
+# 2.4 Blokir SEMUA sisa internet pelanggan isolir (internet mati, akses portal pembayaran lancar)
 add chain=forward src-address-list="{$isolirAddressList}" \
     action=drop comment="5. ISOLIR: DROP ALL OTHER INTERNET" place-before=4
 
 
 # -------------------------------------------------------------------------
-# LANGKAH 2: FIREWALL NAT REDIRECT ISOLIR (Pilih Metode A atau B)
+# LANGKAH 3: FIREWALL NAT REDIRECT ISOLIR (DST-NAT LANGSUNG KE 10.1.0.5)
 # -------------------------------------------------------------------------
-
-# METODE A: WEB-PROXY 302 REDIRECT (SANGAT DIREKOMENDASIKAN)
-# Keunggulan: Otomatis mengubah URL di browser pelanggan menjadi "http://10.1.0.5/isolir"
-/ip proxy set enabled=yes port=8080 max-cache-size=none
-/ip proxy access
-add action=deny redirect-to="{$serverIp}/isolir" src-address-list="{$isolirAddressList}" \
-    comment="REDIRECT HTTP ISOLIR KE PORTAL" place-before=0
-add action=deny redirect-to="{$serverIp}/gangguan" src-address-list=!"{$isolirAddressList}" dst-host=!{$serverIp} \
-    comment="REDIRECT GANGGUAN MASSAL" disabled=yes place-before=1
-
 /ip firewall nat
+
+# Redirect HTTP Port 80 Pelanggan Isolir Langsung ke Server Ubuntu 10.1.0.5
 add chain=dstnat protocol=tcp dst-port=80 src-address-list="{$isolirAddressList}" dst-address=!{$serverIp} \
-    action=redirect to-ports=8080 comment="REDIRECT ISOLIR VIA PROXY 8080" place-before=0
+    action=dst-nat to-addresses={$serverIp} to-ports={$serverHttpPort} \
+    comment="REDIRECT HTTP ISOLIR KE SERVER {$serverIp}" place-before=0
 
-
-# METODE B (ALTERNATIF): DST-NAT LANGSUNG KE 10.1.0.5:80 (Jika tidak memakai Web-Proxy)
-# /ip firewall nat add chain=dstnat protocol=tcp dst-port=80 src-address-list="{$isolirAddressList}" dst-address=!{$serverIp} action=dst-nat to-addresses={$serverIp} to-ports={$serverHttpPort} comment="REDIRECT ISOLIR DST-NAT" place-before=0
-
-
-# -------------------------------------------------------------------------
-# LANGKAH 3: GANGGUAN MASSAL OTOMATIS (NETWATCH ROUTEROS V7)
-# -------------------------------------------------------------------------
-
-# Rule NAT Gangguan Massal (Otomatis aktif saat upline down, kecuali pelanggan isolir)
-/ip firewall nat
+# Rule NAT Cadangan untuk Gangguan Massal (Default DISABLED, otomatis aktif jika upline mati)
 add chain=dstnat protocol=tcp dst-port=80 src-address-list=!"{$isolirAddressList}" dst-address=!{$serverIp} \
-    action=redirect to-ports=8080 comment="PROXY REDIRECT GANGGUAN MASSAL" disabled=yes place-before=1
+    action=dst-nat to-addresses={$serverIp} to-ports={$serverHttpPort} \
+    comment="REDIRECT GANGGUAN MASSAL KE SERVER {$serverIp}" disabled=yes place-before=1
 
-# Netwatch RouterOS v7 memantau IP Upline Internet (8.8.8.8)
+
+# -------------------------------------------------------------------------
+# LANGKAH 4: GANGGUAN MASSAL OTOMATIS (NETWATCH ROUTEROS V7)
+# -------------------------------------------------------------------------
 /tool netwatch
 add host=8.8.8.8 type=icmp interval=10s timeout=2s comment="MONITOR UPLINE INTERNET" \
-    down-script='/ip firewall nat enable [find comment="PROXY REDIRECT GANGGUAN MASSAL"]; /ip proxy access enable [find comment="REDIRECT GANGGUAN MASSAL"]; :log error "UPLINE INTERNET DOWN: REDIRECT GANGGUAN MASSAL DIAKTIFKAN"' \
-    up-script='/ip firewall nat disable [find comment="PROXY REDIRECT GANGGUAN MASSAL"]; /ip proxy access disable [find comment="REDIRECT GANGGUAN MASSAL"]; :log info "UPLINE INTERNET PULIH: REDIRECT GANGGUAN DINONAKTIFKAN"'
+    down-script="/ip firewall nat enable [find comment=\"REDIRECT GANGGUAN MASSAL KE SERVER {$serverIp}\"]; :log error \"UPLINE DOWN: REDIRECT GANGGUAN MASSAL DIAKTIFKAN\"" \
+    up-script="/ip firewall nat disable [find comment=\"REDIRECT GANGGUAN MASSAL KE SERVER {$serverIp}\"]; :log info \"UPLINE NORMAL: REDIRECT GANGGUAN MASSAL DINONAKTIFKAN\""
 MIKROTIK_SCRIPT;
 
         return response()->json([
