@@ -57,8 +57,13 @@ class PayrollController extends Controller
             $selectColumns[] = 'payroll_members.atas_nama_rekening';
         }
 
-        // Ringkasan gaji per anggota: total bagian - total pembayaran + info gaji bulanan
-        $unpaidSummary = PayrollMember::select($selectColumns)
+        // Ringkasan gaji per anggota: total bagian - total pembayaran + info gaji bulanan & tunjangan
+        $memberQuery = PayrollMember::select($selectColumns);
+        if (Schema::hasTable('payroll_member_allowances')) {
+            $memberQuery->with('allowances');
+        }
+
+        $unpaidSummary = $memberQuery
             ->selectRaw('COALESCE((
                 SELECT SUM(ppm.bagian) FROM payroll_project_members ppm WHERE ppm.payroll_member_id = payroll_members.id
             ), 0) as total_bagian')
@@ -77,7 +82,7 @@ class PayrollController extends Controller
 
                 return [
                     ...$member->toArray(),
-                    'total_gaji_bulanan'   => (float) ($member->gaji_pokok ?? 0) + (float) ($member->tunjangan ?? 0),
+                    ...$member->getAllowanceSummaryAttributes(),
                     'borrower'             => $loanContext['borrower'],
                     'borrower_outstanding' => $loanContext['outstanding'],
                 ];
@@ -105,10 +110,16 @@ class PayrollController extends Controller
      */
     public function members()
     {
-        $members = PayrollMember::orderBy('nama')->get()->map(function (PayrollMember $m) {
-            $arr = $m->toArray();
-            $arr['total_gaji_bulanan'] = (float) ($m->gaji_pokok ?? 0) + (float) ($m->tunjangan ?? 0);
-            return $arr;
+        $query = PayrollMember::orderBy('nama');
+        if (Schema::hasTable('payroll_member_allowances')) {
+            $query->with('allowances');
+        }
+
+        $members = $query->get()->map(function (PayrollMember $m) {
+            return [
+                ...$m->toArray(),
+                ...$m->getAllowanceSummaryAttributes(),
+            ];
         });
         return response()->json(['data' => $members]);
     }
@@ -124,6 +135,10 @@ class PayrollController extends Controller
             'tipe_gaji'          => 'nullable|in:bulanan,proyek,campuran',
             'gaji_pokok'         => 'nullable|numeric|min:0',
             'tunjangan'          => 'nullable|numeric|min:0',
+            'allowances'         => 'nullable|array',
+            'allowances.*.nama'  => 'required|string|max:120',
+            'allowances.*.jenis' => 'required|in:bulanan,harian',
+            'allowances.*.nominal' => 'required|numeric|min:0',
             'tanggal_gajian'     => 'nullable|integer|min:1|max:31',
             'nama_bank'          => 'nullable|string|max:100',
             'nomor_rekening'     => 'nullable|string|max:100',
@@ -131,25 +146,41 @@ class PayrollController extends Controller
             'is_active'          => 'nullable|boolean',
         ]);
 
-        $payload = [
-            'nama'           => $validated['nama'],
-            'telepon'        => $validated['telepon'] ?? null,
-            'tipe_gaji'      => $validated['tipe_gaji'] ?? 'bulanan',
-            'gaji_pokok'     => $validated['gaji_pokok'] ?? 0,
-            'tunjangan'      => $validated['tunjangan'] ?? 0,
-            'tanggal_gajian' => $validated['tanggal_gajian'] ?? 1,
-            'nama_bank'      => $validated['nama_bank'] ?? null,
-            'nomor_rekening' => $validated['nomor_rekening'] ?? null,
-            'is_active'      => $validated['is_active'] ?? true,
-        ];
+        $member = DB::transaction(function () use ($request, $validated) {
+            $payload = [
+                'nama'           => $validated['nama'],
+                'telepon'        => $validated['telepon'] ?? null,
+                'tipe_gaji'      => $validated['tipe_gaji'] ?? 'bulanan',
+                'gaji_pokok'     => $validated['gaji_pokok'] ?? 0,
+                'tunjangan'      => $validated['tunjangan'] ?? 0,
+                'tanggal_gajian' => $validated['tanggal_gajian'] ?? 1,
+                'nama_bank'      => $validated['nama_bank'] ?? null,
+                'nomor_rekening' => $validated['nomor_rekening'] ?? null,
+                'is_active'      => $validated['is_active'] ?? true,
+            ];
 
-        if (Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
-            $payload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
-        }
+            if (Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+                $payload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
+            }
 
-        $member = PayrollMember::create($payload);
+            $member = PayrollMember::create($payload);
+            $member->syncAllowancesFromRequest(
+                $request->has('allowances'),
+                $validated['allowances'] ?? null,
+                $request->has('tunjangan'),
+                isset($validated['tunjangan']) ? (float) $validated['tunjangan'] : null
+            );
 
-        return response()->json(['data' => $member, 'message' => 'Karyawan / Anggota berhasil ditambahkan'], 201);
+            return $member->fresh(Schema::hasTable('payroll_member_allowances') ? ['allowances'] : []);
+        });
+
+        return response()->json([
+            'data' => [
+                ...$member->toArray(),
+                ...$member->getAllowanceSummaryAttributes(),
+            ],
+            'message' => 'Karyawan / Anggota berhasil ditambahkan',
+        ], 201);
     }
 
     /**
@@ -164,6 +195,10 @@ class PayrollController extends Controller
             'tipe_gaji'          => 'nullable|in:bulanan,proyek,campuran',
             'gaji_pokok'         => 'nullable|numeric|min:0',
             'tunjangan'          => 'nullable|numeric|min:0',
+            'allowances'         => 'nullable|array',
+            'allowances.*.nama'  => 'required|string|max:120',
+            'allowances.*.jenis' => 'required|in:bulanan,harian',
+            'allowances.*.nominal' => 'required|numeric|min:0',
             'tanggal_gajian'     => 'nullable|integer|min:1|max:31',
             'nama_bank'          => 'nullable|string|max:100',
             'nomor_rekening'     => 'nullable|string|max:100',
@@ -175,9 +210,30 @@ class PayrollController extends Controller
             unset($validated['atas_nama_rekening']);
         }
 
-        $member->update($validated);
+        $memberUpdates = Arr::except($validated, ['allowances']);
+        if (!$request->has('tunjangan')) {
+            unset($memberUpdates['tunjangan']);
+        }
 
-        return response()->json(['data' => $member, 'message' => 'Data gaji karyawan berhasil diperbarui']);
+        $member = DB::transaction(function () use ($member, $request, $validated, $memberUpdates) {
+            $member->update($memberUpdates);
+            $member->syncAllowancesFromRequest(
+                $request->has('allowances'),
+                $validated['allowances'] ?? null,
+                $request->has('tunjangan'),
+                isset($validated['tunjangan']) ? (float) $validated['tunjangan'] : null
+            );
+
+            return $member->fresh(Schema::hasTable('payroll_member_allowances') ? ['allowances'] : []);
+        });
+
+        return response()->json([
+            'data' => [
+                ...$member->toArray(),
+                ...$member->getAllowanceSummaryAttributes(),
+            ],
+            'message' => 'Data gaji karyawan berhasil diperbarui',
+        ]);
     }
 
     /**
@@ -501,6 +557,13 @@ class PayrollController extends Controller
             'note' => !empty($validated['attendance_note']) ? trim((string) $validated['attendance_note']) : null,
         ]);
 
+        $salaryBreakdown = $member->calculateSalaryBreakdown((int) ($attendanceFull['total_present'] ?? 0));
+        $allowanceSnapshot = array_merge($salaryBreakdown, [
+            'attendance_period_start' => $attendanceFull['period_start'],
+            'attendance_period_end' => $attendanceFull['period_end'],
+            'paid_nominal' => $nominal,
+        ]);
+
         $previousPaidInPeriod = (float) PayrollMemberPayment::query()
             ->where('payroll_member_id', $memberId)
             ->whereBetween('created_at', [
@@ -524,6 +587,7 @@ class PayrollController extends Controller
                 $snapshotAccountNumber,
                 $snapshotAccountHolder,
                 $attendanceSnapshot,
+                $allowanceSnapshot,
                 $requestedBankName,
                 $requestedAccountNumber,
                 $requestedAccountHolder
@@ -567,6 +631,9 @@ class PayrollController extends Controller
                     $paymentAttributes['account_holder'] = $snapshotAccountHolder;
                     $paymentAttributes['attendance_summary'] = $attendanceSnapshot;
                 }
+                if (Schema::hasColumn('payroll_member_payments', 'allowance_breakdown')) {
+                    $paymentAttributes['allowance_breakdown'] = $allowanceSnapshot;
+                }
 
                 $payment = PayrollMemberPayment::create($paymentAttributes);
 
@@ -596,6 +663,7 @@ class PayrollController extends Controller
                     'previous_paid_in_period' => $previousPaidInPeriod,
                     'remaining_loan_after' => $loanAfter['outstanding'] ?? 0,
                     'attendance_summary' => $attendanceSnapshot,
+                    'allowance_breakdown' => $allowanceSnapshot,
                 ]);
                 $payment = $payment->fresh(['member', 'borrower']);
             }
@@ -607,6 +675,7 @@ class PayrollController extends Controller
                 'payment' => $payment,
                 'remaining' => $newRemaining,
                 'attendance_summary' => $attendanceSnapshot,
+                'allowance_breakdown' => $allowanceSnapshot,
                 'whatsapp' => $whatsappResult,
             ]);
         } catch (\Exception $e) {
@@ -621,6 +690,10 @@ class PayrollController extends Controller
     public function memberPayments(Request $request, $memberId)
     {
         $member = PayrollMember::findOrFail($memberId);
+        if (Schema::hasTable('payroll_member_allowances')) {
+            $member->load('allowances');
+        }
+
         $payments = \App\Models\PayrollMemberPayment::where('payroll_member_id', $memberId)
             ->with('borrower:id,name')
             ->orderByDesc('created_at')
@@ -632,6 +705,8 @@ class PayrollController extends Controller
             $request->query('end_date')
         );
 
+        $salaryBreakdown = $member->calculateSalaryBreakdown((int) ($attendanceSummary['total_present'] ?? 0));
+
         $alreadyPaidInPeriod = (float) PayrollMemberPayment::query()
             ->where('payroll_member_id', $memberId)
             ->whereBetween('created_at', [
@@ -641,10 +716,14 @@ class PayrollController extends Controller
             ->sum('nominal');
 
         return response()->json([
-            'member' => $member,
+            'member' => [
+                ...$member->toArray(),
+                ...$member->getAllowanceSummaryAttributes(),
+            ],
             'payments' => $payments,
             'loan_context' => $this->resolvePayrollBorrowerContext($member),
             'attendance_summary' => $attendanceSummary,
+            'salary_breakdown' => $salaryBreakdown,
             'already_paid_in_period' => $alreadyPaidInPeriod,
             'attendance_presets' => $this->attendanceService->getPayrollAttendancePeriodPresets(),
         ]);

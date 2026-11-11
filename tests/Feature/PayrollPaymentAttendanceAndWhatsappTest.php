@@ -8,6 +8,7 @@ use App\Models\EmployeeAttendance;
 use App\Models\FinancialTransaction;
 use App\Models\NotificationLog;
 use App\Models\PayrollMember;
+use App\Models\PayrollMemberAllowance;
 use App\Models\PayrollMemberPayment;
 use App\Models\SiteSetting;
 use App\Models\User;
@@ -245,5 +246,159 @@ class PayrollPaymentAttendanceAndWhatsappTest extends TestCase
         $payment = PayrollMemberPayment::query()->firstOrFail();
         $this->assertSame('failed', $payment->whatsapp_status);
         $this->assertSame(1500000, (int) $payment->cash_paid_amount);
+    }
+
+    public function test_employee_multiple_monthly_and_daily_allowances_calculate_by_attendance_date_range_and_send_itemized_whatsapp(): void
+    {
+        Http::fake([
+            'http://localhost:3001/send-bulk' => Http::response([
+                'success' => true,
+                'results' => [[
+                    'phone' => '081999888777',
+                    'success' => true,
+                    'error' => null,
+                ]],
+            ], 200),
+        ]);
+
+        SiteSetting::set('company_name', 'Rumah Kita Net');
+        $actor = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+
+        // 1. Create payroll member with 1 monthly allowance and 2 daily allowances
+        $createRes = $this->actingAs($actor)
+            ->postJson('/api/payroll/members', [
+                'nama' => 'Rendi Teknisi',
+                'telepon' => '081999888777',
+                'tipe_gaji' => 'bulanan',
+                'gaji_pokok' => 2000000,
+                'allowances' => [
+                    ['nama' => 'Tunjangan Jabatan', 'jenis' => 'bulanan', 'nominal' => 300000],
+                    ['nama' => 'Uang Makan', 'jenis' => 'harian', 'nominal' => 25000],
+                    ['nama' => 'Uang Transport', 'jenis' => 'harian', 'nominal' => 15000],
+                ],
+                'tanggal_gajian' => 1,
+                'nama_bank' => 'BRI',
+                'nomor_rekening' => '1122334455',
+                'atas_nama_rekening' => 'Rendi Teknisi',
+                'is_active' => true,
+            ])
+            ->assertCreated();
+
+        $createRes->assertJsonPath('data.tunjangan', 300000);
+        $createRes->assertJsonPath('data.tunjangan_bulanan_total', 300000);
+        $createRes->assertJsonPath('data.tunjangan_harian_per_hari', 40000);
+        $createRes->assertJsonPath('data.total_gaji_bulanan', 2300000);
+        $memberId = (int) $createRes->json('data.id');
+
+        $this->assertSame(3, PayrollMemberAllowance::query()->where('payroll_member_id', $memberId)->count());
+
+        // 2. Link employee user & record attendance (3 present in target range, 1 absent in range, 1 present outside range)
+        $employeeUser = User::factory()->create([
+            'name' => 'Rendi Teknisi',
+            'role' => User::ROLE_TEKNISI,
+            'is_employee' => true,
+            'phone' => '081999888777',
+            'payroll_member_id' => $memberId,
+        ]);
+
+        foreach (['2026-10-05', '2026-10-06'] as $presentDate) {
+            EmployeeAttendance::query()->create([
+                'user_id' => $employeeUser->id,
+                'date' => $presentDate,
+                'clock_in_at' => $presentDate . ' 08:00:00',
+                'clock_out_at' => $presentDate . ' 17:00:00',
+                'clock_in_status' => 'on_time',
+                'clock_in_late_minutes' => 0,
+                'work_duration_minutes' => 540,
+                'status' => 'present',
+            ]);
+        }
+
+        // Late attendance still counts as attending ("masuk")
+        EmployeeAttendance::query()->create([
+            'user_id' => $employeeUser->id,
+            'date' => '2026-10-10',
+            'clock_in_at' => '2026-10-10 08:20:00',
+            'clock_out_at' => '2026-10-10 17:00:00',
+            'clock_in_status' => 'late',
+            'clock_in_late_minutes' => 20,
+            'work_duration_minutes' => 520,
+            'status' => 'late',
+        ]);
+
+        // Absent without clock-in inside range MUST NOT earn daily allowance
+        EmployeeAttendance::query()->create([
+            'user_id' => $employeeUser->id,
+            'date' => '2026-10-12',
+            'clock_in_at' => null,
+            'clock_out_at' => null,
+            'status' => 'absent',
+        ]);
+
+        // Present outside queried range MUST NOT count for 2026-10-05..2026-10-20
+        EmployeeAttendance::query()->create([
+            'user_id' => $employeeUser->id,
+            'date' => '2026-10-25',
+            'clock_in_at' => '2026-10-25 08:00:00',
+            'clock_out_at' => '2026-10-25 17:00:00',
+            'clock_in_status' => 'on_time',
+            'clock_in_late_minutes' => 0,
+            'work_duration_minutes' => 540,
+            'status' => 'present',
+        ]);
+
+        // 3. Query attendance range 2026-10-05..2026-10-20 => 3 attendance days
+        $previewNarrow = $this->actingAs($actor)
+            ->getJson("/api/payroll/members/{$memberId}/payments?start_date=2026-10-05&end_date=2026-10-20")
+            ->assertOk();
+
+        $previewNarrow->assertJsonPath('attendance_summary.total_present', 3);
+        $previewNarrow->assertJsonPath('salary_breakdown.gaji_pokok', 2000000);
+        $previewNarrow->assertJsonPath('salary_breakdown.attendance_days', 3);
+        $previewNarrow->assertJsonPath('salary_breakdown.tunjangan_bulanan_total', 300000);
+        $previewNarrow->assertJsonPath('salary_breakdown.tunjangan_harian_per_hari', 40000);
+        $previewNarrow->assertJsonPath('salary_breakdown.tunjangan_harian_total', 120000);
+        $previewNarrow->assertJsonPath('salary_breakdown.total_gaji_dihitung', 2420000);
+
+        // 4. Query full October range 2026-10-05..2026-10-31 => 4 attendance days
+        $previewWide = $this->actingAs($actor)
+            ->getJson("/api/payroll/members/{$memberId}/payments?start_date=2026-10-05&end_date=2026-10-31")
+            ->assertOk();
+
+        $previewWide->assertJsonPath('attendance_summary.total_present', 4);
+        $previewWide->assertJsonPath('salary_breakdown.tunjangan_harian_total', 160000);
+        $previewWide->assertJsonPath('salary_breakdown.total_gaji_dihitung', 2460000);
+
+        // 5. Pay for the 3-day range (2026-10-05..2026-10-20) => Rp 2.420.000
+        $payRes = $this->actingAs($actor)
+            ->postJson("/api/payroll/members/{$memberId}/pay", [
+                'nominal' => 2420000,
+                'payment_method' => 'transfer',
+                'bank_name' => 'BRI',
+                'account_number' => '1122334455',
+                'account_holder' => 'Rendi Teknisi',
+                'attendance_start_date' => '2026-10-05',
+                'attendance_end_date' => '2026-10-20',
+                'attendance_confirmed' => true,
+                'send_whatsapp' => true,
+            ])
+            ->assertOk();
+
+        $payRes->assertJsonPath('payment.allowance_breakdown.attendance_days', 3);
+        $payRes->assertJsonPath('payment.allowance_breakdown.tunjangan_bulanan_total', 300000);
+        $payRes->assertJsonPath('payment.allowance_breakdown.tunjangan_harian_total', 120000);
+        $payRes->assertJsonPath('payment.allowance_breakdown.total_gaji_dihitung', 2420000);
+
+        Http::assertSent(function ($request) {
+            $data = $request->data();
+            $message = $data['message'] ?? '';
+
+            return ($data['recipients'][0]['phone'] ?? '') === '081999888777'
+                && str_contains($message, 'Gaji Pokok: Rp 2.000.000')
+                && str_contains($message, 'Tunjangan Bulanan (Tunjangan Jabatan): Rp 300.000')
+                && str_contains($message, 'Tunjangan Harian (Uang Makan): 3 hr x Rp 25.000 = Rp 75.000')
+                && str_contains($message, 'Tunjangan Harian (Uang Transport): 3 hr x Rp 15.000 = Rp 45.000')
+                && str_contains($message, 'Rp 2.420.000');
+        });
     }
 }

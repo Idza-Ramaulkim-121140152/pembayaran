@@ -33,11 +33,12 @@ class MasterPegawaiController extends Controller
         $syncFilter = $request->input('sync_status');
 
         // 1. Fetch relevant users (employees, technicians, admins, superadmins, finance, or users with payroll/borrower mapping)
+        $hasAllowancesTable = Schema::hasTable('payroll_member_allowances');
         $usersQuery = User::query()
-            ->with([
-                'payrollMember',
+            ->with(array_filter([
+                $hasAllowancesTable ? 'payrollMember.allowances' : 'payrollMember',
                 'borrowerProfile.loans',
-            ])
+            ]))
             ->where(function ($q) {
                 $q->where('is_employee', true)
                     ->orWhereIn('role', [
@@ -76,7 +77,11 @@ class MasterPegawaiController extends Controller
             ->keyBy('user_id');
 
         // 4. Fetch unlinked PayrollMembers
-        $unlinkedPayrollMembers = PayrollMember::query()
+        $unlinkedPayrollQuery = PayrollMember::query();
+        if ($hasAllowancesTable) {
+            $unlinkedPayrollQuery->with('allowances');
+        }
+        $unlinkedPayrollMembers = $unlinkedPayrollQuery
             ->when(!empty($linkedPayrollMemberIds), function ($q) use ($linkedPayrollMemberIds) {
                 $q->whereNotIn('id', $linkedPayrollMemberIds);
             })
@@ -173,8 +178,7 @@ class MasterPegawaiController extends Controller
                     'telepon' => $payroll->telepon,
                     'tipe_gaji' => $payroll->tipe_gaji,
                     'gaji_pokok' => (float) ($payroll->gaji_pokok ?? 0),
-                    'tunjangan' => (float) ($payroll->tunjangan ?? 0),
-                    'total_gaji_bulanan' => (float) ($payroll->gaji_pokok ?? 0) + (float) ($payroll->tunjangan ?? 0),
+                    ...$payroll->getAllowanceSummaryAttributes(),
                     'tanggal_gajian' => $payroll->tanggal_gajian,
                     'nama_bank' => $payroll->nama_bank,
                     'nomor_rekening' => $payroll->nomor_rekening,
@@ -232,8 +236,7 @@ class MasterPegawaiController extends Controller
                     'telepon' => $pm->telepon,
                     'tipe_gaji' => $pm->tipe_gaji,
                     'gaji_pokok' => (float) ($pm->gaji_pokok ?? 0),
-                    'tunjangan' => (float) ($pm->tunjangan ?? 0),
-                    'total_gaji_bulanan' => (float) ($pm->gaji_pokok ?? 0) + (float) ($pm->tunjangan ?? 0),
+                    ...$pm->getAllowanceSummaryAttributes(),
                     'tanggal_gajian' => $pm->tanggal_gajian,
                     'nama_bank' => $pm->nama_bank,
                     'nomor_rekening' => $pm->nomor_rekening,
@@ -405,7 +408,7 @@ class MasterPegawaiController extends Controller
                 'user' => $user,
                 'payroll' => $payroll ? [
                     ...$payroll->toArray(),
-                    'total_gaji_bulanan' => (float) ($payroll->gaji_pokok ?? 0) + (float) ($payroll->tunjangan ?? 0),
+                    ...$payroll->getAllowanceSummaryAttributes(),
                     'unpaid_total' => $payroll->unpaid_total,
                 ] : null,
                 'borrower' => $borrower ? [
@@ -441,6 +444,10 @@ class MasterPegawaiController extends Controller
             'tipe_gaji' => 'nullable|in:bulanan,proyek,campuran',
             'gaji_pokok' => 'nullable|numeric|min:0',
             'tunjangan' => 'nullable|numeric|min:0',
+            'allowances' => 'nullable|array',
+            'allowances.*.nama' => 'required|string|max:120',
+            'allowances.*.jenis' => 'required|in:bulanan,harian',
+            'allowances.*.nominal' => 'required|numeric|min:0',
             'tanggal_gajian' => 'nullable|integer|min:1|max:31',
             'nama_bank' => 'nullable|string|max:100',
             'nomor_rekening' => 'nullable|string|max:100',
@@ -479,6 +486,12 @@ class MasterPegawaiController extends Controller
                     $payrollPayload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
                 }
                 $payrollMember = PayrollMember::create($payrollPayload);
+                $payrollMember->syncAllowancesFromRequest(
+                    $request->has('allowances'),
+                    $validated['allowances'] ?? null,
+                    $request->has('tunjangan'),
+                    isset($validated['tunjangan']) ? (float) $validated['tunjangan'] : null
+                );
             }
 
             // 2. Create User account
@@ -568,6 +581,10 @@ class MasterPegawaiController extends Controller
             'tipe_gaji' => 'nullable|in:bulanan,proyek,campuran',
             'gaji_pokok' => 'nullable|numeric|min:0',
             'tunjangan' => 'nullable|numeric|min:0',
+            'allowances' => 'nullable|array',
+            'allowances.*.nama' => 'required|string|max:120',
+            'allowances.*.jenis' => 'required|in:bulanan,harian',
+            'allowances.*.nominal' => 'required|numeric|min:0',
             'tanggal_gajian' => 'nullable|integer|min:1|max:31',
             'nama_bank' => 'nullable|string|max:100',
             'nomor_rekening' => 'nullable|string|max:100',
@@ -665,7 +682,13 @@ class MasterPegawaiController extends Controller
                     $payrollUpdates['is_active'] = (bool) $validated['is_active'];
                 }
                 $payroll->update($payrollUpdates);
-            } elseif ($user && ($request->has('gaji_pokok') || $request->has('nama_bank') || $request->has('nomor_rekening') || $request->has('atas_nama_rekening') || $request->has('tipe_gaji'))) {
+                $payroll->syncAllowancesFromRequest(
+                    $request->has('allowances'),
+                    $validated['allowances'] ?? null,
+                    $request->has('tunjangan'),
+                    isset($validated['tunjangan']) ? (float) $validated['tunjangan'] : null
+                );
+            } elseif ($user && ($request->has('gaji_pokok') || $request->has('nama_bank') || $request->has('nomor_rekening') || $request->has('atas_nama_rekening') || $request->has('tipe_gaji') || $request->has('allowances'))) {
                 $payrollPayload = [
                     'nama' => $name,
                     'telepon' => $phone,
@@ -681,6 +704,12 @@ class MasterPegawaiController extends Controller
                     $payrollPayload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
                 }
                 $payroll = PayrollMember::create($payrollPayload);
+                $payroll->syncAllowancesFromRequest(
+                    $request->has('allowances'),
+                    $validated['allowances'] ?? null,
+                    $request->has('tunjangan'),
+                    isset($validated['tunjangan']) ? (float) $validated['tunjangan'] : null
+                );
                 $user->update(['payroll_member_id' => $payroll->id]);
             }
 

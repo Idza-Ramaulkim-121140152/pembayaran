@@ -3,6 +3,13 @@ import {
     Plus, Edit2, CheckCircle, Trash2, Users, Wallet, Calendar, X, ChevronDown, ChevronUp,
     Search, Clock, DollarSign, Building2, CreditCard, MessageSquare, AlertCircle, RefreshCw, ArrowLeft,
 } from 'lucide-react';
+import PayrollAllowancesEditor, {
+    AllowanceTagList,
+    SalaryBreakdownItems,
+    normalizeAllowancesFromRecord,
+    serializeAllowancesPayload,
+    summarizeAllowances,
+} from '../../components/PayrollAllowancesEditor';
 
 const API_HEADERS = () => ({
     'Content-Type': 'application/json',
@@ -42,7 +49,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
     const [telepon, setTelepon] = useState('');
     const [tipeGaji, setTipeGaji] = useState('bulanan');
     const [gajiPokok, setGajiPokok] = useState('');
-    const [tunjangan, setTunjangan] = useState('');
+    const [allowances, setAllowances] = useState([]);
     const [tanggalGajian, setTanggalGajian] = useState(1);
     const [namaBank, setNamaBank] = useState('');
     const [nomorRekening, setNomorRekening] = useState('');
@@ -57,7 +64,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
                 setTelepon(memberToEdit.telepon || '');
                 setTipeGaji(memberToEdit.tipe_gaji || 'bulanan');
                 setGajiPokok(memberToEdit.gaji_pokok ? String(Number(memberToEdit.gaji_pokok)) : '');
-                setTunjangan(memberToEdit.tunjangan ? String(Number(memberToEdit.tunjangan)) : '');
+                setAllowances(normalizeAllowancesFromRecord(memberToEdit));
                 setTanggalGajian(memberToEdit.tanggal_gajian ? Number(memberToEdit.tanggal_gajian) : 1);
                 setNamaBank(memberToEdit.nama_bank || '');
                 setNomorRekening(memberToEdit.nomor_rekening || '');
@@ -68,7 +75,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
                 setTelepon('');
                 setTipeGaji('bulanan');
                 setGajiPokok('');
-                setTunjangan('');
+                setAllowances([]);
                 setTanggalGajian(1);
                 setNamaBank('');
                 setNomorRekening('');
@@ -85,12 +92,16 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
         if (!nama.trim()) return alert('Nama karyawan wajib diisi');
         setSaving(true);
 
+        const cleanedAllowances = tipeGaji === 'proyek' ? [] : serializeAllowancesPayload(allowances);
+        const { monthlyTotal } = summarizeAllowances(cleanedAllowances);
+
         const payload = {
             nama: nama.trim(),
             telepon: telepon.trim() || null,
             tipe_gaji: tipeGaji,
-            gaji_pokok: parseFloat(gajiPokok) || 0,
-            tunjangan: parseFloat(tunjangan) || 0,
+            gaji_pokok: tipeGaji === 'proyek' ? 0 : (parseFloat(gajiPokok) || 0),
+            tunjangan: monthlyTotal,
+            allowances: cleanedAllowances,
             tanggal_gajian: parseInt(tanggalGajian, 10) || 1,
             nama_bank: namaBank.trim() || null,
             nomor_rekening: nomorRekening.trim() || null,
@@ -123,7 +134,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-8 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl my-8 overflow-hidden">
                 <div className="flex items-center justify-between p-5 border-b bg-gray-50">
                     <div>
                         <h3 className="text-lg font-bold text-gray-800">
@@ -180,41 +191,26 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
 
                     {/* Nominal Gaji & Tunjangan */}
                     {tipeGaji !== 'proyek' && (
-                        <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-100 space-y-3">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-semibold text-blue-900 mb-1">
-                                        Gaji Pokok Bulanan (Rp)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={gajiPokok}
-                                        onChange={e => setGajiPokok(e.target.value)}
-                                        placeholder="0"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-semibold text-blue-900 mb-1">
-                                        Tunjangan Bulanan (Rp)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={tunjangan}
-                                        onChange={e => setTunjangan(e.target.value)}
-                                        placeholder="0"
-                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
-                                    />
-                                </div>
+                        <div className="p-3.5 bg-blue-50/60 rounded-xl border border-blue-100 space-y-3">
+                            <div>
+                                <label className="block text-xs font-semibold text-blue-900 mb-1">
+                                    Gaji Pokok Bulanan (Rp)
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={gajiPokok}
+                                    onChange={e => setGajiPokok(e.target.value)}
+                                    placeholder="0"
+                                    className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white"
+                                />
                             </div>
-                            <div className="flex items-center justify-between text-xs text-blue-800 font-medium pt-1 border-t border-blue-200/60">
-                                <span>Total Gaji Bulanan:</span>
-                                <span className="font-bold text-sm text-blue-900">
-                                    {formatRupiah((parseFloat(gajiPokok) || 0) + (parseFloat(tunjangan) || 0))} / bulan
-                                </span>
-                            </div>
+
+                            <PayrollAllowancesEditor
+                                allowances={allowances}
+                                onChange={setAllowances}
+                                gajiPokok={gajiPokok}
+                            />
                         </div>
                     )}
 
@@ -327,6 +323,20 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
 }
 
 
+const computeSuggestedSalaryAmount = (memberObj, breakdown, unpaidAmount = 0) => {
+    const type = memberObj?.tipe_gaji || 'bulanan';
+    if (type === 'proyek') {
+        return Math.max(0, Number(unpaidAmount) || 0);
+    }
+    const computedBaseAndAllowances = breakdown
+        ? Number(breakdown.total_gaji_dihitung || 0)
+        : ((Number(memberObj?.gaji_pokok) || 0) + (Number(memberObj?.tunjangan_bulanan_total ?? memberObj?.tunjangan) || 0));
+
+    return type === 'campuran'
+        ? Math.max(0, computedBaseAndAllowances + (Number(unpaidAmount) || 0))
+        : Math.max(0, computedBaseAndAllowances);
+};
+
 // ==================== PAY MEMBER MODAL ====================
 function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [nominal, setNominal] = useState('');
@@ -339,10 +349,13 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [loanDeductionAmount, setLoanDeductionAmount] = useState('');
     const [loanChoicePromptOpen, setLoanChoicePromptOpen] = useState(false);
 
-    // Attendance states
+    // Attendance & salary breakdown states
     const [attendanceSummary, setAttendanceSummary] = useState(null);
+    const [salaryBreakdown, setSalaryBreakdown] = useState(null);
     const [attendancePresets, setAttendancePresets] = useState([]);
     const [selectedPeriodKey, setSelectedPeriodKey] = useState('reset_current');
+    const [attendanceStartDate, setAttendanceStartDate] = useState('');
+    const [attendanceEndDate, setAttendanceEndDate] = useState('');
     const [alreadyPaidInPeriod, setAlreadyPaidInPeriod] = useState(0);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
     const [showAttendanceDetails, setShowAttendanceDetails] = useState(false);
@@ -362,10 +375,12 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [confirmWorkAndSalary, setConfirmWorkAndSalary] = useState(false);
     const [formError, setFormError] = useState('');
 
-    const totalGajiBulanan = member ? ((Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0)) : 0;
+    const totalGajiBulanan = salaryBreakdown
+        ? Number(salaryBreakdown.total_gaji_tetap || 0)
+        : (member ? ((Number(member.gaji_pokok) || 0) + (Number(member.tunjangan_bulanan_total ?? member.tunjangan) || 0)) : 0);
     const isMonthly = member ? ((member.tipe_gaji || 'bulanan') !== 'proyek') : true;
 
-    const loadMemberPaymentDetails = useCallback(async (memberObj, startDate = null, endDate = null) => {
+    const loadMemberPaymentDetails = useCallback(async (memberObj, startDate = null, endDate = null, autoApplyNominal = false) => {
         if (!memberObj?.id) return;
         setLoadingHistory(true);
         setLoadingAttendance(true);
@@ -384,11 +399,29 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
             setPayments(d.payments || []);
             if (d.attendance_summary) {
                 setAttendanceSummary(d.attendance_summary);
+                setAttendanceStartDate(d.attendance_summary.period_start || startDate || '');
+                setAttendanceEndDate(d.attendance_summary.period_end || endDate || '');
             }
             if (Array.isArray(d.attendance_presets)) {
                 setAttendancePresets(d.attendance_presets);
             }
+            setSalaryBreakdown(d.salary_breakdown || null);
             setAlreadyPaidInPeriod(Number(d.already_paid_in_period || 0));
+
+            if (autoApplyNominal) {
+                const recalculated = computeSuggestedSalaryAmount(
+                    d.member || memberObj,
+                    d.salary_breakdown,
+                    memberObj.total_unpaid
+                );
+                setNominal(recalculated > 0 ? String(recalculated) : '');
+                const latestOutstanding = Number(d.loan_context?.outstanding || 0);
+                setLoanDeductionAmount((prev) => {
+                    if (!prev) return prev;
+                    const maxCap = latestOutstanding > 0 ? Math.min(recalculated, latestOutstanding) : recalculated;
+                    return String(Math.min(Number(prev) || 0, maxCap));
+                });
+            }
 
             if (d.member) {
                 const refreshedBank = (d.member.nama_bank || '').trim();
@@ -424,16 +457,14 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     useEffect(() => {
         if (isOpen && member) {
             const memberUnpaid = Number(member.total_unpaid) || 0;
-            const monthlyTotal = (Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0);
+            const monthlyTotal = (Number(member.gaji_pokok) || 0) + (Number(member.tunjangan_bulanan_total ?? member.tunjangan) || 0);
             const isMemberMonthly = (member.tipe_gaji || 'bulanan') !== 'proyek';
-            const suggestedDefault = isMemberMonthly
-                ? (member.tipe_gaji === 'campuran' ? monthlyTotal + memberUnpaid : monthlyTotal)
-                : memberUnpaid;
+            const suggestedDefault = computeSuggestedSalaryAmount(member, null, memberUnpaid);
 
             const defaultNom = suggestedDefault > 0 ? String(suggestedDefault) : (memberUnpaid > 0 ? String(memberUnpaid) : '');
             const currentMonthName = new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
             setNominal(defaultNom);
-            setCatatan(isMemberMonthly && monthlyTotal > 0 ? `Gaji Bulanan ${currentMonthName} - ${member.nama}` : '');
+            setCatatan(isMemberMonthly && (monthlyTotal > 0 || Number(member.tunjangan_harian_per_hari || 0) > 0) ? `Gaji Bulanan ${currentMonthName} - ${member.nama}` : '');
 
             const initialLoanContext = Number(member.borrower_outstanding || 0) > 0 ? {
                 borrower: member.borrower || null,
@@ -463,20 +494,19 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
             setShowAttendanceDetails(false);
             setAttendanceNote('');
             setAttendanceSummary(null);
+            setSalaryBreakdown(null);
+            setAttendanceStartDate('');
+            setAttendanceEndDate('');
             setAlreadyPaidInPeriod(0);
 
-            loadMemberPaymentDetails(member);
+            loadMemberPaymentDetails(member, null, null, true);
         }
     }, [isOpen, member, loadMemberPaymentDetails]);
 
     if (!isOpen || !member) return null;
 
     const unpaid = Number(member.total_unpaid) || 0;
-    const fullSuggestedAmount = member.tipe_gaji === 'proyek'
-        ? unpaid
-        : member.tipe_gaji === 'campuran'
-            ? totalGajiBulanan + unpaid
-            : totalGajiBulanan;
+    const fullSuggestedAmount = computeSuggestedSalaryAmount(member, salaryBreakdown, unpaid);
     const numericNominal = parseFloat(nominal) || 0;
     const loanOutstanding = Number(loanContext?.outstanding || 0);
     const requestedDeduction = loanHandling === 'deduct_loan' ? (Number(loanDeductionAmount) || 0) : 0;
@@ -487,7 +517,18 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
         setSelectedPeriodKey(presetKey);
         const preset = attendancePresets.find(p => p.key === presetKey);
         if (preset) {
-            loadMemberPaymentDetails(member, preset.start_date, preset.end_date);
+            setAttendanceStartDate(preset.start_date);
+            setAttendanceEndDate(preset.end_date);
+            loadMemberPaymentDetails(member, preset.start_date, preset.end_date, true);
+        }
+    };
+
+    const handleCustomDateChange = (nextStart, nextEnd) => {
+        setAttendanceStartDate(nextStart);
+        setAttendanceEndDate(nextEnd);
+        setSelectedPeriodKey('custom');
+        if (nextStart && nextEnd && nextStart <= nextEnd) {
+            loadMemberPaymentDetails(member, nextStart, nextEnd, true);
         }
     };
 
@@ -558,8 +599,8 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                 account_holder: paymentMethod === 'transfer' ? (accountHolder.trim() || null) : null,
                 save_bank_to_member: paymentMethod === 'transfer' && Boolean(bankName.trim()),
                 telepon: employeePhone.trim() || null,
-                attendance_start_date: attendanceSummary?.period_start || null,
-                attendance_end_date: attendanceSummary?.period_end || null,
+                attendance_start_date: attendanceSummary?.period_start || attendanceStartDate || null,
+                attendance_end_date: attendanceSummary?.period_end || attendanceEndDate || null,
                 attendance_confirmed: true,
                 attendance_note: attendanceNote.trim() || null,
                 send_whatsapp: sendWhatsapp,
@@ -641,20 +682,39 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
 
                     {step === 'form' ? (
                         <>
-                            {/* Saldo / Gaji Summary Box */}
-                            <div className="mx-5 mt-4 bg-orange-50 border border-orange-200 rounded-xl p-3.5 space-y-1.5">
+                            {/* Saldo & Rincian Gaji + Tunjangan */}
+                            <div className="mx-5 mt-4 bg-orange-50 border border-orange-200 rounded-xl p-3.5 space-y-2">
                                 {isMonthly && (
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs sm:text-sm text-orange-800 font-medium">
-                                            Standar Gaji Bulanan (Pokok + Tunjangan)
-                                        </span>
-                                        <span className="text-base font-bold text-orange-700">{formatRupiah(totalGajiBulanan)}</span>
-                                    </div>
+                                    <>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs sm:text-sm text-orange-800 font-semibold">
+                                                Rincian Gaji &amp; Tunjangan
+                                            </span>
+                                            <span className="text-xs font-medium text-orange-700">
+                                                Tetap / bln: {formatRupiah(totalGajiBulanan)}
+                                            </span>
+                                        </div>
+                                        {salaryBreakdown && (
+                                            <div className="rounded-lg bg-white/80 border border-orange-100 px-3 py-2">
+                                                <SalaryBreakdownItems breakdown={salaryBreakdown} />
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                                 {(!isMonthly || member.tipe_gaji === 'campuran' || unpaid > 0) && (
                                     <div className="flex items-center justify-between">
                                         <span className="text-xs sm:text-sm text-orange-700">Sisa Upah Proyek Belum Dibayar</span>
-                                        <span className="text-base font-bold text-orange-600">{formatRupiah(unpaid)}</span>
+                                        <span className="text-sm font-bold text-orange-600">{formatRupiah(unpaid)}</span>
+                                    </div>
+                                )}
+                                {isMonthly && (
+                                    <div className="flex items-center justify-between pt-1.5 border-t border-orange-200/70">
+                                        <span className="text-xs sm:text-sm font-bold text-orange-900">
+                                            Total Gaji Dihitung ({attendanceSummary?.total_present ?? 0} hari masuk)
+                                        </span>
+                                        <span className="text-base font-extrabold text-orange-700">
+                                            {formatRupiah(fullSuggestedAmount)}
+                                        </span>
                                     </div>
                                 )}
                                 <div className="flex items-center justify-between pt-1 border-t border-orange-200/70 text-xs">
@@ -685,8 +745,38 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                                             {attendancePresets.map(p => (
                                                 <option key={p.key} value={p.key}>{p.label}</option>
                                             ))}
+                                            {selectedPeriodKey === 'custom' && (
+                                                <option value="custom">Rentang Tanggal Kustom</option>
+                                            )}
                                         </select>
                                     )}
+                                </div>
+
+                                {/* Rentang Tanggal Perhitungan Absen (Preset atau Custom) */}
+                                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-100 bg-white/80 p-2 text-xs">
+                                    <span className="font-medium text-indigo-900">Rentang Hitung Absen:</span>
+                                    <input
+                                        type="date"
+                                        value={attendanceStartDate}
+                                        onChange={(e) => handleCustomDateChange(e.target.value, attendanceEndDate)}
+                                        className="rounded border border-indigo-200 bg-white px-2 py-1 text-xs text-gray-800"
+                                    />
+                                    <span className="text-gray-500">s.d.</span>
+                                    <input
+                                        type="date"
+                                        value={attendanceEndDate}
+                                        onChange={(e) => handleCustomDateChange(attendanceStartDate, e.target.value)}
+                                        className="rounded border border-indigo-200 bg-white px-2 py-1 text-xs text-gray-800"
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={!attendanceStartDate || !attendanceEndDate || attendanceStartDate > attendanceEndDate || loadingAttendance}
+                                        onClick={() => loadMemberPaymentDetails(member, attendanceStartDate, attendanceEndDate, true)}
+                                        className="inline-flex items-center gap-1 rounded bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                                    >
+                                        <RefreshCw size={11} className={loadingAttendance ? 'animate-spin' : ''} />
+                                        Hitung
+                                    </button>
                                 </div>
 
                                 {loadingAttendance ? (
@@ -826,7 +916,7 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                                             className="mt-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium"
                                         >
                                             {isMonthly
-                                                ? `Isi gaji penuh (${formatRupiah(fullSuggestedAmount)})`
+                                                ? `Gunakan total gaji dihitung (${formatRupiah(fullSuggestedAmount)})`
                                                 : `Bayar penuh (${formatRupiah(unpaid)})`}
                                         </button>
                                     )}
@@ -1121,6 +1211,14 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                                                             Absensi: {p.attendance_summary.total_present ?? 0} hari masuk • {p.attendance_summary.total_hours_formatted || '0 mnt'}
                                                         </p>
                                                     )}
+                                                    {p.allowance_breakdown?.items?.length > 0 && (
+                                                        <p className="text-[11px] text-gray-500">
+                                                            Pokok {formatRupiah(p.allowance_breakdown.gaji_pokok || 0)}
+                                                            {p.allowance_breakdown.items
+                                                                .map((it) => ` + ${it.nama} (${it.jenis === 'harian' ? `${it.multiplier ?? 0}hr×${formatRupiah(it.nominal)}` : 'bln'}: ${formatRupiah(it.subtotal)})`)
+                                                                .join('')}
+                                                        </p>
+                                                    )}
                                                     {p.catatan && <p className="text-xs text-gray-400">{p.catatan}</p>}
                                                 </div>
                                                 <span className="text-xs text-gray-400 whitespace-nowrap">{formatDate(p.created_at)}</span>
@@ -1188,6 +1286,17 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                                 <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wide flex items-center gap-1.5">
                                     <DollarSign size={14} className="text-emerald-600" /> 2. Konfirmasi Rincian Gaji &amp; Hutang
                                 </h4>
+                                {isMonthly && salaryBreakdown && (
+                                    <div className="pb-2 mb-1 border-b border-emerald-100">
+                                        <SalaryBreakdownItems breakdown={salaryBreakdown} />
+                                        {member.tipe_gaji === 'campuran' && unpaid > 0 && (
+                                            <div className="flex items-center justify-between text-xs text-gray-700 mt-1">
+                                                <span>Upah Proyek Belum Dibayar</span>
+                                                <span className="font-semibold text-gray-900">{formatRupiah(unpaid)}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="text-xs space-y-1 text-gray-700">
                                     <div className="flex justify-between">
                                         <span className="text-gray-500">Jumlah Gaji (Bruto):</span>
@@ -1733,9 +1842,19 @@ export default function PayrollPage() {
     const totalUnpaidAll = data.unpaid_summary.reduce((sum, m) => sum + Number(m.total_unpaid || 0), 0);
 
     const activeMembers = members.filter(m => m.is_active !== false);
-    const totalBebanGaji = activeMembers.reduce((sum, m) => sum + (Number(m.gaji_pokok || 0) + Number(m.tunjangan || 0)), 0);
+    const totalBebanGaji = activeMembers.reduce(
+        (sum, m) => sum + Number(m.total_gaji_bulanan ?? ((Number(m.gaji_pokok || 0) + Number(m.tunjangan_bulanan_total ?? m.tunjangan ?? 0)))),
+        0
+    );
     const totalGajiPokok = activeMembers.reduce((sum, m) => sum + Number(m.gaji_pokok || 0), 0);
-    const totalTunjangan = activeMembers.reduce((sum, m) => sum + Number(m.tunjangan || 0), 0);
+    const totalTunjanganBulanan = activeMembers.reduce(
+        (sum, m) => sum + Number(m.tunjangan_bulanan_total ?? m.tunjangan ?? 0),
+        0
+    );
+    const totalTunjanganHarianRate = activeMembers.reduce(
+        (sum, m) => sum + Number(m.tunjangan_harian_per_hari || 0),
+        0
+    );
 
     const todayDateNum = new Date().getDate();
 
@@ -1891,21 +2010,25 @@ export default function PayrollPage() {
                         </div>
                         <div className="bg-white rounded-xl p-4 border shadow-sm">
                             <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                                <DollarSign size={14} className="text-purple-500" /> Tunjangan Bulanan
+                                <DollarSign size={14} className="text-purple-500" /> Tunjangan Bulanan &amp; Harian
                             </div>
                             <div className="text-xl font-bold text-gray-900 mt-1">
-                                {formatRupiah(totalTunjangan)}
+                                {formatRupiah(totalTunjanganBulanan)} <span className="text-xs font-normal text-gray-500">/ bln</span>
                             </div>
-                            <div className="text-xs text-gray-400 mt-0.5">Uang makan, transport, dll</div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                                {totalTunjanganHarianRate > 0
+                                    ? `+${formatRupiah(totalTunjanganHarianRate)} / hari masuk (tarif harian)`
+                                    : 'Tunjangan tetap & tunjangan absen harian'}
+                            </div>
                         </div>
                         <div className="bg-blue-50 rounded-xl p-4 border border-blue-200 shadow-sm">
                             <div className="flex items-center gap-2 text-xs font-semibold text-blue-700 uppercase tracking-wide">
-                                <Calendar size={14} className="text-blue-600" /> Beban Gaji / Bulan
+                                <Calendar size={14} className="text-blue-600" /> Beban Gaji Tetap / Bulan
                             </div>
                             <div className="text-xl font-bold text-blue-900 mt-1">
                                 {formatRupiah(totalBebanGaji)}
                             </div>
-                            <div className="text-xs text-blue-600 mt-0.5">Total pengeluaran gaji bulanan</div>
+                            <div className="text-xs text-blue-600 mt-0.5">Gaji pokok + tunjangan bulanan tetap</div>
                         </div>
                     </div>
 
@@ -1951,7 +2074,9 @@ export default function PayrollPage() {
                                         </tr>
                                     ) : filteredMembersList.map(m => {
                                         const isPaydayToday = Number(m.tanggal_gajian) === todayDateNum;
-                                        const totalGaji = (Number(m.gaji_pokok) || 0) + (Number(m.tunjangan) || 0);
+                                        const monthlyAllowanceTotal = Number(m.tunjangan_bulanan_total ?? m.tunjangan ?? 0);
+                                        const dailyAllowanceRate = Number(m.tunjangan_harian_per_hari || 0);
+                                        const totalGaji = (Number(m.gaji_pokok) || 0) + monthlyAllowanceTotal;
                                         return (
                                             <tr key={m.id} className={`hover:bg-gray-50 transition ${isPaydayToday ? 'bg-amber-50/40' : ''}`}>
                                                 <td className="px-4 py-3.5">
@@ -1993,11 +2118,20 @@ export default function PayrollPage() {
                                                 <td className="px-4 py-3.5 text-right font-medium text-gray-700 whitespace-nowrap">
                                                     {formatRupiah(m.gaji_pokok || 0)}
                                                 </td>
-                                                <td className="px-4 py-3.5 text-right font-medium text-gray-600 whitespace-nowrap">
-                                                    {formatRupiah(m.tunjangan || 0)}
+                                                <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                                                    <AllowanceTagList
+                                                        allowances={m.allowances}
+                                                        fallbackMonthlyTotal={monthlyAllowanceTotal}
+                                                        align="right"
+                                                    />
                                                 </td>
                                                 <td className="px-4 py-3.5 text-right font-bold text-gray-900 whitespace-nowrap">
-                                                    {formatRupiah(totalGaji)}
+                                                    <div>{formatRupiah(totalGaji)}</div>
+                                                    {dailyAllowanceRate > 0 && (
+                                                        <div className="text-[11px] font-medium text-amber-700">
+                                                            +{formatRupiah(dailyAllowanceRate)}/hr masuk
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3.5 text-center whitespace-nowrap">
                                                     <span className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold ${

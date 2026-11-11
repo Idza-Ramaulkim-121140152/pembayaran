@@ -779,14 +779,18 @@ class AttendanceService
             ->orderByDesc('date')
             ->get();
 
-        $totalPresent = $records->count();
-        $totalOnTime = $records->where('clock_in_status', 'on_time')->count();
-        $totalLate = $records->where('clock_in_status', 'late')->count();
-        $totalLateMinutes = (int) $records->sum('clock_in_late_minutes');
-        $totalWithClockOut = $records->filter(fn (EmployeeAttendance $r) => $r->clock_out_at !== null)->count();
-        $totalWorkMinutes = (int) $records->sum('work_duration_minutes');
+        $presentRecords = $records->filter(
+            fn (EmployeeAttendance $r) => $r->clock_in_at !== null || in_array($r->status, ['present', 'late'], true)
+        );
 
-        $clockInSeconds = $records
+        $totalPresent = $presentRecords->count();
+        $totalOnTime = $presentRecords->where('clock_in_status', 'on_time')->count();
+        $totalLate = $presentRecords->where('clock_in_status', 'late')->count();
+        $totalLateMinutes = (int) $presentRecords->sum('clock_in_late_minutes');
+        $totalWithClockOut = $presentRecords->filter(fn (EmployeeAttendance $r) => $r->clock_out_at !== null)->count();
+        $totalWorkMinutes = (int) $presentRecords->sum('work_duration_minutes');
+
+        $clockInSeconds = $presentRecords
             ->filter(fn (EmployeeAttendance $r) => $r->clock_in_at !== null)
             ->map(function (EmployeeAttendance $r): int {
                 $t = $r->clock_in_at;
@@ -799,7 +803,7 @@ class AttendanceService
             $avgClockIn = sprintf('%02d:%02d', intdiv($avgSecs, 3600), intdiv($avgSecs % 3600, 60));
         }
 
-        $latest = $records->first(fn (EmployeeAttendance $r) => $r->clock_in_at !== null);
+        $latest = $presentRecords->first(fn (EmployeeAttendance $r) => $r->clock_in_at !== null);
 
         $hours = intdiv($totalWorkMinutes, 60);
         $mins = $totalWorkMinutes % 60;

@@ -413,6 +413,7 @@ class FinancialLedgerService
                     'account_number' => $payment->account_number,
                     'account_holder' => $payment->account_holder,
                     'attendance_summary' => $payment->attendance_summary,
+                    'allowance_breakdown' => $payment->allowance_breakdown,
                 ],
             ]
         );

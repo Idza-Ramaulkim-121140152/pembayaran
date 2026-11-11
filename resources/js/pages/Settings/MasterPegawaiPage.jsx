@@ -32,6 +32,12 @@ import {
     MessageCircle
 } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import PayrollAllowancesEditor, {
+    AllowanceTagList,
+    normalizeAllowancesFromRecord,
+    serializeAllowancesPayload,
+    summarizeAllowances,
+} from '../../components/PayrollAllowancesEditor';
 
 const ROLE_BADGES = {
     superadmin: { label: 'Super Admin', bg: 'bg-rose-50 text-rose-700 border-rose-200' },
@@ -113,6 +119,7 @@ export default function MasterPegawaiPage() {
         tipe_gaji: 'bulanan',
         gaji_pokok: '',
         tunjangan: '',
+        allowances: [],
         tanggal_gajian: 1,
         nama_bank: '',
         nomor_rekening: '',
@@ -230,6 +237,7 @@ export default function MasterPegawaiPage() {
             tipe_gaji: 'bulanan',
             gaji_pokok: '',
             tunjangan: '',
+            allowances: [],
             tanggal_gajian: 1,
             nama_bank: '',
             nomor_rekening: '',
@@ -260,6 +268,7 @@ export default function MasterPegawaiPage() {
             tipe_gaji: emp.payroll?.tipe_gaji || 'bulanan',
             gaji_pokok: emp.payroll?.gaji_pokok || '',
             tunjangan: emp.payroll?.tunjangan || '',
+            allowances: normalizeAllowancesFromRecord(emp.payroll),
             tanggal_gajian: emp.payroll?.tanggal_gajian || 1,
             nama_bank: emp.payroll?.nama_bank || '',
             nomor_rekening: emp.payroll?.nomor_rekening || '',
@@ -284,6 +293,17 @@ export default function MasterPegawaiPage() {
         setShowLinkModal(true);
     };
 
+    const buildSubmissionPayload = (raw) => {
+        const cleanedAllowances = raw.tipe_gaji === 'proyek' ? [] : serializeAllowancesPayload(raw.allowances);
+        const { monthlyTotal } = summarizeAllowances(cleanedAllowances);
+        return {
+            ...raw,
+            gaji_pokok: raw.tipe_gaji === 'proyek' ? 0 : (parseFloat(raw.gaji_pokok) || 0),
+            tunjangan: monthlyTotal,
+            allowances: cleanedAllowances,
+        };
+    };
+
     // Submit Create Form
     const handleCreateSubmit = async (e) => {
         e.preventDefault();
@@ -298,7 +318,7 @@ export default function MasterPegawaiPage() {
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': csrfToken,
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify(buildSubmissionPayload(formData)),
             });
             const json = await res.json();
             if (res.ok && json.success) {
@@ -329,7 +349,7 @@ export default function MasterPegawaiPage() {
                     'Accept': 'application/json',
                     'X-CSRF-TOKEN': csrfToken,
                 },
-                body: JSON.stringify(formData),
+                body: JSON.stringify(buildSubmissionPayload(formData)),
             });
             const json = await res.json();
             if (res.ok && json.success) {
@@ -951,7 +971,7 @@ export default function MasterPegawaiPage() {
 
                                 {formData.create_payroll && (
                                     <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4 animate-[fadeIn_.15s_ease-out]">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                             <div>
                                                 <label className="block text-xs font-semibold text-slate-700 mb-1">Tipe Gaji</label>
                                                 <select
@@ -964,27 +984,29 @@ export default function MasterPegawaiPage() {
                                                     <option value="campuran">Campuran</option>
                                                 </select>
                                             </div>
-                                            <div>
-                                                <label className="block text-xs font-semibold text-slate-700 mb-1">Gaji Pokok (Rp)</label>
-                                                <input
-                                                    type="number"
-                                                    value={formData.gaji_pokok}
-                                                    onChange={(e) => setFormData({ ...formData, gaji_pokok: e.target.value })}
-                                                    placeholder="0"
-                                                    className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-semibold text-slate-700 mb-1">Tunjangan (Rp)</label>
-                                                <input
-                                                    type="number"
-                                                    value={formData.tunjangan}
-                                                    onChange={(e) => setFormData({ ...formData, tunjangan: e.target.value })}
-                                                    placeholder="0"
-                                                    className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
-                                                />
-                                            </div>
+                                            {formData.tipe_gaji !== 'proyek' && (
+                                                <div>
+                                                    <label className="block text-xs font-semibold text-slate-700 mb-1">Gaji Pokok (Rp)</label>
+                                                    <input
+                                                        type="number"
+                                                        value={formData.gaji_pokok}
+                                                        onChange={(e) => setFormData({ ...formData, gaji_pokok: e.target.value })}
+                                                        placeholder="0"
+                                                        className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
+
+                                        {formData.tipe_gaji !== 'proyek' && (
+                                            <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-100">
+                                                <PayrollAllowancesEditor
+                                                    allowances={formData.allowances || []}
+                                                    onChange={(items) => setFormData({ ...formData, allowances: items })}
+                                                    gajiPokok={formData.gaji_pokok}
+                                                />
+                                            </div>
+                                        )}
 
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                             <div>
@@ -1229,7 +1251,7 @@ export default function MasterPegawaiPage() {
                                     <Wallet size={14} /> Pengaturan Payroll & Gaji
                                 </h4>
                                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
                                             <label className="block text-xs font-semibold text-slate-700 mb-1">Tipe Gaji</label>
                                             <select
@@ -1242,25 +1264,28 @@ export default function MasterPegawaiPage() {
                                                 <option value="campuran">Campuran</option>
                                             </select>
                                         </div>
-                                        <div>
-                                            <label className="block text-xs font-semibold text-slate-700 mb-1">Gaji Pokok (Rp)</label>
-                                            <input
-                                                type="number"
-                                                value={formData.gaji_pokok}
-                                                onChange={(e) => setFormData({ ...formData, gaji_pokok: e.target.value })}
-                                                className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="block text-xs font-semibold text-slate-700 mb-1">Tunjangan (Rp)</label>
-                                            <input
-                                                type="number"
-                                                value={formData.tunjangan}
-                                                onChange={(e) => setFormData({ ...formData, tunjangan: e.target.value })}
-                                                className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
-                                            />
-                                        </div>
+                                        {formData.tipe_gaji !== 'proyek' && (
+                                            <div>
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">Gaji Pokok (Rp)</label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.gaji_pokok}
+                                                    onChange={(e) => setFormData({ ...formData, gaji_pokok: e.target.value })}
+                                                    className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
+
+                                    {formData.tipe_gaji !== 'proyek' && (
+                                        <div className="p-3 rounded-xl bg-blue-50/50 border border-blue-100">
+                                            <PayrollAllowancesEditor
+                                                allowances={formData.allowances || []}
+                                                onChange={(items) => setFormData({ ...formData, allowances: items })}
+                                                gajiPokok={formData.gaji_pokok}
+                                            />
+                                        </div>
+                                    )}
 
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                         <div>
@@ -1506,14 +1531,27 @@ export default function MasterPegawaiPage() {
                                     {activeDetailTab === 'payroll' && (
                                         <div className="space-y-6">
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
-                                                    <span className="text-xs font-semibold text-slate-500 uppercase">Gaji Pokok & Tunjangan</span>
+                                                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-1.5">
+                                                    <span className="text-xs font-semibold text-slate-500 uppercase">Gaji Pokok &amp; Tunjangan</span>
                                                     <p className="text-lg font-bold text-slate-800 mt-1">
                                                         {formatRupiah(detailData?.payroll?.total_gaji_bulanan || 0)}
                                                     </p>
                                                     <p className="text-xs text-slate-500">
-                                                        Pokok: {formatRupiah(detailData?.payroll?.gaji_pokok || 0)} | Tunj: {formatRupiah(detailData?.payroll?.tunjangan || 0)}
+                                                        Pokok: {formatRupiah(detailData?.payroll?.gaji_pokok || 0)} | Tunj. Bln: {formatRupiah(detailData?.payroll?.tunjangan_bulanan_total ?? detailData?.payroll?.tunjangan ?? 0)}
                                                     </p>
+                                                    {Number(detailData?.payroll?.tunjangan_harian_per_hari || 0) > 0 && (
+                                                        <p className="text-xs font-semibold text-amber-700">
+                                                            Tunj. Harian: +{formatRupiah(detailData.payroll.tunjangan_harian_per_hari)} / hari masuk
+                                                        </p>
+                                                    )}
+                                                    {detailData?.payroll?.allowances?.length > 0 && (
+                                                        <div className="pt-1">
+                                                            <AllowanceTagList
+                                                                allowances={detailData.payroll.allowances}
+                                                                fallbackMonthlyTotal={detailData.payroll.tunjangan || 0}
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">

@@ -318,4 +318,59 @@ class MasterPegawaiTest extends TestCase
         $this->assertFalse($borrower->is_active);
         $this->assertFalse($user->is_employee);
     }
+
+    public function test_can_create_and_update_employee_with_multiple_bulanan_and_harian_allowances(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $createRes = $this->actingAs($admin)->postJson('/api/master-pegawai', [
+            'name' => 'Satrio Lapangan',
+            'phone' => '081777666555',
+            'create_account' => false,
+            'create_payroll' => true,
+            'tipe_gaji' => 'bulanan',
+            'gaji_pokok' => 2500000,
+            'allowances' => [
+                ['nama' => 'Tunjangan Jabatan', 'jenis' => 'bulanan', 'nominal' => 250000],
+                ['nama' => 'Tunjangan Internet', 'jenis' => 'bulanan', 'nominal' => 100000],
+                ['nama' => 'Uang Makan', 'jenis' => 'harian', 'nominal' => 25000],
+            ],
+            'tanggal_gajian' => 5,
+            'create_borrower' => false,
+        ]);
+
+        $createRes->assertStatus(201)
+            ->assertJsonPath('success', true);
+
+        $payroll = PayrollMember::query()->where('nama', 'Satrio Lapangan')->firstOrFail();
+        $this->assertSame(350000, (int) $payroll->tunjangan);
+        $this->assertSame(3, $payroll->allowances()->count());
+
+        $empId = 'p_' . $payroll->id;
+
+        $detailRes = $this->actingAs($admin)->getJson("/api/master-pegawai/{$empId}")
+            ->assertOk();
+        $detailRes->assertJsonPath('data.payroll.tunjangan_bulanan_total', 350000);
+        $detailRes->assertJsonPath('data.payroll.tunjangan_harian_per_hari', 25000);
+
+        $updateRes = $this->actingAs($admin)->putJson("/api/master-pegawai/{$empId}", [
+            'name' => 'Satrio Lapangan',
+            'phone' => '081777666555',
+            'tipe_gaji' => 'bulanan',
+            'gaji_pokok' => 2600000,
+            'allowances' => [
+                ['nama' => 'Tunjangan Jabatan', 'jenis' => 'bulanan', 'nominal' => 400000],
+                ['nama' => 'Uang Makan', 'jenis' => 'harian', 'nominal' => 30000],
+                ['nama' => 'Uang Bensin', 'jenis' => 'harian', 'nominal' => 20000],
+            ],
+            'tanggal_gajian' => 5,
+        ]);
+
+        $updateRes->assertOk()->assertJsonPath('success', true);
+
+        $payroll->refresh();
+        $this->assertSame(400000, (int) $payroll->tunjangan);
+        $this->assertSame(50000, (int) $payroll->getDailyAllowanceRate());
+        $this->assertSame(3, $payroll->allowances()->count());
+    }
 }

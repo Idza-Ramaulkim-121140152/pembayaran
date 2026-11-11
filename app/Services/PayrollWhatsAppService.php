@@ -178,11 +178,38 @@ class PayrollWhatsAppService
             $attendanceLines[] = "📝 *Catatan Absensi:* {$attendanceNote}";
         }
 
-        $salaryLines = [
-            '• Jumlah Gaji (Bruto): *' . $this->formatRupiah($grossNominal) . '*',
-            '• Sudah Diambil / Dibayar Sebelumnya (Periode Ini): ' . $this->formatRupiah($previousPaidInPeriod),
-            '• Potongan Hutang / Kasbon: ' . $this->formatRupiah($loanDeduction),
-        ];
+        $salaryLines = [];
+        $allowanceBreakdown = is_array($payment->allowance_breakdown)
+            ? $payment->allowance_breakdown
+            : ($context['allowance_breakdown'] ?? null);
+
+        if (is_array($allowanceBreakdown)) {
+            $baseSalary = (int) round((float) ($allowanceBreakdown['gaji_pokok'] ?? 0));
+            if ($baseSalary > 0) {
+                $salaryLines[] = '• Gaji Pokok: ' . $this->formatRupiah($baseSalary);
+            }
+            foreach (($allowanceBreakdown['items'] ?? []) as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $itemName = trim((string) ($item['nama'] ?? 'Tunjangan'));
+                $itemType = strtolower((string) ($item['jenis'] ?? 'bulanan'));
+                $itemNominal = (int) round((float) ($item['nominal'] ?? 0));
+                $multiplier = (int) ($item['multiplier'] ?? 1);
+                $subtotal = (int) round((float) ($item['subtotal'] ?? 0));
+
+                if ($itemType === 'harian') {
+                    $salaryLines[] = "• Tunjangan Harian ({$itemName}): {$multiplier} hr x "
+                        . $this->formatRupiah($itemNominal) . ' = ' . $this->formatRupiah($subtotal);
+                } else {
+                    $salaryLines[] = "• Tunjangan Bulanan ({$itemName}): " . $this->formatRupiah($subtotal);
+                }
+            }
+        }
+
+        $salaryLines[] = '• Total Jumlah Gaji (Bruto): *' . $this->formatRupiah($grossNominal) . '*';
+        $salaryLines[] = '• Sudah Diambil / Dibayar Sebelumnya (Periode Ini): ' . $this->formatRupiah($previousPaidInPeriod);
+        $salaryLines[] = '• Potongan Hutang / Kasbon: ' . $this->formatRupiah($loanDeduction);
 
         if ($remainingLoanAfter !== null) {
             $salaryLines[] = '• Sisa Hutang / Pinjaman Setelah Pembayaran: ' . $this->formatRupiah($remainingLoanAfter);

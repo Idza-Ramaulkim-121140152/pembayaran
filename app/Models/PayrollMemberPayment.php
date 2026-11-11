@@ -21,6 +21,7 @@ class PayrollMemberPayment extends Model
         'account_number',
         'account_holder',
         'attendance_summary',
+        'allowance_breakdown',
         'whatsapp_status',
         'whatsapp_sent_at',
         'whatsapp_error',
@@ -32,6 +33,7 @@ class PayrollMemberPayment extends Model
         'loan_deduction_amount' => 'decimal:0',
         'cash_paid_amount' => 'decimal:0',
         'attendance_summary' => 'array',
+        'allowance_breakdown' => 'array',
         'whatsapp_sent_at' => 'datetime',
     ];
 
