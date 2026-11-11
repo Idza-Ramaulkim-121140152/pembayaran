@@ -20,7 +20,8 @@ class FinancialLedgerService
         Invoice $invoice, 
         ?int $actorId = null, 
         string $transactionStatus = FinancialTransaction::STATUS_CONFIRMED,
-        ?string $confirmationMethod = null
+        ?string $confirmationMethod = null,
+        array $extraMeta = []
     ): ?FinancialTransaction
     {
         if (!$this->isReady()) {
@@ -135,6 +136,15 @@ class FinancialLedgerService
             ];
         }
 
+        $settledWebhookLog = null;
+        if (class_exists(\App\Models\QrisWebhookLog::class) && Schema::hasTable('qris_webhook_logs')) {
+            $settledWebhookLog = \App\Models\QrisWebhookLog::query()
+                ->where('invoice_id', $invoice->id)
+                ->where('status', 'settled')
+                ->latest('id')
+                ->first();
+        }
+
         // Tentukan metode konfirmasi: unique_code (Kode Unik), wa_photo (Kirim Foto WA), atau manual
         if (!$confirmationMethod) {
             if ($capture && in_array($capture->source, ['whatsapp_webhook', 'whatsapp'], true)) {
@@ -142,7 +152,7 @@ class FinancialLedgerService
             } elseif ($paymentProofData && data_get($paymentProofData, 'source') === 'whatsapp_webhook') {
                 $confirmationMethod = 'wa_photo';
             } elseif (
-                (class_exists(\App\Models\QrisWebhookLog::class) && Schema::hasTable('qris_webhook_logs') && \App\Models\QrisWebhookLog::where('invoice_id', $invoice->id)->where('status', 'settled')->exists())
+                $settledWebhookLog !== null
                 || str_starts_with((string) $invoice->qris_transaction_number, 'QG-')
                 || $invoice->qris_sender === 'GoPay QRIS'
                 || ((int) $invoice->qris_unique_code > 0 && $invoice->qris_payment_time && !$capture)
@@ -152,6 +162,37 @@ class FinancialLedgerService
                 $confirmationMethod = 'manual';
             }
         }
+
+        $uniqueCodeMeta = $this->resolveQrisUniqueCodeMeta(
+            $invoice,
+            $customer,
+            $confirmationMethod,
+            $settledWebhookLog,
+            $extraMeta
+        );
+
+        $meta = array_merge([
+            'invoice_link' => $invoice->invoice_link,
+            'customer_id' => $invoice->customer_id,
+            'pppoe_username' => $pppoeUsername,
+            'status' => $invoice->status,
+            'confirmation_method' => $confirmationMethod,
+            'received_via_id' => $receivedViaOption?->id,
+            'received_via_name' => $receivedViaName,
+            'payment_receiver_user_id' => $paymentReceiver?->id,
+            'payment_receiver_name' => $paymentReceiver?->name,
+            'payment_receiver_is_company_finance' => $paymentReceiver
+                ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
+                : false,
+            'qris_payment_time' => $this->formatSafeIsoDateTime($invoice->qris_payment_time),
+            'qris_sender' => $invoice->qris_sender,
+            'qris_transaction_number' => $invoice->qris_transaction_number,
+            'payment_proof' => $paymentProofData,
+            'media' => $paymentProofData ? [
+                'path' => $paymentProofData['media_path'],
+                'url' => $paymentProofData['proof_url'],
+            ] : null,
+        ], $uniqueCodeMeta);
 
         return $query->updateOrCreate(
             [
@@ -168,30 +209,41 @@ class FinancialLedgerService
                 'created_by' => $actorId,
                 'updated_by' => $actorId,
                 'status' => $transactionStatus,
-                'meta' => [
-                    'invoice_link' => $invoice->invoice_link,
-                    'customer_id' => $invoice->customer_id,
-                    'pppoe_username' => $pppoeUsername,
-                    'status' => $invoice->status,
-                    'confirmation_method' => $confirmationMethod,
-                    'received_via_id' => $receivedViaOption?->id,
-                    'received_via_name' => $receivedViaName,
-                    'payment_receiver_user_id' => $paymentReceiver?->id,
-                    'payment_receiver_name' => $paymentReceiver?->name,
-                    'payment_receiver_is_company_finance' => $paymentReceiver
-                        ? app(CompanyFinanceReceiverService::class)->isCompanyFinanceUserId($paymentReceiver->id)
-                        : false,
-                    'qris_payment_time' => $this->formatSafeIsoDateTime($invoice->qris_payment_time),
-                    'qris_sender' => $invoice->qris_sender,
-                    'qris_transaction_number' => $invoice->qris_transaction_number,
-                    'payment_proof' => $paymentProofData,
-                    'media' => $paymentProofData ? [
-                        'path' => $paymentProofData['media_path'],
-                        'url' => $paymentProofData['proof_url'],
-                    ] : null,
-                ],
+                'meta' => $meta,
             ]
         );
+    }
+
+    /**
+     * Ekstrak metadata kode unik QRIS untuk disimpan di meta mutasi keuangan.
+     */
+    private function resolveQrisUniqueCodeMeta(
+        Invoice $invoice,
+        ?Customer $customer,
+        string $confirmationMethod,
+        $settledWebhookLog = null,
+        array $extraMeta = []
+    ): array {
+        $settledVia = $extraMeta['settled_via'] ?? ($settledWebhookLog ? 'qris_webhook' : null);
+        $breakdown = FinancialTransaction::resolveUniqueCodeBreakdown(
+            [],
+            (float) $invoice->amount,
+            $confirmationMethod,
+            $invoice,
+            $customer?->package,
+            $settledWebhookLog,
+            $extraMeta
+        );
+
+        return array_filter([
+            'settled_via' => $settledVia,
+            'qris_unique_code' => $breakdown['code'] ?? null,
+            'qris_generated_unique_code' => $breakdown['generated_code'] ?? ((int) ($invoice->qris_unique_code ?? 0) ?: null),
+            'qris_base_amount' => $breakdown ? $breakdown['base_amount'] : null,
+            'qris_expected_amount' => $breakdown['expected_amount'] ?? ($invoice->qris_expected_amount !== null ? (float) $invoice->qris_expected_amount : null),
+            'qris_settled_amount' => $breakdown['settled_amount'] ?? null,
+            'qris_webhook_device' => $breakdown['webhook_device'] ?? ($extraMeta['qris_webhook_device'] ?? $settledWebhookLog?->device_name),
+        ], fn ($value) => $value !== null && $value !== '');
     }
 
     private function isReady(): bool

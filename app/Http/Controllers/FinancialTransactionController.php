@@ -226,7 +226,7 @@ class FinancialTransactionController extends Controller
                 'updater:id,name',
                 'reference' => function (\Illuminate\Database\Eloquent\Relations\MorphTo $morphTo) {
                     $morphTo->morphWith([
-                        \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username', 'approvedPaymentCapture'],
+                        \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username,package_id', 'customer.package:id,name,price', 'approvedPaymentCapture', 'settledQrisWebhookLog'],
                         \App\Models\Pengeluaran::class => ['user:id,name', 'expenseCategory:id,name'],
                         \App\Models\Customer::class => ['package:id,name'],
                     ]);
@@ -257,7 +257,7 @@ class FinancialTransactionController extends Controller
             'updater:id,name',
             'reference' => function (\Illuminate\Database\Eloquent\Relations\MorphTo $morphTo) {
                 $morphTo->morphWith([
-                    \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username', 'approvedPaymentCapture'],
+                    \App\Models\Invoice::class => ['customer:id,name,phone,pppoe_username,package_id', 'customer.package:id,name,price', 'approvedPaymentCapture', 'settledQrisWebhookLog'],
                     \App\Models\Pengeluaran::class => ['user:id,name', 'expenseCategory:id,name'],
                     \App\Models\Customer::class => ['package:id,name'],
                 ]);

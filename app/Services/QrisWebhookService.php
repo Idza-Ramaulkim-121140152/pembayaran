@@ -336,7 +336,12 @@ class QrisWebhookService
                 $invoice->fresh(), 
                 $defaultFinanceId, 
                 \App\Models\FinancialTransaction::STATUS_CONFIRMED, 
-                'unique_code'
+                'unique_code',
+                [
+                    'settled_via' => 'qris_webhook',
+                    'qris_settled_amount' => (float) $amount,
+                    'qris_webhook_device' => $deviceName,
+                ]
             );
         } catch (\Throwable $ledgerEx) {
             Log::error('DynamicQris settle: FinancialLedgerService error: ' . $ledgerEx->getMessage());

@@ -116,4 +116,17 @@ class Invoice extends Model
     {
         return $this->hasOne(BillingPaymentCapture::class)->where('match_status', 'approved');
     }
+
+    public function qrisWebhookLogs()
+    {
+        return $this->hasMany(QrisWebhookLog::class);
+    }
+
+    public function settledQrisWebhookLog()
+    {
+        return $this->hasOne(QrisWebhookLog::class)->ofMany(
+            ['id' => 'max'],
+            fn ($query) => $query->where('status', 'settled')
+        );
+    }
 }

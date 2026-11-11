@@ -275,6 +275,43 @@ function MutasiPage() {
         }
     };
 
+    const getUniqueCodeInfo = (row) => {
+        if (!row || row?.type === 'expense') return null;
+
+        const apiInfo = row?.unique_code_info;
+        if (apiInfo && (apiInfo.has_unique_code || apiInfo.is_exact_amount_settlement || row?.confirmation_via === 'unique_code')) {
+            return apiInfo;
+        }
+
+        const metaCode = Number(row?.meta?.qris_unique_code || 0);
+        const refCode = Number(row?.reference?.qris_unique_code || 0);
+        const code = metaCode > 0 ? metaCode : (refCode > 0 ? refCode : null);
+
+        if (!code && row?.confirmation_via !== 'unique_code') {
+            return null;
+        }
+
+        const ledgerAmount = Math.abs(Number(row?.amount || 0));
+        const expectedAmount = Number(row?.meta?.qris_expected_amount || row?.reference?.qris_expected_amount || 0) || null;
+        const settledAmount = Number(row?.meta?.qris_settled_amount || 0) || null;
+        const totalAmount = settledAmount || expectedAmount || (code ? ledgerAmount + code : ledgerAmount);
+        const baseAmount = Number(row?.meta?.qris_base_amount || 0) || (code && totalAmount > code ? totalAmount - code : ledgerAmount);
+
+        return {
+            has_unique_code: Boolean(code && code > 0),
+            code: code || null,
+            formatted_code: code ? `+${code}` : null,
+            base_amount: baseAmount,
+            expected_amount: expectedAmount || totalAmount,
+            settled_amount: settledAmount,
+            total_amount: totalAmount,
+            amount_differs_from_ledger: Math.abs(totalAmount - ledgerAmount) > 0.5,
+            is_exact_amount_settlement: !code,
+            generated_code: Number(row?.reference?.qris_unique_code || row?.meta?.qris_generated_unique_code || 0) || null,
+            webhook_device: row?.meta?.qris_webhook_device || null,
+        };
+    };
+
     const renderConfirmationViaBadge = (row) => {
         if (row?.type === 'expense') {
             return <span className="text-slate-400 text-xs">-</span>;
@@ -283,14 +320,40 @@ function MutasiPage() {
         const method = row?.confirmation_via || row?.meta?.confirmation_method || 'manual';
 
         if (method === 'unique_code') {
+            const uniqueInfo = getUniqueCodeInfo(row);
             return (
-                <span 
-                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 shadow-xs whitespace-nowrap"
-                    title="Otomatis terkonfirmasi via kode unik QRIS dinamis"
-                >
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    Kode Unik
-                </span>
+                <div className="inline-flex flex-col items-start gap-1">
+                    <span 
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 shadow-xs whitespace-nowrap"
+                        title="Otomatis terkonfirmasi via kode unik QRIS dinamis"
+                    >
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Kode Unik
+                    </span>
+                    {uniqueInfo?.has_unique_code ? (
+                        <div className="inline-flex flex-wrap items-center gap-1 text-[11px] leading-tight">
+                            <span
+                                className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50/90 px-1.5 py-0.5 font-mono font-bold text-emerald-800 whitespace-nowrap"
+                                title={`Kode unik pembayaran: +${uniqueInfo.code}`}
+                            >
+                                Kode: {uniqueInfo.formatted_code || `+${uniqueInfo.code}`}
+                            </span>
+                            {uniqueInfo.amount_differs_from_ledger && uniqueInfo.total_amount > 0 && (
+                                <span
+                                    className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-semibold text-slate-700 whitespace-nowrap"
+                                    title={`Nominal pokok ${formatCurrency(uniqueInfo.base_amount)} + kode unik ${uniqueInfo.code}`}
+                                >
+                                    QRIS: {formatCurrency(uniqueInfo.total_amount)}
+                                </span>
+                            )}
+                        </div>
+                    ) : uniqueInfo?.is_exact_amount_settlement ? (
+                        <span className="text-[11px] font-medium text-emerald-700/80 whitespace-nowrap">
+                            QRIS Nominal Pas
+                            {uniqueInfo.generated_code ? ` (Kode tagihan: +${uniqueInfo.generated_code})` : ''}
+                        </span>
+                    ) : null}
+                </div>
             );
         }
 
@@ -1568,6 +1631,72 @@ function MutasiPage() {
                                         </div>
 
                                         <div className="space-y-1.5">
+                                            {((item.confirmation_via || item.meta?.confirmation_method) === 'unique_code' || getUniqueCodeInfo(item)?.has_unique_code) && (() => {
+                                                const uniqueInfo = getUniqueCodeInfo(item);
+                                                return (
+                                                    <div className="mb-2 rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 space-y-1.5 text-xs">
+                                                        <div className="flex items-center justify-between gap-2 pb-1 border-b border-emerald-200/70">
+                                                            <span className="font-bold uppercase tracking-wider text-emerald-900">
+                                                                Informasi Kode Unik QRIS
+                                                            </span>
+                                                            {uniqueInfo?.has_unique_code ? (
+                                                                <span className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 font-mono text-xs font-extrabold text-emerald-700 shadow-xs">
+                                                                    Kode: {uniqueInfo.formatted_code || `+${uniqueInfo.code}`}
+                                                                </span>
+                                                            ) : (
+                                                                <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                                                    Nominal Pas (Tanpa Kode)
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {uniqueInfo?.has_unique_code ? (
+                                                            <>
+                                                                <div className="flex justify-between items-center gap-2">
+                                                                    <span className="text-slate-600 font-medium">Tagihan Pokok:</span>
+                                                                    <span className="font-semibold text-slate-800">
+                                                                        {formatCurrency(uniqueInfo.base_amount)}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex justify-between items-center gap-2">
+                                                                    <span className="text-slate-600 font-medium">Kode Unik Pembayaran:</span>
+                                                                    <span className="font-mono font-bold text-emerald-700">
+                                                                        +{uniqueInfo.code} ({formatCurrency(uniqueInfo.code)})
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex justify-between items-center gap-2 pt-1 border-t border-emerald-200/70">
+                                                                    <span className="text-emerald-900 font-bold">Total Bayar QRIS (+ Kode Unik):</span>
+                                                                    <span className="font-bold text-emerald-800">
+                                                                        {formatCurrency(uniqueInfo.total_amount)}
+                                                                    </span>
+                                                                </div>
+                                                            </>
+                                                        ) : (
+                                                            <div className="flex justify-between items-center gap-2">
+                                                                <span className="text-slate-600 font-medium">Nominal Dibayar QRIS:</span>
+                                                                <span className="font-semibold text-slate-800">
+                                                                    {formatCurrency(uniqueInfo?.total_amount ?? item.amount)}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                        {uniqueInfo?.is_exact_amount_settlement && uniqueInfo?.generated_code && (
+                                                            <div className="flex justify-between items-center gap-2">
+                                                                <span className="text-slate-600 font-medium">Kode Unik Tagihan:</span>
+                                                                <span className="font-mono font-semibold text-slate-700">
+                                                                    +{uniqueInfo.generated_code} (pelanggan transfer nominal pas)
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                        {uniqueInfo?.webhook_device && (
+                                                            <div className="flex justify-between items-center gap-2">
+                                                                <span className="text-slate-600 font-medium">Perangkat Webhook:</span>
+                                                                <span className="font-mono text-[11px] font-semibold text-slate-700">
+                                                                    {uniqueInfo.webhook_device}
+                                                                </span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                             {hasQrisMeta && (
                                                 <>
                                                     <div className="flex justify-between items-start gap-2">
