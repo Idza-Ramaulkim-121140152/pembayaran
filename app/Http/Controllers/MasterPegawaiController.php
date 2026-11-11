@@ -178,6 +178,7 @@ class MasterPegawaiController extends Controller
                     'tanggal_gajian' => $payroll->tanggal_gajian,
                     'nama_bank' => $payroll->nama_bank,
                     'nomor_rekening' => $payroll->nomor_rekening,
+                    'atas_nama_rekening' => $payroll->atas_nama_rekening ?? null,
                     'is_active' => (bool) $payroll->is_active,
                     'unpaid_total' => $unpaidPayroll,
                 ] : null,
@@ -236,6 +237,7 @@ class MasterPegawaiController extends Controller
                     'tanggal_gajian' => $pm->tanggal_gajian,
                     'nama_bank' => $pm->nama_bank,
                     'nomor_rekening' => $pm->nomor_rekening,
+                    'atas_nama_rekening' => $pm->atas_nama_rekening ?? null,
                     'is_active' => (bool) $pm->is_active,
                     'unpaid_total' => (float) ($pm->unpaid_total ?? 0),
                 ],
@@ -442,6 +444,7 @@ class MasterPegawaiController extends Controller
             'tanggal_gajian' => 'nullable|integer|min:1|max:31',
             'nama_bank' => 'nullable|string|max:100',
             'nomor_rekening' => 'nullable|string|max:100',
+            'atas_nama_rekening' => 'nullable|string|max:150',
             // Borrower profile fields
             'create_borrower' => 'nullable|boolean',
             'borrower_notes' => 'nullable|string|max:500',
@@ -461,7 +464,7 @@ class MasterPegawaiController extends Controller
             // 1. Create Payroll Member
             $payrollMember = null;
             if ($createPayroll) {
-                $payrollMember = PayrollMember::create([
+                $payrollPayload = [
                     'nama' => $validated['name'],
                     'telepon' => $validated['phone'] ?? null,
                     'tipe_gaji' => $validated['tipe_gaji'] ?? 'bulanan',
@@ -471,7 +474,11 @@ class MasterPegawaiController extends Controller
                     'nama_bank' => $validated['nama_bank'] ?? null,
                     'nomor_rekening' => $validated['nomor_rekening'] ?? null,
                     'is_active' => true,
-                ]);
+                ];
+                if (Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+                    $payrollPayload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
+                }
+                $payrollMember = PayrollMember::create($payrollPayload);
             }
 
             // 2. Create User account
@@ -564,6 +571,7 @@ class MasterPegawaiController extends Controller
             'tanggal_gajian' => 'nullable|integer|min:1|max:31',
             'nama_bank' => 'nullable|string|max:100',
             'nomor_rekening' => 'nullable|string|max:100',
+            'atas_nama_rekening' => 'nullable|string|max:150',
             'is_active' => 'nullable|boolean',
             // Borrower profile notes
             'borrower_notes' => 'nullable|string|max:500',
@@ -650,12 +658,15 @@ class MasterPegawaiController extends Controller
                 if ($request->has('nomor_rekening')) {
                     $payrollUpdates['nomor_rekening'] = $validated['nomor_rekening'];
                 }
+                if ($request->has('atas_nama_rekening') && Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+                    $payrollUpdates['atas_nama_rekening'] = $validated['atas_nama_rekening'];
+                }
                 if ($request->has('is_active')) {
                     $payrollUpdates['is_active'] = (bool) $validated['is_active'];
                 }
                 $payroll->update($payrollUpdates);
-            } elseif ($user && ($request->has('gaji_pokok') || $request->has('nama_bank') || $request->has('tipe_gaji'))) {
-                $payroll = PayrollMember::create([
+            } elseif ($user && ($request->has('gaji_pokok') || $request->has('nama_bank') || $request->has('nomor_rekening') || $request->has('atas_nama_rekening') || $request->has('tipe_gaji'))) {
+                $payrollPayload = [
                     'nama' => $name,
                     'telepon' => $phone,
                     'tipe_gaji' => $validated['tipe_gaji'] ?? 'bulanan',
@@ -665,7 +676,11 @@ class MasterPegawaiController extends Controller
                     'nama_bank' => $validated['nama_bank'] ?? null,
                     'nomor_rekening' => $validated['nomor_rekening'] ?? null,
                     'is_active' => true,
-                ]);
+                ];
+                if (Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+                    $payrollPayload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
+                }
+                $payroll = PayrollMember::create($payrollPayload);
                 $user->update(['payroll_member_id' => $payroll->id]);
             }
 

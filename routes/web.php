@@ -274,7 +274,11 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
     // User API (any authenticated user)
     Route::get('/api/user', function () {
-        return response()->json(auth()->user());
+        $user = auth()->user();
+        if ($user) {
+            $user->loadMissing('payrollMember');
+        }
+        return response()->json($user);
     })->name('api.user');
     Route::get('/api/staff-users-lite', function () {
         return response()->json([
@@ -303,6 +307,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
 
     // Profile (any authenticated user)
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::patch('/api/profile/bank', [ProfileController::class, 'updateBank'])->name('api.profile.bank.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
     Route::post('/api/customers/{customer}/mobile-password/reset', [CustomerMobilePasswordController::class, 'reset'])

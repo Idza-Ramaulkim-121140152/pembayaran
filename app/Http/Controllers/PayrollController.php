@@ -9,12 +9,17 @@ use App\Models\PayrollMemberPayment;
 use App\Models\PayrollProject;
 use App\Models\PayrollProjectDetail;
 use App\Models\User;
+use App\Services\AttendanceService;
 use App\Services\BorrowerLoanService;
 use App\Services\FinancialLedgerService;
 use App\Services\InventoryService;
+use App\Services\PayrollWhatsAppService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class PayrollController extends Controller
@@ -23,6 +28,8 @@ class PayrollController extends Controller
         private FinancialLedgerService $ledgerService,
         private InventoryService $inventoryService,
         private BorrowerLoanService $borrowerLoanService,
+        private AttendanceService $attendanceService,
+        private PayrollWhatsAppService $payrollWhatsAppService,
     )
     {
     }
@@ -32,19 +39,26 @@ class PayrollController extends Controller
      */
     public function index(Request $request)
     {
+        $hasAtasNamaColumn = Schema::hasColumn('payroll_members', 'atas_nama_rekening');
+
+        $selectColumns = [
+            'payroll_members.id',
+            'payroll_members.nama',
+            'payroll_members.telepon',
+            'payroll_members.tipe_gaji',
+            'payroll_members.gaji_pokok',
+            'payroll_members.tunjangan',
+            'payroll_members.tanggal_gajian',
+            'payroll_members.nama_bank',
+            'payroll_members.nomor_rekening',
+            'payroll_members.is_active',
+        ];
+        if ($hasAtasNamaColumn) {
+            $selectColumns[] = 'payroll_members.atas_nama_rekening';
+        }
+
         // Ringkasan gaji per anggota: total bagian - total pembayaran + info gaji bulanan
-        $unpaidSummary = PayrollMember::select(
-                'payroll_members.id',
-                'payroll_members.nama',
-                'payroll_members.telepon',
-                'payroll_members.tipe_gaji',
-                'payroll_members.gaji_pokok',
-                'payroll_members.tunjangan',
-                'payroll_members.tanggal_gajian',
-                'payroll_members.nama_bank',
-                'payroll_members.nomor_rekening',
-                'payroll_members.is_active'
-            )
+        $unpaidSummary = PayrollMember::select($selectColumns)
             ->selectRaw('COALESCE((
                 SELECT SUM(ppm.bagian) FROM payroll_project_members ppm WHERE ppm.payroll_member_id = payroll_members.id
             ), 0) as total_bagian')
@@ -105,18 +119,19 @@ class PayrollController extends Controller
     public function storeMember(Request $request)
     {
         $validated = $request->validate([
-            'nama'           => 'required|string|max:255',
-            'telepon'        => 'nullable|string|max:20',
-            'tipe_gaji'      => 'nullable|in:bulanan,proyek,campuran',
-            'gaji_pokok'     => 'nullable|numeric|min:0',
-            'tunjangan'      => 'nullable|numeric|min:0',
-            'tanggal_gajian' => 'nullable|integer|min:1|max:31',
-            'nama_bank'      => 'nullable|string|max:100',
-            'nomor_rekening' => 'nullable|string|max:100',
-            'is_active'      => 'nullable|boolean',
+            'nama'               => 'required|string|max:255',
+            'telepon'            => 'nullable|string|max:20',
+            'tipe_gaji'          => 'nullable|in:bulanan,proyek,campuran',
+            'gaji_pokok'         => 'nullable|numeric|min:0',
+            'tunjangan'          => 'nullable|numeric|min:0',
+            'tanggal_gajian'     => 'nullable|integer|min:1|max:31',
+            'nama_bank'          => 'nullable|string|max:100',
+            'nomor_rekening'     => 'nullable|string|max:100',
+            'atas_nama_rekening' => 'nullable|string|max:150',
+            'is_active'          => 'nullable|boolean',
         ]);
 
-        $member = PayrollMember::create([
+        $payload = [
             'nama'           => $validated['nama'],
             'telepon'        => $validated['telepon'] ?? null,
             'tipe_gaji'      => $validated['tipe_gaji'] ?? 'bulanan',
@@ -126,7 +141,13 @@ class PayrollController extends Controller
             'nama_bank'      => $validated['nama_bank'] ?? null,
             'nomor_rekening' => $validated['nomor_rekening'] ?? null,
             'is_active'      => $validated['is_active'] ?? true,
-        ]);
+        ];
+
+        if (Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+            $payload['atas_nama_rekening'] = $validated['atas_nama_rekening'] ?? null;
+        }
+
+        $member = PayrollMember::create($payload);
 
         return response()->json(['data' => $member, 'message' => 'Karyawan / Anggota berhasil ditambahkan'], 201);
     }
@@ -138,16 +159,21 @@ class PayrollController extends Controller
     {
         $member = PayrollMember::findOrFail($id);
         $validated = $request->validate([
-            'nama'           => 'required|string|max:255',
-            'telepon'        => 'nullable|string|max:20',
-            'tipe_gaji'      => 'nullable|in:bulanan,proyek,campuran',
-            'gaji_pokok'     => 'nullable|numeric|min:0',
-            'tunjangan'      => 'nullable|numeric|min:0',
-            'tanggal_gajian' => 'nullable|integer|min:1|max:31',
-            'nama_bank'      => 'nullable|string|max:100',
-            'nomor_rekening' => 'nullable|string|max:100',
-            'is_active'      => 'nullable|boolean',
+            'nama'               => 'required|string|max:255',
+            'telepon'            => 'nullable|string|max:20',
+            'tipe_gaji'          => 'nullable|in:bulanan,proyek,campuran',
+            'gaji_pokok'         => 'nullable|numeric|min:0',
+            'tunjangan'          => 'nullable|numeric|min:0',
+            'tanggal_gajian'     => 'nullable|integer|min:1|max:31',
+            'nama_bank'          => 'nullable|string|max:100',
+            'nomor_rekening'     => 'nullable|string|max:100',
+            'atas_nama_rekening' => 'nullable|string|max:150',
+            'is_active'          => 'nullable|boolean',
         ]);
+
+        if (!Schema::hasColumn('payroll_members', 'atas_nama_rekening')) {
+            unset($validated['atas_nama_rekening']);
+        }
 
         $member->update($validated);
 
@@ -369,6 +395,17 @@ class PayrollController extends Controller
             'catatan' => 'nullable|string|max:255',
             'loan_handling' => 'nullable|in:cash,deduct_loan',
             'loan_deduction_amount' => 'nullable|numeric|min:0',
+            'payment_method' => 'nullable|in:transfer,cash',
+            'bank_name' => 'nullable|string|max:100',
+            'account_number' => 'nullable|string|max:100',
+            'account_holder' => 'nullable|string|max:150',
+            'save_bank_to_member' => 'nullable|boolean',
+            'telepon' => 'nullable|string|max:30',
+            'attendance_start_date' => 'nullable|date',
+            'attendance_end_date' => 'nullable|date',
+            'attendance_confirmed' => 'nullable|boolean',
+            'attendance_note' => 'nullable|string|max:255',
+            'send_whatsapp' => 'nullable|boolean',
         ]);
 
         $member = PayrollMember::findOrFail($memberId);
@@ -424,9 +461,95 @@ class PayrollController extends Controller
 
         $cashPaidAmount = max(0, $nominal - $loanDeductionAmount);
 
+        $requestedBankName = trim((string) ($validated['bank_name'] ?? ''));
+        $requestedAccountNumber = trim((string) ($validated['account_number'] ?? ''));
+        $requestedAccountHolder = trim((string) ($validated['account_holder'] ?? ''));
+
+        $effectiveBankName = $requestedBankName !== '' ? $requestedBankName : trim((string) ($member->nama_bank ?? ''));
+        $effectiveAccountNumber = $requestedAccountNumber !== '' ? $requestedAccountNumber : trim((string) ($member->nomor_rekening ?? ''));
+        $effectiveAccountHolder = $requestedAccountHolder !== ''
+            ? $requestedAccountHolder
+            : trim((string) ($member->atas_nama_rekening ?: $member->nama));
+
+        $paymentMethod = $validated['payment_method'] ?? null;
+        if (!$paymentMethod) {
+            $isBankTransfer = $effectiveBankName !== '' && !in_array(strtolower($effectiveBankName), ['cash', 'tunai'], true);
+            $paymentMethod = $isBankTransfer ? 'transfer' : 'cash';
+        }
+
+        if ($paymentMethod === 'transfer' && $effectiveBankName === '') {
+            return response()->json(['message' => 'Nama bank tujuan wajib diisi jika memilih metode transfer bank.'], 422);
+        }
+
+        if ($paymentMethod === 'cash') {
+            $snapshotBankName = null;
+            $snapshotAccountNumber = null;
+            $snapshotAccountHolder = null;
+        } else {
+            $snapshotBankName = $effectiveBankName;
+            $snapshotAccountNumber = $effectiveAccountNumber !== '' ? $effectiveAccountNumber : null;
+            $snapshotAccountHolder = $effectiveAccountHolder !== '' ? $effectiveAccountHolder : null;
+        }
+
+        $attendanceFull = $this->attendanceService->getEmployeePayrollAttendanceSummary(
+            $member,
+            $validated['attendance_start_date'] ?? null,
+            $validated['attendance_end_date'] ?? null
+        );
+        $attendanceSnapshot = array_merge(Arr::except($attendanceFull, ['recent_records']), [
+            'confirmed' => (bool) ($validated['attendance_confirmed'] ?? true),
+            'note' => !empty($validated['attendance_note']) ? trim((string) $validated['attendance_note']) : null,
+        ]);
+
+        $previousPaidInPeriod = (float) PayrollMemberPayment::query()
+            ->where('payroll_member_id', $memberId)
+            ->whereBetween('created_at', [
+                Carbon::parse($attendanceFull['period_start'])->startOfDay(),
+                Carbon::parse($attendanceFull['period_end'])->endOfDay(),
+            ])
+            ->sum('nominal');
+
         try {
-            $payment = DB::transaction(function () use ($memberId, $nominal, $validated, $loanHandling, $loanDeductionAmount, $cashPaidAmount, $borrower) {
-                $payment = PayrollMemberPayment::create([
+            $payment = DB::transaction(function () use (
+                $member,
+                $memberId,
+                $nominal,
+                $validated,
+                $loanHandling,
+                $loanDeductionAmount,
+                $cashPaidAmount,
+                $borrower,
+                $paymentMethod,
+                $snapshotBankName,
+                $snapshotAccountNumber,
+                $snapshotAccountHolder,
+                $attendanceSnapshot,
+                $requestedBankName,
+                $requestedAccountNumber,
+                $requestedAccountHolder
+            ) {
+                $memberUpdates = [];
+                $shouldSaveBank = (bool) ($validated['save_bank_to_member'] ?? true);
+                if ($shouldSaveBank && $paymentMethod === 'transfer' && $requestedBankName !== '') {
+                    $memberUpdates['nama_bank'] = $requestedBankName;
+                    if ($requestedAccountNumber !== '' || array_key_exists('account_number', $validated)) {
+                        $memberUpdates['nomor_rekening'] = $requestedAccountNumber !== '' ? $requestedAccountNumber : null;
+                    }
+                    if (
+                        Schema::hasColumn('payroll_members', 'atas_nama_rekening')
+                        && ($requestedAccountHolder !== '' || array_key_exists('account_holder', $validated))
+                    ) {
+                        $memberUpdates['atas_nama_rekening'] = $requestedAccountHolder !== '' ? $requestedAccountHolder : null;
+                    }
+                }
+                if (!empty($validated['telepon'])) {
+                    $memberUpdates['telepon'] = trim((string) $validated['telepon']);
+                }
+                if (!empty($memberUpdates)) {
+                    $member->update($memberUpdates);
+                }
+
+                $paymentAttributes = [
                     'payroll_member_id' => $memberId,
                     'nominal' => $nominal,
                     'catatan' => $validated['catatan'] ?? null,
@@ -435,7 +558,17 @@ class PayrollController extends Controller
                     'loan_deduction_amount' => $loanDeductionAmount,
                     'cash_paid_amount' => $cashPaidAmount,
                     'borrower_id' => $borrower?->id,
-                ]);
+                ];
+
+                if (Schema::hasColumn('payroll_member_payments', 'payment_method')) {
+                    $paymentAttributes['payment_method'] = $paymentMethod;
+                    $paymentAttributes['bank_name'] = $snapshotBankName;
+                    $paymentAttributes['account_number'] = $snapshotAccountNumber;
+                    $paymentAttributes['account_holder'] = $snapshotAccountHolder;
+                    $paymentAttributes['attendance_summary'] = $attendanceSnapshot;
+                }
+
+                $payment = PayrollMemberPayment::create($paymentAttributes);
 
                 if ($borrower && $loanDeductionAmount > 0) {
                     $settlement = $this->borrowerLoanService->settleBorrowerTotal(
@@ -456,12 +589,25 @@ class PayrollController extends Controller
                 return $payment->fresh(['member', 'borrower']);
             });
 
-            $newRemaining = $remaining - $nominal;
+            $loanAfter = $this->resolvePayrollBorrowerContext($member->fresh());
+            $whatsappResult = null;
+            if ((bool) ($validated['send_whatsapp'] ?? true)) {
+                $whatsappResult = $this->payrollWhatsAppService->sendSalarySlip($payment, [
+                    'previous_paid_in_period' => $previousPaidInPeriod,
+                    'remaining_loan_after' => $loanAfter['outstanding'] ?? 0,
+                    'attendance_summary' => $attendanceSnapshot,
+                ]);
+                $payment = $payment->fresh(['member', 'borrower']);
+            }
+
+            $newRemaining = max(0, $remaining - $nominal);
 
             return response()->json([
                 'message' => 'Pembayaran ' . number_format($nominal, 0, ',', '.') . ' untuk ' . $member->nama . ' berhasil',
                 'payment' => $payment,
                 'remaining' => $newRemaining,
+                'attendance_summary' => $attendanceSnapshot,
+                'whatsapp' => $whatsappResult,
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to pay member', ['member_id' => $memberId, 'error' => $e->getMessage()]);
@@ -470,9 +616,9 @@ class PayrollController extends Controller
     }
 
     /**
-     * Riwayat pembayaran anggota
+     * Riwayat pembayaran anggota + ringkasan absensi
      */
-    public function memberPayments($memberId)
+    public function memberPayments(Request $request, $memberId)
     {
         $member = PayrollMember::findOrFail($memberId);
         $payments = \App\Models\PayrollMemberPayment::where('payroll_member_id', $memberId)
@@ -480,10 +626,27 @@ class PayrollController extends Controller
             ->orderByDesc('created_at')
             ->get();
 
+        $attendanceSummary = $this->attendanceService->getEmployeePayrollAttendanceSummary(
+            $member,
+            $request->query('start_date'),
+            $request->query('end_date')
+        );
+
+        $alreadyPaidInPeriod = (float) PayrollMemberPayment::query()
+            ->where('payroll_member_id', $memberId)
+            ->whereBetween('created_at', [
+                Carbon::parse($attendanceSummary['period_start'])->startOfDay(),
+                Carbon::parse($attendanceSummary['period_end'])->endOfDay(),
+            ])
+            ->sum('nominal');
+
         return response()->json([
             'member' => $member,
             'payments' => $payments,
             'loan_context' => $this->resolvePayrollBorrowerContext($member),
+            'attendance_summary' => $attendanceSummary,
+            'already_paid_in_period' => $alreadyPaidInPeriod,
+            'attendance_presets' => $this->attendanceService->getPayrollAttendancePeriodPresets(),
         ]);
     }
 

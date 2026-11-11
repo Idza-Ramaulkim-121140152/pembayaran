@@ -116,6 +116,7 @@ export default function MasterPegawaiPage() {
         tanggal_gajian: 1,
         nama_bank: '',
         nomor_rekening: '',
+        atas_nama_rekening: '',
         is_active: true,
         // Borrower
         create_borrower: true,
@@ -232,6 +233,7 @@ export default function MasterPegawaiPage() {
             tanggal_gajian: 1,
             nama_bank: '',
             nomor_rekening: '',
+            atas_nama_rekening: '',
             is_active: true,
             create_borrower: true,
             borrower_notes: '',
@@ -261,6 +263,7 @@ export default function MasterPegawaiPage() {
             tanggal_gajian: emp.payroll?.tanggal_gajian || 1,
             nama_bank: emp.payroll?.nama_bank || '',
             nomor_rekening: emp.payroll?.nomor_rekening || '',
+            atas_nama_rekening: emp.payroll?.atas_nama_rekening || '',
             is_active: emp.is_active !== undefined ? emp.is_active : true,
             borrower_notes: emp.borrower?.notes || '',
         });
@@ -1015,6 +1018,16 @@ export default function MasterPegawaiPage() {
                                                     className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
                                                 />
                                             </div>
+                                            <div className="md:col-span-3">
+                                                <label className="block text-xs font-semibold text-slate-700 mb-1">Atas Nama Pemilik Rekening</label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.atas_nama_rekening}
+                                                    onChange={(e) => setFormData({ ...formData, atas_nama_rekening: e.target.value })}
+                                                    placeholder="Nama sesuai buku tabungan / e-wallet"
+                                                    className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -1279,6 +1292,16 @@ export default function MasterPegawaiPage() {
                                                 className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
                                             />
                                         </div>
+                                        <div className="md:col-span-3">
+                                            <label className="block text-xs font-semibold text-slate-700 mb-1">Atas Nama Pemilik Rekening</label>
+                                            <input
+                                                type="text"
+                                                value={formData.atas_nama_rekening}
+                                                onChange={(e) => setFormData({ ...formData, atas_nama_rekening: e.target.value })}
+                                                placeholder="Nama sesuai buku tabungan / e-wallet"
+                                                className="w-full px-3.5 py-2 rounded-xl text-sm border border-slate-200 bg-white"
+                                            />
+                                        </div>
                                     </div>
 
                                     <div className="pt-2">
@@ -1498,6 +1521,9 @@ export default function MasterPegawaiPage() {
                                                     <p className="text-sm font-bold text-slate-800 mt-1">
                                                         {detailData?.payroll?.nama_bank || '-'} {detailData?.payroll?.nomor_rekening || ''}
                                                     </p>
+                                                    {detailData?.payroll?.atas_nama_rekening && (
+                                                        <p className="text-xs text-slate-600">a.n. {detailData.payroll.atas_nama_rekening}</p>
+                                                    )}
                                                     <p className="text-xs text-slate-500">Tgl Gajian: Setiap tgl {detailData?.payroll?.tanggal_gajian || '-'}</p>
                                                 </div>
 

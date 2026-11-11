@@ -408,6 +408,11 @@ class FinancialLedgerService
                     'cash_paid_amount' => $cashPaidAmount,
                     'borrower_id' => $payment->borrower_id,
                     'borrower_loan_settlement_action_group_key' => $payment->borrower_loan_settlement_action_group_key,
+                    'payment_method' => $payment->payment_method,
+                    'bank_name' => $payment->bank_name,
+                    'account_number' => $payment->account_number,
+                    'account_holder' => $payment->account_holder,
+                    'attendance_summary' => $payment->attendance_summary,
                 ],
             ]
         );

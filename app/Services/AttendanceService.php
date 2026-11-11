@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\EmployeeAttendance;
+use App\Models\PayrollMember;
 use App\Models\SiteSetting;
 use App\Models\User;
 use Carbon\Carbon;
@@ -673,5 +674,242 @@ class AttendanceService
             Log::error('Failed to save attendance base64 photo: ' . $e->getMessage());
             return null;
         }
+    }
+
+    /**
+     * Resolve the linked user account for a payroll member.
+     *
+     * @return array{user: ?User, match_method: string}
+     */
+    public function resolveUserLinkForPayrollMember(PayrollMember $member): array
+    {
+        if (!Schema::hasTable('users')) {
+            return ['user' => null, 'match_method' => 'unlinked'];
+        }
+
+        $directUser = User::query()
+            ->where('payroll_member_id', $member->id)
+            ->first();
+
+        if ($directUser) {
+            return ['user' => $directUser, 'match_method' => 'payroll_link'];
+        }
+
+        $memberPhoneDigits = $this->normalizePhoneDigits((string) ($member->telepon ?? ''));
+        if ($memberPhoneDigits !== '') {
+            $phoneMatches = User::query()
+                ->whereNotNull('phone')
+                ->where('phone', '!=', '')
+                ->get()
+                ->filter(fn (User $user) => $this->normalizePhoneDigits((string) $user->phone) === $memberPhoneDigits)
+                ->values();
+
+            if ($phoneMatches->count() === 1) {
+                return ['user' => $phoneMatches->first(), 'match_method' => 'phone_match'];
+            }
+        }
+
+        $memberName = mb_strtolower(trim((string) ($member->nama ?? '')));
+        if ($memberName !== '') {
+            $nameMatches = User::query()
+                ->where('is_employee', true)
+                ->get()
+                ->filter(fn (User $user) => mb_strtolower(trim((string) $user->name)) === $memberName)
+                ->values();
+
+            if ($nameMatches->count() === 1) {
+                return ['user' => $nameMatches->first(), 'match_method' => 'name_match'];
+            }
+        }
+
+        return ['user' => null, 'match_method' => 'unlinked'];
+    }
+
+    public function resolveUserForPayrollMember(PayrollMember $member): ?User
+    {
+        return $this->resolveUserLinkForPayrollMember($member)['user'];
+    }
+
+    /**
+     * Summarize attendance & work duration for payroll verification and slip delivery.
+     */
+    public function getEmployeePayrollAttendanceSummary(
+        PayrollMember $member,
+        ?string $startDate = null,
+        ?string $endDate = null
+    ): array {
+        $this->ensureTableExists();
+
+        $period = $this->resolveAttendancePeriod($startDate, $endDate);
+        $link = $this->resolveUserLinkForPayrollMember($member);
+        /** @var ?User $user */
+        $user = $link['user'];
+
+        $baseSummary = [
+            'linked' => $user !== null,
+            'match_method' => $link['match_method'],
+            'user' => $user ? [
+                'id' => $user->id,
+                'name' => $user->name,
+                'phone' => $user->phone,
+                'role' => $user->role,
+            ] : null,
+            'period_start' => $period['start_date'],
+            'period_end' => $period['end_date'],
+            'period_label' => $period['label'],
+            'total_present' => 0,
+            'total_on_time' => 0,
+            'total_late' => 0,
+            'total_late_minutes' => 0,
+            'total_with_clock_out' => 0,
+            'total_work_minutes' => 0,
+            'total_hours_formatted' => '0 mnt',
+            'average_clock_in' => null,
+            'last_clock_in_at' => null,
+            'recent_records' => [],
+        ];
+
+        if (!$user || !Schema::hasTable('employee_attendances')) {
+            return $baseSummary;
+        }
+
+        $records = EmployeeAttendance::query()
+            ->where('user_id', $user->id)
+            ->whereBetween('date', [$period['start_date'], $period['end_date']])
+            ->orderByDesc('date')
+            ->get();
+
+        $totalPresent = $records->count();
+        $totalOnTime = $records->where('clock_in_status', 'on_time')->count();
+        $totalLate = $records->where('clock_in_status', 'late')->count();
+        $totalLateMinutes = (int) $records->sum('clock_in_late_minutes');
+        $totalWithClockOut = $records->filter(fn (EmployeeAttendance $r) => $r->clock_out_at !== null)->count();
+        $totalWorkMinutes = (int) $records->sum('work_duration_minutes');
+
+        $clockInSeconds = $records
+            ->filter(fn (EmployeeAttendance $r) => $r->clock_in_at !== null)
+            ->map(function (EmployeeAttendance $r): int {
+                $t = $r->clock_in_at;
+                return ($t->hour * 3600) + ($t->minute * 60) + $t->second;
+            });
+
+        $avgClockIn = null;
+        if ($clockInSeconds->count() > 0) {
+            $avgSecs = (int) round($clockInSeconds->avg());
+            $avgClockIn = sprintf('%02d:%02d', intdiv($avgSecs, 3600), intdiv($avgSecs % 3600, 60));
+        }
+
+        $latest = $records->first(fn (EmployeeAttendance $r) => $r->clock_in_at !== null);
+
+        $hours = intdiv($totalWorkMinutes, 60);
+        $mins = $totalWorkMinutes % 60;
+        $totalHoursFormatted = $hours > 0 ? "{$hours} jam {$mins} mnt" : "{$mins} mnt";
+
+        $baseSummary['total_present'] = $totalPresent;
+        $baseSummary['total_on_time'] = $totalOnTime;
+        $baseSummary['total_late'] = $totalLate;
+        $baseSummary['total_late_minutes'] = $totalLateMinutes;
+        $baseSummary['total_with_clock_out'] = $totalWithClockOut;
+        $baseSummary['total_work_minutes'] = $totalWorkMinutes;
+        $baseSummary['total_hours_formatted'] = $totalHoursFormatted;
+        $baseSummary['average_clock_in'] = $avgClockIn;
+        $baseSummary['last_clock_in_at'] = $latest?->clock_in_at?->format('d/m H:i');
+        $baseSummary['recent_records'] = $records->take(31)->map(function (EmployeeAttendance $record): array {
+            return [
+                'id' => $record->id,
+                'date' => $record->date?->toDateString(),
+                'date_formatted' => $record->date?->translatedFormat('d M Y'),
+                'clock_in_at' => $record->clock_in_at?->format('H:i'),
+                'clock_out_at' => $record->clock_out_at?->format('H:i'),
+                'clock_in_status' => $record->clock_in_status,
+                'clock_in_late_minutes' => (int) ($record->clock_in_late_minutes ?? 0),
+                'work_duration_minutes' => (int) ($record->work_duration_minutes ?? 0),
+                'work_duration_formatted' => $record->work_duration_formatted,
+                'status' => $record->status,
+            ];
+        })->values()->all();
+
+        return $baseSummary;
+    }
+
+    /**
+     * Provide period presets for UI inspection inside payroll modal.
+     *
+     * @return array<int, array{key: string, label: string, start_date: string, end_date: string}>
+     */
+    public function getPayrollAttendancePeriodPresets(): array
+    {
+        $resetPeriod = $this->getPeriodRange(Carbon::today());
+        $prevResetPeriod = $this->getPeriodRange(
+            Carbon::parse($resetPeriod['start_date'])->subDay(),
+            (int) $resetPeriod['reset_day']
+        );
+        $currentMonthStart = Carbon::today()->startOfMonth();
+        $currentMonthEnd = Carbon::today()->endOfMonth();
+        $prevMonthStart = Carbon::today()->subMonthNoOverflow()->startOfMonth();
+        $prevMonthEnd = Carbon::today()->subMonthNoOverflow()->endOfMonth();
+
+        return [
+            [
+                'key' => 'reset_current',
+                'label' => 'Periode Absensi Berjalan (' . $resetPeriod['label'] . ')',
+                'start_date' => $resetPeriod['start_date'],
+                'end_date' => $resetPeriod['end_date'],
+            ],
+            [
+                'key' => 'reset_previous',
+                'label' => 'Periode Absensi Sebelumnya (' . $prevResetPeriod['label'] . ')',
+                'start_date' => $prevResetPeriod['start_date'],
+                'end_date' => $prevResetPeriod['end_date'],
+            ],
+            [
+                'key' => 'month_current',
+                'label' => 'Bulan Ini (' . $currentMonthStart->translatedFormat('F Y') . ')',
+                'start_date' => $currentMonthStart->toDateString(),
+                'end_date' => $currentMonthEnd->toDateString(),
+            ],
+            [
+                'key' => 'month_previous',
+                'label' => 'Bulan Lalu (' . $prevMonthStart->translatedFormat('F Y') . ')',
+                'start_date' => $prevMonthStart->toDateString(),
+                'end_date' => $prevMonthEnd->toDateString(),
+            ],
+        ];
+    }
+
+    private function resolveAttendancePeriod(?string $startDate, ?string $endDate): array
+    {
+        if ($startDate && $endDate) {
+            try {
+                $start = Carbon::parse($startDate)->startOfDay();
+                $end = Carbon::parse($endDate)->endOfDay();
+                if ($start->gt($end)) {
+                    [$start, $end] = [$end->copy()->startOfDay(), $start->copy()->endOfDay()];
+                }
+
+                return [
+                    'start_date' => $start->toDateString(),
+                    'end_date' => $end->toDateString(),
+                    'label' => $start->translatedFormat('d M Y') . ' - ' . $end->translatedFormat('d M Y'),
+                ];
+            } catch (\Throwable) {
+                // Fall back to configured reset period if query dates are malformed.
+            }
+        }
+
+        return $this->getPeriodRange(Carbon::today());
+    }
+
+    private function normalizePhoneDigits(string $phone): string
+    {
+        $digits = preg_replace('/\D/', '', $phone) ?? '';
+        if ($digits === '') {
+            return '';
+        }
+        if (str_starts_with($digits, '0')) {
+            return '62' . substr($digits, 1);
+        }
+
+        return $digits;
     }
 }

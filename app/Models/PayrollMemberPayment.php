@@ -16,6 +16,14 @@ class PayrollMemberPayment extends Model
         'cash_paid_amount',
         'borrower_id',
         'borrower_loan_settlement_action_group_key',
+        'payment_method',
+        'bank_name',
+        'account_number',
+        'account_holder',
+        'attendance_summary',
+        'whatsapp_status',
+        'whatsapp_sent_at',
+        'whatsapp_error',
     ];
 
     protected $casts = [
@@ -23,6 +31,8 @@ class PayrollMemberPayment extends Model
         'gross_nominal' => 'decimal:0',
         'loan_deduction_amount' => 'decimal:0',
         'cash_paid_amount' => 'decimal:0',
+        'attendance_summary' => 'array',
+        'whatsapp_sent_at' => 'datetime',
     ];
 
     public function member()

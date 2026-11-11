@@ -15,6 +15,7 @@ class PayrollMember extends Model
         'tanggal_gajian',
         'nama_bank',
         'nomor_rekening',
+        'atas_nama_rekening',
         'is_active',
     ];
 
@@ -41,6 +42,11 @@ class PayrollMember extends Model
     public function payments()
     {
         return $this->hasMany(PayrollMemberPayment::class);
+    }
+
+    public function user()
+    {
+        return $this->hasOne(User::class, 'payroll_member_id');
     }
 
     /**

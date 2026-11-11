@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Edit2, CheckCircle, Trash2, Users, Wallet, Calendar, X, ChevronDown, ChevronUp, Search, Clock, DollarSign } from 'lucide-react';
+import {
+    Plus, Edit2, CheckCircle, Trash2, Users, Wallet, Calendar, X, ChevronDown, ChevronUp,
+    Search, Clock, DollarSign, Building2, CreditCard, MessageSquare, AlertCircle, RefreshCw, ArrowLeft,
+} from 'lucide-react';
 
 const API_HEADERS = () => ({
     'Content-Type': 'application/json',
@@ -17,6 +20,22 @@ const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
+const BANK_SUGGESTIONS = [
+    'BCA',
+    'BRI',
+    'BNI',
+    'Mandiri',
+    'BSI',
+    'BTN',
+    'CIMB Niaga',
+    'SeaBank',
+    'Bank Jago',
+    'DANA',
+    'OVO',
+    'GoPay',
+    'Cash / Tunai',
+];
+
 // ==================== MEMBER SALARY MODAL (ADD / EDIT) ====================
 function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
     const [nama, setNama] = useState('');
@@ -27,6 +46,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
     const [tanggalGajian, setTanggalGajian] = useState(1);
     const [namaBank, setNamaBank] = useState('');
     const [nomorRekening, setNomorRekening] = useState('');
+    const [atasNamaRekening, setAtasNamaRekening] = useState('');
     const [isActive, setIsActive] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -41,6 +61,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
                 setTanggalGajian(memberToEdit.tanggal_gajian ? Number(memberToEdit.tanggal_gajian) : 1);
                 setNamaBank(memberToEdit.nama_bank || '');
                 setNomorRekening(memberToEdit.nomor_rekening || '');
+                setAtasNamaRekening(memberToEdit.atas_nama_rekening || '');
                 setIsActive(memberToEdit.is_active !== undefined ? Boolean(memberToEdit.is_active) : true);
             } else {
                 setNama('');
@@ -51,6 +72,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
                 setTanggalGajian(1);
                 setNamaBank('');
                 setNomorRekening('');
+                setAtasNamaRekening('');
                 setIsActive(true);
             }
         }
@@ -72,6 +94,7 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
             tanggal_gajian: parseInt(tanggalGajian, 10) || 1,
             nama_bank: namaBank.trim() || null,
             nomor_rekening: nomorRekening.trim() || null,
+            atas_nama_rekening: atasNamaRekening.trim() || null,
             is_active: isActive,
         };
 
@@ -221,25 +244,47 @@ function MemberSalaryModal({ isOpen, onClose, onSaved, memberToEdit = null }) {
                     )}
 
                     {/* Bank & Rekening */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">Nama Bank / Metode</label>
-                            <input
-                                type="text"
-                                value={namaBank}
-                                onChange={e => setNamaBank(e.target.value)}
-                                placeholder="BCA / Mandiri / Cash"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                            />
+                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-3">
+                        <div className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                            <CreditCard size={14} className="text-blue-600" />
+                            Informasi Rekening Bank Pegawai
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Nama Bank / E-Wallet</label>
+                                <input
+                                    type="text"
+                                    list="payroll-bank-suggestions"
+                                    value={namaBank}
+                                    onChange={e => setNamaBank(e.target.value)}
+                                    placeholder="BCA / Mandiri / BRI / Cash"
+                                    className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500"
+                                />
+                                <datalist id="payroll-bank-suggestions">
+                                    {BANK_SUGGESTIONS.map((bank) => (
+                                        <option key={bank} value={bank} />
+                                    ))}
+                                </datalist>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-700 mb-1">Nomor Rekening</label>
+                                <input
+                                    type="text"
+                                    value={nomorRekening}
+                                    onChange={e => setNomorRekening(e.target.value)}
+                                    placeholder="1234567890"
+                                    className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-gray-700 mb-1">Nomor Rekening</label>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1">Atas Nama Pemilik Rekening</label>
                             <input
                                 type="text"
-                                value={nomorRekening}
-                                onChange={e => setNomorRekening(e.target.value)}
-                                placeholder="1234567890"
-                                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                                value={atasNamaRekening}
+                                onChange={e => setAtasNamaRekening(e.target.value)}
+                                placeholder={nama ? `Contoh: ${nama}` : 'Nama sesuai buku tabungan'}
+                                className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500"
                             />
                         </div>
                     </div>
@@ -293,15 +338,103 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     const [loanHandling, setLoanHandling] = useState('cash');
     const [loanDeductionAmount, setLoanDeductionAmount] = useState('');
     const [loanChoicePromptOpen, setLoanChoicePromptOpen] = useState(false);
+
+    // Attendance states
+    const [attendanceSummary, setAttendanceSummary] = useState(null);
+    const [attendancePresets, setAttendancePresets] = useState([]);
+    const [selectedPeriodKey, setSelectedPeriodKey] = useState('reset_current');
+    const [alreadyPaidInPeriod, setAlreadyPaidInPeriod] = useState(0);
+    const [loadingAttendance, setLoadingAttendance] = useState(false);
+    const [showAttendanceDetails, setShowAttendanceDetails] = useState(false);
+    const [attendanceNote, setAttendanceNote] = useState('');
+
+    // Bank & WhatsApp destination states
+    const [paymentMethod, setPaymentMethod] = useState('transfer');
+    const [bankName, setBankName] = useState('');
+    const [accountNumber, setAccountNumber] = useState('');
+    const [accountHolder, setAccountHolder] = useState('');
+    const [editingBank, setEditingBank] = useState(false);
+    const [employeePhone, setEmployeePhone] = useState('');
+    const [sendWhatsapp, setSendWhatsapp] = useState(true);
+
+    // Confirmation step states
+    const [step, setStep] = useState('form'); // 'form' | 'confirm'
+    const [confirmWorkAndSalary, setConfirmWorkAndSalary] = useState(false);
+    const [formError, setFormError] = useState('');
+
     const totalGajiBulanan = member ? ((Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0)) : 0;
     const isMonthly = member ? ((member.tipe_gaji || 'bulanan') !== 'proyek') : true;
 
+    const loadMemberPaymentDetails = useCallback(async (memberObj, startDate = null, endDate = null) => {
+        if (!memberObj?.id) return;
+        setLoadingHistory(true);
+        setLoadingAttendance(true);
+        try {
+            const params = new URLSearchParams();
+            if (startDate && endDate) {
+                params.set('start_date', startDate);
+                params.set('end_date', endDate);
+            }
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`/api/payroll/members/${memberObj.id}/payments${qs}`, {
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin',
+            });
+            const d = res.ok ? await res.json() : {};
+            setPayments(d.payments || []);
+            if (d.attendance_summary) {
+                setAttendanceSummary(d.attendance_summary);
+            }
+            if (Array.isArray(d.attendance_presets)) {
+                setAttendancePresets(d.attendance_presets);
+            }
+            setAlreadyPaidInPeriod(Number(d.already_paid_in_period || 0));
+
+            if (d.member) {
+                const refreshedBank = (d.member.nama_bank || '').trim();
+                const refreshedRek = (d.member.nomor_rekening || '').trim();
+                const refreshedHolder = (d.member.atas_nama_rekening || d.member.nama || '').trim();
+                const refreshedPhone = (d.member.telepon || '').trim();
+                const isRefreshedTransfer = refreshedBank !== '' && !['cash', 'tunai'].includes(refreshedBank.toLowerCase());
+
+                setBankName(refreshedBank);
+                setAccountNumber(refreshedRek);
+                setAccountHolder(refreshedHolder);
+                if (refreshedPhone) {
+                    setEmployeePhone(prev => prev || refreshedPhone);
+                }
+                if (isRefreshedTransfer) {
+                    setPaymentMethod('transfer');
+                    setEditingBank(!refreshedRek);
+                }
+            }
+
+            if (Number(d.loan_context?.outstanding || 0) > 0) {
+                setLoanContext(d.loan_context);
+                setLoanChoicePromptOpen(true);
+            }
+        } catch {
+            setPayments([]);
+        } finally {
+            setLoadingHistory(false);
+            setLoadingAttendance(false);
+        }
+    }, []);
+
     useEffect(() => {
         if (isOpen && member) {
-            const defaultNom = isMonthly && totalGajiBulanan > 0 ? String(totalGajiBulanan) : (Number(member.total_unpaid) > 0 ? String(member.total_unpaid) : '');
+            const memberUnpaid = Number(member.total_unpaid) || 0;
+            const monthlyTotal = (Number(member.gaji_pokok) || 0) + (Number(member.tunjangan) || 0);
+            const isMemberMonthly = (member.tipe_gaji || 'bulanan') !== 'proyek';
+            const suggestedDefault = isMemberMonthly
+                ? (member.tipe_gaji === 'campuran' ? monthlyTotal + memberUnpaid : monthlyTotal)
+                : memberUnpaid;
+
+            const defaultNom = suggestedDefault > 0 ? String(suggestedDefault) : (memberUnpaid > 0 ? String(memberUnpaid) : '');
             const currentMonthName = new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
             setNominal(defaultNom);
-            setCatatan(isMonthly && totalGajiBulanan > 0 ? `Gaji Bulanan ${currentMonthName} - ${member.nama}` : '');
+            setCatatan(isMemberMonthly && monthlyTotal > 0 ? `Gaji Bulanan ${currentMonthName} - ${member.nama}` : '');
+
             const initialLoanContext = Number(member.borrower_outstanding || 0) > 0 ? {
                 borrower: member.borrower || null,
                 outstanding: Number(member.borrower_outstanding || 0),
@@ -310,87 +443,154 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
             setLoanHandling('cash');
             setLoanDeductionAmount('');
             setLoanChoicePromptOpen(Boolean(initialLoanContext));
-            // Load riwayat pembayaran
-            setLoadingHistory(true);
-            fetch(`/api/payroll/members/${member.id}/payments`, {
-                headers: { 'Accept': 'application/json' },
-                credentials: 'same-origin',
-            })
-                .then(r => r.ok ? r.json() : { payments: [] })
-                .then(d => {
-                    setPayments(d.payments || []);
-                    if (Number(d.loan_context?.outstanding || 0) > 0) {
-                        setLoanContext(d.loan_context);
-                        setLoanChoicePromptOpen(true);
-                    }
-                })
-                .catch(() => setPayments([]))
-                .finally(() => setLoadingHistory(false));
+
+            const initialBank = (member.nama_bank || '').trim();
+            const initialRek = (member.nomor_rekening || '').trim();
+            const initialHolder = (member.atas_nama_rekening || member.nama || '').trim();
+            const hasBankTransfer = initialBank !== '' && !['cash', 'tunai'].includes(initialBank.toLowerCase());
+
+            setPaymentMethod(hasBankTransfer ? 'transfer' : 'transfer');
+            setBankName(hasBankTransfer ? initialBank : '');
+            setAccountNumber(initialRek);
+            setAccountHolder(initialHolder);
+            setEditingBank(!hasBankTransfer || !initialRek);
+            setEmployeePhone((member.telepon || '').trim());
+            setSendWhatsapp(true);
+            setStep('form');
+            setConfirmWorkAndSalary(false);
+            setFormError('');
+            setSelectedPeriodKey('reset_current');
+            setShowAttendanceDetails(false);
+            setAttendanceNote('');
+            setAttendanceSummary(null);
+            setAlreadyPaidInPeriod(0);
+
+            loadMemberPaymentDetails(member);
         }
-    }, [isOpen, member]);
+    }, [isOpen, member, loadMemberPaymentDetails]);
 
     if (!isOpen || !member) return null;
 
     const unpaid = Number(member.total_unpaid) || 0;
+    const fullSuggestedAmount = member.tipe_gaji === 'proyek'
+        ? unpaid
+        : member.tipe_gaji === 'campuran'
+            ? totalGajiBulanan + unpaid
+            : totalGajiBulanan;
+    const numericNominal = parseFloat(nominal) || 0;
+    const loanOutstanding = Number(loanContext?.outstanding || 0);
+    const requestedDeduction = loanHandling === 'deduct_loan' ? (Number(loanDeductionAmount) || 0) : 0;
+    const netPayableAmount = Math.max(0, numericNominal - requestedDeduction);
+    const remainingLoanAfter = Math.max(0, loanOutstanding - requestedDeduction);
 
-    const handleSubmit = async (e) => {
+    const handlePeriodChange = (presetKey) => {
+        setSelectedPeriodKey(presetKey);
+        const preset = attendancePresets.find(p => p.key === presetKey);
+        if (preset) {
+            loadMemberPaymentDetails(member, preset.start_date, preset.end_date);
+        }
+    };
+
+    const handleProceedToConfirm = (e) => {
         e.preventDefault();
-        const amount = parseFloat(nominal);
-        if (!amount || amount <= 0) return alert('Masukkan nominal yang valid');
-        if (!isMonthly && amount > unpaid) return alert('Nominal melebihi sisa saldo upah proyek (' + formatRupiah(unpaid) + ')');
+        setFormError('');
 
-        const loanOutstanding = Number(loanContext?.outstanding || 0);
-        const rawDeduction = Number(loanDeductionAmount || 0);
-        const requestedDeduction = loanHandling === 'deduct_loan' ? rawDeduction : 0;
-
-        if (loanHandling === 'deduct_loan' && requestedDeduction <= 0) {
-            return alert('Masukkan nominal potong pinjaman yang valid');
+        if (!numericNominal || numericNominal <= 0) {
+            setFormError('Masukkan nominal pembayaran yang valid (lebih dari 0).');
+            return;
         }
-
-        if (loanHandling === 'deduct_loan' && requestedDeduction > amount) {
-            return alert('Nominal bayar pinjaman tidak boleh lebih besar dari jumlah payroll');
+        if (!isMonthly && unpaid > 0 && numericNominal > unpaid) {
+            setFormError(`Nominal melebihi sisa saldo upah proyek (${formatRupiah(unpaid)}).`);
+            return;
         }
-
-        if (loanHandling === 'deduct_loan' && requestedDeduction > loanOutstanding) {
-            return alert('Nominal bayar pinjaman tidak boleh lebih besar dari sisa pinjaman');
+        if (!isMonthly && unpaid <= 0) {
+            setFormError('Tidak ada sisa saldo upah proyek yang belum dibayar.');
+            return;
         }
 
         if (loanHandling === 'deduct_loan') {
-            const ok = window.confirm(`Bayar pinjaman ${formatRupiah(requestedDeduction)} dari pembayaran payroll ini?`);
-            if (!ok) return;
+            if (requestedDeduction <= 0) {
+                setFormError('Masukkan nominal potong pinjaman / kasbon yang valid.');
+                return;
+            }
+            if (requestedDeduction > numericNominal) {
+                setFormError('Nominal potong pinjaman tidak boleh lebih besar dari jumlah gaji bruto.');
+                return;
+            }
+            if (requestedDeduction > loanOutstanding) {
+                setFormError('Nominal potong pinjaman melebihi sisa pinjaman karyawan.');
+                return;
+            }
         }
 
+        if (paymentMethod === 'transfer' && !bankName.trim()) {
+            setFormError('Masukkan nama bank tujuan transfer, atau pilih metode Tunai / Cash.');
+            setEditingBank(true);
+            return;
+        }
+
+        if (sendWhatsapp && !employeePhone.trim()) {
+            setFormError('Isi nomor WhatsApp pegawai terlebih dahulu jika ingin mengirim slip gaji via WhatsApp, atau hilangkan centang kirim WA.');
+            return;
+        }
+
+        setConfirmWorkAndSalary(false);
+        setStep('confirm');
+    };
+
+    const handleConfirmAndPay = async () => {
+        if (!confirmWorkAndSalary) {
+            setFormError('Centang konfirmasi bahwa data waktu kerja dan jumlah gaji sudah benar.');
+            return;
+        }
+
+        setFormError('');
         setSaving(true);
         try {
+            const payload = {
+                nominal: numericNominal,
+                catatan: catatan.trim() || null,
+                loan_handling: loanHandling,
+                loan_deduction_amount: requestedDeduction,
+                payment_method: paymentMethod,
+                bank_name: paymentMethod === 'transfer' ? (bankName.trim() || null) : null,
+                account_number: paymentMethod === 'transfer' ? (accountNumber.trim() || null) : null,
+                account_holder: paymentMethod === 'transfer' ? (accountHolder.trim() || null) : null,
+                save_bank_to_member: paymentMethod === 'transfer' && Boolean(bankName.trim()),
+                telepon: employeePhone.trim() || null,
+                attendance_start_date: attendanceSummary?.period_start || null,
+                attendance_end_date: attendanceSummary?.period_end || null,
+                attendance_confirmed: true,
+                attendance_note: attendanceNote.trim() || null,
+                send_whatsapp: sendWhatsapp,
+            };
+
             const res = await fetch(`/api/payroll/members/${member.id}/pay`, {
                 method: 'POST',
                 headers: API_HEADERS(),
                 credentials: 'same-origin',
-                body: JSON.stringify({
-                    nominal: amount,
-                    catatan: catatan.trim() || null,
-                    loan_handling: loanHandling,
-                    loan_deduction_amount: requestedDeduction,
-                }),
+                body: JSON.stringify(payload),
             });
             const d = await res.json();
             if (res.ok) {
-                onPaid();
+                onPaid(d);
                 onClose();
             } else {
-                alert(d.message || 'Gagal memproses pembayaran');
+                setFormError(d.message || 'Gagal memproses pembayaran');
             }
         } catch {
-            alert('Terjadi kesalahan');
+            setFormError('Terjadi kesalahan jaringan saat memproses pembayaran');
         } finally {
             setSaving(false);
         }
     };
 
     const handlePayFull = () => {
-        setNominal(String(unpaid));
-        if (loanHandling === 'deduct_loan' && loanContext?.outstanding) {
-            setLoanDeductionAmount(String(Math.min(unpaid, Number(loanContext.outstanding || 0))));
+        const targetAmount = fullSuggestedAmount > 0 ? fullSuggestedAmount : unpaid;
+        if (targetAmount <= 0) return;
+        setNominal(String(targetAmount));
+        if (loanHandling === 'deduct_loan' && loanOutstanding > 0) {
+            setLoanDeductionAmount(String(Math.min(targetAmount, loanOutstanding)));
         }
     };
 
@@ -401,193 +601,686 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
     };
 
     const chooseLoanDeduction = () => {
-        const amount = Number(nominal || unpaid || 0);
+        const amount = Number(nominal || fullSuggestedAmount || unpaid || 0);
         setLoanHandling('deduct_loan');
-        setLoanDeductionAmount(String(Math.min(amount, Number(loanContext?.outstanding || 0))));
+        setLoanDeductionAmount(String(Math.min(amount, loanOutstanding)));
         setLoanChoicePromptOpen(false);
     };
-    const maxLoanDeduction = Math.min(Number(nominal || unpaid || 0), Number(loanContext?.outstanding || 0));
+
+    const maxLoanDeduction = Math.min(numericNominal || fullSuggestedAmount || unpaid || 0, loanOutstanding);
 
     return (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-8 sm:py-10">
-            <div className="my-0 flex max-h-[calc(100vh-4rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl sm:max-h-[calc(100vh-5rem)]">
-                <div className="shrink-0 flex items-center justify-between border-b bg-white p-5">
-                    <h3 className="text-lg font-bold text-gray-800">Bayar - {member.nama}</h3>
-                    <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100"><X size={20} /></button>
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-6 sm:py-8">
+            <div className="my-0 flex max-h-[calc(100vh-3rem)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl sm:max-h-[calc(100vh-4rem)]">
+                {/* Modal Header */}
+                <div className="shrink-0 flex items-center justify-between border-b bg-white px-5 py-4">
+                    <div>
+                        <h3 className="text-lg font-bold text-gray-800">
+                            {step === 'confirm' ? `Konfirmasi Pembayaran Gaji - ${member.nama}` : `Bayar Gaji - ${member.nama}`}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            {member.tipe_gaji === 'bulanan'
+                                ? 'Gaji Bulanan Tetap'
+                                : member.tipe_gaji === 'campuran'
+                                    ? 'Kombinasi (Gaji Bulanan + Upah Proyek)'
+                                    : 'Upah Proyek Pemasangan'}
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+                        <X size={20} />
+                    </button>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto">
-                    {/* Saldo Info */}
-                    <div className="mx-5 mt-5 bg-orange-50 border border-orange-200 rounded-xl p-4">
-                        <div className="flex items-center justify-between">
-                            <span className="text-sm text-orange-700">Sisa Belum Dibayar</span>
-                            <span className="text-lg font-bold text-orange-600">{formatRupiah(unpaid)}</span>
+                    {formError && (
+                        <div className="mx-5 mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700 flex items-start gap-2">
+                            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                            <span>{formError}</span>
                         </div>
-                        {Number(member.total_paid) > 0 && (
-                            <div className="flex items-center justify-between mt-1">
-                                <span className="text-xs text-gray-500">Total Sudah Dibayar</span>
-                                <span className="text-sm font-medium text-green-600">{formatRupiah(member.total_paid)}</span>
-                            </div>
-                        )}
-                    </div>
+                    )}
 
-                    <form onSubmit={handleSubmit} className="p-5 space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Pembayaran *</label>
-                        <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Rp</span>
-                            <input
-                                type="number"
-                                value={nominal}
-                                onChange={e => setNominal(e.target.value)}
-                                placeholder="0"
-                                min="1"
-                                max={unpaid}
-                                className="w-full border rounded-lg pl-10 pr-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg font-semibold"
-                                autoFocus
-                                required
-                            />
-                        </div>
-                        <button
-                            type="button"
-                            onClick={handlePayFull}
-                            className="mt-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium"
-                        >
-                            Bayar penuh ({formatRupiah(unpaid)})
-                        </button>
-                    </div>
-                    {Number(loanContext?.outstanding || 0) > 0 && (
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-3">
-                            <div>
-                                <p className="text-sm font-semibold text-blue-900">Karyawan punya pinjaman aktif</p>
-                                <p className="text-xs text-blue-700">
-                                    {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanContext.outstanding)}.
-                                </p>
+                    {step === 'form' ? (
+                        <>
+                            {/* Saldo / Gaji Summary Box */}
+                            <div className="mx-5 mt-4 bg-orange-50 border border-orange-200 rounded-xl p-3.5 space-y-1.5">
+                                {isMonthly && (
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs sm:text-sm text-orange-800 font-medium">
+                                            Standar Gaji Bulanan (Pokok + Tunjangan)
+                                        </span>
+                                        <span className="text-base font-bold text-orange-700">{formatRupiah(totalGajiBulanan)}</span>
+                                    </div>
+                                )}
+                                {(!isMonthly || member.tipe_gaji === 'campuran' || unpaid > 0) && (
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs sm:text-sm text-orange-700">Sisa Upah Proyek Belum Dibayar</span>
+                                        <span className="text-base font-bold text-orange-600">{formatRupiah(unpaid)}</span>
+                                    </div>
+                                )}
+                                <div className="flex items-center justify-between pt-1 border-t border-orange-200/70 text-xs">
+                                    <span className="text-gray-600">Gaji Sudah Diambil (Periode Absensi Ini)</span>
+                                    <span className="font-semibold text-gray-800">{formatRupiah(alreadyPaidInPeriod)}</span>
+                                </div>
+                                {Number(member.total_paid) > 0 && (
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="text-gray-500">Akumulasi Total Sudah Dibayar</span>
+                                        <span className="font-medium text-green-700">{formatRupiah(member.total_paid)}</span>
+                                    </div>
+                                )}
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setLoanHandling('deduct_loan');
-                                        const amount = Number(nominal || unpaid || 0);
-                                        setLoanDeductionAmount(String(Math.min(amount, Number(loanContext.outstanding || 0))));
-                                    }}
-                                    className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
-                                        loanHandling === 'deduct_loan'
-                                            ? 'bg-white border-blue-500 text-blue-700'
-                                            : 'border-transparent bg-blue-100 text-blue-700'
-                                    }`}
-                                >
-                                    Bayar pinjaman
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={chooseCashPayroll}
-                                    className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
-                                        loanHandling === 'cash'
-                                            ? 'bg-white border-green-400 text-green-700'
-                                            : 'border-transparent bg-blue-100 text-blue-700'
-                                    }`}
-                                >
-                                    Tidak
-                                </button>
+
+                            {/* Attendance / Waktu Kerja Box */}
+                            <div className="mx-5 mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3.5 space-y-2.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 uppercase tracking-wide">
+                                        <Clock size={14} className="text-indigo-600" />
+                                        Informasi Waktu Kerja (Absensi Karyawan)
+                                    </div>
+                                    {attendancePresets.length > 0 && (
+                                        <select
+                                            value={selectedPeriodKey}
+                                            onChange={(e) => handlePeriodChange(e.target.value)}
+                                            className="text-xs border border-indigo-200 rounded-lg px-2 py-1 bg-white text-indigo-900 font-medium"
+                                        >
+                                            {attendancePresets.map(p => (
+                                                <option key={p.key} value={p.key}>{p.label}</option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+
+                                {loadingAttendance ? (
+                                    <p className="text-xs text-indigo-600 py-2">Mengambil data absensi karyawan...</p>
+                                ) : attendanceSummary ? (
+                                    <>
+                                        <div className="text-xs text-indigo-800 flex flex-wrap items-center justify-between gap-1">
+                                            <span>Periode: <strong>{attendanceSummary.period_label}</strong></span>
+                                            {attendanceSummary.linked ? (
+                                                <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
+                                                    Akun: {attendanceSummary.user?.name}
+                                                </span>
+                                            ) : (
+                                                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                                                    Akun user absensi belum ditautkan
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                            <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                                <p className="text-[11px] text-gray-500">Waktu Masuk</p>
+                                                <p className="text-sm font-bold text-indigo-900">{attendanceSummary.total_present} hari</p>
+                                            </div>
+                                            <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                                <p className="text-[11px] text-gray-500">Tepat Waktu / Telat</p>
+                                                <p className="text-sm font-bold text-gray-800">
+                                                    <span className="text-emerald-600">{attendanceSummary.total_on_time}</span>
+                                                    {' / '}
+                                                    <span className={attendanceSummary.total_late > 0 ? 'text-amber-600' : 'text-gray-500'}>
+                                                        {attendanceSummary.total_late}
+                                                    </span>
+                                                </p>
+                                            </div>
+                                            <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                                <p className="text-[11px] text-gray-500">Total Waktu Kerja</p>
+                                                <p className="text-sm font-bold text-indigo-900">{attendanceSummary.total_hours_formatted}</p>
+                                            </div>
+                                            <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                                <p className="text-[11px] text-gray-500">Rata-rata Masuk</p>
+                                                <p className="text-sm font-bold text-gray-800">
+                                                    {attendanceSummary.average_clock_in || '-'}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {attendanceSummary.total_late_minutes > 0 && (
+                                            <p className="text-[11px] text-amber-700 font-medium">
+                                                Total akumulasi keterlambatan: {attendanceSummary.total_late_minutes} menit
+                                                {attendanceSummary.last_clock_in_at ? ` • Absen masuk terakhir: ${attendanceSummary.last_clock_in_at}` : ''}
+                                            </p>
+                                        )}
+
+                                        {attendanceSummary.recent_records?.length > 0 && (
+                                            <div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowAttendanceDetails(prev => !prev)}
+                                                    className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 flex items-center gap-1"
+                                                >
+                                                    {showAttendanceDetails ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                                    {showAttendanceDetails ? 'Sembunyikan' : 'Lihat'} rincian waktu masuk harian ({attendanceSummary.recent_records.length} hari)
+                                                </button>
+                                                {showAttendanceDetails && (
+                                                    <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-indigo-100 bg-white">
+                                                        <table className="w-full text-[11px]">
+                                                            <thead className="bg-indigo-50 text-indigo-900">
+                                                                <tr>
+                                                                    <th className="text-left px-2 py-1.5">Tanggal</th>
+                                                                    <th className="text-left px-2 py-1.5">Masuk</th>
+                                                                    <th className="text-left px-2 py-1.5">Pulang</th>
+                                                                    <th className="text-left px-2 py-1.5">Durasi</th>
+                                                                    <th className="text-left px-2 py-1.5">Status</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-gray-100">
+                                                                {attendanceSummary.recent_records.map(r => (
+                                                                    <tr key={r.id}>
+                                                                        <td className="px-2 py-1 text-gray-700">{r.date_formatted || r.date}</td>
+                                                                        <td className="px-2 py-1 font-medium text-gray-900">{r.clock_in_at || '-'}</td>
+                                                                        <td className="px-2 py-1 text-gray-600">{r.clock_out_at || '-'}</td>
+                                                                        <td className="px-2 py-1 text-gray-600">{r.work_duration_formatted || '-'}</td>
+                                                                        <td className="px-2 py-1">
+                                                                            <span className={`px-1.5 py-0.5 rounded font-medium ${
+                                                                                r.clock_in_status === 'late'
+                                                                                    ? 'bg-amber-100 text-amber-800'
+                                                                                    : 'bg-emerald-100 text-emerald-700'
+                                                                            }`}>
+                                                                                {r.clock_in_status === 'late' ? `Telat ${r.clock_in_late_minutes}m` : 'Tepat'}
+                                                                            </span>
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div>
+                                            <input
+                                                type="text"
+                                                value={attendanceNote}
+                                                onChange={(e) => setAttendanceNote(e.target.value)}
+                                                placeholder="Catatan waktu kerja / lembur / izin (opsional)"
+                                                className="w-full border border-indigo-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-indigo-400"
+                                            />
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-xs text-gray-500">Data absensi belum tersedia.</p>
+                                )}
                             </div>
-                            {loanHandling === 'deduct_loan' && (
+
+                            <form onSubmit={handleProceedToConfirm} className="p-5 space-y-4">
                                 <div>
-                                    <label className="block text-xs font-medium text-blue-900 mb-1">Nominal Bayar Pinjaman</label>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Nominal Pembayaran *</label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">Rp</span>
+                                        <input
+                                            type="number"
+                                            value={nominal}
+                                            onChange={e => setNominal(e.target.value)}
+                                            placeholder="0"
+                                            min="1"
+                                            max={!isMonthly && unpaid > 0 ? unpaid : undefined}
+                                            className="w-full border rounded-lg pl-10 pr-3 py-2.5 focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg font-semibold"
+                                            autoFocus
+                                            required
+                                        />
+                                    </div>
+                                    {fullSuggestedAmount > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handlePayFull}
+                                            className="mt-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                        >
+                                            {isMonthly
+                                                ? `Isi gaji penuh (${formatRupiah(fullSuggestedAmount)})`
+                                                : `Bayar penuh (${formatRupiah(unpaid)})`}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {loanOutstanding > 0 && (
+                                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-3">
+                                        <div>
+                                            <p className="text-sm font-semibold text-blue-900">Karyawan punya pinjaman aktif</p>
+                                            <p className="text-xs text-blue-700">
+                                                {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanOutstanding)}.
+                                            </p>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setLoanHandling('deduct_loan');
+                                                    const amount = Number(nominal || fullSuggestedAmount || unpaid || 0);
+                                                    setLoanDeductionAmount(String(Math.min(amount, loanOutstanding)));
+                                                }}
+                                                className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
+                                                    loanHandling === 'deduct_loan'
+                                                        ? 'bg-white border-blue-500 text-blue-700'
+                                                        : 'border-transparent bg-blue-100 text-blue-700'
+                                                }`}
+                                            >
+                                                Bayar pinjaman
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={chooseCashPayroll}
+                                                className={`rounded-lg px-3 py-2 text-sm font-semibold border transition ${
+                                                    loanHandling === 'cash'
+                                                        ? 'bg-white border-green-400 text-green-700'
+                                                        : 'border-transparent bg-blue-100 text-blue-700'
+                                                }`}
+                                            >
+                                                Tidak
+                                            </button>
+                                        </div>
+                                        {loanHandling === 'deduct_loan' && (
+                                            <div>
+                                                <label className="block text-xs font-medium text-blue-900 mb-1">Nominal Bayar Pinjaman</label>
+                                                <input
+                                                    type="number"
+                                                    value={loanDeductionAmount}
+                                                    onChange={(e) => setLoanDeductionAmount(e.target.value)}
+                                                    min="1"
+                                                    max={maxLoanDeduction > 0 ? maxLoanDeduction : undefined}
+                                                    className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                                />
+                                                <p className="mt-1 text-xs text-blue-700">
+                                                    Maksimal {formatRupiah(maxLoanDeduction)} atau tidak lebih dari jumlah payroll.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Informasi Bank Pegawai & Tujuan Pengiriman */}
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                                            <Building2 size={14} className="text-slate-600" />
+                                            Tujuan Pembayaran &amp; Bank Pegawai
+                                        </span>
+                                        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs">
+                                            <button
+                                                type="button"
+                                                onClick={() => setPaymentMethod('transfer')}
+                                                className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                                                    paymentMethod === 'transfer' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                                }`}
+                                            >
+                                                Transfer Bank
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setPaymentMethod('cash')}
+                                                className={`px-2.5 py-1 rounded-md font-semibold transition ${
+                                                    paymentMethod === 'cash' ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'
+                                                }`}
+                                            >
+                                                Tunai / Cash
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {paymentMethod === 'transfer' ? (
+                                        !editingBank && bankName ? (
+                                            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-lg px-3 py-2.5">
+                                                <div className="text-xs space-y-0.5">
+                                                    <p className="font-bold text-slate-800">{bankName} {accountNumber ? `• ${accountNumber}` : ''}</p>
+                                                    <p className="text-slate-500">a.n. {accountHolder || member.nama}</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingBank(true)}
+                                                    className="text-xs font-semibold text-blue-600 hover:underline"
+                                                >
+                                                    Ubah Bank
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2.5 bg-white border border-slate-200 rounded-lg p-3">
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-xs font-semibold text-amber-700">
+                                                        {bankName ? 'Edit informasi rekening pegawai:' : 'Informasi bank pegawai belum diisi — isi di sini:'}
+                                                    </p>
+                                                    {bankName && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setEditingBank(false)}
+                                                            className="text-[11px] text-slate-500 hover:text-slate-700"
+                                                        >
+                                                            Selesai
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    <div>
+                                                        <label className="block text-[11px] font-medium text-slate-600 mb-1">Nama Bank *</label>
+                                                        <input
+                                                            type="text"
+                                                            list="pay-modal-bank-suggestions"
+                                                            value={bankName}
+                                                            onChange={(e) => setBankName(e.target.value)}
+                                                            placeholder="BCA / BRI / Mandiri"
+                                                            className="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <datalist id="pay-modal-bank-suggestions">
+                                                            {BANK_SUGGESTIONS.filter(b => b !== 'Cash / Tunai').map((bank) => (
+                                                                <option key={bank} value={bank} />
+                                                            ))}
+                                                        </datalist>
+                                                    </div>
+                                                    <div>
+                                                        <label className="block text-[11px] font-medium text-slate-600 mb-1">Nomor Rekening</label>
+                                                        <input
+                                                            type="text"
+                                                            value={accountNumber}
+                                                            onChange={(e) => setAccountNumber(e.target.value)}
+                                                            placeholder="Contoh: 1234567890"
+                                                            className="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[11px] font-medium text-slate-600 mb-1">Atas Nama Rekening</label>
+                                                    <input
+                                                        type="text"
+                                                        value={accountHolder}
+                                                        onChange={(e) => setAccountHolder(e.target.value)}
+                                                        placeholder={`Nama pemilik rekening (default: ${member.nama})`}
+                                                        className="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-blue-500"
+                                                    />
+                                                </div>
+                                                <p className="text-[11px] text-slate-500">
+                                                    Data rekening akan otomatis tersimpan ke profil payroll pegawai saat dibayar.
+                                                </p>
+                                            </div>
+                                        )
+                                    ) : (
+                                        <p className="text-xs text-emerald-700 bg-white border border-emerald-200 rounded-lg px-3 py-2">
+                                            Pembayaran akan dicatat sebagai <strong>Tunai / Cash langsung</strong> kepada {member.nama}.
+                                        </p>
+                                    )}
+                                </div>
+
+                                {/* Catatan */}
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Catatan Pembayaran</label>
                                     <input
-                                        type="number"
-                                        value={loanDeductionAmount}
-                                        onChange={(e) => setLoanDeductionAmount(e.target.value)}
-                                        min="1"
-                                        max={maxLoanDeduction}
-                                        className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                        type="text"
+                                        value={catatan}
+                                        onChange={e => setCatatan(e.target.value)}
+                                        placeholder="Catatan pembayaran (opsional)"
+                                        className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
                                     />
-                                    <p className="mt-1 text-xs text-blue-700">
-                                        Maksimal {formatRupiah(maxLoanDeduction)} atau tidak lebih dari jumlah payroll.
-                                    </p>
+                                </div>
+
+                                {/* WhatsApp Notification Toggle */}
+                                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-2">
+                                    <label className="flex items-start gap-2.5 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={sendWhatsapp}
+                                            onChange={(e) => setSendWhatsapp(e.target.checked)}
+                                            className="mt-0.5 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500"
+                                        />
+                                        <div className="text-xs">
+                                            <span className="font-semibold text-emerald-900 flex items-center gap-1">
+                                                <MessageSquare size={13} /> Kirim Rincian Gaji ke WhatsApp Pegawai
+                                            </span>
+                                            <span className="text-emerald-700 block mt-0.5">
+                                                Mengirim info waktu kerja (absensi), total gaji, potongan hutang / gaji diambil, gaji dibayar, dan bank tujuan.
+                                            </span>
+                                        </div>
+                                    </label>
+                                    {sendWhatsapp && (
+                                        <div>
+                                            <label className="block text-[11px] font-medium text-emerald-900 mb-1">Nomor WhatsApp Tujuan</label>
+                                            <input
+                                                type="text"
+                                                value={employeePhone}
+                                                onChange={(e) => setEmployeePhone(e.target.value)}
+                                                placeholder="Contoh: 08123456789"
+                                                className="w-full border border-emerald-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-emerald-500"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Preview */}
+                                {numericNominal > 0 && (
+                                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 space-y-1">
+                                        <div className="flex justify-between text-sm">
+                                            <span className="text-gray-600">Jumlah gaji (bruto):</span>
+                                            <span className="font-bold text-green-700">{formatRupiah(numericNominal)}</span>
+                                        </div>
+                                        {loanHandling === 'deduct_loan' && (
+                                            <div className="flex justify-between text-sm">
+                                                <span className="text-gray-600">Potong pinjaman / hutang:</span>
+                                                <span className="font-semibold text-blue-700">-{formatRupiah(requestedDeduction)}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between text-sm pt-1 border-t border-green-200">
+                                            <span className="font-semibold text-gray-800">Gaji yang harus dibayar:</span>
+                                            <span className="font-bold text-emerald-800">{formatRupiah(netPayableAmount)}</span>
+                                        </div>
+                                        {(!isMonthly || unpaid > 0) && (
+                                            <div className="flex justify-between text-xs text-gray-600">
+                                                <span>Sisa upah proyek setelah bayar:</span>
+                                                <span className="font-semibold">{formatRupiah(Math.max(0, unpaid - numericNominal))}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <div className="flex gap-3 justify-end pt-2">
+                                    <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-50 text-sm">
+                                        Batal
+                                    </button>
+                                    <button type="submit" className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm">
+                                        Lanjut Konfirmasi
+                                    </button>
+                                </div>
+                            </form>
+
+                            {/* Riwayat Pembayaran */}
+                            {payments.length > 0 && (
+                                <div className="border-t px-5 pb-5 pt-4">
+                                    <h4 className="text-sm font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
+                                        <Clock size={14} /> Riwayat Pembayaran
+                                    </h4>
+                                    <div className="max-h-44 overflow-y-auto space-y-2">
+                                        {payments.map(p => (
+                                            <div key={p.id} className="flex items-start justify-between bg-gray-50 rounded-lg px-3 py-2 gap-2">
+                                                <div>
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="text-sm font-semibold text-green-700">{formatRupiah(p.nominal)}</span>
+                                                        {p.payment_method === 'transfer' && p.bank_name && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">
+                                                                {p.bank_name}{p.account_number ? ` • ${p.account_number}` : ''}
+                                                            </span>
+                                                        )}
+                                                        {p.payment_method === 'cash' && (
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">
+                                                                Tunai
+                                                            </span>
+                                                        )}
+                                                        {p.whatsapp_status && (
+                                                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                                                p.whatsapp_status === 'sent'
+                                                                    ? 'bg-green-100 text-green-700'
+                                                                    : p.whatsapp_status === 'skipped'
+                                                                        ? 'bg-gray-200 text-gray-600'
+                                                                        : 'bg-red-100 text-red-700'
+                                                            }`}>
+                                                                WA: {p.whatsapp_status === 'sent' ? 'Terkirim' : p.whatsapp_status === 'skipped' ? 'Dilewati' : 'Gagal'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {Number(p.loan_deduction_amount || 0) > 0 && (
+                                                        <p className="text-xs text-blue-600">
+                                                            Potong pinjaman {formatRupiah(p.loan_deduction_amount)} | Diterima {formatRupiah(p.cash_paid_amount)}
+                                                        </p>
+                                                    )}
+                                                    {p.attendance_summary && (
+                                                        <p className="text-[11px] text-indigo-700">
+                                                            Absensi: {p.attendance_summary.total_present ?? 0} hari masuk • {p.attendance_summary.total_hours_formatted || '0 mnt'}
+                                                        </p>
+                                                    )}
+                                                    {p.catatan && <p className="text-xs text-gray-400">{p.catatan}</p>}
+                                                </div>
+                                                <span className="text-xs text-gray-400 whitespace-nowrap">{formatDate(p.created_at)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
-                        </div>
-                    )}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Catatan</label>
-                        <input
-                            type="text"
-                            value={catatan}
-                            onChange={e => setCatatan(e.target.value)}
-                            placeholder="Catatan pembayaran (opsional)"
-                            className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                        />
-                    </div>
-
-                    {/* Preview */}
-                    {nominal && parseFloat(nominal) > 0 && (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                            <div className="flex justify-between text-sm">
-                                <span className="text-gray-600">Gross payroll:</span>
-                                <span className="font-bold text-green-700">{formatRupiah(parseFloat(nominal))}</span>
-                            </div>
-                            {loanHandling === 'deduct_loan' && (
-                                <>
-                                    <div className="flex justify-between text-sm mt-1">
-                                        <span className="text-gray-600">Potong pinjaman:</span>
-                                        <span className="font-semibold text-blue-700">{formatRupiah(Number(loanDeductionAmount || 0))}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm mt-1">
-                                        <span className="text-gray-600">Tunai keluar:</span>
-                                        <span className="font-semibold text-gray-700">{formatRupiah(Math.max(0, parseFloat(nominal) - Number(loanDeductionAmount || 0)))}</span>
-                                    </div>
-                                </>
+                            {loadingHistory && (
+                                <div className="border-t px-5 pb-5 pt-4 text-center">
+                                    <p className="text-xs text-gray-400">Memuat riwayat...</p>
+                                </div>
                             )}
-                            <div className="flex justify-between text-sm mt-1">
-                                <span className="text-gray-600">Sisa setelah bayar:</span>
-                                <span className="font-semibold text-gray-700">{formatRupiah(Math.max(0, unpaid - parseFloat(nominal)))}</span>
+                        </>
+                    ) : (
+                        /* STEP 2: KONFIRMASI WAKTU KERJA & JUMLAH GAJI */
+                        <div className="p-5 space-y-4">
+                            <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900">
+                                Periksa dan konfirmasi kebenaran <strong>waktu kerja (absensi)</strong>, <strong>jumlah gaji</strong>,
+                                <strong> potongan pinjaman</strong>, serta <strong>rekening tujuan</strong> sebelum memproses pembayaran.
                             </div>
-                        </div>
-                    )}
 
-                    <div className="flex gap-3 justify-end pt-2">
-                        <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg text-gray-600 hover:bg-gray-50">Batal</button>
-                        <button type="submit" disabled={saving} className="px-5 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-medium">
-                            {saving ? 'Memproses...' : 'Bayar'}
-                        </button>
-                    </div>
-                    </form>
-
-                    {/* Riwayat Pembayaran */}
-                    {payments.length > 0 && (
-                        <div className="border-t px-5 pb-5 pt-4">
-                            <h4 className="text-sm font-semibold text-gray-600 mb-2 flex items-center gap-1.5">
-                                <Clock size={14} /> Riwayat Pembayaran
-                            </h4>
-                            <div className="max-h-40 overflow-y-auto space-y-2">
-                                {payments.map(p => (
-                                    <div key={p.id} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
-	                                        <div>
-	                                            <span className="text-sm font-medium text-green-700">{formatRupiah(p.nominal)}</span>
-	                                            {Number(p.loan_deduction_amount || 0) > 0 && (
-	                                                <p className="text-xs text-blue-600">
-	                                                    Potong pinjaman {formatRupiah(p.loan_deduction_amount)} | Tunai {formatRupiah(p.cash_paid_amount)}
-	                                                </p>
-	                                            )}
-	                                            {p.catatan && <p className="text-xs text-gray-400">{p.catatan}</p>}
-	                                        </div>
-                                        <span className="text-xs text-gray-400">{formatDate(p.created_at)}</span>
+                            {/* Konfirmasi Waktu Kerja */}
+                            <div className="rounded-xl border border-indigo-200 bg-white p-3.5 space-y-2">
+                                <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wide flex items-center gap-1.5">
+                                    <Clock size={14} className="text-indigo-600" /> 1. Konfirmasi Waktu Kerja Karyawan
+                                </h4>
+                                <div className="text-xs space-y-1 text-gray-700">
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Periode Absensi:</span>
+                                        <span className="font-semibold">{attendanceSummary?.period_label || '-'}</span>
                                     </div>
-                                ))}
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Jumlah Waktu Masuk / Hadir:</span>
+                                        <span className="font-bold text-indigo-800">{attendanceSummary?.total_present ?? 0} hari</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Ketepatan Waktu:</span>
+                                        <span className="font-medium">
+                                            {attendanceSummary?.total_on_time ?? 0} tepat waktu, {attendanceSummary?.total_late ?? 0} terlambat
+                                            {(attendanceSummary?.total_late_minutes ?? 0) > 0 ? ` (${attendanceSummary.total_late_minutes} mnt)` : ''}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Total Durasi Jam Kerja:</span>
+                                        <span className="font-bold text-indigo-800">{attendanceSummary?.total_hours_formatted || '0 mnt'}</span>
+                                    </div>
+                                    {attendanceSummary?.average_clock_in && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Rata-rata Jam Masuk:</span>
+                                            <span className="font-medium">{attendanceSummary.average_clock_in}</span>
+                                        </div>
+                                    )}
+                                    {attendanceNote.trim() && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Catatan Absensi:</span>
+                                            <span className="font-medium">{attendanceNote.trim()}</span>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    )}
-                    {loadingHistory && (
-                        <div className="border-t px-5 pb-5 pt-4 text-center">
-                            <p className="text-xs text-gray-400">Memuat riwayat...</p>
+
+                            {/* Konfirmasi Rincian Gaji */}
+                            <div className="rounded-xl border border-emerald-200 bg-white p-3.5 space-y-2">
+                                <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-wide flex items-center gap-1.5">
+                                    <DollarSign size={14} className="text-emerald-600" /> 2. Konfirmasi Rincian Gaji &amp; Hutang
+                                </h4>
+                                <div className="text-xs space-y-1 text-gray-700">
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Jumlah Gaji (Bruto):</span>
+                                        <span className="font-bold text-gray-900">{formatRupiah(numericNominal)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Sudah Diambil Periode Ini:</span>
+                                        <span className="font-medium">{formatRupiah(alreadyPaidInPeriod)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Potong Pinjaman / Hutang:</span>
+                                        <span className="font-semibold text-blue-700">-{formatRupiah(requestedDeduction)}</span>
+                                    </div>
+                                    {loanOutstanding > 0 && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Sisa Pinjaman Setelah Bayar:</span>
+                                            <span className="font-medium text-amber-700">{formatRupiah(remainingLoanAfter)}</span>
+                                        </div>
+                                    )}
+                                    <div className="flex justify-between pt-2 border-t border-emerald-100 text-sm">
+                                        <span className="font-bold text-emerald-900">Gaji yang Dibayarkan (Bersih):</span>
+                                        <span className="font-extrabold text-emerald-700">{formatRupiah(netPayableAmount)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Konfirmasi Bank & WA */}
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-1.5 text-xs">
+                                <h4 className="font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                                    <CreditCard size={14} className="text-slate-600" /> 3. Pengiriman Pembayaran &amp; WhatsApp
+                                </h4>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Dikirim Ke:</span>
+                                    <span className="font-semibold text-gray-900 text-right">
+                                        {paymentMethod === 'transfer'
+                                            ? `${bankName} ${accountNumber ? `(${accountNumber})` : ''} a.n. ${accountHolder || member.nama}`
+                                            : 'Tunai / Cash Langsung'}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Notifikasi WhatsApp Pegawai:</span>
+                                    <span className={`font-semibold ${sendWhatsapp ? 'text-emerald-700' : 'text-gray-500'}`}>
+                                        {sendWhatsapp ? `Ya -> ${employeePhone}` : 'Tidak dikirim'}
+                                    </span>
+                                </div>
+                                {catatan.trim() && (
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Catatan:</span>
+                                        <span className="font-medium text-gray-800">{catatan.trim()}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Confirmation Checkbox */}
+                            <label className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 p-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={confirmWorkAndSalary}
+                                    onChange={(e) => setConfirmWorkAndSalary(e.target.checked)}
+                                    className="mt-0.5 rounded border-amber-400 text-emerald-600 focus:ring-emerald-500"
+                                />
+                                <span className="text-xs font-semibold text-amber-950">
+                                    Saya konfirmasi data waktu kerja ({attendanceSummary?.total_present ?? 0} hari hadir,{' '}
+                                    {attendanceSummary?.total_hours_formatted || '0 mnt'}) dan jumlah gaji bersih sebesar{' '}
+                                    {formatRupiah(netPayableAmount)} sudah benar.
+                                </span>
+                            </label>
+
+                            <div className="flex gap-3 justify-between pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => { setStep('form'); setFormError(''); }}
+                                    disabled={saving}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 border rounded-lg text-gray-700 hover:bg-gray-50 text-sm font-medium"
+                                >
+                                    <ArrowLeft size={15} /> Kembali Ubah
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleConfirmAndPay}
+                                    disabled={saving || !confirmWorkAndSalary}
+                                    className="inline-flex items-center gap-1.5 px-5 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 font-semibold text-sm"
+                                >
+                                    <CheckCircle size={15} />
+                                    {saving ? 'Memproses...' : 'Konfirmasi & Bayar Sekarang'}
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>
             </div>
 
-            {loanChoicePromptOpen && Number(loanContext?.outstanding || 0) > 0 && (
+            {loanChoicePromptOpen && loanOutstanding > 0 && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4">
                     <div className="w-full max-w-md rounded-3xl border border-blue-100 bg-white p-5 shadow-2xl">
                         <div className="mb-3 flex items-center justify-between gap-3">
@@ -604,7 +1297,7 @@ function PayMemberModal({ isOpen, onClose, onPaid, member }) {
                         <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 p-4">
                             <p className="text-sm font-bold text-blue-900">Karyawan memiliki pinjaman aktif</p>
                             <p className="mt-1 text-sm text-blue-700">
-                                {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanContext.outstanding)}.
+                                {loanContext?.borrower?.name || member.nama} masih memiliki sisa pinjaman {formatRupiah(loanOutstanding)}.
                             </p>
                         </div>
                         <p className="text-sm text-gray-600">
@@ -939,6 +1632,7 @@ export default function PayrollPage() {
     const [activeTab, setActiveTab] = useState('karyawan');
     const [memberToEdit, setMemberToEdit] = useState(null);
     const [memberSearchQuery, setMemberSearchQuery] = useState('');
+    const [paymentFeedback, setPaymentFeedback] = useState(null);
 
     const fetchData = useCallback(async () => {
         try {
@@ -1050,8 +1744,34 @@ export default function PayrollPage() {
         const q = memberSearchQuery.toLowerCase();
         return (m.nama && m.nama.toLowerCase().includes(q)) ||
                (m.telepon && m.telepon.includes(q)) ||
-               (m.nama_bank && m.nama_bank.toLowerCase().includes(q));
+               (m.nama_bank && m.nama_bank.toLowerCase().includes(q)) ||
+               (m.nomor_rekening && m.nomor_rekening.toLowerCase().includes(q)) ||
+               (m.atas_nama_rekening && m.atas_nama_rekening.toLowerCase().includes(q));
     });
+
+    const handleOpenPayModal = (memberObj) => {
+        const enriched = data.unpaid_summary.find(u => u.id === memberObj.id);
+        setPayMember(enriched ? { ...memberObj, ...enriched } : memberObj);
+    };
+
+    const handleMemberPaid = (response) => {
+        fetchData();
+        if (response?.message) {
+            const waStatus = response?.whatsapp?.status;
+            const waText = waStatus === 'sent'
+                ? `Slip gaji terkirim ke WhatsApp (${response.whatsapp.phone}).`
+                : waStatus === 'skipped'
+                    ? `WhatsApp dilewati: ${response.whatsapp.error}`
+                    : waStatus === 'failed'
+                        ? `WhatsApp gagal dikirim: ${response.whatsapp.error}`
+                        : null;
+            setPaymentFeedback({
+                type: waStatus === 'failed' ? 'warning' : 'success',
+                message: response.message,
+                whatsappNote: waText,
+            });
+        }
+    };
 
     if (loading) {
         return (
@@ -1089,6 +1809,28 @@ export default function PayrollPage() {
                     </button>
                 </div>
             </div>
+
+            {paymentFeedback && (
+                <div className={`rounded-xl border px-4 py-3 flex items-start justify-between gap-3 ${
+                    paymentFeedback.type === 'warning'
+                        ? 'bg-amber-50 border-amber-200 text-amber-900'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                }`}>
+                    <div className="text-sm">
+                        <p className="font-semibold">{paymentFeedback.message}</p>
+                        {paymentFeedback.whatsappNote && (
+                            <p className="text-xs mt-0.5 opacity-90">{paymentFeedback.whatsappNote}</p>
+                        )}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setPaymentFeedback(null)}
+                        className="p-1 rounded-lg hover:bg-black/5"
+                    >
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
 
             {/* Navigation Tabs */}
             <div className="flex gap-2 border-b border-gray-200">
@@ -1272,15 +2014,22 @@ export default function PayrollPage() {
                                                         <div>
                                                             <span className="font-semibold text-gray-800">{m.nama_bank}</span>
                                                             {m.nomor_rekening && <span className="block text-gray-500">{m.nomor_rekening}</span>}
+                                                            {m.atas_nama_rekening && <span className="block text-[11px] text-gray-400">a.n. {m.atas_nama_rekening}</span>}
                                                         </div>
                                                     ) : (
-                                                        <span className="text-gray-400">-</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setMemberToEdit(m); setShowMemberModal(true); }}
+                                                            className="text-xs px-2 py-1 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 font-medium"
+                                                        >
+                                                            + Isi Rekening
+                                                        </button>
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-3.5 text-center whitespace-nowrap">
                                                     <div className="flex items-center justify-center gap-1.5">
                                                         <button
-                                                            onClick={() => setPayMember(m)}
+                                                            onClick={() => handleOpenPayModal(m)}
                                                             className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 transition"
                                                             title="Bayar Gaji Karyawan"
                                                         >
@@ -1342,7 +2091,7 @@ export default function PayrollPage() {
                                             <span className="font-bold text-orange-600 text-sm">{formatRupiah(m.total_unpaid)}</span>
                                         </div>
                                         <button
-                                            onClick={() => setPayMember(m)}
+                                            onClick={() => handleOpenPayModal(m)}
                                             className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition"
                                         >
                                             <DollarSign size={15} /> Bayar Upah
@@ -1530,7 +2279,7 @@ export default function PayrollPage() {
             <PayMemberModal
                 isOpen={!!payMember}
                 onClose={() => setPayMember(null)}
-                onPaid={fetchData}
+                onPaid={handleMemberPaid}
                 member={payMember}
             />
         </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, Mail, Lock, Trash2, Save, AlertTriangle } from 'lucide-react';
+import { User, Mail, Lock, Trash2, Save, AlertTriangle, CreditCard, Phone } from 'lucide-react';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Alert from '../../components/common/Alert';
 import Button from '../../components/common/Button';
@@ -13,6 +13,12 @@ function ProfilePage() {
     
     // Form states
     const [profileData, setProfileData] = useState({ name: '', email: '' });
+    const [bankData, setBankData] = useState({
+        nama_bank: '',
+        nomor_rekening: '',
+        atas_nama_rekening: '',
+        telepon: '',
+    });
     const [passwordData, setPasswordData] = useState({ 
         current_password: '', 
         password: '', 
@@ -23,6 +29,7 @@ function ProfilePage() {
     
     const [submitting, setSubmitting] = useState({
         profile: false,
+        bank: false,
         password: false,
         delete: false,
     });
@@ -44,6 +51,12 @@ function ProfilePage() {
             const data = await response.json();
             setUser(data);
             setProfileData({ name: data.name, email: data.email });
+            setBankData({
+                nama_bank: data.payroll_member?.nama_bank || '',
+                nomor_rekening: data.payroll_member?.nomor_rekening || '',
+                atas_nama_rekening: data.payroll_member?.atas_nama_rekening || data.name || '',
+                telepon: data.payroll_member?.telepon || data.phone || '',
+            });
         } catch (err) {
             setError('Gagal memuat data profil');
             console.error(err);
@@ -80,6 +93,37 @@ function ProfilePage() {
             setError(err.message);
         } finally {
             setSubmitting(prev => ({ ...prev, profile: false }));
+        }
+    };
+
+    const handleBankUpdate = async (e) => {
+        e.preventDefault();
+        setError(null);
+        setSuccess(null);
+        setSubmitting(prev => ({ ...prev, bank: true }));
+
+        try {
+            const response = await fetch('/api/profile/bank', {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                },
+                body: JSON.stringify(bankData),
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || 'Gagal menyimpan informasi rekening bank');
+            }
+
+            setSuccess(data.message || 'Informasi rekening bank berhasil disimpan');
+            fetchUser();
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setSubmitting(prev => ({ ...prev, bank: false }));
         }
     };
 
@@ -204,6 +248,76 @@ function ProfilePage() {
                     </div>
                 </form>
             </div>
+
+            {/* Employee Bank Account Info */}
+            {(user?.is_employee || user?.payroll_member || ['superadmin', 'admin', 'teknisi', 'finance'].includes(user?.role)) && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                    <div className="mb-6">
+                        <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                            <CreditCard size={20} className="text-blue-600" />
+                            Informasi Rekening Bank Pegawai
+                        </h2>
+                        <p className="text-sm text-gray-600">
+                            Rekening tujuan pengiriman gaji dan nomor WhatsApp untuk menerima rincian slip gaji.
+                        </p>
+                    </div>
+                    <form onSubmit={handleBankUpdate} className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nama Bank / E-Wallet</label>
+                                <input
+                                    type="text"
+                                    value={bankData.nama_bank}
+                                    onChange={(e) => setBankData(prev => ({ ...prev, nama_bank: e.target.value }))}
+                                    placeholder="BCA / BRI / BNI / Mandiri"
+                                    className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Rekening</label>
+                                <input
+                                    type="text"
+                                    value={bankData.nomor_rekening}
+                                    onChange={(e) => setBankData(prev => ({ ...prev, nomor_rekening: e.target.value }))}
+                                    placeholder="Contoh: 1234567890"
+                                    className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Atas Nama Rekening</label>
+                                <input
+                                    type="text"
+                                    value={bankData.atas_nama_rekening}
+                                    onChange={(e) => setBankData(prev => ({ ...prev, atas_nama_rekening: e.target.value }))}
+                                    placeholder="Nama sesuai buku tabungan"
+                                    className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">No. WhatsApp (Slip Gaji)</label>
+                                <div className="relative">
+                                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                    <input
+                                        type="text"
+                                        value={bankData.telepon}
+                                        onChange={(e) => setBankData(prev => ({ ...prev, telepon: e.target.value }))}
+                                        placeholder="08123456789"
+                                        className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex justify-end">
+                            <Button type="submit" variant="primary" disabled={submitting.bank}>
+                                <Save size={18} className="mr-2" />
+                                {submitting.bank ? 'Menyimpan...' : 'Simpan Rekening'}
+                            </Button>
+                        </div>
+                    </form>
+                </div>
+            )}
 
             {/* Update Password */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
