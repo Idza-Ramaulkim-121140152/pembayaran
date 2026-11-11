@@ -7,6 +7,7 @@ use App\Services\PaymentCaptureNotificationService;
 use App\Services\PaymentMatchingService;
 use App\Services\PaymentProofAnalysisService;
 use App\Services\PaymentProofValidationService;
+use App\Services\PaymentVerificationConfigService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -37,6 +38,26 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
         $capture = BillingPaymentCapture::query()->with(['customer', 'invoice'])->find($this->captureId);
         if (!$capture) {
             return;
+        }
+
+        if ($capture->source === 'whatsapp_webhook' && $capture->match_status !== 'approved') {
+            $excluded = app(PaymentVerificationConfigService::class)->matchExcludedSender(
+                (string) data_get($capture->meta, 'sender_phone', ''),
+                (string) data_get($capture->meta, 'sender_lid', '')
+            );
+            if ($excluded !== null) {
+                Log::info('Discarding queued WhatsApp capture from excluded admin/internal sender', [
+                    'capture_id' => $capture->id,
+                    'excluded_name' => $excluded['name'] ?? null,
+                ]);
+                $mediaPath = (string) data_get($capture->meta, 'media.path', '');
+                if ($mediaPath !== '' && Storage::disk('public')->exists($mediaPath)) {
+                    Storage::disk('public')->delete($mediaPath);
+                }
+                $capture->matchReviews()->delete();
+                $capture->delete();
+                return;
+            }
         }
 
         // Auto-resolve customer from sender_phone, caption, or OCR if not yet attached

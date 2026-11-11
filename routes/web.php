@@ -657,6 +657,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/billing/payments/match', [BillingAutomationController::class, 'runMatch'])->name('api.billing.payments.match');
         Route::put('/api/billing/payment-verification/config', [BillingAutomationController::class, 'updatePaymentVerificationConfig'])->name('api.billing.payment-verification.config.update');
         Route::post('/api/billing/payments/{capture}/reanalyze', [BillingAutomationController::class, 'reanalyzeCapture'])->whereNumber('capture')->name('api.billing.payments.reanalyze');
+        Route::post('/api/billing/payments/{capture}/exclude-sender', [BillingAutomationController::class, 'excludeCaptureSender'])->whereNumber('capture')->name('api.billing.payments.exclude-sender');
     });
 
     Route::middleware('permission:billing.payment_capture.review')->group(function () {

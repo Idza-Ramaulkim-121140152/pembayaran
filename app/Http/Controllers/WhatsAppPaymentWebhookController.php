@@ -68,6 +68,22 @@ class WhatsAppPaymentWebhookController extends Controller
             ], 422);
         }
 
+        if (!empty($result['ignored']) || empty($result['capture'])) {
+            Log::info('WhatsApp payment webhook ignored (excluded sender)', [
+                'message_id' => $validated['message_id'],
+                'sender_phone' => $validated['sender_phone'],
+                'sender_lid' => $validated['sender_lid'] ?? null,
+                'excluded_sender' => $result['excluded_sender']['name'] ?? null,
+            ]);
+
+            return response()->json([
+                'message' => $result['message'],
+                'duplicate' => false,
+                'ignored' => true,
+                'data' => null,
+            ], 200);
+        }
+
         Log::info('WhatsApp payment webhook accepted', [
             'message_id' => $validated['message_id'],
             'capture_id' => $result['capture']->id,

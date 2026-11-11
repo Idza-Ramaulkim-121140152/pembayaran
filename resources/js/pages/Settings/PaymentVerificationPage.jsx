@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
     AlertTriangle,
+    Ban,
     Bot,
     Building2,
     Calendar,
@@ -53,6 +54,51 @@ function createRecipient() {
         receive_auto_approved: true,
         receive_needs_review: true,
     };
+}
+
+function createExcludedSender() {
+    return {
+        id: `excluded-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: '',
+        phone: '',
+        lid: '',
+        is_active: true,
+    };
+}
+
+function normalizeWaTokens(raw) {
+    const str = String(raw || '').trim();
+    if (!str) return [];
+    const digits = str.replace(/@(lid|s\.whatsapp\.net)$/i, '').replace(/\D/g, '');
+    if (digits.length < 7) return [];
+
+    const isLid = str.includes('@lid') || (digits.length >= 14 && /^(01|02|1|2)/.test(digits));
+    if (isLid) {
+        const clean = digits.length >= 15 && digits.startsWith('0') ? digits.slice(1) : digits;
+        return [`lid:${clean}`, `digits:${clean}`, `digits:0${clean}`];
+    }
+
+    const local = digits.startsWith('62') ? `0${digits.slice(2)}` : (digits.startsWith('0') ? digits : `0${digits}`);
+    const bare = local.replace(/^0+/, '');
+    return [`digits:${digits}`, `digits:${local}`, `digits:${bare}`, `digits:62${bare}`];
+}
+
+function findExcludedSenderMatch(capture, excludedList = []) {
+    if (!capture || !Array.isArray(excludedList) || excludedList.length === 0) return null;
+    const captureTokens = new Set([
+        ...normalizeWaTokens(capture.sender_phone),
+        ...normalizeWaTokens(capture.sender_lid),
+    ]);
+    if (captureTokens.size === 0) return null;
+
+    return excludedList.find((entry) => {
+        if (entry?.is_active === false) return false;
+        const entryTokens = [
+            ...normalizeWaTokens(entry?.phone),
+            ...normalizeWaTokens(entry?.lid),
+        ];
+        return entryTokens.some((tok) => captureTokens.has(tok));
+    }) || null;
 }
 
 export default function PaymentVerificationPage() {
@@ -169,6 +215,17 @@ export default function PaymentVerificationPage() {
     const [customerSearchResults, setCustomerSearchResults] = useState({});
     const [isSearchingCustomer, setIsSearchingCustomer] = useState({});
     const [showCustomerSearch, setShowCustomerSearch] = useState({});
+
+    // Exclude Admin Sender modal state
+    const [excludeSenderModal, setExcludeSenderModal] = useState({
+        open: false,
+        capture: null,
+        name: '',
+        phone: '',
+        lid: '',
+        remove_capture: true,
+        saving: false,
+    });
 
     // Load initial data
     const loadData = async (
@@ -630,6 +687,93 @@ export default function PaymentVerificationPage() {
             ...prev,
             notification_recipients: (prev?.notification_recipients || []).filter((_, i) => i !== index),
         }));
+    };
+
+    // Excluded Senders (Admin / Internal)
+    const excludedSenders = config?.excluded_senders || [];
+
+    const handleAddExcludedSender = () => {
+        setConfig((prev) => ({
+            ...prev,
+            excluded_senders: [...(prev?.excluded_senders || []), createExcludedSender()],
+        }));
+    };
+
+    const handleUpdateExcludedSender = (index, patch) => {
+        setConfig((prev) => {
+            const nextList = [...(prev?.excluded_senders || [])];
+            nextList[index] = { ...nextList[index], ...patch };
+            return { ...prev, excluded_senders: nextList };
+        });
+    };
+
+    const handleDeleteExcludedSender = (index) => {
+        setConfig((prev) => ({
+            ...prev,
+            excluded_senders: (prev?.excluded_senders || []).filter((_, i) => i !== index),
+        }));
+    };
+
+    const openExcludeSenderModal = (capture) => {
+        const rawLid = String(capture?.sender_lid || '').trim();
+        const rawPhone = String(capture?.sender_phone || '').trim();
+        const phoneIsLid = Boolean(capture?.is_lid) && (
+            rawLid !== '' ||
+            rawPhone.includes('@lid') ||
+            (rawPhone.replace(/\D/g, '').length >= 14 && /^(01|02|1|2)/.test(rawPhone.replace(/\D/g, '')))
+        );
+        const derivedLid = rawLid || (phoneIsLid ? rawPhone.replace(/\D/g, '').replace(/^0(?=\d{14,})/, '') : '');
+        const derivedPhone = !phoneIsLid ? rawPhone : '';
+        const matchedExisting = findExcludedSenderMatch(capture, excludedSenders);
+
+        setExcludeSenderModal({
+            open: true,
+            capture,
+            name: matchedExisting?.name || (capture?.sender_name ? `${capture.sender_name} (Admin)` : 'Admin / Internal'),
+            phone: matchedExisting?.phone || derivedPhone,
+            lid: matchedExisting?.lid || derivedLid,
+            remove_capture: capture?.match_status !== 'approved',
+            saving: false,
+        });
+    };
+
+    const handleSubmitExcludeSender = async (e) => {
+        e.preventDefault();
+        if (!excludeSenderModal.capture?.id) return;
+
+        try {
+            setExcludeSenderModal((prev) => ({ ...prev, saving: true }));
+            setError('');
+            setMessage('');
+
+            const res = await paymentVerificationService.excludeCaptureSender(excludeSenderModal.capture.id, {
+                name: excludeSenderModal.name.trim() || null,
+                phone: excludeSenderModal.phone.trim() || null,
+                lid: excludeSenderModal.lid.trim() || null,
+                remove_capture: Boolean(excludeSenderModal.remove_capture),
+            });
+
+            if (res.data?.config) {
+                setConfig(res.data.config);
+            }
+            if (res.data?.removed && selectedDetailCapture?.id === excludeSenderModal.capture.id) {
+                handleCloseDetailModal();
+            }
+            setExcludeSenderModal({
+                open: false,
+                capture: null,
+                name: '',
+                phone: '',
+                lid: '',
+                remove_capture: true,
+                saving: false,
+            });
+            setMessage(res.data?.message || 'Pengirim berhasil ditambahkan ke daftar pengecualian admin.');
+            await loadData(activeTab, currentPage, searchQuery, fromDate, toDate, sourceFilter, confidenceFilter);
+        } catch (err) {
+            setError(err.response?.data?.message || err.message || 'Gagal menambahkan pengecualian pengirim.');
+            setExcludeSenderModal((prev) => ({ ...prev, saving: false }));
+        }
     };
 
     if (loading && !config) {
@@ -1284,6 +1428,17 @@ export default function PaymentVerificationPage() {
                                                                                 <span>{isSearchOpen ? 'Tutup Ubah Pelanggan' : 'Ubah Pelanggan'}</span>
                                                                             </button>
                                                                         )}
+                                                                        {canManage && isNeedsReview && capture.source === 'whatsapp_webhook' && (capture.sender_phone || capture.sender_lid) && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => openExcludeSenderModal(capture)}
+                                                                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs transition shadow-xs"
+                                                                                title="Kecualikan nomor / ID perangkat WA pengirim ini karena merupakan admin lain"
+                                                                            >
+                                                                                <Ban size={12} />
+                                                                                <span>Kecualikan Admin</span>
+                                                                            </button>
+                                                                        )}
                                                                     </div>
                                                                 </div>
 
@@ -1399,19 +1554,39 @@ export default function PaymentVerificationPage() {
                                                                                 {capture.sender_name && (
                                                                                     <span>· Nama Profil WA: <strong className="text-purple-700">"{capture.sender_name}"</strong></span>
                                                                                 )}
+                                                                                {(() => {
+                                                                                    const excludedMatch = findExcludedSenderMatch(capture, excludedSenders);
+                                                                                    return excludedMatch ? (
+                                                                                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-white">
+                                                                                            <Ban size={10} /> Pengirim Admin Dikecualikan ({excludedMatch.name})
+                                                                                        </span>
+                                                                                    ) : null;
+                                                                                })()}
                                                                             </div>
                                                                         </div>
                                                                     </div>
-                                                                    {canManage && isNeedsReview && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => setShowCustomerSearch((prev) => ({ ...prev, [capture.id]: !isSearchOpen }))}
-                                                                            className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition flex items-center gap-1 shadow-sm shrink-0"
-                                                                        >
-                                                                            <User size={13} />
-                                                                            {isSearchOpen ? 'Tutup Pencarian' : 'Cari & Tautkan Pelanggan'}
-                                                                        </button>
-                                                                    )}
+                                                                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                                                        {canManage && capture.source === 'whatsapp_webhook' && (capture.sender_phone || capture.sender_lid) && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => openExcludeSenderModal(capture)}
+                                                                                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs transition flex items-center gap-1 shadow-sm"
+                                                                            >
+                                                                                <Ban size={12} />
+                                                                                <span>{findExcludedSenderMatch(capture, excludedSenders) ? 'Bersihkan Capture Admin' : 'Kecualikan Admin'}</span>
+                                                                            </button>
+                                                                        )}
+                                                                        {canManage && isNeedsReview && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setShowCustomerSearch((prev) => ({ ...prev, [capture.id]: !isSearchOpen }))}
+                                                                                className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition flex items-center gap-1 shadow-sm shrink-0"
+                                                                            >
+                                                                                <User size={13} />
+                                                                                {isSearchOpen ? 'Tutup Pencarian' : 'Cari & Tautkan Pelanggan'}
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
 
                                                                 {/* Search Customer Inline Form */}
@@ -2085,6 +2260,102 @@ export default function PaymentVerificationPage() {
                             </button>
                         </div>
                     </div>
+
+                    {/* Excluded Senders (Other Admin / Internal Numbers) */}
+                    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <Ban className="h-5 w-5 text-slate-700" />
+                                    <h3 className="font-bold text-gray-900">Pengecualian Pengirim WhatsApp (Admin / Bukan Pelanggan)</h3>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Nomor WhatsApp maupun ID Perangkat WA Multi-Device (LID) yang terdaftar di bawah ini akan diabaikan oleh webhook dan tidak akan dibaca AI sebagai bukti pembayaran pelanggan.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleAddExcludedSender}
+                                className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-200 transition"
+                            >
+                                <Plus size={13} /> Tambah Pengecualian
+                            </button>
+                        </div>
+
+                        {excludedSenders.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-center text-xs text-gray-500">
+                                Belum ada nomor admin / internal yang dikecualikan.
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {excludedSenders.map((item, idx) => (
+                                    <div key={item.id || idx} className="grid gap-3 sm:grid-cols-12 p-3 rounded-xl border border-gray-100 bg-gray-50 items-center">
+                                        <div className="sm:col-span-3">
+                                            <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">Nama Admin / Ket.</label>
+                                            <input
+                                                type="text"
+                                                placeholder="Contoh: Adul (Admin)"
+                                                value={item.name || ''}
+                                                onChange={(e) => handleUpdateExcludedSender(idx, { name: e.target.value })}
+                                                className="w-full text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white"
+                                            />
+                                        </div>
+                                        <div className="sm:col-span-3">
+                                            <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">Nomor WhatsApp</label>
+                                            <input
+                                                type="text"
+                                                placeholder="085840635530"
+                                                value={item.phone || ''}
+                                                onChange={(e) => handleUpdateExcludedSender(idx, { phone: e.target.value })}
+                                                className="w-full text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white font-mono"
+                                            />
+                                        </div>
+                                        <div className="sm:col-span-4">
+                                            <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">ID Perangkat WA / LID (Opsional)</label>
+                                            <input
+                                                type="text"
+                                                placeholder="130167959728202"
+                                                value={item.lid || ''}
+                                                onChange={(e) => handleUpdateExcludedSender(idx, { lid: e.target.value })}
+                                                className="w-full text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white font-mono"
+                                            />
+                                        </div>
+                                        <div className="sm:col-span-2 flex items-center justify-between sm:justify-end gap-3 pt-3 sm:pt-4">
+                                            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-700 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={item.is_active !== false}
+                                                    onChange={(e) => handleUpdateExcludedSender(idx, { is_active: e.target.checked })}
+                                                    className="rounded text-slate-800"
+                                                />
+                                                Aktif
+                                            </label>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDeleteExcludedSender(idx)}
+                                                className="text-rose-600 hover:text-rose-800 p-1"
+                                                title="Hapus Pengecualian"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="pt-2">
+                            <button
+                                type="button"
+                                onClick={() => handleSaveConfig()}
+                                disabled={saving}
+                                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 transition"
+                            >
+                                <Save size={16} />
+                                {saving ? 'Menyimpan...' : 'Simpan Pengecualian & Pengaturan'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -2742,6 +3013,17 @@ export default function PaymentVerificationPage() {
                                             </button>
                                         </>
                                     )}
+                                    {canManage && c.source === 'whatsapp_webhook' && c.match_status !== 'approved' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => openExcludeSenderModal(c)}
+                                            disabled={refreshing}
+                                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-bold text-slate-800 hover:bg-slate-200 disabled:opacity-60 transition"
+                                        >
+                                            <Ban size={14} className="text-slate-700" />
+                                            <span>Kecualikan Pengirim (Admin)</span>
+                                        </button>
+                                    )}
                                 </div>
                                 <button
                                     type="button"
@@ -2754,6 +3036,100 @@ export default function PaymentVerificationPage() {
                         </div>
                     );
                 })()}
+            </Modal>
+
+            {/* MODAL: EXCLUDE ADMIN SENDER */}
+            <Modal
+                isOpen={excludeSenderModal.open}
+                onClose={() => !excludeSenderModal.saving && setExcludeSenderModal((prev) => ({ ...prev, open: false }))}
+                title="Kecualikan Pengirim WhatsApp (Admin / Internal)"
+            >
+                <form onSubmit={handleSubmitExcludeSender} className="space-y-4">
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                        Pengirim yang dikecualikan tidak akan dibaca atau dianalisis AI sebagai bukti pembayaran pelanggan saat mengirim foto ke akun WhatsApp pembayaran.
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-700 mb-1">
+                            Nama / Keterangan Admin <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            required
+                            value={excludeSenderModal.name}
+                            onChange={(e) => setExcludeSenderModal((prev) => ({ ...prev, name: e.target.value }))}
+                            placeholder="Contoh: Adul / Abdrohman (Admin)"
+                            className="w-full text-xs rounded-xl border border-gray-300 p-2.5"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">
+                                Nomor WhatsApp Admin
+                            </label>
+                            <input
+                                type="text"
+                                value={excludeSenderModal.phone}
+                                onChange={(e) => setExcludeSenderModal((prev) => ({ ...prev, phone: e.target.value }))}
+                                placeholder="085840635530"
+                                className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono"
+                            />
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                Isi nomor WA (misal 0858...) jika perangkat mengirimkan LID.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-700 mb-1">
+                                ID Perangkat WA / LID
+                            </label>
+                            <input
+                                type="text"
+                                value={excludeSenderModal.lid}
+                                onChange={(e) => setExcludeSenderModal((prev) => ({ ...prev, lid: e.target.value }))}
+                                placeholder="130167959728202"
+                                className="w-full text-xs rounded-xl border border-gray-300 p-2.5 font-mono"
+                            />
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                Terisi otomatis jika pengiriman memakai Multi-Device LID.
+                            </p>
+                        </div>
+                    </div>
+
+                    {excludeSenderModal.capture?.match_status !== 'approved' && (
+                        <label className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={excludeSenderModal.remove_capture}
+                                onChange={(e) => setExcludeSenderModal((prev) => ({ ...prev, remove_capture: e.target.checked }))}
+                                className="rounded text-slate-800"
+                            />
+                            <span>
+                                Sekaligus bersihkan &amp; hapus <strong>Capture #{excludeSenderModal.capture?.id}</strong> dari daftar verifikasi
+                            </span>
+                        </label>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-2">
+                        <button
+                            type="button"
+                            disabled={excludeSenderModal.saving}
+                            onClick={() => setExcludeSenderModal((prev) => ({ ...prev, open: false }))}
+                            className="px-4 py-2 text-xs font-semibold text-gray-600 rounded-xl hover:bg-gray-100"
+                        >
+                            Batal
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={excludeSenderModal.saving || (!excludeSenderModal.phone.trim() && !excludeSenderModal.lid.trim())}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-slate-900 rounded-xl hover:bg-slate-800 disabled:opacity-60"
+                        >
+                            <Ban size={13} />
+                            {excludeSenderModal.saving ? 'Menyimpan...' : 'Simpan Pengecualian'}
+                        </button>
+                    </div>
+                </form>
             </Modal>
         </div>
     );

@@ -20,6 +20,7 @@ const paymentVerificationService = {
         return apiClient.post(`/billing/payments/${captureId}/reanalyze`);
     },
     assignCustomer: (captureId, customerId) => apiClient.post(`/billing/payments/${captureId}/assign-customer`, { customer_id: customerId }),
+    excludeCaptureSender: (captureId, payload = {}) => apiClient.post(`/billing/payments/${captureId}/exclude-sender`, payload),
     getCustomers: (params = {}) => apiClient.get('/customers', { params }),
     getAutoConfirmations: (params = {}) => apiClient.get('/billing/payment-verification/auto-confirmations', { params }),
     cancelAutoConfirmation: (captureId) => apiClient.post(`/billing/payment-verification/auto-confirmations/${captureId}/cancel`),

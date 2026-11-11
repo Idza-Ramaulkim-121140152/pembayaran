@@ -9,6 +9,7 @@ use App\Services\PaymentMatchingService;
 use App\Services\PaymentVerificationConfigService;
 use App\Jobs\AnalyzeWhatsAppPaymentCaptureJob;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Rule;
 
@@ -143,11 +144,23 @@ class BillingAutomationController extends Controller
             'notification_recipients.*.is_active' => 'nullable|boolean',
             'notification_recipients.*.receive_auto_approved' => 'nullable|boolean',
             'notification_recipients.*.receive_needs_review' => 'nullable|boolean',
+            'excluded_senders' => 'sometimes|array',
+            'excluded_senders.*.id' => 'nullable|string|max:80',
+            'excluded_senders.*.name' => 'nullable|string|max:120',
+            'excluded_senders.*.phone' => 'nullable|string|max:40',
+            'excluded_senders.*.lid' => 'nullable|string|max:64',
+            'excluded_senders.*.is_active' => 'nullable|boolean',
         ]);
 
         if (array_key_exists('notification_recipients', $validated)) {
             $validated['notification_recipients'] = $this->validateNotificationRecipients(
                 is_array($validated['notification_recipients']) ? $validated['notification_recipients'] : []
+            );
+        }
+
+        if (array_key_exists('excluded_senders', $validated)) {
+            $validated['excluded_senders'] = $this->validateExcludedSenders(
+                is_array($validated['excluded_senders']) ? $validated['excluded_senders'] : []
             );
         }
 
@@ -198,6 +211,127 @@ class BillingAutomationController extends Controller
         }
 
         return $normalized;
+    }
+
+    private function validateExcludedSenders(array $items): array
+    {
+        $normalized = $this->paymentVerificationConfigService->normalizeExcludedSenders($items);
+        $seenTokens = [];
+
+        foreach ($normalized as $index => $item) {
+            $name = trim((string) ($item['name'] ?? ''));
+            $phone = trim((string) ($item['phone'] ?? ''));
+            $lid = trim((string) ($item['lid'] ?? ''));
+
+            if ($name === '') {
+                throw ValidationException::withMessages([
+                    "excluded_senders.$index.name" => ['Nama/keterangan admin yang dikecualikan wajib diisi.'],
+                ]);
+            }
+
+            if ($phone === '' && $lid === '') {
+                throw ValidationException::withMessages([
+                    "excluded_senders.$index.phone" => ['Isi minimal Nomor WhatsApp atau ID Perangkat WA (LID).'],
+                ]);
+            }
+
+            if ($phone !== '') {
+                $phoneDigits = preg_replace('/\D/', '', $phone) ?: '';
+                if (strlen($phoneDigits) < 10 || strlen($phoneDigits) > 15) {
+                    throw ValidationException::withMessages([
+                        "excluded_senders.$index.phone" => ['Nomor WA pengecualian harus 10-15 digit.'],
+                    ]);
+                }
+            }
+
+            if ($lid !== '' && strlen($lid) < 10) {
+                throw ValidationException::withMessages([
+                    "excluded_senders.$index.lid" => ['ID Perangkat WA (LID) tidak valid.'],
+                ]);
+            }
+
+            $tokens = $this->paymentVerificationConfigService->extractSenderTokens($phone, $lid);
+            if (!empty(array_intersect($tokens, $seenTokens))) {
+                throw ValidationException::withMessages([
+                    "excluded_senders.$index.phone" => ['Nomor WA / ID Perangkat duplikat dalam daftar pengecualian.'],
+                ]);
+            }
+
+            $seenTokens = array_merge($seenTokens, $tokens);
+        }
+
+        return $normalized;
+    }
+
+    public function excludeCaptureSender(Request $request, BillingPaymentCapture $capture)
+    {
+        $validated = $request->validate([
+            'name' => 'nullable|string|max:120',
+            'phone' => 'nullable|string|max:40',
+            'lid' => 'nullable|string|max:64',
+            'remove_capture' => 'nullable|boolean',
+        ]);
+
+        $meta = (array) ($capture->meta ?? []);
+        $capturePhone = trim((string) data_get($meta, 'sender_phone', ''));
+        $captureLid = trim((string) data_get($meta, 'sender_lid', ''));
+        $captureName = trim((string) data_get($meta, 'sender_name', ''));
+
+        $resolvedLid = trim((string) ($validated['lid'] ?? ''));
+        $resolvedPhone = trim((string) ($validated['phone'] ?? ''));
+
+        if ($resolvedLid === '' && $captureLid !== '') {
+            $resolvedLid = $captureLid;
+        }
+        if ($capturePhone !== '') {
+            if ($this->paymentVerificationConfigService->isLidIdentifier($capturePhone)) {
+                if ($resolvedLid === '') {
+                    $resolvedLid = $this->paymentVerificationConfigService->cleanLidIdentifier($capturePhone);
+                }
+            } elseif ($resolvedPhone === '') {
+                $resolvedPhone = $capturePhone;
+            }
+        }
+
+        if ($resolvedPhone === '' && $resolvedLid === '') {
+            throw ValidationException::withMessages([
+                'phone' => ['Capture ini tidak memiliki nomor WA atau ID Perangkat WA yang dapat dikecualikan.'],
+            ]);
+        }
+
+        $resolvedName = trim((string) ($validated['name'] ?? ''));
+        if ($resolvedName === '') {
+            $resolvedName = $captureName !== '' ? ($captureName . ' (Admin)') : 'Admin / Internal';
+        }
+
+        $result = $this->paymentVerificationConfigService->addExcludedSender([
+            'name' => $resolvedName,
+            'phone' => $resolvedPhone,
+            'lid' => $resolvedLid,
+            'is_active' => true,
+        ]);
+
+        $shouldRemove = $request->boolean('remove_capture', true);
+        $removed = false;
+
+        if ($shouldRemove && $capture->match_status !== 'approved') {
+            $mediaPath = (string) data_get($meta, 'media.path', '');
+            if ($mediaPath !== '' && Storage::disk('public')->exists($mediaPath)) {
+                Storage::disk('public')->delete($mediaPath);
+            }
+            $capture->matchReviews()->delete();
+            $capture->delete();
+            $removed = true;
+        }
+
+        return response()->json([
+            'message' => $removed
+                ? 'Pengirim ditambahkan ke daftar pengecualian admin dan capture telah dibersihkan.'
+                : 'Pengirim ditambahkan ke daftar pengecualian admin.',
+            'removed' => $removed,
+            'entry' => $result['entry'],
+            'config' => $result['config'],
+        ]);
     }
 
     public function runMatch(Request $request)

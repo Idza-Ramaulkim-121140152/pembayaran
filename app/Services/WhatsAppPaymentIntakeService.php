@@ -23,6 +23,30 @@ class WhatsAppPaymentIntakeService
     public function intake(array $payload): array
     {
         $normalized = $this->normalizePayload($payload);
+
+        $excluded = $this->configService->matchExcludedSender(
+            $normalized['sender_phone'],
+            $normalized['sender_lid']
+        );
+        if ($excluded !== null) {
+            Log::info('WhatsApp payment webhook ignored for excluded admin/internal sender', [
+                'message_id' => $normalized['message_id'],
+                'sender_phone' => $normalized['sender_phone'],
+                'sender_lid' => $normalized['sender_lid'],
+                'sender_name' => $normalized['sender_name'],
+                'excluded_id' => $excluded['id'] ?? null,
+                'excluded_name' => $excluded['name'] ?? null,
+            ]);
+
+            return [
+                'capture' => null,
+                'duplicate' => false,
+                'ignored' => true,
+                'excluded_sender' => $excluded,
+                'message' => 'Pengirim termasuk dalam daftar pengecualian admin, pesan diabaikan dan tidak diproses sebagai bukti pembayaran pelanggan.',
+            ];
+        }
+
         $existing = BillingPaymentCapture::query()->where('fingerprint', $normalized['fingerprint'])->first();
 
         if ($existing) {

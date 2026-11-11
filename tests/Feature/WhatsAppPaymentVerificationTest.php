@@ -1706,6 +1706,117 @@ class WhatsAppPaymentVerificationTest extends TestCase
         $this->assertNotNull($confirmationLog);
     }
 
+    public function test_webhook_ignores_default_excluded_admin_phone_and_lid_without_creating_capture_or_calling_ai(): void
+    {
+        Storage::fake('public');
+        Http::fake();
+
+        // Case 1: Incoming webhook using Multi-Device LID from Adul / Abdrohman
+        $lidResponse = $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-admin-lid-001',
+            'sender_phone' => '130167959728202@lid',
+            'sender_lid' => '130167959728202',
+            'sender_name' => 'Abdrohman',
+            'sent_at' => '2026-11-11T18:45:00+07:00',
+            'media_base64' => base64_encode('fake-admin-transfer-image'),
+            'mime_type' => 'image/jpeg',
+        ]);
+
+        $lidResponse->assertStatus(200)
+            ->assertJsonPath('ignored', true)
+            ->assertJsonPath('data', null);
+
+        // Case 2: Incoming webhook using normalized phone (+62 858-4063-5530) from Adul
+        $phoneResponse = $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-admin-phone-002',
+            'sender_phone' => '+62 858-4063-5530',
+            'sender_name' => 'Adul',
+            'sent_at' => '2026-11-11T18:46:00+07:00',
+            'media_base64' => base64_encode('fake-admin-transfer-image-2'),
+            'mime_type' => 'image/jpeg',
+        ]);
+
+        $phoneResponse->assertStatus(200)
+            ->assertJsonPath('ignored', true)
+            ->assertJsonPath('data', null);
+
+        $this->assertSame(0, BillingPaymentCapture::query()->count());
+        $this->assertEmpty(Storage::disk('public')->allFiles('payment-captures'));
+        Http::assertNothingSent();
+    }
+
+    public function test_admin_can_exclude_sender_from_existing_capture_and_manage_exclusion_list(): void
+    {
+        Storage::fake('public');
+        Http::fake();
+
+        $admin = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+
+        // Create an existing capture from another admin WA device before excluding it
+        Storage::disk('public')->put('payment-captures/test-admin-receipt.jpg', 'fake-content');
+        $capture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'amount' => 175000,
+            'paid_date' => '2026-11-11',
+            'fingerprint' => sha1('existing-admin-capture-397'),
+            'match_status' => 'needs_review',
+            'match_confidence' => 95,
+            'meta' => [
+                'sender_phone' => '024455667788990',
+                'sender_lid' => '24455667788990',
+                'sender_name' => 'Admin Lapangan',
+                'media' => [
+                    'path' => 'payment-captures/test-admin-receipt.jpg',
+                    'mime_type' => 'image/jpeg',
+                ],
+            ],
+        ]);
+
+        // Exclude sender directly from the capture card + enrich with their WA phone number
+        $excludeRes = $this->actingAs($admin)->postJson("/api/billing/payments/{$capture->id}/exclude-sender", [
+            'name' => 'Admin Lapangan',
+            'phone' => '081299988877',
+            'lid' => '24455667788990',
+            'remove_capture' => true,
+        ]);
+
+        $excludeRes->assertOk()
+            ->assertJsonPath('removed', true)
+            ->assertJsonPath('entry.phone', '081299988877')
+            ->assertJsonPath('entry.lid', '24455667788990');
+
+        $this->assertDatabaseMissing('billing_payment_captures', ['id' => $capture->id]);
+        $this->assertFalse(Storage::disk('public')->exists('payment-captures/test-admin-receipt.jpg'));
+
+        // Subsequent webhook from either their phone or their LID is ignored
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-later-phone',
+            'sender_phone' => '6281299988877',
+            'sent_at' => '2026-11-11T19:00:00+07:00',
+            'media_base64' => base64_encode('fake-img'),
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(200)->assertJsonPath('ignored', true);
+
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-later-lid',
+            'sender_phone' => '24455667788990',
+            'sender_lid' => '24455667788990',
+            'sent_at' => '2026-11-11T19:01:00+07:00',
+            'media_base64' => base64_encode('fake-img-2'),
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(200)->assertJsonPath('ignored', true);
+
+        $this->assertSame(0, BillingPaymentCapture::query()->count());
+
+        // Clearing exclusion list persists empty array (does not revert to defaults)
+        $this->actingAs($admin)->putJson('/api/billing/payment-verification/config', [
+            'excluded_senders' => [],
+        ])->assertOk()->assertJsonPath('data.excluded_senders', []);
+
+        $configAfterClear = app(PaymentVerificationConfigService::class)->getConfig();
+        $this->assertSame([], $configAfterClear['excluded_senders']);
+    }
+
     private function makeCustomerInvoice(): array
     {
         $customer = Customer::create([
