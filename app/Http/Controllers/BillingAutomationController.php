@@ -147,6 +147,7 @@ class BillingAutomationController extends Controller
             'excluded_senders' => 'sometimes|array',
             'excluded_senders.*.id' => 'nullable|string|max:80',
             'excluded_senders.*.name' => 'nullable|string|max:120',
+            'excluded_senders.*.aliases' => 'nullable',
             'excluded_senders.*.phone' => 'nullable|string|max:40',
             'excluded_senders.*.lid' => 'nullable|string|max:64',
             'excluded_senders.*.is_active' => 'nullable|boolean',
@@ -222,6 +223,7 @@ class BillingAutomationController extends Controller
             $name = trim((string) ($item['name'] ?? ''));
             $phone = trim((string) ($item['phone'] ?? ''));
             $lid = trim((string) ($item['lid'] ?? ''));
+            $aliases = is_array($item['aliases'] ?? null) ? $item['aliases'] : [];
 
             if ($name === '') {
                 throw ValidationException::withMessages([
@@ -229,9 +231,9 @@ class BillingAutomationController extends Controller
                 ]);
             }
 
-            if ($phone === '' && $lid === '') {
+            if ($phone === '' && $lid === '' && empty($aliases)) {
                 throw ValidationException::withMessages([
-                    "excluded_senders.$index.phone" => ['Isi minimal Nomor WhatsApp atau ID Perangkat WA (LID).'],
+                    "excluded_senders.$index.phone" => ['Isi minimal Nomor WhatsApp, ID Perangkat WA (LID), atau alias nama pembayar.'],
                 ]);
             }
 
@@ -251,7 +253,7 @@ class BillingAutomationController extends Controller
             }
 
             $tokens = $this->paymentVerificationConfigService->extractSenderTokens($phone, $lid);
-            if (!empty(array_intersect($tokens, $seenTokens))) {
+            if (!empty($tokens) && !empty(array_intersect($tokens, $seenTokens))) {
                 throw ValidationException::withMessages([
                     "excluded_senders.$index.phone" => ['Nomor WA / ID Perangkat duplikat dalam daftar pengecualian.'],
                 ]);
@@ -263,10 +265,15 @@ class BillingAutomationController extends Controller
         return $normalized;
     }
 
-    public function excludeCaptureSender(Request $request, BillingPaymentCapture $capture)
-    {
+    public function excludeCaptureSender(
+        Request $request,
+        BillingPaymentCapture $capture,
+        \App\Services\CustomerResolutionService $customerResolutionService
+    ) {
         $validated = $request->validate([
             'name' => 'nullable|string|max:120',
+            'aliases' => 'nullable|array',
+            'aliases.*' => 'nullable|string|max:120',
             'phone' => 'nullable|string|max:40',
             'lid' => 'nullable|string|max:64',
             'remove_capture' => 'nullable|boolean',
@@ -276,6 +283,7 @@ class BillingAutomationController extends Controller
         $capturePhone = trim((string) data_get($meta, 'sender_phone', ''));
         $captureLid = trim((string) data_get($meta, 'sender_lid', ''));
         $captureName = trim((string) data_get($meta, 'sender_name', ''));
+        $receiptSenderName = trim((string) data_get($meta, 'analysis.sender_name', ''));
 
         $resolvedLid = trim((string) ($validated['lid'] ?? ''));
         $resolvedPhone = trim((string) ($validated['phone'] ?? ''));
@@ -293,23 +301,37 @@ class BillingAutomationController extends Controller
             }
         }
 
-        if ($resolvedPhone === '' && $resolvedLid === '') {
+        $aliases = is_array($validated['aliases'] ?? null) ? $validated['aliases'] : [];
+        if ($captureName !== '') {
+            $aliases[] = $captureName;
+        }
+        if ($receiptSenderName !== '') {
+            $aliases[] = $receiptSenderName;
+        }
+        $aliases = array_values(array_unique(array_filter(array_map('trim', $aliases))));
+
+        if ($resolvedPhone === '' && $resolvedLid === '' && empty($aliases)) {
             throw ValidationException::withMessages([
-                'phone' => ['Capture ini tidak memiliki nomor WA atau ID Perangkat WA yang dapat dikecualikan.'],
+                'phone' => ['Capture ini tidak memiliki nomor WA, ID Perangkat WA, atau nama pengirim yang dapat dikecualikan.'],
             ]);
         }
 
         $resolvedName = trim((string) ($validated['name'] ?? ''));
         if ($resolvedName === '') {
-            $resolvedName = $captureName !== '' ? ($captureName . ' (Admin)') : 'Admin / Internal';
+            $fallbackLabel = $captureName !== '' ? $captureName : $receiptSenderName;
+            $resolvedName = $fallbackLabel !== '' ? ($fallbackLabel . ' (Admin)') : 'Admin / Internal';
         }
 
         $result = $this->paymentVerificationConfigService->addExcludedSender([
             'name' => $resolvedName,
+            'aliases' => $aliases,
             'phone' => $resolvedPhone,
             'lid' => $resolvedLid,
             'is_active' => true,
         ]);
+
+        // Purge any poisoned LID mapping cache/setting from previous erroneous assignments
+        $customerResolutionService->forgetCustomerLid($resolvedLid !== '' ? $resolvedLid : $captureLid, $resolvedPhone !== '' ? $resolvedPhone : $capturePhone);
 
         $shouldRemove = $request->boolean('remove_capture', true);
         $removed = false;
@@ -322,6 +344,18 @@ class BillingAutomationController extends Controller
             $capture->matchReviews()->delete();
             $capture->delete();
             $removed = true;
+        } elseif ($capture->match_status !== 'approved') {
+            $capture->meta = array_merge($meta, [
+                'validation' => array_merge((array) data_get($meta, 'validation', []), [
+                    'status' => 'needs_review',
+                    'failure_reason' => 'excluded_admin_payer',
+                    'flags' => array_merge((array) data_get($meta, 'validation.flags', []), [
+                        'non_admin_payer' => false,
+                    ]),
+                ]),
+            ]);
+            $capture->match_status = 'needs_review';
+            $capture->save();
         }
 
         return response()->json([
@@ -433,6 +467,7 @@ class BillingAutomationController extends Controller
             'validation' => [
                 'status' => $validation['status'],
                 'failure_reason' => $validation['failure_reason'],
+                'staff_match' => $validation['staff_match'] ?? null,
                 'flags' => $validation['validation_flags'],
                 'destination_match' => $validation['destination_match'],
                 'normalized' => $validation['normalized'],
@@ -549,18 +584,27 @@ class BillingAutomationController extends Controller
         $customerId = !empty($validated['customer_id']) ? (int) $validated['customer_id'] : null;
         $capture->customer_id = $customerId;
 
+        $lidSaved = false;
         if ($customerId) {
-            // Remember WhatsApp LID mapping if capture came from a LID
+            $customer = \App\Models\Customer::find($customerId);
+
+            // Remember WhatsApp LID mapping ONLY if capture did NOT come from an excluded admin / internal staff
             $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
             $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
-            if ($senderLid !== '') {
-                $customerResolutionService->rememberCustomerLid($customerId, $senderLid);
-            } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
-                $customerResolutionService->rememberCustomerLid($customerId, $senderPhone);
+            $senderName = (string) data_get($capture->meta, 'sender_name', '');
+            $isAdminOrStaff = $customerResolutionService->isSenderAdminOrStaff($senderPhone, $senderLid, $senderName, $customer);
+
+            if (!$isAdminOrStaff) {
+                if ($senderLid !== '') {
+                    $customerResolutionService->rememberCustomerLid($customerId, $senderLid);
+                    $lidSaved = true;
+                } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+                    $customerResolutionService->rememberCustomerLid($customerId, $senderPhone);
+                    $lidSaved = true;
+                }
             }
 
             // Auto-link active invoice if not already attached, or if existing invoice belongs to a different customer
-            $customer = \App\Models\Customer::find($customerId);
             $activeInvoice = $customer ? $customerResolutionService->findActiveInvoices($customer)->first() : null;
 
             $shouldUpdateInvoice = false;
@@ -592,7 +636,9 @@ class BillingAutomationController extends Controller
 
         return response()->json([
             'message' => $customerId
-                ? 'Pelanggan berhasil ditautkan ke bukti pembayaran dan ID WhatsApp disimpan.'
+                ? ($lidSaved
+                    ? 'Pelanggan berhasil ditautkan ke bukti pembayaran dan ID WhatsApp disimpan.'
+                    : 'Pelanggan berhasil ditautkan ke bukti pembayaran (identitas admin/staf tidak disimpan ke pelanggan).')
                 : 'Tautan pelanggan berhasil dilepas.',
             'data' => $this->capturePresenter->present($capture->fresh(['invoice', 'customer', 'matchReviews.candidateInvoice.customer'])),
         ]);

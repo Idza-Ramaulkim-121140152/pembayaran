@@ -1839,4 +1839,145 @@ class WhatsAppPaymentVerificationTest extends TestCase
 
         return [$customer, $invoice];
     }
+
+    public function test_excluded_admin_lid_and_partial_name_never_poison_customer_or_auto_approve_plain_amount(): void
+    {
+        Storage::fake('public');
+
+        $customerRohman = Customer::create([
+            'name' => 'Rohman Hidayat',
+            'phone' => '081211110001',
+            'address' => 'Jl. Melati 1',
+            'package_type' => 'Paket 20 Mbps',
+            'due_date' => '2026-11-12',
+            'is_active' => true,
+        ]);
+
+        $customerAbdul = Customer::create([
+            'name' => 'Abdul Hakim',
+            'phone' => '081211110002',
+            'address' => 'Jl. Melati 2',
+            'package_type' => 'Paket 175K',
+            'due_date' => '2026-11-12',
+            'is_active' => true,
+        ]);
+
+        $invoiceAbdul = Invoice::create([
+            'customer_id' => $customerAbdul->id,
+            'invoice_date' => '2026-11-01',
+            'due_date' => '2026-11-12',
+            'amount' => 175000,
+            'qris_unique_code' => 245,
+            'qris_expected_amount' => 175245,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-abdul-175',
+        ]);
+
+        $resolver = app(\App\Services\CustomerResolutionService::class);
+
+        // 1. Multi-word admin name "M ABDUL ROHMAN" MUST NOT partially match "Rohman Hidayat" or "Abdul Hakim"
+        $this->assertNull($resolver->findCustomerByName('M ABDUL ROHMAN'));
+        $this->assertNull($resolver->findCustomerByName('Abdrohman Adul'));
+
+        // 2. Excluded admin LID "130167959728202" MUST NOT be persisted or resolved onto any customer
+        $resolver->rememberCustomerLid($customerAbdul->id, '130167959728202');
+        $this->assertNull($resolver->findCustomerByLid('130167959728202'));
+
+        // 3. Forwarded WA capture from another WA number where receipt payer is M ABDUL ROHMAN (even matching unique QRIS Rp 175.245)
+        // MUST be held in needs_review for manual confirmation!
+        $aiPayload = [
+            'choices' => [[
+                'message' => [
+                    'content' => json_encode([
+                        'is_payment_proof' => true,
+                        'amount' => 175245,
+                        'paid_date' => '2026-11-11',
+                        'paid_time' => '18:45:14',
+                        'reference_code' => 'WONDR-ADUL-175245',
+                        'payment_channel' => 'QRIS',
+                        'sender_name' => 'M ABDUL ROHMAN',
+                        'destination_identity' => [
+                            'name' => 'Rumah Kita Net',
+                            'merchant_id' => '9360091438488266793',
+                            'raw' => 'Rumah Kita Net, KALIANDA',
+                        ],
+                        'success_status' => true,
+                        'confidence_overall' => 97,
+                        'ocr_raw_text' => 'Penerima Rumah Kita Net Sumber dana M ABDUL ROHMAN Rp 175.245 Berhasil',
+                        'raw_summary' => 'Pembayaran QRIS dari M ABDUL ROHMAN',
+                    ]),
+                ],
+            ]],
+        ];
+
+        Http::fake([
+            'https://openrouter.ai/*' => Http::response($aiPayload),
+            'https://api.openai.com/v1/chat/completions' => Http::response($aiPayload),
+            '*send-bulk' => Http::response(['success' => true]),
+        ]);
+
+        $this->withHeaders($this->webhookHeaders)->postJson('/api/whatsapp/webhooks/payments', [
+            'message_id' => 'wa-msg-forwarded-adul-proof',
+            'sender_phone' => '089911223344',
+            'sent_at' => '2026-11-11T18:45:30+07:00',
+            'media_base64' => base64_encode('fake-forwarded-adul-proof'),
+            'mime_type' => 'image/jpeg',
+        ])->assertStatus(202);
+
+        $captureAdul = BillingPaymentCapture::query()->where('reference_code', 'WONDR-ADUL-175245')->firstOrFail();
+        $this->assertSame('needs_review', $captureAdul->match_status);
+        $this->assertSame('excluded_admin_payer', data_get($captureAdul->meta, 'validation.failure_reason'));
+        $this->assertFalse((bool) data_get($captureAdul->meta, 'validation.flags.non_admin_payer'));
+        $this->assertSame('unpaid', $invoiceAbdul->fresh()->status);
+
+        // Re-running auto matching MUST keep it in needs_review!
+        app(\App\Services\PaymentMatchingService::class)->runMatching($captureAdul->id, true);
+        $this->assertSame('needs_review', $captureAdul->fresh()->match_status);
+        $this->assertSame('unpaid', $invoiceAbdul->fresh()->status);
+
+        // 4. Unidentified sender sending a plain base amount without unique QRIS code MUST stay in needs_review (score <= 75)
+        $singleBaseCustomer = Customer::create([
+            'name' => 'Budi Santoso Tunggal',
+            'phone' => '081288889999',
+            'due_date' => '2026-11-12',
+            'is_active' => true,
+        ]);
+        $singleBaseInvoice = Invoice::create([
+            'customer_id' => $singleBaseCustomer->id,
+            'invoice_date' => '2026-11-01',
+            'due_date' => '2026-11-12',
+            'amount' => 150000,
+            'status' => 'unpaid',
+            'invoice_link' => 'inv-budi-base-150',
+        ]);
+
+        $plainUnknownCapture = BillingPaymentCapture::create([
+            'source' => 'whatsapp_webhook',
+            'customer_id' => null,
+            'invoice_id' => null,
+            'amount' => 150000,
+            'paid_date' => '2026-11-11',
+            'reference_code' => 'PLAIN-UNKNOWN-150',
+            'fingerprint' => sha1('plain-unknown-150'),
+            'match_status' => 'pending',
+            'meta' => [
+                'sender_phone' => '087766554433',
+                'validation' => [
+                    'flags' => [
+                        'is_payment_proof' => true,
+                        'success_status' => true,
+                        'destination_whitelisted' => true,
+                        'non_admin_payer' => true,
+                    ],
+                ],
+            ],
+        ]);
+
+        app(\App\Services\PaymentMatchingService::class)->runMatching($plainUnknownCapture->id, true);
+        $plainUnknownCapture->refresh();
+
+        $this->assertSame('needs_review', $plainUnknownCapture->match_status);
+        $this->assertLessThanOrEqual(75.0, (float) $plainUnknownCapture->match_confidence);
+        $this->assertSame('unpaid', $singleBaseInvoice->fresh()->status);
+    }
 }

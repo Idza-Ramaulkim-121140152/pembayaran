@@ -250,7 +250,7 @@ class MutasiUniqueCodeTest extends TestCase
 
         $this->postJson('/api/qris/webhook', [
             'title' => 'GoBiz - Transaksi Masuk',
-            'text' => 'Pembayaran QRIS sebesar Rp 200.000 berhasil diterima. Ref: QG-PAS-200',
+            'text' => 'Pembayaran QRIS sebesar Rp 200.000 berhasil diterima dari PELANGGAN PAS. Ref: QG-PAS-200',
             'device_name' => 'HP-Kasir-Pas',
         ], ['X-QRIS-SECRET' => 'mutasi-qris-secret'])->assertOk();
 

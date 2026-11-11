@@ -60,6 +60,7 @@ function createExcludedSender() {
     return {
         id: `excluded-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         name: '',
+        aliases: [],
         phone: '',
         lid: '',
         is_active: true,
@@ -89,7 +90,9 @@ function findExcludedSenderMatch(capture, excludedList = []) {
         ...normalizeWaTokens(capture.sender_phone),
         ...normalizeWaTokens(capture.sender_lid),
     ]);
-    if (captureTokens.size === 0) return null;
+
+    const norm = (val) => String(val || '').replace(/\([^)]*\)/g, ' ').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const senderNames = [norm(capture.sender_name), norm(capture.analysis?.sender_name)].filter((v) => v.length >= 3);
 
     return excludedList.find((entry) => {
         if (entry?.is_active === false) return false;
@@ -97,7 +100,15 @@ function findExcludedSenderMatch(capture, excludedList = []) {
             ...normalizeWaTokens(entry?.phone),
             ...normalizeWaTokens(entry?.lid),
         ];
-        return entryTokens.some((tok) => captureTokens.has(tok));
+        if (captureTokens.size > 0 && entryTokens.some((tok) => captureTokens.has(tok))) {
+            return true;
+        }
+        const entryAliases = [
+            ...(Array.isArray(entry?.aliases) ? entry.aliases : []),
+            ...(String(entry?.name || '').split(/[\/,|]+/)),
+        ].map(norm).filter((v) => v.length >= 3 && !['admin', 'internal', 'staf', 'staff'].includes(v));
+
+        return senderNames.some((sn) => entryAliases.some((al) => sn === al || (al.length >= 4 && sn.includes(al))));
     }) || null;
 }
 
@@ -178,6 +189,22 @@ export default function PaymentVerificationPage() {
                 return 'Skor keyakinan AI di bawah ambang batas auto-konfirmasi. Perlu verifikasi manual.';
             case 'auto_approve_disabled':
                 return 'Auto-konfirmasi sedang dinonaktifkan di pengaturan.';
+            case 'excluded_admin_payer':
+                return 'Pembayar terdeteksi sebagai Admin yang dikecualikan (bukan pelanggan langsung). Wajib dikonfirmasi manual.';
+            case 'admin_payer_needs_manual_review':
+                return 'Pembayar atau pengirim terdeteksi sebagai Admin / Staf internal. Wajib dicek dan dikonfirmasi manual.';
+            case 'manipulated_or_ambiguous_notification':
+                return 'Notifikasi memuat lebih dari satu nominal berbeda atau mencurigakan. Ditahan untuk konfirmasi manual.';
+            case 'ambiguous_qris_candidates':
+                return 'Nominal kode unik QRIS cocok dengan lebih dari satu tagihan aktif. Pilih pelanggan yang sesuai secara manual.';
+            case 'ambiguous_base_amount':
+                return 'Nominal dasar tanpa kode unik cocok dengan beberapa pelanggan sekaligus. Wajib dipilih & dikonfirmasi manual.';
+            case 'unverified_static_qris_base_amount':
+                return 'Pembayaran QRIS tanpa kode unik dan tanpa identitas pengirim. Tidak boleh di-auto-konfirmasi.';
+            case 'sender_customer_mismatch_base_amount':
+                return 'Nama pengirim QRIS tanpa kode unik tidak cocok dengan pelanggan pemilik tagihan. Perlu konfirmasi manual.';
+            case 'customer_billing_auto_disabled':
+                return 'Auto-konfirmasi untuk pelanggan ini dinonaktifkan oleh admin.';
             default:
                 return reason;
         }
@@ -1010,6 +1037,7 @@ export default function PaymentVerificationPage() {
                                         {[
                                             { key: 'all', label: 'Semua' },
                                             { key: 'whatsapp', label: '📱 WA' },
+                                            { key: 'qris_webhook', label: '🔔 QRIS' },
                                             { key: 'web_public', label: '🌐 Web' },
                                             { key: 'admin_upload', label: '📤 Admin' },
                                         ].map((s) => (
@@ -1159,6 +1187,22 @@ export default function PaymentVerificationPage() {
                                                                 <ZoomIn size={16} /> Perbesar Foto
                                                             </button>
                                                         </>
+                                                    ) : capture.source === 'qris_webhook' && capture.analysis?.ocr_raw_text ? (
+                                                        <div className="flex h-full w-full flex-col justify-between p-3 text-left bg-amber-50/70">
+                                                            <div>
+                                                                <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
+                                                                    Notifikasi GoPay / GoBiz
+                                                                </span>
+                                                                <p className="mt-2 text-xs text-slate-700 leading-relaxed line-clamp-6">
+                                                                    {capture.analysis.ocr_raw_text}
+                                                                </p>
+                                                            </div>
+                                                            {capture.sender_name && (
+                                                                <p className="text-[11px] font-semibold text-amber-900 truncate">
+                                                                    Pengirim: {capture.sender_name}
+                                                                </p>
+                                                            )}
+                                                        </div>
                                                     ) : (
                                                         <div className="flex flex-col items-center text-gray-400 text-xs text-center p-4">
                                                             <FileText size={28} className="text-gray-300 mb-1" />
@@ -2339,6 +2383,24 @@ export default function PaymentVerificationPage() {
                                                 <Trash2 size={16} />
                                             </button>
                                         </div>
+                                        <div className="sm:col-span-12">
+                                            <label className="block text-[10px] font-semibold text-gray-500 mb-0.5">
+                                                Alias Nama Rekening / Pengirim QRIS (pisahkan dengan koma)
+                                            </label>
+                                            <input
+                                                type="text"
+                                                placeholder="Adul, Abdrohman, M ABDUL ROHMAN"
+                                                value={Array.isArray(item.aliases) ? item.aliases.join(', ') : (item.aliases || '')}
+                                                onChange={(e) => {
+                                                    const parts = e.target.value
+                                                        .split(',')
+                                                        .map((v) => v.trim())
+                                                        .filter(Boolean);
+                                                    handleUpdateExcludedSender(idx, { aliases: parts });
+                                                }}
+                                                className="w-full text-xs rounded-lg border border-gray-200 px-3 py-1.5 bg-white"
+                                            />
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -2639,6 +2701,16 @@ export default function PaymentVerificationPage() {
                                                     <ZoomIn size={16} /> Perbesar Foto
                                                 </button>
                                             </>
+                                        ) : c.source === 'qris_webhook' && c.analysis?.ocr_raw_text ? (
+                                            <div className="p-4 text-left text-xs text-slate-700 bg-amber-50/70 h-full w-full overflow-y-auto space-y-2">
+                                                <span className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
+                                                    Notifikasi GoPay / GoBiz
+                                                </span>
+                                                <p className="leading-relaxed whitespace-pre-wrap">{c.analysis.ocr_raw_text}</p>
+                                                {c.sender_name && (
+                                                    <p className="font-semibold text-amber-900">Pengirim: {c.sender_name}</p>
+                                                )}
+                                            </div>
                                         ) : (
                                             <div className="text-center p-4 text-slate-400 text-xs">
                                                 <FileText size={32} className="mx-auto text-slate-300 mb-1" />

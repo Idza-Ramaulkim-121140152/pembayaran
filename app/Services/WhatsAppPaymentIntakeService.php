@@ -57,21 +57,29 @@ class WhatsAppPaymentIntakeService
             ];
         }
 
+        $senderIsStaff = $this->configService->matchInternalStaffIdentity(
+            $normalized['sender_phone'],
+            $normalized['sender_lid'],
+            $normalized['sender_name']
+        ) !== null;
+
         $customer = null;
-        if (!$this->customerResolutionService->isLid($normalized['sender_phone'])) {
+        if (!$senderIsStaff && !$this->customerResolutionService->isLid($normalized['sender_phone'])) {
             $customer = $this->customerResolutionService->findCustomerByPhone($normalized['sender_phone']);
         }
-        if (!$customer && !empty($normalized['sender_lid'])) {
+        if (!$senderIsStaff && !$customer && !empty($normalized['sender_lid'])) {
             $customer = $this->customerResolutionService->findCustomerByLid($normalized['sender_lid']);
         }
-        if (!$customer && !empty($normalized['sender_name'])) {
+        if (!$senderIsStaff && !$customer && !empty($normalized['sender_name'])) {
             $customer = $this->customerResolutionService->findCustomerByName($normalized['sender_name']);
         }
+        $resolvedByCaption = false;
         if (!$customer && !empty($normalized['caption'])) {
             $customer = $this->customerResolutionService->resolveFromText($normalized['caption']);
+            $resolvedByCaption = $customer !== null;
         }
 
-        if ($customer && !empty($normalized['sender_lid'])) {
+        if ($customer && !$resolvedByCaption && !$senderIsStaff && !empty($normalized['sender_lid'])) {
             $this->customerResolutionService->rememberCustomerLid($customer->id, $normalized['sender_lid']);
         }
 

@@ -76,10 +76,10 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
 
         $analysis = $analysisService->analyze($capture);
 
-        // Prioritas 1: Resolusi pelanggan & invoice berdasarkan nominal unik QRIS dinamis (karena 3-digit kode unik bersifat eksklusif per tagihan)
+        // Prioritas 1: Resolusi pelanggan & invoice berdasarkan nominal unik QRIS dinamis (hanya jika eksklusif 1 tagihan)
         $detectedAmount = isset($analysis['amount']) ? (float) $analysis['amount'] : 0;
         if ($detectedAmount > 0) {
-            $qrisInvoice = \App\Models\Invoice::query()
+            $qrisInvoices = \App\Models\Invoice::query()
                 ->with('customer')
                 ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
                 ->where(function ($q) {
@@ -89,10 +89,12 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                              ->where('updated_at', '>=', now()->subHours(24));
                       });
                 })
-                ->latest('updated_at')
-                ->first();
+                ->orderByDesc('updated_at')
+                ->limit(2)
+                ->get();
 
-            if ($qrisInvoice?->customer) {
+            if ($qrisInvoices->count() === 1 && $qrisInvoices->first()?->customer) {
+                $qrisInvoice = $qrisInvoices->first();
                 $capture->customer_id = $qrisInvoice->customer->id;
                 $capture->invoice_id = $qrisInvoice->id;
                 $capture->save();
@@ -113,13 +115,11 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
             }
         }
 
-        // Prioritas 3: Cari berdasarkan kemiripan nama pengirim struk
+        // Prioritas 3: Cari berdasarkan kecocokan nama pengirim struk yang unik dan bukan nama admin/staf
         if (!$capture->customer_id || !$capture->customer) {
-            $senderName = trim((string) ($analysis['sender_name'] ?? ''));
-            if ($senderName !== '' && strlen($senderName) >= 3) {
-                $resolvedCustomer = \App\Models\Customer::query()
-                    ->where('name', 'like', "%{$senderName}%")
-                    ->first();
+            $receiptSenderName = trim((string) ($analysis['sender_name'] ?? ''));
+            if ($receiptSenderName !== '' && strlen($receiptSenderName) >= 3) {
+                $resolvedCustomer = $customerResolutionService->findCustomerByName($receiptSenderName);
                 if ($resolvedCustomer) {
                     $capture->customer_id = $resolvedCustomer->id;
                     $capture->save();
@@ -131,10 +131,18 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
         if ($capture->customer) {
             $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
             $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
-            if ($senderLid !== '') {
-                $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderLid);
-            } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
-                $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderPhone);
+            $metaSenderName = (string) data_get($capture->meta, 'sender_name', '');
+            $receiptSenderName = (string) ($analysis['sender_name'] ?? '');
+
+            $isAdminOrStaff = $customerResolutionService->isSenderAdminOrStaff($senderPhone, $senderLid, $metaSenderName, $capture->customer)
+                || $customerResolutionService->isSenderAdminOrStaff(null, null, $receiptSenderName, $capture->customer);
+
+            if (!$isAdminOrStaff) {
+                if ($senderLid !== '') {
+                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderLid);
+                } elseif ($senderPhone !== '' && $customerResolutionService->isLid($senderPhone)) {
+                    $customerResolutionService->rememberCustomerLid($capture->customer->id, $senderPhone);
+                }
             }
         }
 
@@ -156,16 +164,18 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
                     })
                     : null;
 
-                // Jika belum ketemu di tagihan aktif pelanggan saat ini, periksa apakah nominal unik QRIS ini milik tagihan aktif lain di sistem
+                // Jika belum ketemu di tagihan aktif pelanggan saat ini, periksa apakah nominal unik QRIS ini milik 1 tagihan aktif lain di sistem
                 if (!$matchingInvoice && $detectedAmount > 0) {
-                    $qrisInvoice = \App\Models\Invoice::query()
+                    $qrisMatches = \App\Models\Invoice::query()
                         ->with('customer')
                         ->whereBetween('qris_expected_amount', [$detectedAmount - 0.01, $detectedAmount + 0.01])
                         ->whereIn('status', ['unpaid', 'menunggu konfirmasi'])
-                        ->latest('updated_at')
-                        ->first();
+                        ->orderByDesc('updated_at')
+                        ->limit(2)
+                        ->get();
 
-                    if ($qrisInvoice) {
+                    if ($qrisMatches->count() === 1) {
+                        $qrisInvoice = $qrisMatches->first();
                         $matchingInvoice = $qrisInvoice;
                         if ($qrisInvoice->customer) {
                             $capture->customer_id = $qrisInvoice->customer->id;
@@ -241,6 +251,7 @@ class AnalyzeWhatsAppPaymentCaptureJob implements ShouldQueue
             'validation' => [
                 'status' => $validation['status'],
                 'failure_reason' => $validation['failure_reason'],
+                'staff_match' => $validation['staff_match'] ?? null,
                 'flags' => $validation['validation_flags'],
                 'destination_match' => $validation['destination_match'],
                 'normalized' => $validation['normalized'],

@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Customer;
+use App\Models\PayrollMember;
 use App\Models\SiteSetting;
+use App\Models\User;
 use Illuminate\Support\Str;
 
 class PaymentVerificationConfigService
@@ -49,9 +52,26 @@ class PaymentVerificationConfigService
         $config['notification_recipients'] = $this->normalizeNotificationRecipients(
             is_array($config['notification_recipients'] ?? null) ? $config['notification_recipients'] : []
         );
-        $config['excluded_senders'] = $this->normalizeExcludedSenders(
-            is_array($config['excluded_senders'] ?? null) ? $config['excluded_senders'] : []
-        );
+
+        $defaultAliasesById = collect($this->defaults()['excluded_senders'] ?? [])
+            ->filter(fn ($entry) => is_array($entry) && !empty($entry['id']) && !empty($entry['aliases']))
+            ->mapWithKeys(fn ($entry) => [$entry['id'] => $entry['aliases']])
+            ->all();
+
+        $rawExcluded = is_array($config['excluded_senders'] ?? null) ? $config['excluded_senders'] : [];
+        $rawExcluded = array_map(function ($entry) use ($defaultAliasesById) {
+            if (
+                is_array($entry)
+                && !array_key_exists('aliases', $entry)
+                && isset($entry['id'], $defaultAliasesById[$entry['id']])
+            ) {
+                $entry['aliases'] = $defaultAliasesById[$entry['id']];
+            }
+
+            return $entry;
+        }, $rawExcluded);
+
+        $config['excluded_senders'] = $this->normalizeExcludedSenders($rawExcluded);
 
         return $config;
     }
@@ -179,6 +199,7 @@ class PaymentVerificationConfigService
                 [
                     'id' => 'excluded-admin-adul',
                     'name' => 'Adul / Abdrohman (Admin)',
+                    'aliases' => ['Adul', 'Abdrohman', 'M ABDUL ROHMAN', 'Abdul Rohman'],
                     'phone' => '085840635530',
                     'lid' => '130167959728202',
                     'is_active' => true,
@@ -196,6 +217,7 @@ class PaymentVerificationConfigService
                 $name = trim((string) ($item['name'] ?? ''));
                 $rawPhone = trim((string) ($item['phone'] ?? ''));
                 $rawLid = trim((string) ($item['lid'] ?? ''));
+                $aliases = $this->normalizeAliasesList($item['aliases'] ?? []);
 
                 $phone = '';
                 $lid = '';
@@ -219,6 +241,7 @@ class PaymentVerificationConfigService
                 return [
                     'id' => $id !== '' ? $id : (string) Str::uuid(),
                     'name' => $name,
+                    'aliases' => $aliases,
                     'phone' => $phone,
                     'lid' => $lid,
                     'is_active' => (bool) ($item['is_active'] ?? true),
@@ -228,10 +251,39 @@ class PaymentVerificationConfigService
             ->all();
     }
 
-    public function matchExcludedSender(?string $senderPhone, ?string $senderLid = null): ?array
+    public function matchExcludedSender(?string $senderPhone, ?string $senderLid = null, ?string $senderName = null): ?array
     {
         $incomingTokens = $this->extractSenderTokens($senderPhone, $senderLid);
-        if (empty($incomingTokens)) {
+        $entries = $this->getConfig()['excluded_senders'] ?? [];
+
+        if (!empty($incomingTokens)) {
+            foreach ($entries as $entry) {
+                if (!($entry['is_active'] ?? false)) {
+                    continue;
+                }
+
+                $entryTokens = $this->extractSenderTokens(
+                    (string) ($entry['phone'] ?? ''),
+                    (string) ($entry['lid'] ?? '')
+                );
+
+                if (!empty(array_intersect($incomingTokens, $entryTokens))) {
+                    return $entry;
+                }
+            }
+        }
+
+        if ($senderName !== null && trim($senderName) !== '') {
+            return $this->matchExcludedSenderByName($senderName);
+        }
+
+        return null;
+    }
+
+    public function matchExcludedSenderByName(?string $name): ?array
+    {
+        $incomingNorm = $this->normalizeComparableName($name);
+        if ($this->isIgnorablePersonName($incomingNorm, 3)) {
             return null;
         }
 
@@ -241,17 +293,245 @@ class PaymentVerificationConfigService
                 continue;
             }
 
-            $entryTokens = $this->extractSenderTokens(
-                (string) ($entry['phone'] ?? ''),
-                (string) ($entry['lid'] ?? '')
-            );
+            foreach ($this->extractExcludedEntryNames($entry) as $candidateNorm) {
+                if ($incomingNorm === $candidateNorm) {
+                    return $entry;
+                }
 
-            if (!empty(array_intersect($incomingTokens, $entryTokens))) {
-                return $entry;
+                if (strlen($candidateNorm) >= 4 && preg_match('/\b' . preg_quote($candidateNorm, '/') . '\b/', $incomingNorm)) {
+                    return $entry;
+                }
+
+                if (strlen($incomingNorm) >= 4 && preg_match('/\b' . preg_quote($incomingNorm, '/') . '\b/', $candidateNorm)) {
+                    return $entry;
+                }
             }
         }
 
         return null;
+    }
+
+    public function matchExcludedSenderInText(?string $text): ?array
+    {
+        $normalizedText = $this->normalizeComparableName($text);
+        if ($normalizedText === '') {
+            return null;
+        }
+
+        $entries = $this->getConfig()['excluded_senders'] ?? [];
+        foreach ($entries as $entry) {
+            if (!($entry['is_active'] ?? false)) {
+                continue;
+            }
+
+            foreach ($this->extractExcludedEntryNames($entry) as $candidateNorm) {
+                if (strlen($candidateNorm) < 4) {
+                    continue;
+                }
+
+                if (preg_match('/\b' . preg_quote($candidateNorm, '/') . '\b/', $normalizedText)) {
+                    return $entry;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Detect whether a sender identity or payer name belongs to an excluded admin or internal staff member.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function matchInternalStaffIdentity(
+        ?string $senderPhone = null,
+        ?string $senderLid = null,
+        ?string $senderName = null,
+        ?Customer $targetCustomer = null
+    ): ?array {
+        $excluded = $this->matchExcludedSender($senderPhone, $senderLid, $senderName);
+        if ($excluded) {
+            return [
+                'type' => 'excluded_sender',
+                'label' => (string) ($excluded['name'] ?? 'Admin Dikecualikan'),
+                'entry' => $excluded,
+            ];
+        }
+
+        $incomingTokens = $this->extractSenderTokens($senderPhone, $senderLid);
+        $targetCustomerTokens = $targetCustomer
+            ? $this->extractSenderTokens((string) ($targetCustomer->phone ?? ''))
+            : [];
+
+        // If the phone/LID matches the target customer themselves, do not block by phone lookup alone.
+        $nonCustomerTokens = array_values(array_diff($incomingTokens, $targetCustomerTokens));
+
+        $incomingNameNorm = $this->normalizeComparableName($senderName);
+        $targetCustomerNameNorm = $targetCustomer
+            ? $this->normalizeComparableName((string) ($targetCustomer->name ?? ''))
+            : '';
+        $checkName = !$this->isIgnorablePersonName($incomingNameNorm, 4)
+            && $incomingNameNorm !== $targetCustomerNameNorm;
+
+        if (empty($nonCustomerTokens) && !$checkName) {
+            return null;
+        }
+
+        $staffUsers = User::query()
+            ->whereIn('role', [User::ROLE_SUPERADMIN, User::ROLE_ADMIN, User::ROLE_TEKNISI, User::ROLE_FINANCE])
+            ->get(['id', 'name', 'phone', 'role']);
+
+        foreach ($staffUsers as $staffUser) {
+            if (!empty($nonCustomerTokens) && !empty($staffUser->phone)) {
+                $staffTokens = $this->extractSenderTokens((string) $staffUser->phone);
+                if (!empty(array_intersect($nonCustomerTokens, $staffTokens))) {
+                    return [
+                        'type' => 'internal_staff',
+                        'source' => 'user',
+                        'id' => $staffUser->id,
+                        'role' => $staffUser->role,
+                        'label' => $staffUser->name,
+                    ];
+                }
+            }
+
+            if ($checkName) {
+                $staffNameNorm = $this->normalizeComparableName((string) $staffUser->name);
+                if (!$this->isIgnorablePersonName($staffNameNorm, 4) && $incomingNameNorm === $staffNameNorm) {
+                    return [
+                        'type' => 'internal_staff',
+                        'source' => 'user',
+                        'id' => $staffUser->id,
+                        'role' => $staffUser->role,
+                        'label' => $staffUser->name,
+                    ];
+                }
+            }
+        }
+
+        $payrollMembers = PayrollMember::query()
+            ->where('is_active', true)
+            ->get(['id', 'nama', 'telepon', 'atas_nama_rekening']);
+
+        foreach ($payrollMembers as $member) {
+            if (!empty($nonCustomerTokens) && !empty($member->telepon)) {
+                $memberTokens = $this->extractSenderTokens((string) $member->telepon);
+                if (!empty(array_intersect($nonCustomerTokens, $memberTokens))) {
+                    return [
+                        'type' => 'internal_staff',
+                        'source' => 'payroll',
+                        'id' => $member->id,
+                        'label' => $member->nama,
+                    ];
+                }
+            }
+
+            if ($checkName) {
+                foreach ([$member->nama, $member->atas_nama_rekening] as $candidateField) {
+                    $memberNameNorm = $this->normalizeComparableName((string) $candidateField);
+                    if (!$this->isIgnorablePersonName($memberNameNorm, 4) && $incomingNameNorm === $memberNameNorm) {
+                        return [
+                            'type' => 'internal_staff',
+                            'source' => 'payroll',
+                            'id' => $member->id,
+                            'label' => $member->nama,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    public function normalizeComparableName(?string $name): string
+    {
+        $raw = trim((string) $name);
+        if ($raw === '') {
+            return '';
+        }
+
+        // Remove parenthetical annotations such as "(Admin)"
+        $withoutParens = preg_replace('/\([^)]*\)/', ' ', $raw) ?: $raw;
+        $lower = mb_strtolower($withoutParens);
+        // Replace non-alphanumeric punctuation (e.g. dots in "M. ABDUL ROHMAN") with spaces
+        $alphaNum = preg_replace('/[^a-z0-9\s]/', ' ', $lower) ?: $lower;
+        $collapsed = trim(preg_replace('/\s+/', ' ', $alphaNum) ?: '');
+
+        // Strip common Indonesian honorifics at the beginning
+        return trim(preg_replace('/^(?:bapak|ibu|bpk|pak|mas|mbak|kak|bang|sdr|sdri)\s+/i', '', $collapsed) ?: $collapsed);
+    }
+
+    /**
+     * @param  mixed  $rawAliases
+     * @return array<int, string>
+     */
+    private function normalizeAliasesList($rawAliases): array
+    {
+        if (is_string($rawAliases)) {
+            $rawAliases = preg_split('/[,;\r\n]+/', $rawAliases) ?: [];
+        }
+
+        return collect(is_array($rawAliases) ? $rawAliases : [])
+            ->map(fn ($alias) => trim((string) $alias))
+            ->filter(fn ($alias) => $alias !== '')
+            ->unique(fn ($alias) => mb_strtolower($alias))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function extractExcludedEntryNames(array $entry): array
+    {
+        $candidates = [];
+        $aliases = $this->normalizeAliasesList($entry['aliases'] ?? []);
+        foreach ($aliases as $alias) {
+            $candidates[] = $alias;
+        }
+
+        $entryName = trim((string) ($entry['name'] ?? ''));
+        if ($entryName !== '') {
+            $withoutParens = trim((string) (preg_replace('/\([^)]*\)/', ' ', $entryName) ?: $entryName));
+            $candidates[] = $withoutParens;
+            foreach (preg_split('/[\/,|]+/', $withoutParens) ?: [] as $part) {
+                $candidates[] = trim((string) $part);
+            }
+        }
+
+        return collect($candidates)
+            ->map(fn ($value) => $this->normalizeComparableName((string) $value))
+            ->filter(fn ($norm) => !$this->isIgnorablePersonName($norm, 3))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function isIgnorablePersonName(string $normalized, int $minLength = 3): bool
+    {
+        if ($normalized === '' || strlen($normalized) < $minLength) {
+            return true;
+        }
+
+        return in_array($normalized, [
+            'admin',
+            'super admin',
+            'superadmin',
+            'admin finance',
+            'admin keuangan',
+            'finance',
+            'teknisi',
+            'kasir',
+            'staff',
+            'staf',
+            'internal',
+            'user',
+            'test',
+            'demo',
+            'pelanggan',
+            'customer',
+        ], true);
     }
 
     public function addExcludedSender(array $entry): array
@@ -273,10 +553,14 @@ class PaymentVerificationConfigService
                 (string) ($item['lid'] ?? '')
             );
 
-            if (!empty(array_intersect($candidateTokens, $itemTokens))) {
+            if (!empty($candidateTokens) && !empty(array_intersect($candidateTokens, $itemTokens))) {
                 $existing[$idx] = [
                     'id' => $item['id'],
                     'name' => $candidate['name'] !== '' ? $candidate['name'] : ($item['name'] ?? 'Admin'),
+                    'aliases' => $this->normalizeAliasesList(array_merge(
+                        is_array($item['aliases'] ?? null) ? $item['aliases'] : [],
+                        is_array($candidate['aliases'] ?? null) ? $candidate['aliases'] : []
+                    )),
                     'phone' => $candidate['phone'] !== '' ? $candidate['phone'] : ($item['phone'] ?? ''),
                     'lid' => $candidate['lid'] !== '' ? $candidate['lid'] : ($item['lid'] ?? ''),
                     'is_active' => true,
@@ -288,6 +572,7 @@ class PaymentVerificationConfigService
 
         if ($mergedEntry === null) {
             $candidate['name'] = $candidate['name'] !== '' ? $candidate['name'] : 'Admin / Internal';
+            $candidate['aliases'] = $this->normalizeAliasesList($candidate['aliases'] ?? []);
             $candidate['is_active'] = true;
             $existing[] = $candidate;
             $mergedEntry = $candidate;

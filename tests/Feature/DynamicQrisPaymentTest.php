@@ -472,4 +472,231 @@ class DynamicQrisPaymentTest extends TestCase
             ],
         ]);
     }
+
+    public function test_webhook_holds_excluded_admin_qris_payment_for_manual_review_instead_of_auto_settling(): void
+    {
+        SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
+        $admin = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
+
+        $customer = Customer::create([
+            'name' => 'Pelanggan Target Salah',
+            'phone' => '081211112222',
+            'status' => 'active',
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'INV-ADMIN-QR-001',
+            'amount' => 175000,
+            'qris_unique_code' => 245,
+            'qris_expected_amount' => 175245,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDay(),
+            'due_date' => now()->addDays(3),
+        ]);
+
+        // Admin dikecualikan (M ABDUL ROHMAN / Adul) membayar QR ke GoPay Merchant
+        $response = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz - Transaksi Masuk',
+            'text' => 'Pembayaran QRIS sebesar Rp 175.245 berhasil diterima dari M. ABDUL ROHMAN. Ref: GOPAY-ADUL-001',
+            'device_name' => 'HP-Kasir-Utama',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'status' => 'manual_review_required',
+            'reason' => 'excluded_admin_payer',
+        ]);
+
+        // Invoice HARUS tetap unpaid — TIDAK boleh terkonfirmasi otomatis!
+        $freshInvoice = $invoice->fresh();
+        $this->assertSame('unpaid', $freshInvoice->status);
+        $this->assertNull($freshInvoice->paid_at);
+
+        // Capture & Log manual review tersimpan di Payment Verification
+        $captureId = $response->json('capture_id');
+        $capture = \App\Models\BillingPaymentCapture::query()->findOrFail($captureId);
+        $this->assertSame('qris_webhook', $capture->source);
+        $this->assertSame('needs_review', $capture->match_status);
+        $this->assertSame('excluded_admin_payer', data_get($capture->meta, 'validation.failure_reason'));
+        $this->assertFalse((bool) data_get($capture->meta, 'validation.flags.non_admin_payer'));
+
+        $this->assertDatabaseHas('qris_webhook_logs', [
+            'status' => 'manual_review_required',
+            'extracted_amount' => 175245,
+        ]);
+
+        // Admin tetap bisa melakukan konfirmasi manual lewat endpoint resolve
+        $this->actingAs($admin)->postJson("/api/billing/payments/{$capture->id}/resolve", [
+            'decision' => 'approve',
+            'invoice_id' => $invoice->id,
+        ])->assertOk();
+
+        $this->assertSame('paid', $invoice->fresh()->status);
+    }
+
+    public function test_webhook_holds_internal_staff_payer_for_manual_review(): void
+    {
+        SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
+
+        User::factory()->create([
+            'name' => 'Rudi Teknisi',
+            'role' => User::ROLE_TEKNISI,
+            'phone' => '081277778888',
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Siti Aminah',
+            'phone' => '081255551234',
+            'status' => 'active',
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'INV-STAFF-QR-001',
+            'amount' => 150000,
+            'qris_unique_code' => 111,
+            'qris_expected_amount' => 150111,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDay(),
+            'due_date' => now()->addDays(2),
+        ]);
+
+        $response = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz - Transaksi Masuk',
+            'text' => 'Pembayaran QRIS sebesar Rp 150.111 berhasil diterima dari RUDI TEKNISI. Ref: GOPAY-STAFF-001',
+            'device_name' => 'HP-Kasir-Utama',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'success' => true,
+            'status' => 'manual_review_required',
+            'reason' => 'admin_payer_needs_manual_review',
+        ]);
+
+        $this->assertSame('unpaid', $invoice->fresh()->status);
+    }
+
+    public function test_webhook_holds_ambiguous_or_unverified_base_amount_without_auto_settling_random_customer(): void
+    {
+        SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
+
+        $customerA = Customer::create([
+            'name' => 'Pelanggan Satu',
+            'phone' => '081200000001',
+            'status' => 'active',
+        ]);
+        $customerB = Customer::create([
+            'name' => 'Pelanggan Dua',
+            'phone' => '081200000002',
+            'status' => 'active',
+        ]);
+
+        $invA = Invoice::create([
+            'customer_id' => $customerA->id,
+            'invoice_link' => 'INV-BASE-A',
+            'amount' => 175000,
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDay(),
+            'due_date' => now()->addDays(3),
+        ]);
+        $invB = Invoice::create([
+            'customer_id' => $customerB->id,
+            'invoice_link' => 'INV-BASE-B',
+            'amount' => 175000,
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDay(),
+            'due_date' => now()->addDays(3),
+        ]);
+
+        // Skenario A: Beberapa pelanggan punya tagihan Rp 175.000
+        $resMulti = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz',
+            'text' => 'Pembayaran QRIS sebesar Rp 175.000 berhasil diterima. Ref: BASE-MULTI-01',
+            'device_name' => 'HP-Kasir',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $resMulti->assertStatus(200)->assertJson([
+            'status' => 'manual_review_required',
+            'reason' => 'ambiguous_base_amount',
+        ]);
+        $this->assertSame('unpaid', $invA->fresh()->status);
+        $this->assertSame('unpaid', $invB->fresh()->status);
+        $this->assertSame(
+            2,
+            \App\Models\BillingPaymentMatchReview::query()->where('capture_id', $resMulti->json('capture_id'))->count()
+        );
+
+        // Skenario B: Hanya 1 tagihan Rp 175.000 yang tersisa, tapi notifikasi tidak mencantumkan nama pengirim / kode unik
+        $invB->update(['status' => 'paid', 'paid_at' => now()]);
+
+        $resAnon = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz',
+            'text' => 'Pembayaran QRIS sebesar Rp 175.000 berhasil diterima. Ref: BASE-ANON-02',
+            'device_name' => 'HP-Kasir',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $resAnon->assertStatus(200)->assertJson([
+            'status' => 'manual_review_required',
+            'reason' => 'unverified_static_qris_base_amount',
+        ]);
+        $this->assertSame('unpaid', $invA->fresh()->status);
+    }
+
+    public function test_webhook_parses_manipulated_notification_without_crashing_or_settling(): void
+    {
+        SiteSetting::set(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'valid-secret');
+
+        $customer = Customer::create([
+            'name' => 'Pelanggan Manipulasi',
+            'phone' => '081344445555',
+            'status' => 'active',
+        ]);
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'INV-MANIP-001',
+            'amount' => 200000,
+            'qris_unique_code' => 123,
+            'qris_expected_amount' => 200123,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+            'invoice_date' => now()->subDay(),
+            'due_date' => now()->addDays(3),
+        ]);
+
+        // 1. Teks tanpa prefix Rp/IDR (sebelumnya crash Undefined variable $amount di Priority 2/3)
+        $webhookService = app(QrisWebhookService::class);
+        $parsedPriority3 = $webhookService->parseNotificationText('masuk 175.000 dari Adul');
+        $this->assertSame(175000, $parsedPriority3['amount']);
+        $this->assertSame('Adul', $parsedPriority3['sender']);
+
+        // 2. Teks dimanipulasi dengan lebih dari satu nominal berbeda
+        $resMultiAmt = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz - Transaksi',
+            'text' => 'Pembayaran Rp 175.000 diubah menjadi Rp 200.123 berhasil diterima dari BUDI. Ref: MANIP-01',
+            'device_name' => 'HP-Manip',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $resMultiAmt->assertStatus(200)->assertJson([
+            'status' => 'manual_review_required',
+            'reason' => 'manipulated_or_ambiguous_notification',
+        ]);
+        $this->assertSame('unpaid', $invoice->fresh()->status);
+
+        // 3. Notifikasi pencairan / refund / gagal diabaikan aman dan tidak melunaskan tagihan
+        $resNonPayment = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoBiz - Pencairan Dana',
+            'text' => 'Pencairan otomatis sebesar Rp 200.123 sedang diproses ke rekening bank Anda.',
+            'device_name' => 'HP-Kasir',
+        ], ['X-QRIS-SECRET' => 'valid-secret']);
+
+        $resNonPayment->assertStatus(200)->assertJson([
+            'status' => 'ignored_non_payment',
+        ]);
+        $this->assertSame('unpaid', $invoice->fresh()->status);
+    }
 }

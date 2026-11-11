@@ -223,6 +223,7 @@ class PaymentMatchingService
             if ($source === 'whatsapp') {
                 $query->where(function ($q) {
                     $q->where('source', 'whatsapp')
+                        ->orWhere('source', 'like', 'whatsapp%')
                         ->orWhere('source', 'like', 'wa_%');
                 });
             } elseif ($source === 'web_public') {
@@ -364,6 +365,62 @@ class PaymentMatchingService
             $destinationOk = (bool) data_get($capture->meta, 'validation.flags.destination_whitelisted', true);
             $isSuccessConfirmed = (bool) data_get($capture->meta, 'validation.flags.success_status', false);
             $isPaymentProof = (bool) data_get($capture->meta, 'validation.flags.is_payment_proof', false);
+            $nonAdminPayerFlag = (bool) data_get($capture->meta, 'validation.flags.non_admin_payer', true);
+
+            $configService = app(PaymentVerificationConfigService::class);
+            $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+            $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+            $waSenderName = (string) data_get($capture->meta, 'sender_name', '');
+            $receiptSenderName = (string) data_get($capture->meta, 'analysis.sender_name', '');
+            $ocrText = (string) data_get($capture->meta, 'analysis.ocr_raw_text', '');
+            $targetCustomer = $topInvoice?->customer;
+
+            $liveStaffMatch = $configService->matchInternalStaffIdentity($senderPhone, $senderLid, $waSenderName, $targetCustomer)
+                ?? ($receiptSenderName !== '' ? $configService->matchInternalStaffIdentity(null, null, $receiptSenderName, $targetCustomer) : null);
+
+            if (!$liveStaffMatch && $receiptSenderName === '' && $ocrText !== '') {
+                $ocrForPayerScan = $ocrText;
+                foreach ([
+                    (string) data_get($capture->meta, 'analysis.destination_identity.name', ''),
+                    (string) data_get($capture->meta, 'analysis.destination_identity.raw', ''),
+                ] as $destFragment) {
+                    $destFragment = trim($destFragment);
+                    if ($destFragment !== '') {
+                        $ocrForPayerScan = str_ireplace($destFragment, ' ', $ocrForPayerScan);
+                    }
+                }
+                $excludedInText = $configService->matchExcludedSenderInText($ocrForPayerScan);
+                if ($excludedInText) {
+                    $liveStaffMatch = [
+                        'type' => 'excluded_sender',
+                        'label' => (string) ($excludedInText['name'] ?? 'Admin Dikecualikan'),
+                        'entry' => $excludedInText,
+                    ];
+                }
+            }
+
+            $isNonAdminPayer = $nonAdminPayerFlag && ($liveStaffMatch === null);
+            if (!$isNonAdminPayer) {
+                $existingReason = data_get($capture->meta, 'validation.failure_reason');
+                $defaultReason = ($liveStaffMatch['type'] ?? '') === 'excluded_sender'
+                    ? 'excluded_admin_payer'
+                    : 'admin_payer_needs_manual_review';
+
+                $capture->meta = array_merge((array) $capture->meta, [
+                    'validation' => array_merge((array) data_get($capture->meta, 'validation', []), [
+                        'status' => 'needs_review',
+                        'failure_reason' => $existingReason ?: $defaultReason,
+                        'staff_match' => $liveStaffMatch ?? data_get($capture->meta, 'validation.staff_match'),
+                        'flags' => array_merge((array) data_get($capture->meta, 'validation.flags', []), [
+                            'non_admin_payer' => false,
+                        ]),
+                    ]),
+                ]);
+            }
+
+            $topIsUniqueQris = str_contains((string) ($top['reason'] ?? ''), 'qris_unique_amount_exact');
+            $senderOrUniqueQrisVerified = ((bool) $capture->customer_id && $topInvoice && (int) $topInvoice->customer_id === (int) $capture->customer_id)
+                || $topIsUniqueQris;
 
             $canAutoApply = $autoApply
                 && $topScore >= $autoThreshold
@@ -371,6 +428,8 @@ class PaymentMatchingService
                 && $destinationOk
                 && $isSuccessConfirmed
                 && $isPaymentProof
+                && $isNonAdminPayer
+                && $senderOrUniqueQrisVerified
                 && (
                     $candidates->count() === 1 ||
                     ($capture->customer_id && $top['invoice']->customer_id === $capture->customer_id && (
@@ -626,7 +685,7 @@ class PaymentMatchingService
 
             foreach ($amountMatches as $invoice) {
                 $isQrisUnique = $invoice->qris_expected_amount && abs((float) $invoice->qris_expected_amount - $amount) <= 0.01;
-                $score = $isQrisUnique ? 90.0 : 70.0;
+                $score = $isQrisUnique ? 90.0 : 65.0;
                 $reasons = [$isQrisUnique ? 'qris_unique_amount_exact' : 'amount_exact'];
 
                 if ($reference !== '' && str_contains(strtolower((string) $invoice->invoice_link), $reference)) {
@@ -642,9 +701,11 @@ class PaymentMatchingService
                     }
                 }
 
+                $maxScore = $isQrisUnique ? 85.0 : 75.0;
+
                 $candidates->push([
                     'invoice' => $invoice,
-                    'score' => min($score, 85),
+                    'score' => min($score, $maxScore),
                     'reason' => implode(',', $reasons),
                 ]);
             }

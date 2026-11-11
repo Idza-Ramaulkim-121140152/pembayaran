@@ -121,11 +121,43 @@ class PaymentProofValidationService
             ];
         }
 
+        $senderPhone = (string) data_get($capture->meta, 'sender_phone', '');
+        $senderLid = (string) data_get($capture->meta, 'sender_lid', '');
+        $waSenderName = (string) data_get($capture->meta, 'sender_name', '');
+        $receiptSenderName = (string) ($analysis['sender_name'] ?? '');
+
+        $staffMatch = $this->configService->matchInternalStaffIdentity($senderPhone, $senderLid, $waSenderName, $customer);
+        if (!$staffMatch && $receiptSenderName !== '') {
+            $staffMatch = $this->configService->matchInternalStaffIdentity(null, null, $receiptSenderName, $customer);
+        }
+        if (!$staffMatch && $receiptSenderName === '' && !empty($analysis['ocr_raw_text'])) {
+            $ocrForPayerScan = (string) $analysis['ocr_raw_text'];
+            foreach ([
+                (string) data_get($analysis, 'destination_identity.name', ''),
+                (string) data_get($analysis, 'destination_identity.raw', ''),
+            ] as $destFragment) {
+                $destFragment = trim($destFragment);
+                if ($destFragment !== '') {
+                    $ocrForPayerScan = str_ireplace($destFragment, ' ', $ocrForPayerScan);
+                }
+            }
+            $excludedTextMatch = $this->configService->matchExcludedSenderInText($ocrForPayerScan);
+            if ($excludedTextMatch) {
+                $staffMatch = [
+                    'type' => 'excluded_sender',
+                    'label' => (string) ($excludedTextMatch['name'] ?? 'Admin Dikecualikan'),
+                    'entry' => $excludedTextMatch,
+                ];
+            }
+        }
+        $isNonAdminPayer = $staffMatch === null;
+
         $flags = [
             'customer_identified' => (bool) $customer,
             'active_invoice_found' => (bool) $invoice,
             'is_payment_proof' => (bool) ($analysis['is_payment_proof'] ?? false),
             'success_status' => (bool) ($analysis['success_status'] ?? false),
+            'non_admin_payer' => $isNonAdminPayer,
             'amount_matches_invoice' => $amountMatchesInvoice,
             'destination_whitelisted' => $isDestinationTrusted,
             'is_duplicate_reference' => $isDuplicate,
@@ -148,6 +180,11 @@ class PaymentProofValidationService
         } elseif ($flags['is_duplicate_reference']) {
             $failureReason = 'duplicate_reference_code';
             $status = 'rejected';
+        } elseif (!$flags['non_admin_payer']) {
+            $failureReason = ($staffMatch['type'] ?? '') === 'excluded_sender'
+                ? 'excluded_admin_payer'
+                : 'admin_payer_needs_manual_review';
+            $status = 'needs_review';
         } elseif (!$flags['customer_identified']) {
             $failureReason = 'unknown_customer';
             $status = 'needs_review';
@@ -173,6 +210,7 @@ class PaymentProofValidationService
         return [
             'status' => $status,
             'failure_reason' => $failureReason,
+            'staff_match' => $staffMatch,
             'is_duplicate' => (bool) $flags['is_duplicate_reference'],
             'duplicate_label' => $flags['is_duplicate_reference'] ? 'Bukti bayar sudah pernah digunakan' : null,
             'validation_flags' => $flags,
