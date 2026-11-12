@@ -68,12 +68,12 @@ class CustomerAgreementWhatsAppService
     private function sendMedia(string $phone, string $caption, CustomerAgreement $agreement): array
     {
         try {
-            $response = Http::timeout(60)->post($this->gatewayUrl() . '/send-media', [
+            $response = app(WhatsAppGatewayService::class)->post('/send-media', [
                 'phone' => $phone,
                 'message' => $caption,
                 'file_url' => $this->absolutePublicUrl(Storage::disk('public')->url($agreement->pdf_path)),
                 'filename' => 'Kontrak-' . str_replace(['/', '\\'], '-', $agreement->agreement_number) . '.pdf',
-            ]);
+            ], 60);
 
             if ($response->successful()) {
                 $payload = $response->json();
@@ -95,11 +95,7 @@ class CustomerAgreementWhatsAppService
     private function sendText(string $phone, string $message, string $name): array
     {
         try {
-            $response = Http::timeout(30)->post($this->gatewayUrl() . '/send', [
-                'phone' => $phone,
-                'name' => $name,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send($phone, $message, $name, 30);
 
             if ($response->successful()) {
                 $payload = $response->json();
@@ -151,11 +147,6 @@ class CustomerAgreementWhatsAppService
             'error' => $error,
             'meta' => $meta,
         ];
-    }
-
-    private function gatewayUrl(): string
-    {
-        return rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
     }
 
     private function absolutePublicUrl(string $url): string

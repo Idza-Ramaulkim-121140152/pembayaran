@@ -17,9 +17,9 @@ class WhatsAppController extends Controller
     /**
      * Base URL for the Node.js WhatsApp Gateway
      */
-    protected function gatewayUrl(): string
+    protected function gateway(): \App\Services\WhatsAppGatewayService
     {
-        return rtrim(env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+        return app(\App\Services\WhatsAppGatewayService::class);
     }
 
     /**
@@ -29,7 +29,7 @@ class WhatsAppController extends Controller
     public function status()
     {
         try {
-            $response = Http::timeout(5)->get($this->gatewayUrl() . '/status');
+            $response = $this->gateway()->get('/status', [], 5);
             $data = $response->json();
 
             $connected = $data['ready'] ?? false;
@@ -68,7 +68,7 @@ class WhatsAppController extends Controller
     public function qr()
     {
         try {
-            $response = Http::timeout(10)->get($this->gatewayUrl() . '/qr');
+            $response = $this->gateway()->get('/qr', [], 10);
             return response()->json($response->json());
         } catch (\Exception $e) {
             return response()->json([
@@ -80,42 +80,27 @@ class WhatsAppController extends Controller
 
     /**
      * POST /api/whatsapp/restart
-     * Restart WhatsApp client dengan fallback System Hard Restart
+     * Restart WhatsApp client safely through the HTTP gateway service
      */
     public function restart()
     {
-        // 1. Coba restart normal via HTTP ke Gateway
         try {
-            $response = Http::timeout(3)->post($this->gatewayUrl() . '/restart');
+            $response = $this->gateway()->post('/restart', [], 5);
             if ($response->successful()) {
                 return response()->json($response->json());
             }
-        } catch (\Exception $e) {
-            Log::warning('WhatsApp HTTP restart gagal, mengeksekusi fallback restart sistem: ' . $e->getMessage());
-        }
 
-        // 2. Fallback: Eksekusi restart sistem (kill port 3001 & restart supervisor)
-        try {
-            @shell_exec('sudo /usr/bin/fuser -k 3001/tcp 2>/dev/null');
-
-            $sessionPath = base_path('fastapi/wa-gateway/sessions');
-            if (is_dir($sessionPath)) {
-                @shell_exec("rm -rf {$sessionPath}/*/Singleton* 2>/dev/null");
-            }
-
-            $output = @shell_exec('sudo /usr/bin/supervisorctl restart pembayaran-wa:* 2>&1');
-            Log::info("Supervisor restart output from Web: {$output}");
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Layanan WhatsApp Gateway berhasil di-restart melalui sistem server. Silakan tunggu 5-10 detik lalu refresh QR.',
-            ]);
-        } catch (\Exception $e) {
-            Log::error('System restart failed: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal restart WhatsApp: ' . $e->getMessage(),
-            ], 500);
+                'message' => 'WhatsApp Gateway menolak permintaan restart (HTTP ' . $response->status() . '). Periksa service supervisor di server jika perlu.',
+            ], 502);
+        } catch (\Exception $e) {
+            Log::warning('WhatsApp HTTP restart gagal: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'WhatsApp Gateway tidak merespons HTTP restart. Jalankan restart service supervisor secara manual di server.',
+            ], 503);
         }
     }
 
@@ -126,7 +111,7 @@ class WhatsAppController extends Controller
     public function logout()
     {
         try {
-            $response = Http::timeout(10)->post($this->gatewayUrl() . '/logout');
+            $response = $this->gateway()->post('/logout', [], 10);
             return response()->json($response->json());
         } catch (\Exception $e) {
             return response()->json([
@@ -138,49 +123,30 @@ class WhatsAppController extends Controller
 
     /**
      * POST /api/whatsapp/reset-session
-     * Reset WhatsApp session data and generate a fresh QR code
+     * Reset WhatsApp session data through HTTP gateway (and remove local Chromium lockfiles only via PHP)
      */
     public function resetSession()
     {
-        // 1. Coba reset via HTTP ke Gateway
         try {
-            $response = Http::timeout(5)->post($this->gatewayUrl() . '/reset-session');
+            $response = $this->gateway()->post('/reset-session', [], 10);
             if ($response->successful()) {
                 return response()->json([
                     'success' => true,
                     'message' => 'Sesi WhatsApp berhasil di-reset. QR Code baru sedang dibuat...',
                 ]);
             }
-        } catch (\Exception $e) {
-            Log::warning('WhatsApp HTTP reset-session gagal, eksekusi pembersihan sistem: ' . $e->getMessage());
-        }
 
-        // 2. Fallback: Eksekusi pembersihan session di filesystem server
-        try {
-            @shell_exec('sudo /usr/bin/fuser -k 3001/tcp 2>/dev/null');
-
-            $sessionPath = base_path('fastapi/wa-gateway/sessions');
-            if (is_dir($sessionPath)) {
-                @shell_exec("rm -rf {$sessionPath} 2>/dev/null");
-            }
-            $cachePath = base_path('fastapi/wa-gateway/.wwebjs_cache');
-            if (is_dir($cachePath)) {
-                @shell_exec("rm -rf {$cachePath} 2>/dev/null");
-            }
-
-            $output = @shell_exec('sudo /usr/bin/supervisorctl restart pembayaran-wa:* 2>&1');
-            Log::info("Supervisor reset-session output: {$output}");
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Sesi WhatsApp berhasil di-reset via sistem server. Silakan buka QR Code dalam beberapa detik.',
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Reset session fallback failed: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal reset sesi WhatsApp: ' . $e->getMessage(),
-            ], 500);
+                'message' => 'WhatsApp Gateway gagal mereset sesi (HTTP ' . $response->status() . ').',
+            ], 502);
+        } catch (\Exception $e) {
+            Log::warning('WhatsApp HTTP reset-session gagal: ' . $e->getMessage());
+
+            return response()->json([
+                'success' => false,
+                'message' => 'WhatsApp Gateway tidak dapat dihubungi untuk reset sesi. Restart service supervisor secara manual di server.',
+            ], 503);
         }
     }
 
@@ -284,11 +250,7 @@ class WhatsAppController extends Controller
         // Send to WA Gateway
         if (!empty($recipients)) {
             try {
-                $response = Http::timeout(300)->post($this->gatewayUrl() . '/send-bulk', [
-                    'recipients' => $recipients,
-                    'message' => $message,
-                    'delay' => 2000,
-                ]);
+                $response = $this->gateway()->sendBulk($recipients, $message, 2000, 300);
 
                 $gatewayResult = $response->json();
 
@@ -381,10 +343,7 @@ class WhatsAppController extends Controller
         ]);
 
         try {
-            $response = Http::timeout(30)->post($this->gatewayUrl() . '/send', [
-                'phone' => $request->phone,
-                'message' => $request->message,
-            ]);
+            $response = $this->gateway()->send((string) $request->phone, (string) $request->message, null, 30);
             return response()->json($response->json());
         } catch (\Exception $e) {
             return response()->json([
@@ -400,7 +359,7 @@ class WhatsAppController extends Controller
      */
     public function logs(Request $request)
     {
-        $query = NotificationLog::with('customer:id,nama,no_telp')
+        $query = NotificationLog::with('customer:id,name,phone')
             ->orderBy('created_at', 'desc');
 
         if ($request->status) {

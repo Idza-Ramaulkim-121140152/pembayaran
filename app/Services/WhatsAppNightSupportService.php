@@ -85,12 +85,12 @@ class WhatsAppNightSupportService
             ];
         }
 
-        // 3. Cek anti-spam cooldown per nomor HP
+        // 3. Cek anti-spam cooldown atomik per nomor HP
         $cleanPhone = preg_replace('/\D/', '', $senderPhone ?: $senderLid);
         $cooldownKey = "wa_night_cooldown_{$cleanPhone}";
         $cooldownMinutes = max(5, (int) SiteSetting::get(self::SETTING_COOLDOWN_MINUTES, 30));
 
-        if (Cache::has($cooldownKey)) {
+        if ($cleanPhone !== '' && !Cache::add($cooldownKey, true, now()->addMinutes($cooldownMinutes))) {
             Log::info("WhatsAppNightSupport: Cooldown aktif untuk {$cleanPhone}. Pesan dicatat tanpa membalas ulang spam.");
             return [
                 'status' => 'cooldown_active',
@@ -122,9 +122,9 @@ class WhatsAppNightSupportService
         // 7. Kirim balasan ke nomor WhatsApp pelanggan
         $targetPhone = $senderPhone ?: $senderLid;
         $sendSuccess = $this->sendWhatsAppReply($targetPhone, $replyMessage);
-
-        // 8. Pasang cooldown setelah berhasil membalas
-        Cache::put($cooldownKey, true, now()->addMinutes($cooldownMinutes));
+        if (!$sendSuccess && $cleanPhone !== '') {
+            Cache::forget($cooldownKey);
+        }
 
         return [
             'status' => 'replied',
@@ -256,13 +256,8 @@ class WhatsAppNightSupportService
      */
     protected function sendWhatsAppReply(string $phone, string $message): bool
     {
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
-
         try {
-            $response = Http::timeout(30)->post($gatewayUrl . '/send', [
-                'phone' => $phone,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send($phone, $message, null, 30);
 
             $json = $response->json();
             $success = (bool) ($json['success'] ?? false);

@@ -285,12 +285,16 @@ class WhatsAppNightSupportAndNocAdvisorTest extends TestCase
 
     public function test_night_support_controller_webhook_and_status_routes(): void
     {
+        config(['services.wa_night_support_webhook.secret' => 'test-night-support-secret']);
+
         $statusRes = $this->getJson('/api/whatsapp/night-support/status');
         $statusRes->assertStatus(200);
         $statusRes->assertJsonPath('success', true);
         $statusRes->assertJsonStructure(['is_night_shift_active', 'operating_hours']);
 
-        $postRes = $this->postJson('/api/whatsapp/webhooks/night-support', [
+        $postRes = $this->withHeaders([
+            'X-Webhook-Secret' => 'test-night-support-secret',
+        ])->postJson('/api/whatsapp/webhooks/night-support', [
             'sender_phone' => '081234567899',
             'message' => 'Tes pesan webhook',
             'message_id' => 'WEBHOOK-TEST-01',

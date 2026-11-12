@@ -118,7 +118,7 @@ class AttendanceService
      */
     public function getPeriodRange(?Carbon $referenceDate = null, ?int $resetDay = null): array
     {
-        $ref = $referenceDate ? $referenceDate->copy() : Carbon::today();
+        $ref = $referenceDate ? $referenceDate->copy()->setTimezone('Asia/Jakarta') : Carbon::today('Asia/Jakarta');
         $day = $resetDay ?? $this->getSettings()['monthly_reset_day'];
         $day = max(1, min(28, (int) $day));
 
@@ -128,12 +128,12 @@ class AttendanceService
             $nextResetDate = $ref->copy()->addMonthNoOverflow()->startOfMonth()->startOfDay();
         } else {
             if ($ref->day >= $day) {
-                $startDate = Carbon::create($ref->year, $ref->month, $day)->startOfDay();
-                $nextResetDate = Carbon::create($ref->year, $ref->month, $day)->addMonthNoOverflow()->startOfDay();
+                $startDate = Carbon::create($ref->year, $ref->month, $day, 0, 0, 0, 'Asia/Jakarta')->startOfDay();
+                $nextResetDate = Carbon::create($ref->year, $ref->month, $day, 0, 0, 0, 'Asia/Jakarta')->addMonthNoOverflow()->startOfDay();
                 $endDate = $nextResetDate->copy()->subDay()->endOfDay();
             } else {
-                $startDate = Carbon::create($ref->year, $ref->month, $day)->subMonthNoOverflow()->startOfDay();
-                $nextResetDate = Carbon::create($ref->year, $ref->month, $day)->startOfDay();
+                $startDate = Carbon::create($ref->year, $ref->month, $day, 0, 0, 0, 'Asia/Jakarta')->subMonthNoOverflow()->startOfDay();
+                $nextResetDate = Carbon::create($ref->year, $ref->month, $day, 0, 0, 0, 'Asia/Jakarta')->startOfDay();
                 $endDate = $nextResetDate->copy()->subDay()->endOfDay();
             }
         }
@@ -160,7 +160,7 @@ class AttendanceService
         $this->ensureTableExists();
 
         $settings = $this->getSettings();
-        $today = Carbon::today();
+        $today = Carbon::today('Asia/Jakarta');
         $period = $this->getPeriodRange($today, $settings['monthly_reset_day']);
 
         $isEmployee = (bool) ($user->is_employee ?? false);
@@ -204,13 +204,13 @@ class AttendanceService
             ];
         }
 
-        // Check if currently late compared to scheduled work_start_time
-        $startTime = Carbon::createFromTimeString($settings['work_start_time']);
+        // Check if currently late compared to scheduled work_start_time (WIB)
+        $startTime = Carbon::createFromTimeString($settings['work_start_time'], 'Asia/Jakarta');
         $workStartToday = $today->copy()->setTime($startTime->hour, $startTime->minute, 0)
             ->addMinutes($settings['late_tolerance_minutes']);
-        $now = Carbon::now();
+        $now = Carbon::now('Asia/Jakarta');
         $isPastWorkStart = $now->greaterThan($workStartToday);
-        $currentLateMinutes = $isPastWorkStart ? $now->diffInMinutes($workStartToday) : 0;
+        $currentLateMinutes = $isPastWorkStart ? (int) $now->diffInMinutes($workStartToday, true) : 0;
 
         return [
             'is_employee' => $isEmployee,
@@ -239,7 +239,7 @@ class AttendanceService
             ]);
         }
 
-        $today = Carbon::today();
+        $today = Carbon::today('Asia/Jakarta');
         $todayDate = $today->toDateString();
 
         $existing = EmployeeAttendance::where('user_id', $user->id)
@@ -248,20 +248,21 @@ class AttendanceService
 
         if ($existing && $existing->clock_in_at) {
             throw ValidationException::withMessages([
-                'attendance' => 'Anda sudah melakukan absen masuk hari ini pada pukul ' . $existing->clock_in_at->format('H:i') . ' WIB.',
+                'attendance' => 'Anda sudah melakukan absen masuk hari ini pada pukul ' . $existing->clock_in_at->copy()->setTimezone('Asia/Jakarta')->format('H:i') . ' WIB.',
             ]);
         }
 
         $settings = $this->getSettings();
-        $now = Carbon::now();
+        $nowWib = Carbon::now('Asia/Jakarta');
+        $now = $nowWib->copy()->setTimezone(config('app.timezone', 'UTC'));
 
-        // Calculate schedule and late status
-        $startTime = Carbon::createFromTimeString($settings['work_start_time']);
+        // Calculate schedule and late status in WIB
+        $startTime = Carbon::createFromTimeString($settings['work_start_time'], 'Asia/Jakarta');
         $workStartThreshold = $today->copy()->setTime($startTime->hour, $startTime->minute, 0)
             ->addMinutes($settings['late_tolerance_minutes']);
 
-        $isLate = $now->greaterThan($workStartThreshold);
-        $lateMinutes = $isLate ? (int) $now->diffInMinutes($workStartThreshold) : 0;
+        $isLate = $nowWib->greaterThan($workStartThreshold);
+        $lateMinutes = $isLate ? (int) $nowWib->diffInMinutes($workStartThreshold, true) : 0;
         $clockInStatus = $isLate ? 'late' : 'on_time';
         $status = $isLate ? 'late' : 'present';
 
@@ -328,7 +329,7 @@ class AttendanceService
             ]);
         }
 
-        $today = Carbon::today();
+        $today = Carbon::today('Asia/Jakarta');
         $todayDate = $today->toDateString();
 
         $attendance = EmployeeAttendance::where('user_id', $user->id)
@@ -343,14 +344,14 @@ class AttendanceService
 
         if ($attendance->clock_out_at) {
             throw ValidationException::withMessages([
-                'attendance' => 'Anda sudah melakukan absen pulang hari ini pada pukul ' . $attendance->clock_out_at->format('H:i') . ' WIB.',
+                'attendance' => 'Anda sudah melakukan absen pulang hari ini pada pukul ' . $attendance->clock_out_at->copy()->setTimezone('Asia/Jakarta')->format('H:i') . ' WIB.',
             ]);
         }
 
-        $now = Carbon::now();
+        $now = Carbon::now('Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'));
 
         // Calculate work duration
-        $workDurationMinutes = (int) $attendance->clock_in_at->diffInMinutes($now);
+        $workDurationMinutes = (int) $attendance->clock_in_at->diffInMinutes($now, true);
 
         // Process selfie photo
         $photoPath = null;
@@ -439,12 +440,16 @@ class AttendanceService
             ]);
         }
 
-        $clockInAt = !empty($data['clock_in_at']) ? Carbon::parse($data['clock_in_at']) : null;
-        $clockOutAt = !empty($data['clock_out_at']) ? Carbon::parse($data['clock_out_at']) : null;
+        $clockInAt = !empty($data['clock_in_at'])
+            ? Carbon::parse($data['clock_in_at'], 'Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'))
+            : null;
+        $clockOutAt = !empty($data['clock_out_at'])
+            ? Carbon::parse($data['clock_out_at'], 'Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'))
+            : null;
 
         $durationMinutes = null;
         if ($clockInAt && $clockOutAt && $clockOutAt->greaterThan($clockInAt)) {
-            $durationMinutes = (int) $clockInAt->diffInMinutes($clockOutAt);
+            $durationMinutes = (int) $clockInAt->diffInMinutes($clockOutAt, true);
         }
 
         $settings = $this->getSettings();
@@ -452,11 +457,12 @@ class AttendanceService
         $clockInStatus = $data['clock_in_status'] ?? ($lateMinutes > 0 ? 'late' : 'on_time');
 
         if ($clockInAt && empty($data['clock_in_status'])) {
-            $startTime = Carbon::createFromTimeString($settings['work_start_time']);
-            $threshold = Carbon::parse($date)->setTime($startTime->hour, $startTime->minute, 0);
-            if ($clockInAt->greaterThan($threshold)) {
+            $startTime = Carbon::createFromTimeString($settings['work_start_time'], 'Asia/Jakarta');
+            $threshold = Carbon::parse($date, 'Asia/Jakarta')->setTime($startTime->hour, $startTime->minute, 0);
+            $clockInWib = $clockInAt->copy()->setTimezone('Asia/Jakarta');
+            if ($clockInWib->greaterThan($threshold)) {
                 $clockInStatus = 'late';
-                $lateMinutes = (int) $clockInAt->diffInMinutes($threshold);
+                $lateMinutes = (int) $clockInWib->diffInMinutes($threshold, true);
             }
         }
 
@@ -520,11 +526,15 @@ class AttendanceService
         }
 
         if (array_key_exists('clock_in_at', $data)) {
-            $record->clock_in_at = !empty($data['clock_in_at']) ? Carbon::parse($data['clock_in_at']) : null;
+            $record->clock_in_at = !empty($data['clock_in_at'])
+                ? Carbon::parse($data['clock_in_at'], 'Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'))
+                : null;
         }
 
         if (array_key_exists('clock_out_at', $data)) {
-            $record->clock_out_at = !empty($data['clock_out_at']) ? Carbon::parse($data['clock_out_at']) : null;
+            $record->clock_out_at = !empty($data['clock_out_at'])
+                ? Carbon::parse($data['clock_out_at'], 'Asia/Jakarta')->setTimezone(config('app.timezone', 'UTC'))
+                : null;
         }
 
         if (isset($data['clock_in_status'])) {
@@ -567,7 +577,7 @@ class AttendanceService
         }
 
         if ($record->clock_in_at && $record->clock_out_at && $record->clock_out_at->greaterThan($record->clock_in_at)) {
-            $record->work_duration_minutes = (int) $record->clock_in_at->diffInMinutes($record->clock_out_at);
+            $record->work_duration_minutes = (int) $record->clock_in_at->diffInMinutes($record->clock_out_at, true);
         }
 
         $record->save();
@@ -793,7 +803,7 @@ class AttendanceService
         $clockInSeconds = $presentRecords
             ->filter(fn (EmployeeAttendance $r) => $r->clock_in_at !== null)
             ->map(function (EmployeeAttendance $r): int {
-                $t = $r->clock_in_at;
+                $t = $r->clock_in_at->copy()->setTimezone('Asia/Jakarta');
                 return ($t->hour * 3600) + ($t->minute * 60) + $t->second;
             });
 
@@ -817,14 +827,14 @@ class AttendanceService
         $baseSummary['total_work_minutes'] = $totalWorkMinutes;
         $baseSummary['total_hours_formatted'] = $totalHoursFormatted;
         $baseSummary['average_clock_in'] = $avgClockIn;
-        $baseSummary['last_clock_in_at'] = $latest?->clock_in_at?->format('d/m H:i');
+        $baseSummary['last_clock_in_at'] = $latest?->clock_in_at?->copy()?->setTimezone('Asia/Jakarta')?->format('d/m H:i');
         $baseSummary['recent_records'] = $records->take(31)->map(function (EmployeeAttendance $record): array {
             return [
                 'id' => $record->id,
                 'date' => $record->date?->toDateString(),
                 'date_formatted' => $record->date?->translatedFormat('d M Y'),
-                'clock_in_at' => $record->clock_in_at?->format('H:i'),
-                'clock_out_at' => $record->clock_out_at?->format('H:i'),
+                'clock_in_at' => $record->clock_in_at?->copy()?->setTimezone('Asia/Jakarta')?->format('H:i'),
+                'clock_out_at' => $record->clock_out_at?->copy()?->setTimezone('Asia/Jakarta')?->format('H:i'),
                 'clock_in_status' => $record->clock_in_status,
                 'clock_in_late_minutes' => (int) ($record->clock_in_late_minutes ?? 0),
                 'work_duration_minutes' => (int) ($record->work_duration_minutes ?? 0),
@@ -843,15 +853,16 @@ class AttendanceService
      */
     public function getPayrollAttendancePeriodPresets(): array
     {
-        $resetPeriod = $this->getPeriodRange(Carbon::today());
+        $today = Carbon::today('Asia/Jakarta');
+        $resetPeriod = $this->getPeriodRange($today);
         $prevResetPeriod = $this->getPeriodRange(
-            Carbon::parse($resetPeriod['start_date'])->subDay(),
+            Carbon::parse($resetPeriod['start_date'], 'Asia/Jakarta')->subDay(),
             (int) $resetPeriod['reset_day']
         );
-        $currentMonthStart = Carbon::today()->startOfMonth();
-        $currentMonthEnd = Carbon::today()->endOfMonth();
-        $prevMonthStart = Carbon::today()->subMonthNoOverflow()->startOfMonth();
-        $prevMonthEnd = Carbon::today()->subMonthNoOverflow()->endOfMonth();
+        $currentMonthStart = $today->copy()->startOfMonth();
+        $currentMonthEnd = $today->copy()->endOfMonth();
+        $prevMonthStart = $today->copy()->subMonthNoOverflow()->startOfMonth();
+        $prevMonthEnd = $today->copy()->subMonthNoOverflow()->endOfMonth();
 
         return [
             [

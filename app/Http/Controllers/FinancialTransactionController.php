@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\BorrowerLoanService;
 use App\Services\PaymentReceiverService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
@@ -461,131 +462,152 @@ class FinancialTransactionController extends Controller
 
         $validated = $request->validate($rules);
 
-        $meta = is_array($financialTransaction->meta) ? $financialTransaction->meta : [];
+        return DB::transaction(function () use ($financialTransaction, $validated) {
+            $lockedTransaction = FinancialTransaction::query()
+                ->lockForUpdate()
+                ->findOrFail($financialTransaction->id);
 
-        // Determine receiver: if passed in request, use it. Otherwise, use existing meta receiver, or transaction creator.
-        $receiverId = $validated['payment_receiver_user_id']
-            ?? ($meta['payment_receiver_user_id'] ?? $financialTransaction->created_by);
-        
-        $receiver = $receiverId ? User::find($receiverId) : null;
-        if ($receiver) {
-            $meta = $this->putPaymentReceiverMeta($meta, $receiver);
-        }
+            $meta = is_array($lockedTransaction->meta) ? $lockedTransaction->meta : [];
 
-        if (array_key_exists('payment_receipt_option_id', $validated)) {
-            $receiptOption = null;
-            if (!empty($validated['payment_receipt_option_id']) && Schema::hasTable('payment_receipt_options')) {
-                $receiptOption = PaymentReceiptOption::find($validated['payment_receipt_option_id']);
-            }
+            $receiverId = $validated['payment_receiver_user_id']
+                ?? ($meta['payment_receiver_user_id'] ?? $lockedTransaction->created_by);
 
-            if ($receiptOption) {
-                $meta['received_via_id'] = $receiptOption->id;
-                $meta['received_via_name'] = $receiptOption->name;
-            } else {
-                unset($meta['received_via_id'], $meta['received_via_name']);
-            }
-        }
+            $receiver = $receiverId ? User::find($receiverId) : null;
+            $isCompanyFinance = $receiver
+                ? $this->paymentReceiverService->isCompanyFinanceReceiver($receiver->id)
+                : false;
 
-        $financialTransaction->update([
-            'status' => FinancialTransaction::STATUS_CONFIRMED,
-            'updated_by' => auth()->id(),
-            'meta' => $meta !== [] ? $meta : null,
-        ]);
-
-        // If there are linked pending approvals, mark them approved too
-        if (Schema::hasTable('payment_receiver_approval_requests')) {
-            \App\Models\PaymentReceiverApprovalRequest::query()
-                ->where('financial_transaction_id', $financialTransaction->id)
-                ->where('status', \App\Models\PaymentReceiverApprovalRequest::STATUS_PENDING)
-                ->update([
-                    'status' => \App\Models\PaymentReceiverApprovalRequest::STATUS_APPROVED,
-                    'decision_at' => now(),
-                    'decision_note' => 'Dikonfirmasi melalui halaman mutasi keuangan oleh ' . (auth()->user()?->name ?? 'Admin'),
+            if ($lockedTransaction->status === FinancialTransaction::STATUS_CONFIRMED) {
+                return response()->json([
+                    'message' => 'Transaksi sudah dikonfirmasi sebelumnya.',
+                    'already_confirmed' => true,
+                    'data' => $lockedTransaction->fresh(['creator:id,name', 'updater:id,name']),
+                    'is_company_finance' => $isCompanyFinance,
+                    'loan' => null,
                 ]);
-        }
+            }
 
-        // Check if receiver is company finance or non-company
-        $isCompanyFinance = $receiver
-            ? $this->paymentReceiverService->isCompanyFinanceReceiver($receiver->id)
-            : false;
+            if ($receiver) {
+                $meta = $this->putPaymentReceiverMeta($meta, $receiver);
+            }
 
-        $createdLoan = null;
-
-        // If receiver is NOT company finance, money is held by receiver => create borrower debt!
-        if ($receiver && !$isCompanyFinance && $financialTransaction->type === 'income') {
-            $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($receiver);
-            $amount = (int) round(abs((float) $financialTransaction->amount));
-
-            if ($financialTransaction->source === 'installation_income') {
-                $customer = null;
-                if ($financialTransaction->reference_type === Customer::class && $financialTransaction->reference_id) {
-                    $customer = Customer::find($financialTransaction->reference_id);
+            if (array_key_exists('payment_receipt_option_id', $validated)) {
+                $receiptOption = null;
+                if (!empty($validated['payment_receipt_option_id']) && Schema::hasTable('payment_receipt_options')) {
+                    $receiptOption = PaymentReceiptOption::find($validated['payment_receipt_option_id']);
                 }
 
-                $customerName = $customer?->name ?? 'Pelanggan';
-                $notes = "Biaya pemasangan pelanggan {$customerName} diterima oleh {$receiver->name}, otomatis dicatat ke hutang {$receiver->name}.";
-
-                if ($customer) {
-                    $createdLoan = $this->borrowerLoanService->createInstallationFeeDebt(
-                        $borrower,
-                        $customer,
-                        $amount,
-                        auth()->user(),
-                        $receiver,
-                        $receiver,
-                        $notes
-                    );
+                if ($receiptOption) {
+                    $meta['received_via_id'] = $receiptOption->id;
+                    $meta['received_via_name'] = $receiptOption->name;
                 } else {
-                    $createdLoan = BorrowerLoan::create([
-                        'borrower_id' => $borrower->id,
-                        'invoice_id' => null,
-                        'confirmed_by_user_id' => auth()->id(),
-                        'target_receiver_user_id' => $receiver->id,
-                        'actual_receiver_user_id' => $receiver->id,
-                        'amount' => $amount,
-                        'settled_amount' => 0,
-                        'status' => BorrowerLoan::STATUS_OUTSTANDING,
-                        'source' => 'installation_fee_receiver_mismatch',
-                        'occurred_at' => now(),
-                        'notes' => $notes,
-                        'meta' => [
-                            'financial_transaction_id' => $financialTransaction->id,
-                            'receiver_name' => $receiver->name,
-                        ],
-                    ]);
+                    unset($meta['received_via_id'], $meta['received_via_name']);
                 }
-            } else {
-                $notes = "Pemasukan ({$financialTransaction->description}) diterima oleh {$receiver->name}, otomatis dicatat ke hutang {$receiver->name}.";
-                $createdLoan = BorrowerLoan::create([
-                    'borrower_id' => $borrower->id,
-                    'invoice_id' => null,
-                    'confirmed_by_user_id' => auth()->id(),
-                    'target_receiver_user_id' => $receiver->id,
-                    'actual_receiver_user_id' => $receiver->id,
-                    'amount' => $amount,
-                    'settled_amount' => 0,
-                    'status' => BorrowerLoan::STATUS_OUTSTANDING,
-                    'source' => 'manual_income_receiver_debt',
-                    'occurred_at' => now(),
-                    'notes' => $notes,
-                    'meta' => [
-                        'financial_transaction_id' => $financialTransaction->id,
-                        'receiver_name' => $receiver->name,
-                    ],
-                ]);
             }
-        }
 
-        $message = $isCompanyFinance
-            ? 'Transaksi berhasil dikonfirmasi dan masuk ke rekening/kas perusahaan.'
-            : 'Transaksi berhasil dikonfirmasi. Karena uang diterima oleh akun non-perusahaan (' . ($receiver?->name ?? 'Penerima') . '), otomatis dicatat ke tagihan/hutang penerima.';
+            $lockedTransaction->update([
+                'status' => FinancialTransaction::STATUS_CONFIRMED,
+                'updated_by' => auth()->id(),
+                'meta' => $meta !== [] ? $meta : null,
+            ]);
 
-        return response()->json([
-            'message' => $message,
-            'data' => $financialTransaction->fresh(['creator:id,name', 'updater:id,name']),
-            'is_company_finance' => $isCompanyFinance,
-            'loan' => $createdLoan,
-        ]);
+            if (Schema::hasTable('payment_receiver_approval_requests')) {
+                \App\Models\PaymentReceiverApprovalRequest::query()
+                    ->where('financial_transaction_id', $lockedTransaction->id)
+                    ->where('status', \App\Models\PaymentReceiverApprovalRequest::STATUS_PENDING)
+                    ->update([
+                        'status' => \App\Models\PaymentReceiverApprovalRequest::STATUS_APPROVED,
+                        'decision_at' => now(),
+                        'decision_note' => 'Dikonfirmasi melalui halaman mutasi keuangan oleh ' . (auth()->user()?->name ?? 'Admin'),
+                    ]);
+            }
+
+            $createdLoan = null;
+
+            // If receiver is NOT company finance, money is held by receiver => create borrower debt if not already recorded.
+            if ($receiver && !$isCompanyFinance && $lockedTransaction->type === 'income') {
+                $existingLoan = BorrowerLoan::query()
+                    ->where('meta->financial_transaction_id', $lockedTransaction->id)
+                    ->first();
+
+                if ($existingLoan) {
+                    $createdLoan = $existingLoan;
+                } else {
+                    $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($receiver);
+                    $amount = (int) round(abs((float) $lockedTransaction->amount));
+
+                    if ($lockedTransaction->source === 'installation_income') {
+                        $customer = null;
+                        if ($lockedTransaction->reference_type === Customer::class && $lockedTransaction->reference_id) {
+                            $customer = Customer::find($lockedTransaction->reference_id);
+                        }
+
+                        $customerName = $customer?->name ?? 'Pelanggan';
+                        $notes = "Biaya pemasangan pelanggan {$customerName} diterima oleh {$receiver->name}, otomatis dicatat ke hutang {$receiver->name}.";
+
+                        if ($customer) {
+                            $createdLoan = $this->borrowerLoanService->createInstallationFeeDebt(
+                                $borrower,
+                                $customer,
+                                $amount,
+                                auth()->user(),
+                                $receiver,
+                                $receiver,
+                                $notes
+                            );
+                        } else {
+                            $createdLoan = BorrowerLoan::create([
+                                'borrower_id' => $borrower->id,
+                                'invoice_id' => null,
+                                'confirmed_by_user_id' => auth()->id(),
+                                'target_receiver_user_id' => $receiver->id,
+                                'actual_receiver_user_id' => $receiver->id,
+                                'amount' => $amount,
+                                'settled_amount' => 0,
+                                'status' => BorrowerLoan::STATUS_OUTSTANDING,
+                                'source' => 'installation_fee_receiver_mismatch',
+                                'occurred_at' => now(),
+                                'notes' => $notes,
+                                'meta' => [
+                                    'financial_transaction_id' => $lockedTransaction->id,
+                                    'receiver_name' => $receiver->name,
+                                ],
+                            ]);
+                        }
+                    } else {
+                        $notes = "Pemasukan ({$lockedTransaction->description}) diterima oleh {$receiver->name}, otomatis dicatat ke hutang {$receiver->name}.";
+                        $createdLoan = BorrowerLoan::create([
+                            'borrower_id' => $borrower->id,
+                            'invoice_id' => null,
+                            'confirmed_by_user_id' => auth()->id(),
+                            'target_receiver_user_id' => $receiver->id,
+                            'actual_receiver_user_id' => $receiver->id,
+                            'amount' => $amount,
+                            'settled_amount' => 0,
+                            'status' => BorrowerLoan::STATUS_OUTSTANDING,
+                            'source' => 'manual_income_receiver_debt',
+                            'occurred_at' => now(),
+                            'notes' => $notes,
+                            'meta' => [
+                                'financial_transaction_id' => $lockedTransaction->id,
+                                'receiver_name' => $receiver->name,
+                            ],
+                        ]);
+                    }
+                }
+            }
+
+            $message = $isCompanyFinance
+                ? 'Transaksi berhasil dikonfirmasi dan masuk ke rekening/kas perusahaan.'
+                : 'Transaksi berhasil dikonfirmasi. Karena uang diterima oleh akun non-perusahaan (' . ($receiver?->name ?? 'Penerima') . '), otomatis dicatat ke tagihan/hutang penerima.';
+
+            return response()->json([
+                'message' => $message,
+                'data' => $lockedTransaction->fresh(['creator:id,name', 'updater:id,name']),
+                'is_company_finance' => $isCompanyFinance,
+                'loan' => $createdLoan,
+            ]);
+        });
     }
 
     public function reject(Request $request, FinancialTransaction $financialTransaction)

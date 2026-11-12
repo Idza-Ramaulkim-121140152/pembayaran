@@ -12,7 +12,57 @@ loadEnvFile(path.resolve(__dirname, '../.env'));
 loadEnvFile(path.resolve(__dirname, '.env'));
 loadEnvFile(path.resolve(process.cwd(), '.env'));
 
+const GATEWAY_HOST = process.env.WA_GATEWAY_HOST || '127.0.0.1';
+const GATEWAY_SECRET = (process.env.WA_GATEWAY_SECRET || '').trim();
+
+function extractGatewaySecret(req) {
+    const headerSecret = req.get('x-gateway-secret');
+    if (headerSecret) {
+        return String(headerSecret).trim();
+    }
+    const authHeader = req.get('authorization') || '';
+    if (/^Bearer\s+/i.test(authHeader)) {
+        return authHeader.replace(/^Bearer\s+/i, '').trim();
+    }
+    return '';
+}
+
+function timingSafeStringEqual(expected, provided) {
+    const a = Buffer.from(String(expected || ''), 'utf8');
+    const b = Buffer.from(String(provided || ''), 'utf8');
+    if (a.length === 0 || a.length !== b.length) {
+        return false;
+    }
+    return crypto.timingSafeEqual(a, b);
+}
+
+function isLoopbackAddress(addr) {
+    const normalized = String(addr || '').replace(/^::ffff:/, '').trim();
+    return normalized === '127.0.0.1' || normalized === '::1';
+}
+
 app.use(express.json({ limit: '25mb' }));
+app.use((req, res, next) => {
+    if (GATEWAY_SECRET) {
+        if (!timingSafeStringEqual(GATEWAY_SECRET, extractGatewaySecret(req))) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized gateway request',
+            });
+        }
+        return next();
+    }
+
+    const remoteAddr = req.socket?.remoteAddress || req.ip || '';
+    if (!isLoopbackAddress(remoteAddr)) {
+        return res.status(403).json({
+            success: false,
+            message: 'WA_GATEWAY_SECRET belum diset; akses non-loopback ditolak.',
+        });
+    }
+
+    return next();
+});
 
 process.on('unhandledRejection', (reason) => {
     console.error('❌ Unhandled promise rejection pada WA gateway:', reason);
@@ -39,6 +89,7 @@ const PAYMENT_WEBHOOK_URL = process.env.WA_PAYMENT_WEBHOOK_URL || ((process.env.
 const PAYMENT_WEBHOOK_SECRET = process.env.WA_PAYMENT_WEBHOOK_SECRET || '';
 const PAYMENT_FORWARD_ENABLED = String(process.env.WA_PAYMENT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
 const NIGHT_SUPPORT_WEBHOOK_URL = process.env.WA_NIGHT_SUPPORT_WEBHOOK_URL || ((process.env.APP_URL || 'http://localhost').replace(/\/+$/, '') + '/api/whatsapp/webhooks/night-support');
+const NIGHT_SUPPORT_WEBHOOK_SECRET = process.env.WA_NIGHT_SUPPORT_WEBHOOK_SECRET || PAYMENT_WEBHOOK_SECRET || '';
 const NIGHT_SUPPORT_FORWARD_ENABLED = String(process.env.WA_NIGHT_SUPPORT_FORWARD_ENABLED || 'true').toLowerCase() !== 'false';
 const SUPPORTED_PAYMENT_MIME_TYPES = [
     'image/jpeg',
@@ -1359,8 +1410,8 @@ async function maybeForwardNightSupportMessage(msg, sourceEvent = null, baseCont
         'Content-Type': 'application/json',
         Accept: 'application/json',
     };
-    if (PAYMENT_WEBHOOK_SECRET) {
-        headers['X-Webhook-Secret'] = PAYMENT_WEBHOOK_SECRET;
+    if (NIGHT_SUPPORT_WEBHOOK_SECRET) {
+        headers['X-Webhook-Secret'] = NIGHT_SUPPORT_WEBHOOK_SECRET;
     }
 
     try {
@@ -1464,8 +1515,8 @@ async function maybeForwardPaymentMessage(msg, sourceEvent = null, baseContext =
         Accept: 'application/json',
     };
 
-    if (PAYMENT_WEBHOOK_SECRET) {
-        headers['X-Webhook-Secret'] = PAYMENT_WEBHOOK_SECRET;
+    if (NIGHT_SUPPORT_WEBHOOK_SECRET) {
+        headers['X-Webhook-Secret'] = NIGHT_SUPPORT_WEBHOOK_SECRET;
     }
 
     logGatewayEvent('forward_attempt', {
@@ -2027,8 +2078,11 @@ app.post('/reset-session', async (req, res) => {
 
 const PORT = process.env.WA_GATEWAY_PORT || 3001;
 
-const server = app.listen(PORT, () => {
-    console.log(`\n🚀 WhatsApp Gateway berjalan di http://localhost:${PORT}`);
+const server = app.listen(PORT, GATEWAY_HOST, () => {
+    console.log(`\n🚀 WhatsApp Gateway berjalan di http://${GATEWAY_HOST}:${PORT}`);
+    if (!GATEWAY_SECRET) {
+        console.warn('⚠️ WA_GATEWAY_SECRET belum disetel! Hanya mengizinkan koneksi loopback lokal.');
+    }
     console.log('📖 Endpoints:');
     console.log(`   GET  /status     - Cek status WhatsApp`);
     console.log(`   GET  /qr         - Ambil QR Code (base64)`);

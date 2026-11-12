@@ -644,13 +644,8 @@ class AreaOutageMonitorService
      */
     private function sendToWhatsAppGroup(string $groupId, string $message, AreaOutageIncident $incident): bool
     {
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
-
         try {
-            $response = Http::timeout(30)->post($gatewayUrl . '/send', [
-                'phone' => $groupId,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send($groupId, $message, null, 30);
 
             $json = $response->json();
             $success = $json['success'] ?? false;
@@ -790,17 +785,22 @@ class AreaOutageMonitorService
             $lat = $dbCust?->latitude !== null ? (float) $dbCust->latitude : (isset($item['latitude']) && $item['latitude'] !== null ? (float) $item['latitude'] : null);
             $lng = $dbCust?->longitude !== null ? (float) $dbCust->longitude : (isset($item['longitude']) && $item['longitude'] !== null ? (float) $item['longitude'] : null);
 
+            $rawPhone = (string) ($dbCust?->phone ?? $item['phone'] ?? '');
+            $maskedPhone = $rawPhone !== '' && strlen($rawPhone) > 6
+                ? substr($rawPhone, 0, 4) . str_repeat('*', max(strlen($rawPhone) - 7, 2)) . substr($rawPhone, -3)
+                : $rawPhone;
+
             $custData = [
                 'id' => $dbCust?->id ?? $id,
                 'name' => $dbCust?->name ?? $item['name'] ?? 'Pelanggan',
-                'phone' => $dbCust?->phone ?? $item['phone'] ?? '',
+                'phone' => $maskedPhone,
                 'pppoe_username' => $finalUsername,
                 'odp' => $dbCust?->odp ?? $item['odp'] ?? '',
                 'address' => $dbCust?->address ?? $item['address'] ?? '',
                 'latitude' => $lat,
                 'longitude' => $lng,
                 'is_online' => $isOnline,
-                'ip_address' => $isOnline ? ($activeMap[$normUser]['ip'] ?? null) : null,
+                'ip_address' => null,
                 'uptime' => $isOnline ? ($activeMap[$normUser]['uptime'] ?? null) : null,
             ];
 
@@ -951,16 +951,11 @@ class AreaOutageMonitorService
             ];
         }
 
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
         $sentCount = 0;
         $failedCount = 0;
 
         try {
-            $response = Http::timeout(120)->post($gatewayUrl . '/send-bulk', [
-                'recipients' => $recipients,
-                'message' => $messageTemplate,
-                'delay' => 1500,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk($recipients, $messageTemplate, 1500, 120);
 
             $json = $response->json();
             $results = $json['results'] ?? [];

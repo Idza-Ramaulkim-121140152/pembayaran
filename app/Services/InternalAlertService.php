@@ -54,11 +54,7 @@ class InternalAlertService
         }
 
         try {
-            $response = Http::timeout(60)->post(rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/') . '/send-bulk', [
-                'recipients' => $recipients,
-                'message' => $message,
-                'delay' => 1000,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk($recipients, $message, 1000, 60);
 
             $gateway = $response->json();
             $results = is_array($gateway['results'] ?? null) ? $gateway['results'] : [];

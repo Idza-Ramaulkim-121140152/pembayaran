@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Customer;
 use App\Models\CustomerTerminationRequest;
 use App\Models\NotificationLog;
+use App\Support\PdfImageHelper;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
@@ -231,7 +232,7 @@ class CustomerTerminationService
             'customerData' => $request->customer_data ?: [],
             'deviceData' => $request->device_data ?: [],
             'signatureMeta' => $request->signature_meta ?: [],
-            'logoDataUri' => $this->localImageDataUri(public_path('logo_baru.png')),
+            'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
         ])->setPaper('a4');
 
         $path = 'customer-terminations/' . now()->format('Y/m') . '/' . Str::slug($request->document_number) . '.pdf';
@@ -243,12 +244,12 @@ class CustomerTerminationService
     private function sendMedia(string $phone, string $caption, CustomerTerminationRequest $request): array
     {
         try {
-            $response = Http::timeout(60)->post($this->gatewayUrl() . '/send-media', [
+            $response = app(WhatsAppGatewayService::class)->post('/send-media', [
                 'phone' => $phone,
                 'message' => $caption,
                 'file_url' => $this->absolutePublicUrl(Storage::disk('public')->url($request->pdf_path)),
                 'filename' => 'Surat-Copot-' . str_replace(['/', '\\'], '-', $request->document_number) . '.pdf',
-            ]);
+            ], 60);
 
             if ($response->successful()) {
                 $payload = $response->json();
@@ -270,11 +271,7 @@ class CustomerTerminationService
     private function sendText(string $phone, string $message, string $name): array
     {
         try {
-            $response = Http::timeout(30)->post($this->gatewayUrl() . '/send', [
-                'phone' => $phone,
-                'name' => $name,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send($phone, $message, $name, 30);
 
             if ($response->successful()) {
                 $payload = $response->json();
@@ -344,17 +341,6 @@ class CustomerTerminationService
         }
     }
 
-    private function localImageDataUri(string $path): ?string
-    {
-        if (!is_file($path)) {
-            return null;
-        }
-
-        $mime = mime_content_type($path) ?: 'image/png';
-
-        return 'data:' . $mime . ';base64,' . base64_encode((string) file_get_contents($path));
-    }
-
     private function stringInput(array $input, string $key): ?string
     {
         $value = trim((string) ($input[$key] ?? ''));
@@ -368,11 +354,6 @@ class CustomerTerminationService
             ?: $customer->desa?->name
             ?: $customer->kecamatan?->name
             ?: ($customer->area_code ?: ($customer->address ?: 'Tidak Terdata'));
-    }
-
-    private function gatewayUrl(): string
-    {
-        return rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
     }
 
     private function absolutePublicUrl(string $url): string

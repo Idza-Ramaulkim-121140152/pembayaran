@@ -113,7 +113,7 @@ class BillingIsolationFlowTest extends TestCase
         $mikrotik->shouldReceive('connect')->once();
         $mikrotik->shouldReceive('getPPPoESecret')
             ->once()
-            ->with('ISO-PAID')
+            ->with('ISO-PAID', true)
             ->andReturn([
                 'id' => '*2',
                 'name' => 'ISO-PAID',
@@ -121,7 +121,7 @@ class BillingIsolationFlowTest extends TestCase
             ]);
         $mikrotik->shouldReceive('command')
             ->once()
-            ->with('/ppp/profile/print')
+            ->with('/ppp/profile/print', [], false)
             ->andReturn([
                 ['name' => 'Paket 200K'],
                 ['name' => 'Isolir'],
@@ -134,6 +134,7 @@ class BillingIsolationFlowTest extends TestCase
                 'username' => 'ISO-PAID',
                 'profile' => 'Paket 200K',
             ]);
+        $mikrotik->shouldReceive('clearMikrotikCache')->zeroOrMoreTimes();
         $mikrotik->shouldReceive('disconnect')->once();
 
         $this->app->instance(MikroTikService::class, $mikrotik);
@@ -197,7 +198,7 @@ class BillingIsolationFlowTest extends TestCase
         $mikrotik->shouldReceive('connect')->once();
         $mikrotik->shouldReceive('getPPPoESecret')
             ->once()
-            ->with('ISO-MISSING')
+            ->with('ISO-MISSING', true)
             ->andReturn([
                 'id' => '*3',
                 'name' => 'ISO-MISSING',
@@ -205,7 +206,7 @@ class BillingIsolationFlowTest extends TestCase
             ]);
         $mikrotik->shouldReceive('command')
             ->once()
-            ->with('/ppp/profile/print')
+            ->with('/ppp/profile/print', [], false)
             ->andReturn([
                 ['name' => 'Paket 200K'],
                 ['name' => 'Isolir'],
@@ -214,6 +215,7 @@ class BillingIsolationFlowTest extends TestCase
             ->once()
             ->with('ISO-MISSING', 'Paket 200K')
             ->andThrow(new \Exception('Secret not found for username: ISO-MISSING'));
+        $mikrotik->shouldReceive('clearMikrotikCache')->zeroOrMoreTimes();
         $mikrotik->shouldReceive('disconnect')->once();
 
         $this->app->instance(MikroTikService::class, $mikrotik);
@@ -283,7 +285,7 @@ class BillingIsolationFlowTest extends TestCase
                 'paid_amount' => 175000,
             ])
             ->assertOk()
-            ->assertJsonPath('message', 'Pembayaran berhasil dikonfirmasi');
+            ->assertJsonPath('message', 'Pembayaran pelanggan sudah lunas, mutasi tetap tercatat, dan otomatis dimasukkan ke hutang akun pengkonfirmasi.');
 
         $customer->refresh();
         $invoice->refresh();

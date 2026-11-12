@@ -110,7 +110,7 @@ class DashboardPredictionPythonWorker
 
     private function resolvePythonBinary(): array
     {
-        $envBinary = trim((string) env('PREDICTION_PYTHON_BIN', ''));
+        $envBinary = trim((string) config('services.prediction.python_bin', ''));
         $candidates = [];
         if ($envBinary !== '') {
             $candidates[] = $envBinary;

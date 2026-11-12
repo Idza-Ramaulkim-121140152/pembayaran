@@ -85,14 +85,10 @@ class PaymentCaptureNotificationService
         $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true);
 
         try {
-            $response = Http::timeout(60)->post(rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/') . '/send-bulk', [
-                'recipients' => [[
-                    'phone' => $phone,
-                    'name' => (string) ($customer->name ?? 'Pelanggan'),
-                ]],
-                'message' => $message,
-                'delay' => 0,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk([[
+                'phone' => $phone,
+                'name' => (string) ($customer->name ?? 'Pelanggan'),
+            ]], $message, 0, 60);
 
             $payload = $response->json();
             $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];

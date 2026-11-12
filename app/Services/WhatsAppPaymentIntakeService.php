@@ -201,6 +201,10 @@ class WhatsAppPaymentIntakeService
             Storage::disk('public')->put($path, $binary);
             $fileHash = hash('sha256', $binary);
         } elseif ($normalized['media_url'] !== '') {
+            if (!\App\Support\SafeExternalUrl::isSafePublicHttpUrl((string) $normalized['media_url'])) {
+                throw new \InvalidArgumentException('URL media WhatsApp tidak diizinkan.');
+            }
+
             $response = Http::timeout(60)->get($normalized['media_url']);
             if (!$response->successful()) {
                 throw new \RuntimeException('Gagal mengunduh media WhatsApp.');

@@ -271,6 +271,10 @@ class MonthlyBudgetService
 
         $transactions = Schema::hasTable('financial_transactions')
             ? FinancialTransaction::query()
+                ->when(
+                    Schema::hasColumn('financial_transactions', 'status'),
+                    fn ($query) => $query->where('status', FinancialTransaction::STATUS_CONFIRMED)
+                )
                 ->whereBetween('transaction_date', [$startDate->toDateString(), $endDate->toDateString()])
                 ->get()
             : collect();

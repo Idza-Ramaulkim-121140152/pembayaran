@@ -596,7 +596,11 @@ class MasterPegawaiController extends Controller
             'create_account_now' => 'nullable|boolean',
         ]);
 
-        // Security check for role superadmin
+        // Security check: only superadmin may modify superadmin accounts or assign superadmin/admin privileges
+        if ($user && $user->isSuperAdmin() && !auth()->user()?->isSuperAdmin()) {
+            return response()->json(['error' => 'Hanya superadmin yang dapat mengubah akun superadmin.'], 403);
+        }
+
         if ($request->has('role') && $request->role === User::ROLE_SUPERADMIN && !auth()->user()?->isSuperAdmin()) {
             return response()->json(['error' => 'Hanya superadmin yang dapat mengubah role menjadi superadmin.'], 403);
         }

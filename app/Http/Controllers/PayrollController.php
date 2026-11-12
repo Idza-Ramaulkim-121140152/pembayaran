@@ -367,7 +367,12 @@ class PayrollController extends Controller
                 ? InventoryItem::whereIn('id', $inventoryItemIds)->pluck('name', 'id')
                 : collect();
 
-            $project = PayrollProject::findOrFail($id);
+            $project = PayrollProject::query()->lockForUpdate()->findOrFail($id);
+
+            if ($project->status === 'paid') {
+                DB::rollBack();
+                return response()->json(['message' => 'Proyek yang sudah dibayar tidak dapat diubah'], 422);
+            }
 
             $project->update([
                 'tanggal' => $validated['tanggal'],
@@ -426,16 +431,24 @@ class PayrollController extends Controller
      */
     public function confirmPayment($id)
     {
-        $project = PayrollProject::findOrFail($id);
+        $project = DB::transaction(function () use ($id) {
+            $project = PayrollProject::query()->lockForUpdate()->findOrFail($id);
 
-        if ($project->status === 'paid') {
+            if ($project->status === 'paid') {
+                return null;
+            }
+
+            $project->update([
+                'status' => 'paid',
+                'paid_at' => now(),
+            ]);
+
+            return $project;
+        });
+
+        if (!$project) {
             return response()->json(['message' => 'Proyek ini sudah dibayar'], 422);
         }
-
-        $project->update([
-            'status' => 'paid',
-            'paid_at' => now(),
-        ]);
 
         $project->load(['members', 'details']);
         return response()->json(['data' => $project, 'message' => 'Pembayaran berhasil dikonfirmasi']);
@@ -466,56 +479,7 @@ class PayrollController extends Controller
 
         $member = PayrollMember::findOrFail($memberId);
         $isMonthly = in_array($member->tipe_gaji ?? 'bulanan', ['bulanan', 'campuran']);
-
-        // Hitung sisa unpaid dari proyek
-        $totalBagian = DB::table('payroll_project_members')
-            ->where('payroll_member_id', $memberId)
-            ->sum('bagian');
-        $totalPayments = DB::table('payroll_member_payments')
-            ->where('payroll_member_id', $memberId)
-            ->sum('nominal');
-        $remaining = max(0, $totalBagian - $totalPayments);
-
-        $nominal = (int) $validated['nominal'];
-
-        if (!$isMonthly && $remaining <= 0) {
-            return response()->json(['message' => 'Tidak ada saldo yang belum dibayar untuk anggota ini'], 422);
-        }
-
-        if (!$isMonthly && $nominal > $remaining) {
-            $nominal = (int) $remaining;
-        }
-
         $loanHandling = $validated['loan_handling'] ?? 'cash';
-        $loanDeductionAmount = 0;
-        $borrower = null;
-
-        if ($loanHandling === 'deduct_loan') {
-            $loanContext = $this->resolvePayrollBorrowerContext($member);
-            $borrowerData = $loanContext['borrower'];
-            $borrower = $borrowerData ? Borrower::query()->find((int) $borrowerData['id']) : null;
-
-            if (!$borrower) {
-                return response()->json(['message' => 'Karyawan ini belum memiliki mapping borrower aktif.'], 422);
-            }
-
-            $requestedDeduction = (int) ($validated['loan_deduction_amount'] ?? 0);
-            $loanDeductionAmount = $requestedDeduction > 0 ? $requestedDeduction : $nominal;
-
-            if ($loanDeductionAmount <= 0) {
-                return response()->json(['message' => 'Nominal potong pinjaman harus lebih dari 0.'], 422);
-            }
-
-            if ($loanDeductionAmount > $nominal) {
-                return response()->json(['message' => 'Nominal bayar pinjaman tidak boleh lebih besar dari jumlah payroll.'], 422);
-            }
-
-            if ($loanDeductionAmount > (int) $loanContext['outstanding']) {
-                return response()->json(['message' => 'Nominal potong pinjaman melebihi sisa pinjaman karyawan.'], 422);
-            }
-        }
-
-        $cashPaidAmount = max(0, $nominal - $loanDeductionAmount);
 
         $requestedBankName = trim((string) ($validated['bank_name'] ?? ''));
         $requestedAccountNumber = trim((string) ($validated['account_number'] ?? ''));
@@ -557,41 +521,98 @@ class PayrollController extends Controller
             'note' => !empty($validated['attendance_note']) ? trim((string) $validated['attendance_note']) : null,
         ]);
 
-        $salaryBreakdown = $member->calculateSalaryBreakdown((int) ($attendanceFull['total_present'] ?? 0));
-        $allowanceSnapshot = array_merge($salaryBreakdown, [
-            'attendance_period_start' => $attendanceFull['period_start'],
-            'attendance_period_end' => $attendanceFull['period_end'],
-            'paid_nominal' => $nominal,
-        ]);
-
-        $previousPaidInPeriod = (float) PayrollMemberPayment::query()
-            ->where('payroll_member_id', $memberId)
-            ->whereBetween('created_at', [
-                Carbon::parse($attendanceFull['period_start'])->startOfDay(),
-                Carbon::parse($attendanceFull['period_end'])->endOfDay(),
-            ])
-            ->sum('nominal');
-
         try {
-            $payment = DB::transaction(function () use (
-                $member,
+            $result = DB::transaction(function () use (
                 $memberId,
-                $nominal,
+                $isMonthly,
                 $validated,
                 $loanHandling,
-                $loanDeductionAmount,
-                $cashPaidAmount,
-                $borrower,
                 $paymentMethod,
                 $snapshotBankName,
                 $snapshotAccountNumber,
                 $snapshotAccountHolder,
+                $attendanceFull,
                 $attendanceSnapshot,
-                $allowanceSnapshot,
                 $requestedBankName,
                 $requestedAccountNumber,
                 $requestedAccountHolder
             ) {
+                $member = PayrollMember::query()->lockForUpdate()->findOrFail($memberId);
+
+                $totalBagian = DB::table('payroll_project_members')
+                    ->where('payroll_member_id', $memberId)
+                    ->sum('bagian');
+                $totalPayments = DB::table('payroll_member_payments')
+                    ->where('payroll_member_id', $memberId)
+                    ->sum('nominal');
+                $remaining = max(0, $totalBagian - $totalPayments);
+
+                $nominal = (int) $validated['nominal'];
+
+                if (!$isMonthly && $remaining <= 0) {
+                    throw ValidationException::withMessages([
+                        'nominal' => ['Tidak ada saldo yang belum dibayar untuk anggota ini'],
+                    ]);
+                }
+
+                if (!$isMonthly && $nominal > $remaining) {
+                    $nominal = (int) $remaining;
+                }
+
+                $loanDeductionAmount = 0;
+                $borrower = null;
+
+                if ($loanHandling === 'deduct_loan') {
+                    $loanContext = $this->resolvePayrollBorrowerContext($member);
+                    $borrowerData = $loanContext['borrower'];
+                    $borrower = $borrowerData ? Borrower::query()->lockForUpdate()->find((int) $borrowerData['id']) : null;
+
+                    if (!$borrower) {
+                        throw ValidationException::withMessages([
+                            'loan_handling' => ['Karyawan ini belum memiliki mapping borrower aktif.'],
+                        ]);
+                    }
+
+                    $requestedDeduction = (int) ($validated['loan_deduction_amount'] ?? 0);
+                    $loanDeductionAmount = $requestedDeduction > 0 ? $requestedDeduction : $nominal;
+
+                    if ($loanDeductionAmount <= 0) {
+                        throw ValidationException::withMessages([
+                            'loan_deduction_amount' => ['Nominal potong pinjaman harus lebih dari 0.'],
+                        ]);
+                    }
+
+                    if ($loanDeductionAmount > $nominal) {
+                        throw ValidationException::withMessages([
+                            'loan_deduction_amount' => ['Nominal bayar pinjaman tidak boleh lebih besar dari jumlah payroll.'],
+                        ]);
+                    }
+
+                    $freshOutstanding = $this->borrowerLoanService->outstandingForBorrower($borrower);
+                    if ($loanDeductionAmount > $freshOutstanding) {
+                        throw ValidationException::withMessages([
+                            'loan_deduction_amount' => ['Nominal potong pinjaman melebihi sisa pinjaman karyawan.'],
+                        ]);
+                    }
+                }
+
+                $cashPaidAmount = max(0, $nominal - $loanDeductionAmount);
+
+                $salaryBreakdown = $member->calculateSalaryBreakdown((int) ($attendanceFull['total_present'] ?? 0));
+                $allowanceSnapshot = array_merge($salaryBreakdown, [
+                    'attendance_period_start' => $attendanceFull['period_start'],
+                    'attendance_period_end' => $attendanceFull['period_end'],
+                    'paid_nominal' => $nominal,
+                ]);
+
+                $previousPaidInPeriod = (float) PayrollMemberPayment::query()
+                    ->where('payroll_member_id', $memberId)
+                    ->whereBetween('created_at', [
+                        Carbon::parse($attendanceFull['period_start'])->startOfDay(),
+                        Carbon::parse($attendanceFull['period_end'])->endOfDay(),
+                    ])
+                    ->sum('nominal');
+
                 $memberUpdates = [];
                 $shouldSaveBank = (bool) ($validated['save_bank_to_member'] ?? true);
                 if ($shouldSaveBank && $paymentMethod === 'transfer' && $requestedBankName !== '') {
@@ -653,10 +674,24 @@ class PayrollController extends Controller
 
                 $this->ledgerService->syncPayrollPayment($payment->fresh('member'), auth()->id());
 
-                return $payment->fresh(['member', 'borrower']);
+                return [
+                    'payment' => $payment->fresh(['member', 'borrower']),
+                    'member' => $member->fresh(),
+                    'nominal' => $nominal,
+                    'remaining' => max(0, $remaining - $nominal),
+                    'previous_paid_in_period' => $previousPaidInPeriod,
+                    'allowance_snapshot' => $allowanceSnapshot,
+                ];
             });
 
-            $loanAfter = $this->resolvePayrollBorrowerContext($member->fresh());
+            $payment = $result['payment'];
+            $member = $result['member'];
+            $nominal = $result['nominal'];
+            $newRemaining = $result['remaining'];
+            $previousPaidInPeriod = $result['previous_paid_in_period'];
+            $allowanceSnapshot = $result['allowance_snapshot'];
+
+            $loanAfter = $this->resolvePayrollBorrowerContext($member);
             $whatsappResult = null;
             if ((bool) ($validated['send_whatsapp'] ?? true)) {
                 $whatsappResult = $this->payrollWhatsAppService->sendSalarySlip($payment, [
@@ -668,8 +703,6 @@ class PayrollController extends Controller
                 $payment = $payment->fresh(['member', 'borrower']);
             }
 
-            $newRemaining = max(0, $remaining - $nominal);
-
             return response()->json([
                 'message' => 'Pembayaran ' . number_format($nominal, 0, ',', '.') . ' untuk ' . $member->nama . ' berhasil',
                 'payment' => $payment,
@@ -678,6 +711,11 @@ class PayrollController extends Controller
                 'allowance_breakdown' => $allowanceSnapshot,
                 'whatsapp' => $whatsappResult,
             ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'message' => collect($e->errors())->flatten()->first() ?: $e->getMessage(),
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\Exception $e) {
             Log::error('Failed to pay member', ['member_id' => $memberId, 'error' => $e->getMessage()]);
             return response()->json(['message' => 'Gagal memproses pembayaran: ' . $e->getMessage()], 500);
@@ -737,7 +775,11 @@ class PayrollController extends Controller
         DB::beginTransaction();
 
         try {
-            $project = PayrollProject::findOrFail($id);
+            $project = PayrollProject::query()->lockForUpdate()->findOrFail($id);
+            if ($project->status === 'paid') {
+                DB::rollBack();
+                return response()->json(['message' => 'Proyek yang sudah dibayar tidak dapat dihapus'], 422);
+            }
             $this->inventoryService->removePayrollProjectOutflow($project);
             $project->delete();
 

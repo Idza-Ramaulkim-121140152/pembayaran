@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Customer;
 use App\Models\CustomerAgreement;
 use App\Models\SiteSetting;
+use App\Support\PdfImageHelper;
+use App\Support\SafeExternalUrl;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
@@ -222,7 +224,7 @@ class CustomerAgreementService
             'attachments' => $attachmentItems,
             'sheetPhotos' => $this->resolveSheetPhotos($agreement->customer_data['photo_links'] ?? []),
             'signatureMeta' => $agreement->signature_meta ?: [],
-            'logoDataUri' => $this->localImageDataUri(public_path('logo_baru.png')),
+            'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
         ])->setPaper('a4');
 
         $path = 'customer-contracts/' . now()->format('Y/m') . '/' . Str::slug($agreement->agreement_number) . '.pdf';
@@ -304,6 +306,11 @@ class CustomerAgreementService
         ])));
 
         foreach ($candidateUrls as $candidateUrl) {
+            if (!SafeExternalUrl::isSafePublicHttpUrl($candidateUrl)) {
+                Log::warning('Blocked unsafe agreement photo URL', ['url' => $candidateUrl]);
+                continue;
+            }
+
             try {
                 $response = Http::timeout(12)
                     ->withHeaders(['User-Agent' => 'RumahKitaNetwork-ContractPDF/1.0'])
@@ -360,16 +367,5 @@ class CustomerAgreementService
         }
 
         return null;
-    }
-
-    private function localImageDataUri(string $path): ?string
-    {
-        if (!is_file($path)) {
-            return null;
-        }
-
-        $mimeType = mime_content_type($path) ?: 'image/png';
-
-        return 'data:' . $mimeType . ';base64,' . base64_encode((string) file_get_contents($path));
     }
 }

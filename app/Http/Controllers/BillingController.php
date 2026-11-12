@@ -106,18 +106,10 @@ class BillingController extends Controller
         $validated = $request->validate([
             'paid_amount' => 'nullable|numeric|min:1',
             'bukti_pembayaran' => 'nullable|file|mimes:' . $this->paymentProofMimeList() . '|max:2048',
-            'without_proof' => 'nullable|boolean',
         ]);
 
-        $withoutProof = $request->boolean('without_proof');
-        if (!$withoutProof && !$request->hasFile('bukti_pembayaran')) {
-            throw ValidationException::withMessages([
-                'bukti_pembayaran' => ['Bukti pembayaran wajib diupload, atau centang "Saya kirim tanpa bukti pembayaran".'],
-            ]);
-        }
-
         $paidAmount = $validated['paid_amount'] ?? null;
-        if ($paidAmount && $paidAmount > 0) {
+        if ($this->canCurrentUserConfirmPayments() && $paidAmount && $paidAmount > 0) {
             $invoice->amount = $paidAmount;
         }
 
@@ -945,15 +937,16 @@ class BillingController extends Controller
      */
     private function sendInvoiceViaWhatsAppGateway(Customer $customer, string $message): array
     {
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
+        $gateway = app(\App\Services\WhatsAppGatewayService::class);
 
         // 1. Coba kirim single /send terlebih dahulu
         try {
-            $response = Http::timeout(25)->post($gatewayUrl . '/send', [
-                'phone' => (string) $customer->phone,
-                'name' => (string) ($customer->name ?? 'Pelanggan'),
-                'message' => $message,
-            ]);
+            $response = $gateway->send(
+                (string) $customer->phone,
+                $message,
+                (string) ($customer->name ?? 'Pelanggan'),
+                25
+            );
 
             if ($response->successful()) {
                 $payload = $response->json();
@@ -965,14 +958,10 @@ class BillingController extends Controller
 
         // 2. Fallback coba /send-bulk
         try {
-            $response = Http::timeout(60)->post($gatewayUrl . '/send-bulk', [
-                'recipients' => [[
-                    'phone' => (string) $customer->phone,
-                    'name' => (string) ($customer->name ?? 'Pelanggan'),
-                ]],
-                'message' => $message,
-                'delay' => 0,
-            ]);
+            $response = $gateway->sendBulk([[
+                'phone' => (string) $customer->phone,
+                'name' => (string) ($customer->name ?? 'Pelanggan'),
+            ]], $message, 0, 60);
 
             $payload = $response->json();
             $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];
@@ -1287,7 +1276,6 @@ class BillingController extends Controller
 
         $validated = $request->validate($rules);
 
-        $invoice = Invoice::findOrFail($invoiceId);
         $paidAmount = $validated['paid_amount'] ?? null;
         $paymentReceiptOptionId = $validated['payment_receipt_option_id'] ?? null;
         $paymentMethodId = $validated['payment_method_id'] ?? null;
@@ -1334,156 +1322,206 @@ class BillingController extends Controller
                     'qris_transaction_number' => ['No. Transaksi wajib diisi untuk transaksi QRIS.'],
                 ]);
             }
-
-            $trimmedTrxNumber = trim((string) $qrisTransactionNumber);
-
-            // Cek duplikasi di tabel invoices
-            if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
-                $duplicateInvoice = Invoice::where('id', '!=', $invoice->id)
-                    ->where('status', 'paid')
-                    ->where('qris_transaction_number', $trimmedTrxNumber)
-                    ->first();
-
-                if ($duplicateInvoice) {
-                    $custName = $duplicateInvoice->customer?->name ?? 'Pelanggan';
-                    $txTime = $duplicateInvoice->qris_payment_time
-                        ? ($this->parseSafeDateTime($duplicateInvoice->qris_payment_time)?->translatedFormat('d F Y H:i') ?? '-')
-                        : ($duplicateInvoice->paid_at ? ($this->parseSafeDateTime($duplicateInvoice->paid_at)?->translatedFormat('d F Y H:i') ?? '-') : '-');
-
-                    throw ValidationException::withMessages([
-                        'qris_transaction_number' => [
-                            "No. Transaksi '{$trimmedTrxNumber}' sudah pernah digunakan pada Invoice #{$duplicateInvoice->id} ({$custName}, Waktu: {$txTime}). Data tidak dapat disimpan ulang."
-                        ],
-                    ]);
-                }
-            }
-
-            // Cek duplikasi di tabel financial_transactions
-            if (Schema::hasTable('financial_transactions')) {
-                $duplicateTx = FinancialTransaction::where(function ($query) use ($invoice) {
-                        $query->where('reference_type', '!=', Invoice::class)
-                            ->orWhere('reference_id', '!=', $invoice->id)
-                            ->orWhereNull('reference_type');
-                    })
-                    ->where('meta->qris_transaction_number', $trimmedTrxNumber)
-                    ->first();
-
-                if ($duplicateTx) {
-                    $meta = $duplicateTx->meta ?? [];
-                    $txTime = !empty($meta['qris_payment_time'])
-                        ? ($this->parseSafeDateTime($meta['qris_payment_time'])?->translatedFormat('d F Y H:i') ?? '-')
-                        : '-';
-
-                    throw ValidationException::withMessages([
-                        'qris_transaction_number' => [
-                            "No. Transaksi '{$trimmedTrxNumber}' sudah pernah tercatat pada transaksi kas #{$duplicateTx->id} (Waktu: {$txTime}). Data tidak dapat disimpan ulang."
-                        ],
-                    ]);
-                }
-            }
         }
 
-        $borrower = null;
-        $shouldCreateDebtForReceiver = false;
-        $shouldCreatePendingApproval = false;
+        $txResult = DB::transaction(function () use (
+            $invoiceId,
+            $paidAmount,
+            $paymentReceiptOptionId,
+            $paymentMethodId,
+            $includeInMutation,
+            $paymentReceiverUserId,
+            $currentUser,
+            $selectedReceiver,
+            $selectedReceiverIsCompanyFinance,
+            $nonCompanySelfConfirmDebt,
+            $selectingAnotherReceiver,
+            $receiverConflictResolution,
+            $isQris,
+            $qrisPaymentTime,
+            $qrisSender,
+            $qrisTransactionNumber
+        ) {
+            $invoice = Invoice::query()->lockForUpdate()->findOrFail($invoiceId);
+            $wasAlreadyPaid = $invoice->status === 'paid';
 
-        if ($includeInMutation) {
-            if ($selectingAnotherReceiver) {
-                if ($receiverConflictResolution === 'approval') {
-                    $shouldCreatePendingApproval = true;
+            if ($isQris) {
+                $trimmedTrxNumber = trim((string) $qrisTransactionNumber);
+
+                // Cek duplikasi di tabel invoices
+                if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
+                    $duplicateInvoice = Invoice::where('id', '!=', $invoice->id)
+                        ->where('status', 'paid')
+                        ->where('qris_transaction_number', $trimmedTrxNumber)
+                        ->first();
+
+                    if ($duplicateInvoice) {
+                        $custName = $duplicateInvoice->customer?->name ?? 'Pelanggan';
+                        $txTime = $duplicateInvoice->qris_payment_time
+                            ? ($this->parseSafeDateTime($duplicateInvoice->qris_payment_time)?->translatedFormat('d F Y H:i') ?? '-')
+                            : ($duplicateInvoice->paid_at ? ($this->parseSafeDateTime($duplicateInvoice->paid_at)?->translatedFormat('d F Y H:i') ?? '-') : '-');
+
+                        throw ValidationException::withMessages([
+                            'qris_transaction_number' => [
+                                "No. Transaksi '{$trimmedTrxNumber}' sudah pernah digunakan pada Invoice #{$duplicateInvoice->id} ({$custName}, Waktu: {$txTime}). Data tidak dapat disimpan ulang."
+                            ],
+                        ]);
+                    }
+                }
+
+                // Cek duplikasi di tabel financial_transactions
+                if (Schema::hasTable('financial_transactions')) {
+                    $duplicateTx = FinancialTransaction::where(function ($query) use ($invoice) {
+                            $query->where('reference_type', '!=', Invoice::class)
+                                ->orWhere('reference_id', '!=', $invoice->id)
+                                ->orWhereNull('reference_type');
+                        })
+                        ->where('meta->qris_transaction_number', $trimmedTrxNumber)
+                        ->first();
+
+                    if ($duplicateTx) {
+                        $meta = $duplicateTx->meta ?? [];
+                        $txTime = !empty($meta['qris_payment_time'])
+                            ? ($this->parseSafeDateTime($meta['qris_payment_time'])?->translatedFormat('d F Y H:i') ?? '-')
+                            : '-';
+
+                        throw ValidationException::withMessages([
+                            'qris_transaction_number' => [
+                                "No. Transaksi '{$trimmedTrxNumber}' sudah pernah tercatat pada transaksi kas #{$duplicateTx->id} (Waktu: {$txTime}). Data tidak dapat disimpan ulang."
+                            ],
+                        ]);
+                    }
+                }
+            }
+
+            $borrower = null;
+            $shouldCreateDebtForReceiver = false;
+            $shouldCreatePendingApproval = false;
+
+            if ($includeInMutation) {
+                if ($selectingAnotherReceiver) {
+                    if ($receiverConflictResolution === 'approval') {
+                        $shouldCreatePendingApproval = true;
+                        $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
+                    } elseif (!$selectedReceiverIsCompanyFinance) {
+                        $shouldCreateDebtForReceiver = true;
+                        $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($selectedReceiver);
+                    }
+                } elseif ($nonCompanySelfConfirmDebt && $currentUser) {
                     $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
-                } elseif (!$selectedReceiverIsCompanyFinance) {
-                    $shouldCreateDebtForReceiver = true;
-                    $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($selectedReceiver);
                 }
-            } elseif ($nonCompanySelfConfirmDebt && $currentUser) {
-                $borrower = $this->borrowerLoanService->getOrCreateBorrowerForUser($currentUser);
             }
+
+            if ($paidAmount && $paidAmount > 0) {
+                $invoice->amount = $paidAmount;
+            }
+
+            if (Schema::hasColumn('invoices', 'received_via_payment_method_id')) {
+                $invoice->received_via_payment_method_id = $paymentMethodId;
+            }
+
+            if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id')) {
+                $invoice->received_via_payment_receipt_option_id = $paymentReceiptOptionId;
+            }
+
+            if (Schema::hasColumn('invoices', 'include_in_mutation')) {
+                $invoice->include_in_mutation = $includeInMutation;
+            }
+
+            if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
+                $invoice->payment_receiver_user_id = $paymentReceiverUserId ?: Auth::id();
+            }
+
+            if (Schema::hasColumn('invoices', 'qris_payment_time')) {
+                $invoice->qris_payment_time = ($isQris && $qrisPaymentTime) ? $this->parseSafeDateTime($qrisPaymentTime) : null;
+            }
+
+            if (Schema::hasColumn('invoices', 'qris_sender')) {
+                $invoice->qris_sender = $isQris ? $qrisSender : null;
+            }
+
+            if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
+                $invoice->qris_transaction_number = $isQris ? $qrisTransactionNumber : null;
+            }
+
+            $paidTimestamp = ($isQris && $qrisPaymentTime)
+                ? ($this->parseSafeDateTime($qrisPaymentTime) ?? ($invoice->paid_at ?: now()))
+                : ($wasAlreadyPaid && $invoice->paid_at ? $invoice->paid_at : now());
+
+            $invoice->status = 'paid';
+            $invoice->paid_at = $paidTimestamp;
+            $invoice->tolak_info = null;
+
+            // Only apply isolation restoration & due_date extension on first payment transition
+            $confirmationResult = $wasAlreadyPaid
+                ? [
+                    'isolation_restored' => false,
+                    'restored_profile' => null,
+                    'is_isolated' => false,
+                    'isolation_restore_failed' => false,
+                    'isolation_restore_error' => null,
+                ]
+                : $this->applyConfirmedPaymentEffects($invoice, $paidTimestamp);
+            $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
+            if ($shouldCreatePendingApproval) {
+                $mutationStatus = FinancialTransaction::STATUS_PENDING;
+            } elseif ($receiverConflictResolution === 'debt') {
+                $mutationStatus = FinancialTransaction::STATUS_REJECTED;
+            }
+
+            $invoice->save();
+            $mutation = $this->ledgerService->syncInvoicePayment($invoice, Auth::id(), $mutationStatus, 'manual');
+            $invoice->loadMissing('receivedViaPaymentMethod');
+            $invoice->loadMissing('receivedViaPaymentReceiptOption');
+            $invoice->loadMissing('paymentReceiver');
+
+            if ($wasAlreadyPaid || !$includeInMutation) {
+                // Re-saving an already-paid invoice updates mutation status/visibility without duplicating debt records.
+            } elseif ($shouldCreateDebtForReceiver && $borrower && $selectedReceiver) {
+                $this->borrowerLoanService->createDirectDebt(
+                    $borrower,
+                    $invoice,
+                    $currentUser,
+                    $selectedReceiver,
+                    $selectedReceiver,
+                    'Pembayaran dikonfirmasi oleh ' . ($currentUser?->name ?: 'akun lain') . ', otomatis dicatat ke hutang ' . ($selectedReceiver->name ?? 'penerima') . '.'
+                );
+            } elseif ($nonCompanySelfConfirmDebt && $borrower) {
+                $this->borrowerLoanService->createDirectDebt(
+                    $borrower,
+                    $invoice,
+                    $currentUser,
+                    $selectedReceiver,
+                    $selectedReceiver,
+                    'Pembayaran self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.'
+                );
+            } elseif ($shouldCreatePendingApproval && $selectedReceiver && $mutation && $borrower) {
+                $this->borrowerLoanService->createApprovalRequest(
+                    $borrower,
+                    $invoice,
+                    $currentUser,
+                    $selectedReceiver,
+                    $mutation
+                );
+            }
+
+            return [
+                'invoice' => $invoice,
+                'wasAlreadyPaid' => $wasAlreadyPaid,
+                'confirmationResult' => $confirmationResult,
+                'shouldCreateDebtForReceiver' => $shouldCreateDebtForReceiver,
+                'shouldCreatePendingApproval' => $shouldCreatePendingApproval,
+            ];
+        });
+
+        $invoice = $txResult['invoice'];
+        $confirmationResult = $txResult['confirmationResult'];
+        $shouldCreateDebtForReceiver = $txResult['shouldCreateDebtForReceiver'];
+        $shouldCreatePendingApproval = $txResult['shouldCreatePendingApproval'];
+
+        if (!$txResult['wasAlreadyPaid']) {
+            $this->sendAutoPaymentConfirmationIfEligible($invoice);
         }
-        
-        if ($paidAmount && $paidAmount > 0) {
-            $invoice->amount = $paidAmount;
-        }
-
-        if (Schema::hasColumn('invoices', 'received_via_payment_method_id')) {
-            $invoice->received_via_payment_method_id = $paymentMethodId;
-        }
-
-        if (Schema::hasColumn('invoices', 'received_via_payment_receipt_option_id')) {
-            $invoice->received_via_payment_receipt_option_id = $paymentReceiptOptionId;
-        }
-
-        if (Schema::hasColumn('invoices', 'include_in_mutation')) {
-            $invoice->include_in_mutation = $includeInMutation;
-        }
-
-        if (Schema::hasColumn('invoices', 'payment_receiver_user_id')) {
-            $invoice->payment_receiver_user_id = $paymentReceiverUserId ?: Auth::id();
-        }
-
-        if (Schema::hasColumn('invoices', 'qris_payment_time')) {
-            $invoice->qris_payment_time = ($isQris && $qrisPaymentTime) ? $this->parseSafeDateTime($qrisPaymentTime) : null;
-        }
-
-        if (Schema::hasColumn('invoices', 'qris_sender')) {
-            $invoice->qris_sender = $isQris ? $qrisSender : null;
-        }
-
-        if (Schema::hasColumn('invoices', 'qris_transaction_number')) {
-            $invoice->qris_transaction_number = $isQris ? $qrisTransactionNumber : null;
-        }
-
-        $paidTimestamp = ($isQris && $qrisPaymentTime) ? ($this->parseSafeDateTime($qrisPaymentTime) ?? now()) : now();
-
-        $invoice->status = 'paid';
-        $invoice->paid_at = $paidTimestamp;
-        $invoice->tolak_info = null;
-
-        $confirmationResult = $this->applyConfirmedPaymentEffects($invoice, $paidTimestamp);
-        $mutationStatus = FinancialTransaction::STATUS_CONFIRMED;
-        if ($shouldCreatePendingApproval) {
-            $mutationStatus = FinancialTransaction::STATUS_PENDING;
-        } elseif ($receiverConflictResolution === 'debt') {
-            $mutationStatus = FinancialTransaction::STATUS_REJECTED;
-        }
-
-        $invoice->save();
-        $mutation = $this->ledgerService->syncInvoicePayment($invoice, Auth::id(), $mutationStatus, 'manual');
-        $invoice->loadMissing('receivedViaPaymentMethod');
-        $invoice->loadMissing('receivedViaPaymentReceiptOption');
-        $invoice->loadMissing('paymentReceiver');
-
-        if (!$includeInMutation) {
-            // Invoice paid intentionally bypasses mutation, approval, and borrower debt effects.
-        } elseif ($shouldCreateDebtForReceiver && $borrower && $selectedReceiver) {
-            $this->borrowerLoanService->createDirectDebt(
-                $borrower,
-                $invoice,
-                $currentUser,
-                $selectedReceiver,
-                $selectedReceiver,
-                'Pembayaran dikonfirmasi oleh ' . ($currentUser?->name ?: 'akun lain') . ', otomatis dicatat ke hutang ' . ($selectedReceiver->name ?? 'penerima') . '.'
-            );
-        } elseif ($nonCompanySelfConfirmDebt && $borrower) {
-            $this->borrowerLoanService->createDirectDebt(
-                $borrower,
-                $invoice,
-                $currentUser,
-                $selectedReceiver,
-                $selectedReceiver,
-                'Pembayaran self-confirm oleh akun non-keuangan perusahaan otomatis dimasukkan ke hutang.'
-            );
-        } elseif ($shouldCreatePendingApproval && $selectedReceiver && $mutation && $borrower) {
-            $this->borrowerLoanService->createApprovalRequest(
-                $borrower,
-                $invoice,
-                $currentUser,
-                $selectedReceiver,
-                $mutation
-            );
-        }
-
-        $this->sendAutoPaymentConfirmationIfEligible($invoice);
 
         $message = 'Pembayaran berhasil dikonfirmasi';
         if (!$includeInMutation) {

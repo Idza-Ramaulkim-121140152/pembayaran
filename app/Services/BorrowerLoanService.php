@@ -276,22 +276,22 @@ class BorrowerLoanService
             throw new RuntimeException('Nominal pelunasan harus lebih dari 0.');
         }
 
-        $loans = $borrower->loans()
-            ->whereIn('status', [BorrowerLoan::STATUS_OUTSTANDING, BorrowerLoan::STATUS_REJECTED_BY_RECEIVER])
-            ->orderBy('occurred_at')
-            ->orderBy('id')
-            ->get();
+        return DB::transaction(function () use ($borrower, $amount, $paymentDate, $receivedBy, $notes, $actionGroupKey, $pengeluaranId) {
+            $loans = $borrower->loans()
+                ->whereIn('status', [BorrowerLoan::STATUS_OUTSTANDING, BorrowerLoan::STATUS_REJECTED_BY_RECEIVER])
+                ->orderBy('occurred_at')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
 
-        if ($loans->isEmpty()) {
-            throw new RuntimeException('Peminjam ini tidak memiliki hutang outstanding.');
-        }
+            if ($loans->isEmpty()) {
+                throw new RuntimeException('Peminjam ini tidak memiliki hutang outstanding.');
+            }
 
-        $totalOutstanding = (int) $loans->sum(fn (BorrowerLoan $loan) => max(0, (int) $loan->amount - (int) $loan->settled_amount));
-        if ($amount > $totalOutstanding) {
-            throw new RuntimeException('Nominal pelunasan melebihi total outstanding peminjam.');
-        }
-
-        return DB::transaction(function () use ($borrower, $amount, $paymentDate, $receivedBy, $notes, $loans, $totalOutstanding, $actionGroupKey, $pengeluaranId) {
+            $totalOutstanding = (int) $loans->sum(fn (BorrowerLoan $loan) => max(0, (int) $loan->amount - (int) $loan->settled_amount));
+            if ($amount > $totalOutstanding) {
+                throw new RuntimeException('Nominal pelunasan melebihi total outstanding peminjam.');
+            }
             $remainingAllocation = $amount;
             $allocations = [];
             $actionGroupKey = $actionGroupKey ?: (string) Str::uuid();

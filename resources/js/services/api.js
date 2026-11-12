@@ -23,8 +23,8 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
-            // Redirect ke login jika unauthorized
+        if (error.response?.status === 401 || error.response?.status === 419) {
+            // Redirect ke login jika sesi/CSRF sudah kedaluwarsa atau unauthorized
             window.location.href = '/login';
         }
         return Promise.reject(error);

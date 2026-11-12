@@ -47,11 +47,13 @@ class WhatsAppPaymentWebhookController extends Controller
         }
         $validated['mime_type'] = $rawMime;
 
-        $expectedSecret = trim((string) env('WA_PAYMENT_WEBHOOK_SECRET', ''));
-        if ($expectedSecret !== '') {
-            $providedSecret = trim((string) $request->header('X-Webhook-Secret', ''));
-            abort_if($providedSecret !== $expectedSecret, 403, 'Webhook secret tidak valid.');
-        }
+        $expectedSecret = trim((string) config('services.wa_payment_webhook.secret', ''));
+        $providedSecret = trim((string) $request->header('X-Webhook-Secret', ''));
+        abort_if(
+            $expectedSecret === '' || !hash_equals($expectedSecret, $providedSecret),
+            403,
+            'Webhook secret tidak valid.'
+        );
 
         try {
             $result = $this->intakeService->intake($validated);

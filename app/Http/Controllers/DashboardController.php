@@ -6307,7 +6307,7 @@ class DashboardController extends Controller
         $confidenceTotal = 0.0;
         $forecastSeriesMap = $historyAmountMap;
         $dueHealthAdjustmentEnabled = filter_var(
-            env('PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', true),
+            config('services.prediction.due_health_adjustment_enabled', true),
             FILTER_VALIDATE_BOOL
         );
         $dueHealthAdjustmentStatus = $dueHealthAdjustmentEnabled ? 'applied' : 'disabled';
@@ -6318,7 +6318,7 @@ class DashboardController extends Controller
 
         if ($dueHealthAdjustmentEnabled) {
             try {
-                if (filter_var(env('PREDICTION_DUE_HEALTH_FORCE_FAILURE', false), FILTER_VALIDATE_BOOL)) {
+                if (filter_var(config('services.prediction.due_health_force_failure', false), FILTER_VALIDATE_BOOL)) {
                     throw new \RuntimeException('Forced due-health adjustment failure');
                 }
 

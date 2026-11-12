@@ -48,10 +48,6 @@ class PaymentConfirmationController extends BaseMobileCustomerController
             ], 422);
         }
 
-        if (!empty($validated['paid_amount'])) {
-            $invoice->amount = $validated['paid_amount'];
-        }
-
         if ($request->hasFile('bukti_pembayaran')) {
             $path = $request->file('bukti_pembayaran')->store('bukti_pembayaran', 'public');
             $invoice->bukti_pembayaran = $path;

@@ -18,6 +18,14 @@ class WhatsAppNightSupportController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $expectedSecret = trim((string) config('services.wa_night_support_webhook.secret', ''));
+        $providedSecret = trim((string) $request->header('X-Webhook-Secret', ''));
+        abort_if(
+            $expectedSecret === '' || !hash_equals($expectedSecret, $providedSecret),
+            403,
+            'Webhook secret tidak valid.'
+        );
+
         $validated = $request->validate([
             'sender_phone' => 'nullable|string',
             'sender_lid' => 'nullable|string',

@@ -6,6 +6,7 @@ use App\Models\BillingPaymentCapture;
 use App\Models\FinancialTransaction;
 use App\Models\Invoice;
 use App\Models\Pengeluaran;
+use App\Models\QrisDailyReconciliation;
 use App\Models\ReconciliationIssue;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -23,6 +24,7 @@ class ReconciliationCenterService
     public const ISSUE_LEDGER_PENGELUARAN_WITHOUT_SOURCE = 'ledger_pengeluaran_without_source';
     public const ISSUE_FINANCIAL_TRANSACTION_PENDING_REVIEW = 'financial_transaction_pending_review';
     public const ISSUE_DUPLICATE_CONFIRMED_REFERENCE = 'duplicate_confirmed_reference';
+    public const ISSUE_QRIS_SETTLEMENT_MISMATCH = 'qris_settlement_mismatch';
 
     public const SOURCE_GROUP_INVOICE_RECEIPTS = 'invoice_receipts';
     public const SOURCE_GROUP_LEDGER_SOURCE = 'ledger_vs_source';
@@ -269,6 +271,7 @@ class ReconciliationCenterService
             ->concat($this->detectPengeluaranLedgerOrphanIssues())
             ->concat($this->detectPendingReviewLedgerIssues())
             ->concat($this->detectDuplicateConfirmedReferenceIssues())
+            ->concat($this->detectQrisSettlementMismatchIssues())
             ->values();
     }
 
@@ -610,6 +613,49 @@ class ReconciliationCenterService
         });
     }
 
+    private function detectQrisSettlementMismatchIssues(): Collection
+    {
+        if (!Schema::hasTable('qris_daily_reconciliations')) {
+            return collect();
+        }
+
+        return QrisDailyReconciliation::query()
+            ->where('status', QrisDailyReconciliation::STATUS_MISMATCH)
+            ->orderByDesc('cycle_date')
+            ->get()
+            ->map(function (QrisDailyReconciliation $rec) {
+                $cycleDate = Carbon::parse($rec->cycle_date)->toDateString();
+                $expected = (float) $rec->expected_net_amount;
+                $settled = (float) $rec->settled_amount;
+                $diff = (float) $rec->discrepancy_amount;
+
+                return $this->makePayload(
+                    self::ISSUE_QRIS_SETTLEMENT_MISMATCH,
+                    $rec->id,
+                    [
+                        'severity' => ReconciliationIssue::SEVERITY_CRITICAL,
+                        'title' => 'Selisih Pendapatan QRIS vs Pencairan GoPay (' . $cycleDate . ')',
+                        'description' => 'Pendapatan QRIS mutasi (Rp ' . number_format($expected, 0, ',', '.')
+                            . ') tidak sesuai dengan total pencairan GoPay Merchant (Rp ' . number_format($settled, 0, ',', '.')
+                            . '), selisih ' . ($diff >= 0 ? '+' : '-') . 'Rp ' . number_format(abs($diff), 0, ',', '.') . '.',
+                        'primary_entity_type' => QrisDailyReconciliation::class,
+                        'primary_entity_id' => $rec->id,
+                        'amount' => abs($diff),
+                        'occurred_at' => $cycleDate,
+                        'source_group' => self::SOURCE_GROUP_ACTION_REQUIRED,
+                        'source_url' => '/settings/qris',
+                        'available_actions' => [],
+                        'extra_meta' => [
+                            'cycle_date' => $cycleDate,
+                            'expected_net_amount' => $expected,
+                            'settled_amount' => $settled,
+                            'discrepancy_amount' => $diff,
+                        ],
+                    ]
+                );
+            });
+    }
+
     private function makePayload(string $issueType, int|string $entityKey, array $attributes): array
     {
         $fingerprint = sha1($issueType . '|' . $entityKey);
@@ -693,6 +739,7 @@ class ReconciliationCenterService
             self::ISSUE_LEDGER_PENGELUARAN_WITHOUT_SOURCE,
             self::ISSUE_FINANCIAL_TRANSACTION_PENDING_REVIEW,
             self::ISSUE_DUPLICATE_CONFIRMED_REFERENCE,
+            self::ISSUE_QRIS_SETTLEMENT_MISMATCH,
         ];
     }
 
@@ -707,6 +754,7 @@ class ReconciliationCenterService
             self::ISSUE_LEDGER_PENGELUARAN_WITHOUT_SOURCE => 'Ledger Pengeluaran Tanpa Source',
             self::ISSUE_FINANCIAL_TRANSACTION_PENDING_REVIEW => 'Mutasi Pending/Rejected',
             self::ISSUE_DUPLICATE_CONFIRMED_REFERENCE => 'Duplikasi Mutasi Confirmed',
+            self::ISSUE_QRIS_SETTLEMENT_MISMATCH => 'Selisih Pencairan QRIS GoPay',
             default => $type,
         };
     }

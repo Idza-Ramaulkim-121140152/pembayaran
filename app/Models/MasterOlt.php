@@ -12,7 +12,12 @@ class MasterOlt extends Model
         'brand',
         'model',
         'host',
+        'username',
+        'password',
         'snmp_port',
+        'telnet_port',
+        'ssh_port',
+        'http_port',
         'snmp_community',
         'snmp_version',
         'total_pon_ports',
@@ -27,6 +32,11 @@ class MasterOlt extends Model
         'telemetry_data',
     ];
 
+    protected $hidden = [
+        'password',
+        'snmp_community',
+    ];
+
     protected $casts = [
         'is_active' => 'boolean',
         'simulation_mode' => 'boolean',
@@ -36,6 +46,9 @@ class MasterOlt extends Model
         'longitude' => 'decimal:8',
         'total_pon_ports' => 'integer',
         'snmp_port' => 'integer',
+        'telnet_port' => 'integer',
+        'ssh_port' => 'integer',
+        'http_port' => 'integer',
     ];
 
     public function ponPorts(): HasMany

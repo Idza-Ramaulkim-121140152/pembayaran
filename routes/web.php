@@ -70,27 +70,8 @@ use App\Http\Controllers\AttendanceController;
 // Root domain redirect: ke /dashboard jika sudah login, ke /login jika belum login
 // Menangani juga intercept captive portal / isolir jika diakses via host non-standar
 Route::get('/', function (\Illuminate\Http\Request $request) {
-    $host = strtolower($request->getHost());
-    $isStandardHost = in_array($host, ['rumahkitanet.my.id', 'www.rumahkitanet.my.id', 'localhost', '127.0.0.1']);
-
-    if (!$isStandardHost) {
-        $clientIp = $request->header('X-Forwarded-For') 
-            ? trim(explode(',', (string) $request->header('X-Forwarded-For'))[0]) 
-            : ((string) $request->header('X-Real-IP') ?: (string) $request->ip());
-
-        $isIsolir = false;
-        try {
-            $mikrotik = new \App\Services\MikroTikService();
-            $isIsolir = $mikrotik->isIpInAddressList($clientIp, 'ip-isolir');
-        } catch (\Throwable $e) {}
-
-        if ($isIsolir) {
-            return redirect('http://10.1.0.5/isolir', 302);
-        }
-
-        if ($host !== '10.1.0.5') {
-            return redirect('http://10.1.0.5/gangguan', 302);
-        }
+    if ($redirect = \App\Support\CaptivePortalRedirect::maybeRedirect($request)) {
+        return $redirect;
     }
 
     if (auth()->check()) {
@@ -149,10 +130,12 @@ Route::get('/area-incident/{token}', function () {
     return view('app');
 })->name('area-incident.show');
 
-// Area Incident Public Action API (Tanpa Login via Token Unik Insiden)
-Route::get('/api/area-incident/{token}', [WhatsAppController::class, 'getIncidentByToken'])->name('api.area-incident.get');
-Route::post('/api/area-incident/{token}/mark-notice', [WhatsAppController::class, 'markIncidentNotice'])->name('api.area-incident.mark-notice');
-Route::post('/api/area-incident/{token}/send-notification', [WhatsAppController::class, 'sendIncidentCustomerNotification'])->name('api.area-incident.send-notification');
+// Area Incident Action API (Token Unik Insiden dengan rate-limit)
+Route::middleware('throttle:30,1')->group(function () {
+    Route::get('/api/area-incident/{token}', [WhatsAppController::class, 'getIncidentByToken'])->name('api.area-incident.get');
+    Route::post('/api/area-incident/{token}/mark-notice', [WhatsAppController::class, 'markIncidentNotice'])->name('api.area-incident.mark-notice');
+    Route::post('/api/area-incident/{token}/send-notification', [WhatsAppController::class, 'sendIncidentCustomerNotification'])->name('api.area-incident.send-notification');
+});
 
 
 // Route publik untuk akses invoice tanpa login
@@ -231,18 +214,11 @@ Route::post('/api/customer/wifi/block-device', [CustomerAuthController::class, '
 Route::post('/api/customer/wifi/unblock-device', [CustomerAuthController::class, 'unblockDevice'])->name('api.customer.wifi.unblock-device');
 Route::get('/api/customer/wifi/password-verifications/{verificationId}', [CustomerAuthController::class, 'wifiPasswordVerification'])->name('api.customer.wifi.password.verification');
 Route::patch('/api/customer/auto-message', [CustomerAuthController::class, 'updateAutoMessage'])->name('api.customer.auto-message.update');
-Route::post('/api/whatsapp/webhooks/payments', [WhatsAppPaymentWebhookController::class, 'store'])
-    ->middleware('throttle:60,1')
-    ->name('api.whatsapp.webhooks.payments');
-
-Route::post('/api/whatsapp/webhooks/night-support', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'store'])
-    ->middleware('throttle:60,1')
-    ->name('api.whatsapp.webhooks.night-support');
-Route::get('/api/whatsapp/night-support/status', [\App\Http\Controllers\WhatsAppNightSupportController::class, 'status'])
-    ->name('api.whatsapp.night-support.status');
+// Webhook WhatsApp (payments, night-support) didefinisikan secara terpusat di routes/api.php (/api/whatsapp/webhooks/*)
 
 // QRIS Dynamic Notification Webhook (GoBiz / MacroDroid) - Fallback jika pengirim tidak menyertakan prefix /api
 Route::post('/qris/webhook', [\App\Http\Controllers\QrisWebhookController::class, 'webhook'])
+    ->middleware('throttle:60,1')
     ->name('web.qris.webhook');
 
 // iPaymu Payment Gateway Public Callbacks & Webhook (Tanpa Login)
@@ -810,6 +786,14 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::delete('/api/payroll/projects/{id}', [PayrollController::class, 'destroyProject'])->name('api.payroll.projects.destroy');
         Route::post('/api/payroll/members/{id}/pay', [PayrollController::class, 'payMember'])->name('api.payroll.members.pay');
         Route::get('/api/payroll/members/{id}/payments', [PayrollController::class, 'memberPayments'])->name('api.payroll.members.payments');
+
+        // QRIS Settlement & Daily Reconciliation API (superadmin, admin, finance)
+        Route::get('/api/settings/qris/reconciliation', [\App\Http\Controllers\QrisWebhookController::class, 'getReconciliation'])->name('api.settings.qris.reconciliation');
+        Route::post('/api/settings/qris/reconciliation/config', [\App\Http\Controllers\QrisWebhookController::class, 'updateReconciliationConfig'])->name('api.settings.qris.reconciliation.config');
+        Route::post('/api/settings/qris/reconciliation/run', [\App\Http\Controllers\QrisWebhookController::class, 'runReconciliation'])->name('api.settings.qris.reconciliation.run');
+        Route::post('/api/settings/qris/reconciliation/settlements', [\App\Http\Controllers\QrisWebhookController::class, 'storeManualSettlement'])->name('api.settings.qris.reconciliation.settlements.store');
+        Route::delete('/api/settings/qris/reconciliation/settlements/{settlement}', [\App\Http\Controllers\QrisWebhookController::class, 'deleteSettlement'])->name('api.settings.qris.reconciliation.settlements.destroy');
+        Route::post('/api/settings/qris/reconciliation/test-alert', [\App\Http\Controllers\QrisWebhookController::class, 'testReconciliationAlert'])->name('api.settings.qris.reconciliation.test-alert');
     }); // end finance routes
 
     // Admin-only settings routes (superadmin + admin only)
@@ -997,31 +981,33 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/customers/{customer}/termination/{termination}/cancel', [CustomerTerminationController::class, 'cancel'])->name('api.customers.termination.cancel');
     });
 
-    // Remote ONT Web Gateway (MikroTik PPPoE & In-App Reverse Proxy)
-    Route::get('/api/remote-ont/list', [OntProxyController::class, 'apiList'])->name('remote-ont.api.list');
-    Route::post('/api/remote-ont/check-ping', [OntProxyController::class, 'checkPing'])->name('remote-ont.api.check-ping');
-    Route::any('/ont-gateway/{ip}/{path?}', [OntProxyController::class, 'proxy'])
-        ->where('path', '.*')
-        ->name('remote-ont.proxy');
+    // Remote ONT Web Gateway (MikroTik PPPoE & In-App Reverse Proxy) - requires monitoring.view permission
+    Route::middleware('permission:monitoring.view')->group(function () {
+        Route::get('/api/remote-ont/list', [OntProxyController::class, 'apiList'])->name('remote-ont.api.list');
+        Route::post('/api/remote-ont/check-ping', [OntProxyController::class, 'checkPing'])->name('remote-ont.api.check-ping');
+        Route::any('/ont-gateway/{ip}/{path?}', [OntProxyController::class, 'proxy'])
+            ->where('path', '.*')
+            ->name('remote-ont.proxy');
 
-    // ONT Gateway Fallback Route for Root-Relative Assets & Endpoints (js, css, img, images, fonts, boaform, cgi-bin, etc.)
-    Route::any('/{any}', [OntProxyController::class, 'fallbackProxy'])
-        ->where('any', '^(js|css|img|images|image|pic|media|fonts|static|assets|res|resource|theme|skin|boaform|cgi-bin|cgi|web_login|login\.cgi|login\.asp|formLogin|getpage\.gch|favicon\.ico).*$')
-        ->name('remote-ont.fallback');
+        // ONT Gateway Fallback Route for Root-Relative Assets & Endpoints (js, css, img, images, fonts, boaform, cgi-bin, etc.)
+        Route::any('/{any}', [OntProxyController::class, 'fallbackProxy'])
+            ->where('any', '^(js|css|img|images|image|pic|media|fonts|static|assets|res|resource|theme|skin|boaform|cgi-bin|cgi|web_login|login\.cgi|login\.asp|formLogin|getpage\.gch|favicon\.ico).*$')
+            ->name('remote-ont.fallback');
+    });
 
     // Serve React app untuk semua routes yang tidak dimulai dengan /api
     Route::any('{any}', function (\Illuminate\Http\Request $request) {
         $path = $request->path();
 
-        // 1. If request originated from an ONT gateway session via Referer, proxy it!
+        // 1. If request originated from an authenticated ONT gateway session via Referer, proxy it cleanly
         $referer = (string) $request->header('referer', '');
         $ontIp = null;
-        if (preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
+        if ($request->user()?->hasPermission('monitoring.view') && preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
             $ontIp = $matches[1];
         }
 
         // 2. Fallback to active ONT session or cookie if path looks like an ONT asset or endpoint
-        if (!$ontIp) {
+        if (!$ontIp && $request->user()?->hasPermission('monitoring.view')) {
             $candidateIp = session('active_ont_ip') ?? $request->cookie('active_ont_gateway_ip');
             if ($candidateIp && filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                 $ext = strtolower(pathinfo(parse_url($path, PHP_URL_PATH) ?? '', PATHINFO_EXTENSION));
@@ -1037,26 +1023,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         }
 
         if ($request->isMethod('GET')) {
-            $host = strtolower($request->getHost());
-            $isStandardHost = in_array($host, ['rumahkitanet.my.id', 'www.rumahkitanet.my.id', 'localhost', '127.0.0.1']);
-            if (!$isStandardHost) {
-                $clientIp = $request->header('X-Forwarded-For') 
-                    ? trim(explode(',', (string) $request->header('X-Forwarded-For'))[0]) 
-                    : ((string) $request->header('X-Real-IP') ?: (string) $request->ip());
-
-                $isIsolir = false;
-                try {
-                    $mikrotik = new \App\Services\MikroTikService();
-                    $isIsolir = $mikrotik->isIpInAddressList($clientIp, 'ip-isolir');
-                } catch (\Throwable $e) {}
-
-                if ($isIsolir) {
-                    return redirect('http://10.1.0.5/isolir', 302);
-                }
-
-                if ($host !== '10.1.0.5') {
-                    return redirect('http://10.1.0.5/gangguan', 302);
-                }
+            if ($redirect = \App\Support\CaptivePortalRedirect::maybeRedirect($request)) {
+                return $redirect;
             }
             return view('app');
         }

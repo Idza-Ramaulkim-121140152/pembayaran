@@ -24,7 +24,10 @@ class WhatsAppPaymentVerificationTest extends TestCase
     {
         parent::setUp();
 
-        config(['services.openai.api_key' => 'test-openai-key']);
+        config([
+            'services.openai.api_key' => 'test-openai-key',
+            'services.wa_payment_webhook.secret' => 'test-payment-webhook-secret',
+        ]);
         putenv('WA_PAYMENT_WEBHOOK_SECRET=test-payment-webhook-secret');
         $_ENV['WA_PAYMENT_WEBHOOK_SECRET'] = 'test-payment-webhook-secret';
         $_SERVER['WA_PAYMENT_WEBHOOK_SECRET'] = 'test-payment-webhook-secret';

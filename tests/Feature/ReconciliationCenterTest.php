@@ -228,6 +228,14 @@ class ReconciliationCenterTest extends TestCase
             'fingerprint' => sha1('capture-rerun'),
             'match_status' => 'unmatched',
             'match_confidence' => 20,
+            'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
+            ],
         ]);
 
         $this->actingAs($user)->postJson('/api/reconciliation-center/refresh')->assertOk();

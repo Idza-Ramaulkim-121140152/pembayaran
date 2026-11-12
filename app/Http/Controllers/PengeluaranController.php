@@ -31,7 +31,8 @@ class PengeluaranController extends Controller
     public function store(Request $request)
     {
         $validated = $this->validatePengeluaran($request);
-        Pengeluaran::create($validated);
+        $this->createPengeluaranWithSync($validated);
+
         return redirect()->route('pengeluaran.index')->with('success', 'Pengeluaran berhasil dicatat.');
     }
 
@@ -47,18 +48,22 @@ class PengeluaranController extends Controller
     public function apiStore(Request $request)
     {
         $validated = $this->validatePengeluaran($request);
+        $pengeluaran = $this->createPengeluaranWithSync($validated);
 
-        $pengeluaran = DB::transaction(function () use ($validated) {
+        $pengeluaran->load(['user', 'expenseCategory', 'borrower:id,name']);
+        
+        return response()->json(['data' => $pengeluaran, 'message' => 'Pengeluaran berhasil dicatat'], 201);
+    }
+
+    private function createPengeluaranWithSync(array $validated): Pengeluaran
+    {
+        return DB::transaction(function () use ($validated) {
             $pengeluaran = Pengeluaran::create($validated);
             $this->applyBorrowerSettlementIfNeeded($pengeluaran);
             $this->ledgerService->syncPengeluaran($pengeluaran->fresh(), Auth::id());
 
             return $pengeluaran->fresh();
         });
-
-        $pengeluaran->load(['user', 'expenseCategory', 'borrower:id,name']);
-        
-        return response()->json(['data' => $pengeluaran, 'message' => 'Pengeluaran berhasil dicatat'], 201);
     }
 
     public function apiUpdate(Request $request, Pengeluaran $pengeluaran)

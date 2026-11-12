@@ -45,18 +45,13 @@ class PayrollWhatsAppService
             ];
         }
 
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
         $recipientName = trim((string) ($member?->nama ?? 'Pegawai'));
 
         try {
-            $response = Http::timeout(15)->post($gatewayUrl . '/send-bulk', [
-                'recipients' => [[
-                    'phone' => $phone,
-                    'name' => $recipientName !== '' ? $recipientName : 'Pegawai',
-                ]],
-                'message' => $message,
-                'delay' => 0,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk([[
+                'phone' => $phone,
+                'name' => $recipientName !== '' ? $recipientName : 'Pegawai',
+            ]], $message, 0, 15);
 
             $gateway = $response->json();
             $results = is_array($gateway['results'] ?? null) ? $gateway['results'] : [];
@@ -217,7 +212,7 @@ class PayrollWhatsAppService
 
         $salaryLines[] = '• *Jumlah Gaji yang Harus Dibayar / Diterima:* *' . $this->formatRupiah($cashPaid) . '*';
 
-        $paidDate = ($payment->created_at ?? now())->copy()->timezone(config('app.timezone', 'Asia/Jakarta'))->format('d M Y, H:i');
+        $paidDate = ($payment->created_at ?? now())->copy()->timezone('Asia/Jakarta')->format('d M Y, H:i');
 
         $lines = [
             "💸 *INFORMASI PEMBAYARAN GAJI - {$companyName}*",

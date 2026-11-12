@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Invoice;
+use App\Support\PdfImageHelper;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
 use BaconQrCode\Renderer\RendererStyle\RendererStyle;
@@ -105,7 +106,7 @@ class InvoiceDocumentService
             'taxTotal' => $calculatedRows->sum('tax'),
             'grossTotal' => $calculatedRows->sum('gross'),
             'signatureMeta' => $invoice->signature_meta ?: [],
-            'logoDataUri' => $this->localImageDataUri(public_path('logo_baru.png')),
+            'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
             'autoPrint' => $autoPrint,
         ];
     }
@@ -190,16 +191,5 @@ class InvoiceDocumentService
 
             return '';
         }
-    }
-
-    private function localImageDataUri(string $path): ?string
-    {
-        if (!is_file($path)) {
-            return null;
-        }
-
-        $mime = mime_content_type($path) ?: 'image/png';
-
-        return 'data:' . $mime . ';base64,' . base64_encode((string) file_get_contents($path));
     }
 }

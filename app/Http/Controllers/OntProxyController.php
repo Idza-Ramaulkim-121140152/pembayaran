@@ -19,6 +19,34 @@ class OntProxyController extends Controller
     }
 
     /**
+     * Restrict ONT proxy & ping to non-loopback/non-link-local registered customer ONT targets and HTTP ports.
+     */
+    private function isAllowedOntTarget(string $ip, int $port): bool
+    {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return false;
+        }
+
+        if ($port <= 0 || $port > 65535) {
+            return false;
+        }
+
+        // Block loopback (127.0.0.0/8), link-local/cloud metadata (169.254.0.0/16), unspecified (0.0.0.0/8), multicast/reserved.
+        if (preg_match('/^(127\.|169\.254\.|0\.|22[4-9]\.|2[3-5]\d\.)/', $ip)) {
+            return false;
+        }
+
+        $blockedInternalPorts = [22, 25, 53, 110, 143, 389, 445, 636, 1433, 1521, 3000, 3001, 3306, 5432, 6379, 7547, 7557, 8728, 8729, 9000, 11211];
+        if (in_array($port, $blockedInternalPorts, true)) {
+            return false;
+        }
+
+        $registeredIps = array_flip(array_filter(array_column($this->getMergedDevices(), 'remote_ip')));
+
+        return isset($registeredIps[$ip]);
+    }
+
+    /**
      * Dashboard page for Remote ONT Gateway
      */
     public function index(Request $request)
@@ -78,11 +106,11 @@ class OntProxyController extends Controller
         $ip = trim((string) $request->input('ip', ''));
         $port = (int) $request->input('port', 80);
 
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        if (!$this->isAllowedOntTarget($ip, $port)) {
             return response()->json([
                 'success' => false,
                 'online' => false,
-                'message' => 'Format IP tidak valid',
+                'message' => 'Target IP atau port ONT tidak valid/tidak terdaftar.',
             ], 422);
         }
 
@@ -144,14 +172,14 @@ class OntProxyController extends Controller
      */
     public function proxy(Request $request, string $ip, ?string $path = null): Response
     {
-        // 1. Validate IP security (must be IPv4)
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            abort(400, 'Invalid IP address');
-        }
-
         $port = (int) $request->query('__port', session("ont_port_{$ip}", 80));
         if ($port <= 0 || $port > 65535) {
             $port = 80;
+        }
+
+        // 1. Validate IP & port security (reject loopback/metadata/non-registered ONTs)
+        if (!$this->isAllowedOntTarget($ip, $port)) {
+            abort(403, 'Target IP atau port ONT tidak diizinkan.');
         }
 
         // Save active ONT session context
@@ -183,8 +211,6 @@ class OntProxyController extends Controller
         curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
         curl_setopt($ch, CURLOPT_TCP_NODELAY, true);
         curl_setopt($ch, CURLOPT_ENCODING, ''); // Auto decode gzip/deflate from embedded server
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
 
         // Forward headers with embedded device compatibility
         $forwardHeaders = [];

@@ -28,18 +28,18 @@ class PaymentVerificationConfigService
         if (array_key_exists('excluded_senders', $storedConfig)) {
             $config['excluded_senders'] = $storedConfig['excluded_senders'];
         }
-        $orEnvKey = (string) env('OPENROUTER_API_KEY', '');
+        $orEnvKey = (string) config('services.openrouter.api_key', '');
         if (empty($config['openrouter_api_key'])) {
             $config['openrouter_api_key'] = $orEnvKey;
         }
         if (empty($config['openrouter_model'])) {
-            $config['openrouter_model'] = (string) env('OPENROUTER_PAYMENT_VISION_MODEL', 'google/gemini-2.5-flash');
+            $config['openrouter_model'] = (string) config('services.openrouter.payment_vision_model', 'google/gemini-2.5-flash');
         }
         if (empty($config['ai_provider']) || $config['ai_provider'] === 'gemini') {
             $config['ai_provider'] = 'openrouter';
         }
 
-        $envKey = (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', ''));
+        $envKey = (string) config('services.gemini.api_key', '');
         if (empty($config['gemini_api_key']) && $envKey !== '') {
             $config['gemini_api_key'] = $envKey;
         }
@@ -152,12 +152,12 @@ class PaymentVerificationConfigService
     {
         return [
             'ai_provider' => 'openrouter',
-            'openrouter_api_key' => (string) env('OPENROUTER_API_KEY', ''),
-            'openrouter_model' => (string) env('OPENROUTER_PAYMENT_VISION_MODEL', 'google/gemini-2.5-flash'),
-            'gemini_api_key' => (string) env('GEMINI_API_KEY', env('GOOGLE_API_KEY', '')),
-            'gemini_model' => (string) env('GEMINI_PAYMENT_VISION_MODEL', 'gemini-2.5-flash'),
-            'openai_api_key' => (string) env('OPENAI_API_KEY', ''),
-            'openai_model' => (string) env('OPENAI_PAYMENT_VISION_MODEL', 'gpt-4o-mini'),
+            'openrouter_api_key' => (string) config('services.openrouter.api_key', ''),
+            'openrouter_model' => (string) config('services.openrouter.payment_vision_model', 'google/gemini-2.5-flash'),
+            'gemini_api_key' => (string) config('services.gemini.api_key', ''),
+            'gemini_model' => (string) config('services.gemini.payment_vision_model', 'gemini-2.5-flash'),
+            'openai_api_key' => (string) config('services.openai.api_key', ''),
+            'openai_model' => (string) config('services.openai.payment_vision_model', 'gpt-4o-mini'),
             'auto_approve_enabled' => true,
             'confidence_thresholds' => [
                 'auto_approve' => 80,

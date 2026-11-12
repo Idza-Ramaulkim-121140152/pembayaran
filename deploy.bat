@@ -36,8 +36,13 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/7] Generating application key...
-php artisan key:generate --force
+echo [2/7] Checking application key...
+findstr /r "^APP_KEY=..*" .env >nul 2>&1
+if %errorlevel% neq 0 (
+    php artisan key:generate --force
+) else (
+    echo Existing APP_KEY preserved.
+)
 
 echo.
 echo [3/7] Running migrations...
@@ -61,6 +66,7 @@ php artisan view:clear
 
 echo.
 echo [6/7] Optimizing for production...
+call php artisan package:discover --ansi
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache

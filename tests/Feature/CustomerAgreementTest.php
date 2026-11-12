@@ -58,7 +58,8 @@ class CustomerAgreementTest extends TestCase
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'thumbnail?id=front'));
         Http::assertSent(fn ($request) => str_contains($request->url(), 'thumbnail?id=modem'));
-        Http::assertSent(fn ($request) => $request->url() === 'https://example.test/ktp.jpg');
+        // Poto KTP dikecualikan dari kontrak PDF untuk privasi pelanggan
+        Http::assertNotSent(fn ($request) => $request->url() === 'https://example.test/ktp.jpg');
     }
 
     public function test_public_qr_verification_page_displays_contract_identity(): void

@@ -166,6 +166,15 @@ class TechnicianJobController extends Controller
      */
     public function updateTechnicianPhone(Request $request, User $user)
     {
+        $actor = $request->user();
+        if (!$actor || (!$actor->isAdmin() && !$actor->isSuperAdmin())) {
+            return response()->json(['success' => false, 'message' => 'Unauthorized.'], 403);
+        }
+
+        if ($user->isSuperAdmin() && !$actor->isSuperAdmin()) {
+            return response()->json(['success' => false, 'message' => 'Tidak diizinkan mengubah nomor akun superadmin.'], 403);
+        }
+
         $validated = $request->validate([
             'phone' => 'required|string|min:9|max:16',
         ]);

@@ -391,17 +391,12 @@ class IsolirController extends Controller
         }
 
         // Send via WhatsApp Gateway
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
         $status = 'failed';
         $errorMessage = null;
         $gatewayPayload = null;
 
         try {
-            $response = Http::timeout(25)->post($gatewayUrl . '/send', [
-                'phone' => $phone,
-                'name' => $customerName,
-                'message' => $message,
-            ]);
+            $response = app(\App\Services\WhatsAppGatewayService::class)->send((string) $phone, $message, $customerName, 25);
 
             if ($response->successful()) {
                 $gatewayPayload = $response->json();

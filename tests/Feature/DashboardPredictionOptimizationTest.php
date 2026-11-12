@@ -26,15 +26,32 @@ class DashboardPredictionOptimizationTest extends TestCase
 
     private function setPredictionEnv(string $key, ?string $value): void
     {
+        $configKey = match ($key) {
+            'PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED' => 'services.prediction.due_health_adjustment_enabled',
+            'PREDICTION_DUE_HEALTH_FORCE_FAILURE' => 'services.prediction.due_health_force_failure',
+            'PREDICTION_PYTHON_BIN' => 'services.prediction.python_bin',
+            default => null,
+        };
+
         if ($value === null) {
             putenv($key);
             unset($_ENV[$key], $_SERVER[$key]);
+            if ($configKey !== null) {
+                $default = $key === 'PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED' ? true : ($key === 'PREDICTION_DUE_HEALTH_FORCE_FAILURE' ? false : '');
+                config([$configKey => $default]);
+            }
             return;
         }
 
         putenv($key . '=' . $value);
         $_ENV[$key] = $value;
         $_SERVER[$key] = $value;
+        if ($configKey !== null) {
+            $parsed = in_array($key, ['PREDICTION_DUE_HEALTH_ADJUSTMENT_ENABLED', 'PREDICTION_DUE_HEALTH_FORCE_FAILURE'], true)
+                ? filter_var($value, FILTER_VALIDATE_BOOL)
+                : $value;
+            config([$configKey => $parsed]);
+        }
     }
 
     private function createStaffUser(string $role = 'superadmin'): User

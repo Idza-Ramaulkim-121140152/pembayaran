@@ -53,9 +53,13 @@ composer install --optimize-autoloader --no-dev --no-interaction
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 echo ""
-echo "🔑 Step 2: Generating application key (if needed)..."
-php artisan key:generate --force
-echo -e "${GREEN}✓ Application key generated${NC}"
+echo "🔑 Step 2: Ensuring application key exists..."
+if [ -f .env ] && grep -q '^APP_KEY=.\+' .env; then
+    echo -e "${GREEN}✓ Existing APP_KEY preserved${NC}"
+else
+    php artisan key:generate --force
+    echo -e "${GREEN}✓ Application key generated${NC}"
+fi
 
 echo ""
 echo "🗄️  Step 3: Running migrations..."
@@ -77,6 +81,7 @@ echo -e "${GREEN}✓ Cache cleared${NC}"
 
 echo ""
 echo "⚡ Step 6: Optimizing for production..."
+php artisan package:discover --ansi
 php artisan config:cache
 php artisan route:cache
 php artisan view:cache

@@ -180,7 +180,7 @@ class SystemHealthService
     private function checkWhatsApp(): array
     {
         try {
-            $response = Http::timeout(5)->get(rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/') . '/status');
+            $response = app(WhatsAppGatewayService::class)->get('/status', [], 5);
             $data = $response->json();
             $ready = (bool) ($data['ready'] ?? false);
             return $this->check('whatsapp', 'WhatsApp Gateway', $ready ? 'healthy' : 'degraded', $ready ? 'WhatsApp terhubung.' : 'WhatsApp belum ready.', $data ?: []);

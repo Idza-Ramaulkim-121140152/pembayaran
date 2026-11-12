@@ -77,7 +77,7 @@ class CustomerPublicPortalController extends Controller
                 ?? $device['VirtualParameters']['WlanSSID']['_value']
                 ?? null;
 
-            $wifiPassword = $this->genieAcsService->resolveWifiPassword($device);
+            $wifiPassword = null;
             $lanHosts = $this->genieAcsService->resolveAllConnectedHosts($device);
 
             $rxPower = $device['VirtualParameters']['RXPower']['_value'] ?? null;
@@ -171,9 +171,9 @@ class CustomerPublicPortalController extends Controller
         if ($latestInvoice) {
             $invoicePayload = [
                 'id' => $latestInvoice->id,
-                'invoice_number' => $latestInvoice->invoice_number,
+                'invoice_number' => $latestInvoice->invoice_link ?: ('INV-' . $latestInvoice->id),
                 'status' => strtolower((string) $latestInvoice->status),
-                'amount' => (int) $latestInvoice->total_amount,
+                'amount' => (int) ($latestInvoice->qris_expected_amount ?: $latestInvoice->amount),
                 'due_date' => $latestInvoice->due_date ? Carbon::parse($latestInvoice->due_date)->format('d F Y') : null,
                 'period' => $latestInvoice->period ?? null,
                 'payment_url' => $latestInvoice->invoice_link ? url("/invoice/{$latestInvoice->invoice_link}") : null,
@@ -266,7 +266,7 @@ class CustomerPublicPortalController extends Controller
                 'model' => $productClass,
                 'serial_number' => $serialNumber,
                 'ssid' => $ssid,
-                'password' => $wifiPassword, // Will be null if encrypted/not retrieved
+                'password' => null, // Never expose WiFi passphrase on unauthenticated public token API
                 'rx_power' => $rxPower,
                 'connected_hosts' => $lanHosts,
                 'blocked_devices' => $blockedDevices,

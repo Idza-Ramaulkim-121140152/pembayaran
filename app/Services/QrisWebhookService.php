@@ -25,11 +25,13 @@ class QrisWebhookService
         protected BillingMessageTemplateService $billingMessageTemplateService,
         protected ?CustomerIsolationService $customerIsolationService = null,
         protected ?PaymentVerificationConfigService $paymentVerificationConfigService = null,
-        protected ?PaymentCaptureNotificationService $paymentCaptureNotificationService = null
+        protected ?PaymentCaptureNotificationService $paymentCaptureNotificationService = null,
+        protected ?QrisSettlementReconciliationService $settlementReconciliationService = null
     ) {
         $this->customerIsolationService = $customerIsolationService ?? app(CustomerIsolationService::class);
         $this->paymentVerificationConfigService = $paymentVerificationConfigService ?? app(PaymentVerificationConfigService::class);
         $this->paymentCaptureNotificationService = $paymentCaptureNotificationService ?? app(PaymentCaptureNotificationService::class);
+        $this->settlementReconciliationService = $settlementReconciliationService ?? app(QrisSettlementReconciliationService::class);
     }
 
     /**
@@ -37,14 +39,12 @@ class QrisWebhookService
      */
     public function validateSecret(?string $providedSecret): bool
     {
-        $configured = SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'rknet-secret-qris-key');
-        
-        // Jika diset kosong, bypass otentikasi
-        if (empty($configured)) {
-            return true;
+        $configured = trim((string) SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, ''));
+        if ($configured === '') {
+            return false;
         }
 
-        return hash_equals((string) $configured, (string) ($providedSecret ?? ''));
+        return hash_equals($configured, (string) ($providedSecret ?? ''));
     }
 
     /**
@@ -105,6 +105,18 @@ class QrisWebhookService
         $distinctAmounts = array_keys($distinctCurrencyAmounts);
         $hasMultipleAmounts = count($distinctAmounts) > 1;
 
+        // 1b. Deteksi notifikasi pencairan dana (settlement) GoPay Merchant yang sudah berhasil/selesai
+        $hasSettlementWord = (bool) preg_match('/\b(pencairan|settlement|disbursement|penarikan|withdraw(?:al)?|dicairkan)\b/i', $combined);
+        $hasSuccessCompletionWord = (bool) preg_match('/\b(berhasil|selesai|sukses|success|completed|settled|terkirim)\b/i', $combined);
+        $hasPendingOrFailureWord = (bool) preg_match('/\b(sedang\s+diproses|diproses|pending|menunggu|gagal|failed|ditolak|rejected|dibatalkan|cancelled|canceled|batal|refund|pengembalian)\b/i', $combined);
+        $isSettlementSuccess = $hasSettlementWord
+            && $hasSuccessCompletionWord
+            && !$hasPendingOrFailureWord
+            && !$hasNegativeSign
+            && !$hasMultipleAmounts
+            && $amount !== null
+            && $amount > 0;
+
         // 2. Ekstrak Nama Pengirim jika ada (contoh: "...dari BUDI SANTOSO", "sumber dana RODIAH", "pengirim M. ABDUL ROHMAN")
         $sender = null;
         if (preg_match_all('/\b(?:dari|from|sumber\s*dana|pengirim|atas\s*nama|a\.n\.?)\s*[:#]?\s+([A-Za-z0-9\s\.\'\-]+?)(?=\.\s*(?:$|ref\b|transaksi\b|order\b|id\b)|\s+(?:via|pada|sebesar|berhasil|dengan|di|ref|id)\b|$)/i', $combined, $senderMatches, PREG_SET_ORDER)) {
@@ -132,6 +144,7 @@ class QrisWebhookService
             'distinct_amounts' => $distinctAmounts,
             'has_multiple_amounts' => $hasMultipleAmounts,
             'is_non_incoming_event' => $isNonIncomingEvent || $hasNegativeSign,
+            'is_settlement_success' => $isSettlementSuccess,
             'is_suspicious' => $hasMultipleAmounts || $isNonIncomingEvent || $hasNegativeSign,
         ];
     }
@@ -176,6 +189,10 @@ class QrisWebhookService
         // 2. Parsing teks
         $parsed = $this->parseNotificationText($rawText, $rawTitle);
         $amount = $parsed['amount'];
+
+        if (!empty($parsed['is_settlement_success']) && $amount && $amount > 0) {
+            return $this->handleSettlementWebhook($parsed, (float) $amount, $deviceName, $rawTitle, $rawText, $payload);
+        }
 
         if (!empty($parsed['is_non_incoming_event'])) {
             $this->safeLog([
@@ -877,17 +894,11 @@ class QrisWebhookService
         // Pesan konfirmasi resmi terpadu dan konsisten (sama persis dengan konfirmasi tagihan utama)
         $message = $this->billingMessageTemplateService->buildPaymentConfirmationMessage($customer, true);
 
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
-
         try {
-            $response = Http::timeout(25)->post($gatewayUrl . '/send-bulk', [
-                'recipients' => [[
-                    'phone' => $phone,
-                    'name' => (string) ($customer->name ?? 'Pelanggan'),
-                ]],
-                'message' => $message,
-                'delay' => 0,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk([[
+                'phone' => $phone,
+                'name' => (string) ($customer->name ?? 'Pelanggan'),
+            ]], $message, 0, 25);
 
             $json = $response->json();
             $success = (bool) ($json['success'] ?? false);
@@ -905,6 +916,103 @@ class QrisWebhookService
             Log::warning('DynamicQris sendPaymentConfirmationWhatsApp warning: ' . $e->getMessage());
             return false;
         }
+    }
+
+    /**
+     * Tangani notifikasi "Pencairan dana berhasil" dari GoPay Merchant untuk rekonsiliasi harian.
+     * Tidak pernah menyentuh atau melunaskan tagihan pelanggan.
+     */
+    protected function handleSettlementWebhook(
+        array $parsed,
+        float $amount,
+        string $deviceName,
+        string $rawTitle,
+        string $rawText,
+        array $payload
+    ): array {
+        $settledAt = $this->resolvePayloadTimestamp($payload);
+        $webhookLog = $this->safeLog([
+            'device_name' => $deviceName,
+            'raw_title' => $rawTitle ?: null,
+            'raw_text' => $rawText ?: null,
+            'extracted_amount' => $amount,
+            'status' => 'settlement_recorded',
+            'meta' => [
+                'reason' => 'Notifikasi pencairan dana GoPay Merchant berhasil diproses untuk rekonsiliasi harian.',
+                'parsed' => $parsed,
+            ],
+        ]);
+
+        $reconciliationService = $this->settlementReconciliationService ?? app(QrisSettlementReconciliationService::class);
+        $result = $reconciliationService->recordWebhookSettlement(
+            $amount,
+            $parsed,
+            $deviceName,
+            $rawTitle ?: null,
+            $rawText,
+            $webhookLog,
+            $settledAt
+        );
+
+        $isDuplicate = !empty($result['duplicate']);
+        $finalStatus = $isDuplicate ? 'settlement_duplicate_ignored' : 'settlement_recorded';
+
+        if ($webhookLog) {
+            $meta = (array) ($webhookLog->meta ?? []);
+            $meta['settlement_id'] = $result['settlement']?->id;
+            $meta['cycle_date'] = $result['settlement']?->cycle_date
+                ? Carbon::parse($result['settlement']->cycle_date)->toDateString()
+                : null;
+            $meta['reconciliation_status'] = $result['reconciliation']?->status;
+            $webhookLog->update([
+                'status' => $finalStatus,
+                'meta' => $meta,
+            ]);
+        }
+
+        return [
+            'success' => true,
+            'status' => $finalStatus,
+            'http_code' => 200,
+            'message' => $result['message'] ?? 'Notifikasi pencairan dana berhasil diproses.',
+            'amount' => $amount,
+            'settlement' => $result['settlement'] ? [
+                'id' => $result['settlement']->id,
+                'cycle_date' => Carbon::parse($result['settlement']->cycle_date)->toDateString(),
+                'settlement_type' => $result['settlement']->settlement_type,
+                'amount' => (float) $result['settlement']->amount,
+                'settled_at' => $result['settlement']->settled_at?->toIso8601String(),
+            ] : null,
+            'reconciliation' => $result['reconciliation'] ? [
+                'cycle_date' => Carbon::parse($result['reconciliation']->cycle_date)->toDateString(),
+                'status' => $result['reconciliation']->status,
+                'system_qris_gross_amount' => (float) $result['reconciliation']->system_qris_gross_amount,
+                'settled_amount' => (float) $result['reconciliation']->settled_amount,
+                'discrepancy_amount' => (float) $result['reconciliation']->discrepancy_amount,
+            ] : null,
+        ];
+    }
+
+    protected function resolvePayloadTimestamp(array $payload): Carbon
+    {
+        $rawTs = $payload['occurred_at'] ?? $payload['timestamp'] ?? $payload['notif_time'] ?? null;
+        if ($rawTs !== null && $rawTs !== '') {
+            try {
+                if (is_numeric($rawTs)) {
+                    $num = (int) $rawTs;
+                    if ($num > 9999999999) {
+                        $num = (int) floor($num / 1000);
+                    }
+                    return Carbon::createFromTimestamp($num, QrisSettlementReconciliationService::TZ);
+                }
+
+                return Carbon::parse((string) $rawTs, QrisSettlementReconciliationService::TZ);
+            } catch (\Throwable) {
+                // Fallback to server current time
+            }
+        }
+
+        return now(QrisSettlementReconciliationService::TZ);
     }
 
     /**

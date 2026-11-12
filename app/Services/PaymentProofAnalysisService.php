@@ -41,20 +41,20 @@ class PaymentProofAnalysisService
             (!empty($config['openrouter_api_key']) ? $config['openrouter_api_key'] : null)
             ?: \App\Models\SiteSetting::get('openrouter_api_key')
             ?: config('services.openrouter.api_key')
-            ?: env('OPENROUTER_API_KEY', '')
+            ?: ''
         ));
         $geminiKey = trim((string) (
             (!empty($config['gemini_api_key']) ? $config['gemini_api_key'] : null)
             ?: \App\Models\SiteSetting::get('gemini_api_key')
             ?: \App\Models\SiteSetting::get('google_api_key')
             ?: config('services.gemini.api_key')
-            ?: env('GEMINI_API_KEY', env('GOOGLE_API_KEY', env('GOOGLE_GEMINI_API_KEY', '')))
+            ?: ''
         ));
         $openAiKey = trim((string) (
-            $config['openai_api_key']
-            ?? \App\Models\SiteSetting::get('openai_api_key')
-            ?? config('services.openai.api_key')
-            ?: env('OPENAI_API_KEY', '')
+            (!empty($config['openai_api_key']) ? $config['openai_api_key'] : null)
+            ?: \App\Models\SiteSetting::get('openai_api_key')
+            ?: config('services.openai.api_key')
+            ?: ''
         ));
 
         if (app()->runningUnitTests()) {
@@ -251,8 +251,7 @@ PROMPT;
 
         foreach ($modelsToTry as $currentModel) {
             try {
-                $response = Http::withoutVerifying()
-                    ->timeout(35)
+                $response = Http::timeout(35)
                     ->withHeaders([
                         'Authorization' => 'Bearer ' . $apiKey,
                         'HTTP-Referer' => 'https://rumahkitanet.my.id',
@@ -329,7 +328,7 @@ PROMPT;
             $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
 
             try {
-                $response = Http::withoutVerifying()->timeout(12)->post($url, [
+                $response = Http::timeout(12)->post($url, [
                     'contents' => [
                         [
                             'parts' => [

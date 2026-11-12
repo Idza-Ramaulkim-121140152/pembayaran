@@ -2637,7 +2637,7 @@ class GenieAcsService
             }
         }
 
-        // Search through customers
+        // Search through customers using signed HMAC tokens only
         $customers = Customer::query()->select('id', 'name', 'phone', 'pppoe_username')->get();
         $matchedId = null;
         $fallbackKey = 'rumahkitanet-portal-secret-salt';
@@ -2652,12 +2652,6 @@ class GenieAcsService
             // Fallback: HMAC with fallback salt
             $fallbackToken = substr(hash_hmac('sha256', "rk_portal_customer_{$c->id}", $fallbackKey), 0, 32);
             if (hash_equals($fallbackToken, $token)) {
-                $matchedId = $c->id;
-                break;
-            }
-
-            // Fallback: MD5 of customer id or name
-            if (md5("customer_{$c->id}") === $token || md5((string) $c->id) === $token) {
                 $matchedId = $c->id;
                 break;
             }

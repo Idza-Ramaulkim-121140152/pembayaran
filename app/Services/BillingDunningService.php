@@ -319,11 +319,7 @@ class BillingDunningService
     private function sendWhatsApp(string $phone, string $message): array
     {
         try {
-            $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
-            $response = Http::timeout(30)->post($gatewayUrl . '/send', [
-                'phone' => $phone,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send($phone, $message, null, 30);
 
             if ($response->successful()) {
                 $payload = $response->json();

@@ -21,7 +21,10 @@ class InventoryMovementSyncService
      */
     public function updateMovement(InventoryMovement $movement, array $payload, int $actorId): InventoryMovement
     {
-        $movement->loadMissing('pengeluaran');
+        $movement = InventoryMovement::query()
+            ->with('pengeluaran')
+            ->lockForUpdate()
+            ->findOrFail($movement->id);
 
         $old = [
             'inventory_item_id' => (int) $movement->inventory_item_id,
@@ -69,7 +72,10 @@ class InventoryMovementSyncService
 
     public function deleteMovement(InventoryMovement $movement, int $actorId): void
     {
-        $movement->loadMissing('pengeluaran');
+        $movement = InventoryMovement::query()
+            ->with('pengeluaran')
+            ->lockForUpdate()
+            ->findOrFail($movement->id);
 
         $this->assertProjectedStock(
             (int) $movement->inventory_item_id,
@@ -104,7 +110,17 @@ class InventoryMovementSyncService
             $affectedItemIds[] = $newItemId;
         }
 
-        foreach (array_unique($affectedItemIds) as $itemId) {
+        $uniqueItemIds = array_values(array_unique($affectedItemIds));
+        sort($uniqueItemIds);
+        if ($uniqueItemIds !== [] && Schema::hasTable('inventory_items')) {
+            \App\Models\InventoryItem::query()
+                ->whereIn('id', $uniqueItemIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id']);
+        }
+
+        foreach ($uniqueItemIds as $itemId) {
             $currentStock = (float) $this->inventoryService->getCurrentStock((int) $itemId);
             $projectedStock = $currentStock;
 

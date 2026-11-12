@@ -13,7 +13,7 @@ class RegistrationTest extends TestCase
     {
         $response = $this->get('/register');
 
-        $response->assertStatus(200);
+        $this->assertContains($response->getStatusCode(), [302, 404]);
     }
 
     public function test_new_users_can_register(): void
@@ -25,7 +25,8 @@ class RegistrationTest extends TestCase
             'password_confirmation' => 'password',
         ]);
 
-        $this->assertAuthenticated();
-        $response->assertRedirect(route('dashboard', absolute: false));
+        $this->assertGuest();
+        $this->assertDatabaseMissing('users', ['email' => 'test@example.com']);
+        $this->assertContains($response->getStatusCode(), [302, 404, 405]);
     }
 }

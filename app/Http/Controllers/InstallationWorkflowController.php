@@ -145,45 +145,56 @@ class InstallationWorkflowController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        $checklist->is_completed = (bool) $validated['is_completed'];
-        $checklist->completed_at = $checklist->is_completed ? now() : null;
-        $checklist->completed_by = $checklist->is_completed ? auth()->id() : null;
-        $checklist->save();
+        $autoCompletedOrder = null;
 
-        $this->workflowService->logEvent(
-            $checklist->workOrder,
-            'checklist_updated',
-            sprintf('Checklist %s diubah menjadi %s.', $checklist->label, $checklist->is_completed ? 'selesai' : 'belum selesai'),
-            auth()->id(),
-            ['notes' => $validated['notes'] ?? null, 'checklist_id' => $checklist->id]
-        );
+        DB::transaction(function () use ($checklist, $validated, &$autoCompletedOrder) {
+            $checklist->is_completed = (bool) $validated['is_completed'];
+            $checklist->completed_at = $checklist->is_completed ? now() : null;
+            $checklist->completed_by = $checklist->is_completed ? auth()->id() : null;
+            $checklist->save();
 
-        if (
-            $checklist->step_key === 'pppoe_activated'
-            && $checklist->is_completed
-            && $this->workflowService->canBeCompleted($checklist->workOrder)
-            && $checklist->workOrder->status !== 'completed'
-        ) {
-            $workOrder = $checklist->workOrder;
-            $workOrder->status = 'completed';
-            $workOrder->completed_at = now();
-            $workOrder->save();
+            $workOrder = InstallationWorkOrder::query()
+                ->lockForUpdate()
+                ->findOrFail($checklist->installation_work_order_id);
 
             $this->workflowService->logEvent(
                 $workOrder,
-                'auto_completed',
-                'Work order otomatis selesai setelah aktivasi PPPoE berhasil.',
-                auth()->id()
+                'checklist_updated',
+                sprintf('Checklist %s diubah menjadi %s.', $checklist->label, $checklist->is_completed ? 'selesai' : 'belum selesai'),
+                auth()->id(),
+                ['notes' => $validated['notes'] ?? null, 'checklist_id' => $checklist->id]
             );
 
-            $this->auditLogService->log('installation.work_order_auto_completed', $workOrder, [
+            if (
+                $checklist->step_key === 'pppoe_activated'
+                && $checklist->is_completed
+                && $workOrder->status !== 'completed'
+                && $this->workflowService->canBeCompleted($workOrder)
+            ) {
+                $workOrder->status = 'completed';
+                $workOrder->completed_at = now();
+                $workOrder->save();
+
+                $this->workflowService->logEvent(
+                    $workOrder,
+                    'auto_completed',
+                    'Work order otomatis selesai setelah aktivasi PPPoE berhasil.',
+                    auth()->id()
+                );
+
+                $autoCompletedOrder = $workOrder;
+            }
+        });
+
+        if ($autoCompletedOrder) {
+            $this->auditLogService->log('installation.work_order_auto_completed', $autoCompletedOrder, [
                 'trigger_step' => $checklist->step_key,
             ], auth()->id());
         }
 
         return response()->json([
             'message' => 'Checklist berhasil diperbarui.',
-            'data' => $checklist,
+            'data' => $checklist->fresh(),
         ]);
     }
 
@@ -199,17 +210,25 @@ class InstallationWorkflowController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        if (!$this->workflowService->canBeCompleted($workOrder)) {
-            return response()->json([
-                'message' => 'Checklist wajib belum lengkap. Work order tidak bisa ditutup.',
-            ], 422);
-        }
+        $completedOrder = DB::transaction(function () use ($workOrder, $validated) {
+            $lockedOrder = InstallationWorkOrder::query()
+                ->lockForUpdate()
+                ->findOrFail($workOrder->id);
 
-        DB::transaction(function () use ($workOrder, $validated) {
+            if ($lockedOrder->status === 'completed') {
+                return null;
+            }
+
+            if (!$this->workflowService->canBeCompleted($lockedOrder)) {
+                throw ValidationException::withMessages([
+                    'work_order' => ['Checklist wajib belum lengkap. Work order tidak bisa ditutup.'],
+                ]);
+            }
+
             $materials = $validated['materials'] ?? [];
             if (!empty($materials)) {
                 $movements = $this->inventoryService->recordInstallationOutgoingForWorkOrder(
-                    $workOrder,
+                    $lockedOrder,
                     $materials,
                     now()->toDateString(),
                     $validated['notes'] ?? null,
@@ -217,7 +236,7 @@ class InstallationWorkflowController extends Controller
                 );
 
                 $this->workflowService->logEvent(
-                    $workOrder,
+                    $lockedOrder,
                     'inventory_recorded',
                     'Material instalasi dicatat ke inventory.',
                     auth()->id(),
@@ -225,19 +244,28 @@ class InstallationWorkflowController extends Controller
                 );
             }
 
-            $workOrder->status = 'completed';
-            $workOrder->completed_at = now();
-            $workOrder->save();
+            $lockedOrder->status = 'completed';
+            $lockedOrder->completed_at = now();
+            $lockedOrder->save();
+
+            return $lockedOrder;
         });
 
-        $this->workflowService->logEvent($workOrder, 'completed', 'Work order diselesaikan.', auth()->id());
-        $this->auditLogService->log('installation.work_order_completed', $workOrder, [
+        if (!$completedOrder) {
+            return response()->json([
+                'message' => 'Work order ini sudah selesai sebelumnya.',
+                'data' => $workOrder->fresh(),
+            ], 422);
+        }
+
+        $this->workflowService->logEvent($completedOrder, 'completed', 'Work order diselesaikan.', auth()->id());
+        $this->auditLogService->log('installation.work_order_completed', $completedOrder, [
             'materials_count' => count($validated['materials'] ?? []),
         ], auth()->id());
 
         return response()->json([
             'message' => 'Work order berhasil ditutup.',
-            'data' => $workOrder,
+            'data' => $completedOrder,
         ]);
     }
 

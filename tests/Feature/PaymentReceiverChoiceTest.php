@@ -22,7 +22,7 @@ class PaymentReceiverChoiceTest extends TestCase
             'can_confirm_payments' => true,
             'can_choose_payment_receiver' => false,
         ]);
-        $requestedReceiver = User::factory()->create(['role' => User::ROLE_FINANCE]);
+        $requestedReceiver = User::factory()->create(['role' => User::ROLE_TEKNISI]);
         $invoice = $this->createInvoice(125000);
 
         $this->actingAs($actor)->postJson('/api/billing/invoice/' . $invoice->id . '/confirm', [
@@ -170,8 +170,9 @@ class PaymentReceiverChoiceTest extends TestCase
     public function test_payment_receivers_endpoint_requires_permission(): void
     {
         $denied = User::factory()->create([
-            'role' => User::ROLE_ADMIN,
+            'role' => User::ROLE_TEKNISI,
             'can_choose_payment_receiver' => false,
+            'can_edit_mutations' => false,
         ]);
         $allowed = User::factory()->create([
             'role' => User::ROLE_ADMIN,

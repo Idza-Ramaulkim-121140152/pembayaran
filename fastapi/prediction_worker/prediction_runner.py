@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import argparse
-import base64
 import json
 import math
 import os
-import pickle
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -220,23 +218,13 @@ def eval_model(model: Any, x: List[List[float]], y: List[float]) -> Dict[str, fl
     }
 
 
-def serialize_model(model: Any) -> str:
-    raw = pickle.dumps(model)
-    return base64.b64encode(raw).decode("utf-8")
-
-
-def deserialize_model(encoded: str) -> Any:
-    raw = base64.b64decode(encoded.encode("utf-8"))
-    return pickle.loads(raw)
-
-
 def save_model_bundle(path: str, model: Any, model_name: str, metrics: Dict[str, float]) -> Dict[str, Any]:
     payload = {
-        "model_version": f"{model_name}-hourly-v2.1",
+        "model_version": f"{model_name}-hourly-v2.2",
         "model_name": model_name,
         "trained_at": datetime.utcnow().isoformat() + "Z",
         "metrics": metrics,
-        "model_blob": serialize_model(model) if model is not None else None,
+        "serialization": "json-metadata",
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -561,23 +549,13 @@ def run_snapshot(payload: Dict[str, Any], model_path: str) -> Dict[str, Any]:
     x, y, timestamps = build_hourly_feature_matrix(rows)
 
     model_bundle = load_model_bundle(model_path)
-    model = None
-    model_version = "xgboost-hourly-v2.1"
-    metrics = {"smape": 0.0, "mape": 0.0, "mae": 0.0}
+    model_version = str((model_bundle or {}).get("model_version") or "xgboost-hourly-v2.2")
+    metrics = dict((model_bundle or {}).get("metrics") or {"smape": 0.0, "mape": 0.0, "mae": 0.0})
 
-    if model_bundle and model_bundle.get("model_blob"):
-        try:
-            model = deserialize_model(str(model_bundle["model_blob"]))
-            model_version = str(model_bundle.get("model_version", model_version))
-            metrics = dict(model_bundle.get("metrics") or metrics)
-        except Exception:
-            model = None
-
-    if model is None:
-        model, model_name = train_or_fallback(x, y)
-        metrics = eval_model(model, x, y)
-        stored = save_model_bundle(model_path, model, model_name, metrics)
-        model_version = str(stored.get("model_version", model_version))
+    model, model_name = train_or_fallback(x, y)
+    metrics = eval_model(model, x, y)
+    stored = save_model_bundle(model_path, model, model_name, metrics)
+    model_version = str(stored.get("model_version", model_version))
 
     if model is None:
         preds_for_residual = [max(0.0, row[0]) for row in x]

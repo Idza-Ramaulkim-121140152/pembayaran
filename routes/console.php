@@ -84,5 +84,10 @@ Schedule::command('finance:send-monthly-pnl')
     ->timezone('Asia/Jakarta')
     ->withoutOverlapping();
 
+Schedule::command('qris:reconcile-settlements')
+    ->everyFiveMinutes()
+    ->timezone('Asia/Jakarta')
+    ->withoutOverlapping();
+
 
 

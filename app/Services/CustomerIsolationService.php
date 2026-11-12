@@ -14,7 +14,10 @@ class CustomerIsolationService
         protected MikroTikService $mikrotikService,
         protected ?CustomerUsageSnapshotService $usageSnapshotService = null,
         protected ?AuditLogService $auditLogService = null
-    ) {}
+    ) {
+        $this->usageSnapshotService ??= app(CustomerUsageSnapshotService::class);
+        $this->auditLogService ??= app(AuditLogService::class);
+    }
 
     /**
      * Menentukan apakah pelanggan saat ini sedang dalam status isolir,
@@ -51,9 +54,6 @@ class CustomerIsolationService
 
         try {
             $currentDue = Carbon::parse((string) $customer->due_date)->startOfDay();
-            if ($currentDue->lt($confirmedAt->copy()->startOfDay())) {
-                return $confirmedAt->copy()->startOfDay()->addDays(30)->toDateString();
-            }
 
             return $currentDue->addDays(30)->toDateString();
         } catch (\Throwable $e) {
@@ -185,7 +185,7 @@ class CustomerIsolationService
         ?int $actorId = null
     ): array {
         $confirmedAt ??= now();
-        $username = trim((string) ($customer->pppoe_username ?: $customer->name));
+        $username = trim((string) ($customer->pppoe_username ?? ''));
 
         $secret = null;
         $availableProfiles = [];
@@ -228,8 +228,8 @@ class CustomerIsolationService
         $isolationRestoreFailed = false;
         $isolationRestoreError = null;
 
-        // Eksekusi buka isolir di MikroTik
-        if ($username !== '') {
+        // Eksekusi buka isolir di MikroTik hanya jika pelanggan memang sedang terisolir
+        if ($isCurrentlyIsolated && $username !== '') {
             try {
                 $this->mikrotikService->unrestrictUser($username, $targetProfile);
                 $isolationRestored = true;
@@ -251,23 +251,23 @@ class CustomerIsolationService
                 ]);
             }
         } elseif ($isCurrentlyIsolated) {
-            $isolationRestoreFailed = true;
-            $isolationRestoreError = 'Pelanggan tidak memiliki username PPPoE untuk dipulihkan di MikroTik.';
-            Log::warning('CustomerIsolationService: Pelanggan tidak memiliki PPPoE username', [
+            Log::warning('CustomerIsolationService: Pelanggan tidak memiliki PPPoE username saat pemulihan status lokal', [
                 'customer_id' => $customer->id,
                 'name' => $customer->name,
             ]);
         }
 
-        // Perbarui status database pelanggan
-        $customer->is_service_isolated = false;
-        $customer->service_isolated_at = null;
-        $customer->service_isolated_by = null;
-        $customer->isolation_restore_profile = null;
+        // Perbarui status isolir di DB hanya jika pencabutan berhasil (atau memang tidak sedang terisolir)
+        if (!$isolationRestoreFailed) {
+            $customer->is_service_isolated = false;
+            $customer->service_isolated_at = null;
+            $customer->service_isolated_by = null;
+            $customer->isolation_restore_profile = null;
 
-        // Pastikan mikrotik_profile di DB tidak lagi bernilai 'isolir'
-        if (empty($customer->mikrotik_profile) || strtolower((string) $customer->mikrotik_profile) === 'isolir') {
-            $customer->mikrotik_profile = $targetProfile;
+            // Pastikan mikrotik_profile di DB tidak lagi bernilai 'isolir'
+            if (empty($customer->mikrotik_profile) || strtolower((string) $customer->mikrotik_profile) === 'isolir') {
+                $customer->mikrotik_profile = $targetProfile;
+            }
         }
 
         $customer->save();
@@ -285,6 +285,9 @@ class CustomerIsolationService
         if ($mikrotikConnected) {
             try {
                 $this->mikrotikService->clearMikrotikCache();
+            } catch (\Throwable $e) {}
+
+            try {
                 $this->mikrotikService->disconnect();
             } catch (\Throwable $e) {}
         }

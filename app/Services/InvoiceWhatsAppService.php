@@ -44,12 +44,15 @@ class InvoiceWhatsAppService
         ], true);
 
         try {
-            $response = Http::connectTimeout(5)->timeout(15)->post($this->gatewayUrl() . '/send-media', [
-                'phone' => $phone,
-                'message' => $message,
-                'file_url' => $fileUrl,
-                'filename' => 'Invoice-' . $invoice->id . '.pdf',
-            ]);
+            $response = app(WhatsAppGatewayService::class)
+                ->client(15)
+                ->connectTimeout(5)
+                ->post(app(WhatsAppGatewayService::class)->url('/send-media'), [
+                    'phone' => $phone,
+                    'message' => $message,
+                    'file_url' => $fileUrl,
+                    'filename' => 'Invoice-' . $invoice->id . '.pdf',
+                ]);
 
             $payload = $response->json();
             $success = $response->successful()
@@ -146,11 +149,6 @@ class InvoiceWhatsAppService
             'error' => $error,
             'meta' => $meta,
         ];
-    }
-
-    private function gatewayUrl(): string
-    {
-        return rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
     }
 
     private function isValidPhone(?string $phone): bool

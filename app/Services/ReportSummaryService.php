@@ -168,7 +168,11 @@ class ReportSummaryService
             return FinancialTransaction::query()->whereRaw('1 = 0');
         }
 
-        return FinancialTransaction::query();
+        return FinancialTransaction::query()
+            ->when(
+                Schema::hasColumn('financial_transactions', 'status'),
+                fn ($query) => $query->where('status', FinancialTransaction::STATUS_CONFIRMED)
+            );
     }
 
     private function buildFinancialStatement(

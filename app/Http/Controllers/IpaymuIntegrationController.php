@@ -36,7 +36,7 @@ class IpaymuIntegrationController extends Controller
             'success' => true,
             'config' => [
                 'va' => $va,
-                'api_key' => $apiKey,
+                'has_api_key' => $apiKey !== '',
                 'masked_key' => $maskedKey,
                 'env' => $this->ipaymu->getEnv(),
                 'base_url' => $this->ipaymu->getBaseUrl(),
@@ -54,7 +54,6 @@ class IpaymuIntegrationController extends Controller
                 'merchant_balance' => $balanceResult['response']['Data']['MerchantBalance'] ?? 0,
                 'member_balance' => $balanceResult['response']['Data']['MemberBalance'] ?? 0,
                 'message' => $balanceResult['response']['Message'] ?? ($balanceResult['curl_error'] ?: 'Unknown response'),
-                'raw_debug' => $balanceResult,
             ],
         ]);
     }
@@ -86,7 +85,6 @@ class IpaymuIntegrationController extends Controller
                 'http_code' => $balanceResult['http_code'] ?? 0,
                 'merchant_balance' => $balanceResult['response']['Data']['MerchantBalance'] ?? 0,
                 'message' => $balanceResult['response']['Message'] ?? ($balanceResult['curl_error'] ?: 'Unknown response'),
-                'raw_debug' => $balanceResult,
             ],
         ]);
     }
@@ -210,12 +208,41 @@ class IpaymuIntegrationController extends Controller
      */
     public function handleNotify(Request $request)
     {
-        $payload = $request->all();
-        \Illuminate\Support\Facades\Log::info('iPaymu Webhook Notification Received:', $payload);
+        $apiKey = $this->ipaymu->getApiKey();
+        $va = $this->ipaymu->getVa();
+        if ($apiKey === '' || $va === '') {
+            return response()->json(['status' => 'unconfigured', 'message' => 'iPaymu belum dikonfigurasi.'], 503);
+        }
+
+        $providedSig = (string) ($request->header('signature') ?: $request->input('signature', ''));
+        $rawBody = (string) $request->getContent();
+        $bodyHash = strtolower(hash('sha256', $rawBody));
+        $expectedPostSig = hash_hmac('sha256', "POST:{$va}:{$bodyHash}:{$apiKey}", $apiKey);
+        $expectedGetLikeSig = hash_hmac('sha256', strtolower($va . ':' . ($request->input('trx_id', ''))), $apiKey);
+
+        $signatureValid = $providedSig !== '' && (
+            hash_equals($expectedPostSig, $providedSig)
+            || hash_equals($expectedGetLikeSig, $providedSig)
+        );
+
+        if (!$signatureValid) {
+            \Illuminate\Support\Facades\Log::warning('Rejected unverified iPaymu webhook notification.', [
+                'ip' => $request->ip(),
+                'trx_id' => $request->input('trx_id'),
+            ]);
+
+            return response()->json([
+                'status' => 'unauthorized',
+                'message' => 'Signature webhook iPaymu tidak valid.',
+            ], 403);
+        }
+
+        $payload = $request->only(['trx_id', 'sid', 'reference_id', 'status', 'status_code', 'amount', 'via', 'channel']);
+        \Illuminate\Support\Facades\Log::info('iPaymu verified webhook notification received.', $payload);
 
         return response()->json([
-            'status' => 'success',
-            'message' => 'Notification processed successfully',
+            'status' => 'acknowledged',
+            'message' => 'Verified notification logged; invoice auto-settlement via iPaymu callback is not active.',
         ]);
     }
 }

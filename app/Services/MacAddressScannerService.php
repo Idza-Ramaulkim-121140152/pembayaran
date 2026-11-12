@@ -30,7 +30,7 @@ class MacAddressScannerService
         ];
 
         // 1. Try OpenAI Vision if API key is configured
-        $apiKey = (string) (config('services.openai.api_key') ?: env('OPENAI_API_KEY', ''));
+        $apiKey = (string) config('services.openai.api_key', '');
         if ($apiKey !== '') {
             $visionResult = $this->analyzeWithOpenAiVision($file, $apiKey);
             if (!empty($visionResult['mac_address'])) {
@@ -123,7 +123,7 @@ PROMPT;
             $response = Http::timeout(30)
                 ->withToken($apiKey)
                 ->post('https://api.openai.com/v1/chat/completions', [
-                    'model' => env('OPENAI_VISION_MODEL', 'gpt-4.1-mini'),
+                    'model' => config('services.openai.vision_model', 'gpt-4.1-mini'),
                     'response_format' => ['type' => 'json_object'],
                     'messages' => [[
                         'role' => 'user',

@@ -55,6 +55,7 @@ class OltSnmpService
         protected OltTelnetService $telnetService,
         protected ?MikroTikService $mikrotikService = null
     ) {
+        $this->mikrotikService ??= app(MikroTikService::class);
     }
 
     /**
@@ -473,6 +474,76 @@ class OltSnmpService
     }
 
     /**
+     * Safely tokenize JavaScript `new Array(...)` arguments into PHP primitives without eval().
+     */
+    private function parseJsArrayLiteral(string $rawArgs): array
+    {
+        $items = [];
+        $len = strlen($rawArgs);
+        $i = 0;
+
+        while ($i < $len) {
+            while ($i < $len && (ctype_space($rawArgs[$i]) || $rawArgs[$i] === ',')) {
+                $i++;
+            }
+            if ($i >= $len) {
+                break;
+            }
+
+            $ch = $rawArgs[$i];
+            if ($ch === "'" || $ch === '"') {
+                $quote = $ch;
+                $i++;
+                $buf = '';
+                while ($i < $len) {
+                    $c = $rawArgs[$i];
+                    if ($c === '\\' && ($i + 1) < $len) {
+                        $next = $rawArgs[$i + 1];
+                        $buf .= match ($next) {
+                            'n' => "\n",
+                            'r' => "\r",
+                            't' => "\t",
+                            '\\' => '\\',
+                            "'" => "'",
+                            '"' => '"',
+                            default => $next,
+                        };
+                        $i += 2;
+                        continue;
+                    }
+                    if ($c === $quote) {
+                        $i++;
+                        break;
+                    }
+                    $buf .= $c;
+                    $i++;
+                }
+                $items[] = $buf;
+                continue;
+            }
+
+            $start = $i;
+            while ($i < $len && $rawArgs[$i] !== ',') {
+                $i++;
+            }
+            $token = trim(substr($rawArgs, $start, $i - $start));
+            if ($token === '' || strcasecmp($token, 'null') === 0 || strcasecmp($token, 'undefined') === 0) {
+                $items[] = null;
+            } elseif (strcasecmp($token, 'true') === 0) {
+                $items[] = true;
+            } elseif (strcasecmp($token, 'false') === 0) {
+                $items[] = false;
+            } elseif (is_numeric($token)) {
+                $items[] = str_contains($token, '.') ? (float) $token : (int) $token;
+            } else {
+                $items[] = $token;
+            }
+        }
+
+        return $items;
+    }
+
+    /**
      * Fetch 100% Real Live Telemetry, Ports, SFP TX Power, and ONUs from physical HiOSO OLT Web Server
      */
     public function fetchLiveHiosoData(MasterOlt|string $oltOrHost, int $port = 80, string $username = 'admin', string $password = 'admin', bool $includeOnus = true): array
@@ -512,16 +583,14 @@ class OltSnmpService
             if ($sysContent !== false) {
                 $result['reachable'] = true;
                 if (preg_match('/var\s+sysInfo\s*=\s*new\s+Array\((.*?)\);/s', $sysContent, $sm)) {
-                    $sysInfo = [];
-                    eval('$sysInfo = [' . $sm[1] . '];');
+                    $sysInfo = $this->parseJsArrayLiteral($sm[1]);
                     $result['sys_info'] = $sysInfo;
                     if (!empty($sysInfo[3])) {
                         $result['model'] = $sysInfo[3];
                     }
                 }
                 if (preg_match('/var\s+devInfo\s*=\s*new\s+Array\((.*?)\);/s', $sysContent, $dm)) {
-                    $devInfo = [];
-                    eval('$devInfo = [' . $dm[1] . '];');
+                    $devInfo = $this->parseJsArrayLiteral($dm[1]);
                     $result['dev_info'] = $devInfo;
                 }
             }
@@ -543,8 +612,7 @@ class OltSnmpService
             }
 
             if ($ponListContent !== false && preg_match('/var\s+ponListTable\s*=\s*new\s+Array\((.*?)\);/s', $ponListContent, $pm)) {
-                $arr = [];
-                eval('$arr = [' . $pm[1] . '];');
+                $arr = $this->parseJsArrayLiteral($pm[1]);
                 for ($i = 0; $i < count($arr); $i += 2) {
                     $ident = $arr[$i] ?? '';
                     $info = $arr[$i + 1] ?? '';
@@ -572,8 +640,7 @@ class OltSnmpService
                 $portUrl = "http://{$host}:{$port}/oltPonPortStatus.asp?oltponno=" . urlencode($portIdent);
                 $pContent = @file_get_contents($portUrl, false, $ctx);
                 if ($pContent !== false && preg_match('/var\s+ponPortStatus\s*=\s*new\s+Array\((.*?)\);/s', $pContent, $pom)) {
-                    $opm = [];
-                    eval('$opm = [' . $pom[1] . '];');
+                    $opm = $this->parseJsArrayLiteral($pom[1]);
 
                     $linkStatus = isset($opm[2]) ? (int)$opm[2] : 0;
                     $onlineCount = isset($opm[4]) ? (int)$opm[4] : 0;
@@ -604,8 +671,7 @@ class OltSnmpService
                     $portUrl = "http://{$host}:{$port}/oltPortConfig.asp?oltportno=" . urlencode($portKey);
                     $pContent = @file_get_contents($portUrl, false, $ctx);
                     if ($pContent !== false && preg_match('/var\s+oltPonOpmInfo\s*=\s*new\s+Array\((.*?)\);/s', $pContent, $om)) {
-                        $opm = [];
-                        eval('$opm = [' . $om[1] . '];');
+                        $opm = $this->parseJsArrayLiteral($om[1]);
                         $rawTemp = isset($opm[2]) && is_numeric($opm[2]) ? (float) $opm[2] : 0;
                         $rawVolt = isset($opm[3]) && is_numeric($opm[3]) ? (float) $opm[3] : 0;
                         $rawCurr = isset($opm[4]) && is_numeric($opm[4]) ? (float) $opm[4] : 0;
@@ -638,8 +704,7 @@ class OltSnmpService
                 $onusUrl = "http://{$host}:{$port}/onuAllPonOnuList.asp";
                 $onusContent = @file_get_contents($onusUrl, false, $ctx);
                 if ($onusContent !== false && preg_match('/var\s+onutable\s*=\s*new\s+Array\((.*?)\);/s', $onusContent, $om)) {
-                    $arr = [];
-                    eval('$arr = [' . $om[1] . '];');
+                    $arr = $this->parseJsArrayLiteral($om[1]);
                     
                     // Detect step: 22 (for 4P1GM / HA7304) or 18 (for HA7302)
                     $step = 18;
@@ -929,7 +994,7 @@ class OltSnmpService
      */
     public function fetchGenieAcsLookupDevices(): array
     {
-        $genieUrl = config('services.genieacs.url', env('GENIEACS_URL', 'http://10.1.0.5:7557'));
+        $genieUrl = config('services.genieacs.url', config('services.genieacs.api_url', 'http://10.1.0.5:7557'));
         $projections = [
             '_id',
             '_deviceId',
@@ -1740,50 +1805,29 @@ class OltSnmpService
             Log::info("OltTelnetService autoDiscover notice: " . $e->getMessage());
         }
 
-        // 4. HIOSO HARDWARE PORT INITIALIZATION
-        // HIOSO HA7302CST is a 2-port EPON OLT with physical ports 0/1/1 and 0/1/2
-        if ($report['detected_brand'] === 'HIOSO' || str_contains($report['detected_model'], 'HA7302') || empty($discoveredPorts)) {
-            $report['detected_brand'] = 'HIOSO';
-            $report['detected_model'] = $httpGui['model'] ?? 'HA7302CST';
-
-            $onu1Total = $httpGui['onu_counts'][1]['total'] ?? 76;
-            $onu1Online = $httpGui['onu_counts'][1]['online'] ?? 76;
-            $onu2Total = $httpGui['onu_counts'][2]['total'] ?? 66;
-            $onu2Online = $httpGui['onu_counts'][2]['online'] ?? 66;
-
-            $p1Tx = $httpGui['port_telemetry'][1]['tx_power_dbm'] ?? 10.06;
-            $p2Tx = $httpGui['port_telemetry'][2]['tx_power_dbm'] ?? 9.84;
-            $p1Temp = $httpGui['port_telemetry'][1]['temperature'] ?? 54.0;
-            $p2Temp = $httpGui['port_telemetry'][2]['temperature'] ?? 49.0;
-            $p1Volt = $httpGui['port_telemetry'][1]['voltage'] ?? 3.0;
-            $p2Volt = $httpGui['port_telemetry'][2]['voltage'] ?? 3.0;
-            $p1Curr = $httpGui['port_telemetry'][1]['current_ma'] ?? 11.0;
-            $p2Curr = $httpGui['port_telemetry'][2]['current_ma'] ?? 28.0;
-
-            $discoveredPorts[1] = [
-                'index' => 1,
-                'identifier' => '0/1/1',
-                'name' => 'PON 1 (Jalur Utama Sentral - Kalianda)',
-                'oper_status' => 'up',
-                'tx_power_dbm' => $p1Tx,
-                'temperature' => $p1Temp,
-                'voltage' => $p1Volt,
-                'current_ma' => $p1Curr,
-                'total_onus' => $onu1Total,
-                'online_onus' => $onu1Online,
-            ];
-            $discoveredPorts[2] = [
-                'index' => 2,
-                'identifier' => '0/1/2',
-                'name' => 'PON 2 (Jalur Timur - Palas / Way Panji)',
-                'oper_status' => 'up',
-                'tx_power_dbm' => $p2Tx,
-                'temperature' => $p2Temp,
-                'voltage' => $p2Volt,
-                'current_ma' => $p2Curr,
-                'total_onus' => $onu2Total,
-                'online_onus' => $onu2Online,
-            ];
+        // 4. HIOSO HARDWARE PORT MERGE (only when device actually responded and identified as HIOSO/HA7302)
+        if ($report['is_reachable'] && ($report['detected_brand'] === 'HIOSO' || str_contains((string) $report['detected_model'], 'HA7302')) && empty($discoveredPorts)) {
+            $portIndexes = array_unique(array_merge(
+                array_keys($httpGui['port_telemetry'] ?? []),
+                array_keys($httpGui['onu_counts'] ?? [])
+            ));
+            if ($portIndexes !== []) {
+                foreach ($portIndexes as $pIdx) {
+                    $pIdx = (int) $pIdx;
+                    $discoveredPorts[$pIdx] = [
+                        'index' => $pIdx,
+                        'identifier' => '0/1/' . $pIdx,
+                        'name' => 'PON ' . $pIdx,
+                        'oper_status' => 'up',
+                        'tx_power_dbm' => $httpGui['port_telemetry'][$pIdx]['tx_power_dbm'] ?? null,
+                        'temperature' => $httpGui['port_telemetry'][$pIdx]['temperature'] ?? null,
+                        'voltage' => $httpGui['port_telemetry'][$pIdx]['voltage'] ?? null,
+                        'current_ma' => $httpGui['port_telemetry'][$pIdx]['current_ma'] ?? null,
+                        'total_onus' => $httpGui['onu_counts'][$pIdx]['total'] ?? 0,
+                        'online_onus' => $httpGui['onu_counts'][$pIdx]['online'] ?? 0,
+                    ];
+                }
+            }
 
             if (!empty($httpGui['onus'])) {
                 $discoveredOnus = $httpGui['onus'];

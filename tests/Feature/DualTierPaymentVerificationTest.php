@@ -27,7 +27,10 @@ class DualTierPaymentVerificationTest extends TestCase
     {
         parent::setUp();
 
-        config(['services.openai.api_key' => 'test-key']);
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.wa_payment_webhook.secret' => 'test-dual-secret',
+        ]);
         putenv('WA_PAYMENT_WEBHOOK_SECRET=test-dual-secret');
         $_ENV['WA_PAYMENT_WEBHOOK_SECRET'] = 'test-dual-secret';
         $_SERVER['WA_PAYMENT_WEBHOOK_SECRET'] = 'test-dual-secret';

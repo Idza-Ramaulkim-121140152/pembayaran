@@ -70,6 +70,12 @@ class AutoConfirmationHistoryTest extends TestCase
             'fingerprint' => 'test-fp-001',
             'match_status' => 'pending',
             'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
                 'analysis' => [
                     'amount' => 200000,
                     'paid_date' => '2026-10-10',
@@ -96,7 +102,7 @@ class AutoConfirmationHistoryTest extends TestCase
 
         // Invoice checks
         $this->assertSame('paid', $invoice->status);
-        $this->assertSame('2026-10-10 14:22:15', Carbon::parse($invoice->paid_at)->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-10 14:22:15', Carbon::parse($invoice->paid_at)->setTimezone('Asia/Jakarta')->format('Y-m-d H:i:s'));
         $this->assertSame($this->financeUser->id, $invoice->payment_receiver_user_id);
         $this->assertTrue((bool) $invoice->include_in_mutation);
         $this->assertSame('REF-8080-TEST', $invoice->qris_transaction_number);
@@ -143,6 +149,12 @@ class AutoConfirmationHistoryTest extends TestCase
             'fingerprint' => 'test-fp-isolir',
             'match_status' => 'pending',
             'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
                 'analysis' => [
                     'amount' => 150000,
                     'paid_date' => '2026-10-12',
@@ -194,6 +206,12 @@ class AutoConfirmationHistoryTest extends TestCase
             'fingerprint' => 'test-fp-rollback',
             'match_status' => 'pending',
             'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
                 'analysis' => [
                     'amount' => 250000,
                     'paid_date' => '2026-10-08',
@@ -349,6 +367,12 @@ class AutoConfirmationHistoryTest extends TestCase
             'fingerprint' => 'test-fp-web-public-anwar',
             'match_status' => 'pending',
             'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
                 'analysis' => [
                     'amount' => 200000,
                     'paid_date' => '2026-10-12',
@@ -427,6 +451,12 @@ class AutoConfirmationHistoryTest extends TestCase
             'match_status' => 'pending',
             'meta' => [
                 'sender_phone' => '081344445555',
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
                 'analysis' => [
                     'amount' => 150000,
                     'paid_date' => '2026-10-12',

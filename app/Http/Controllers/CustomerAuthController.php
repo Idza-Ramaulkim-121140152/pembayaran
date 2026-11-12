@@ -77,7 +77,8 @@ class CustomerAuthController extends Controller
             ], 401);
         }
 
-        // Simpan session pelanggan
+        // Regenerasi session ID untuk mencegah session fixation lalu simpan session pelanggan
+        $request->session()->regenerate();
         Session::put('customer_id', $customer->id);
         Session::put('customer_logged_in', true);
 
@@ -251,10 +252,6 @@ class CustomerAuthController extends Controller
 
         if (in_array(strtolower((string) $invoice->status), ['paid', 'cancelled'], true)) {
             return response()->json(['success' => false, 'message' => 'Invoice tidak dapat dikonfirmasi.'], 422);
-        }
-
-        if (!empty($validated['paid_amount'])) {
-            $invoice->amount = $validated['paid_amount'];
         }
 
         if ($request->hasFile('bukti_pembayaran')) {

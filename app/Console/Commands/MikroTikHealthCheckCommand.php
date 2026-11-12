@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\MasterMikrotik;
 use App\Models\NotificationLog;
 use App\Services\MikroTikService;
+use App\Services\WhatsAppGatewayService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
@@ -108,11 +109,7 @@ class MikroTikHealthCheckCommand extends Command
             ->all();
 
         try {
-            $response = Http::timeout(60)->post(rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/') . '/send-bulk', [
-                'recipients' => $payloadRecipients,
-                'message' => $message,
-                'delay' => 1000,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->sendBulk($payloadRecipients, $message, 1000, 60);
 
             $gateway = $response->json();
             $results = is_array($gateway['results'] ?? null) ? $gateway['results'] : [];

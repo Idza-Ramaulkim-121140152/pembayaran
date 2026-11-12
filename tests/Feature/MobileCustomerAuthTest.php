@@ -24,7 +24,7 @@ class MobileCustomerAuthTest extends TestCase
 
         $response = $this->postJson('/api/mobile/customer/auth/login', [
             'pppoe_username' => 'MOBILE-USER-01',
-            'password' => '12345678',
+            'password' => 'user123',
             'device_name' => 'Unit Test Device',
         ]);
 
@@ -83,13 +83,13 @@ class MobileCustomerAuthTest extends TestCase
 
         $loginResponse = $this->postJson('/api/mobile/customer/auth/login', [
             'pppoe_username' => 'MOBILE-FLOW-01',
-            'password' => '12345678',
+            'password' => 'user123',
         ])->assertOk();
 
         $token = (string) $loginResponse->json('access_token');
 
         $this->postJson('/api/mobile/customer/auth/change-password', [
-            'current_password' => '12345678',
+            'current_password' => 'user123',
             'new_password' => 'baru12345',
             'new_password_confirmation' => 'baru12345',
         ], [
@@ -168,13 +168,13 @@ class MobileCustomerAuthTest extends TestCase
             'data' => [
                 'customer_id' => $customer->id,
                 'must_change_password' => true,
-                'default_password' => '12345678',
+                'default_password' => 'user123',
             ],
         ]);
 
         $customer->refresh();
 
-        $this->assertTrue(Hash::check('12345678', (string) $customer->mobile_password));
+        $this->assertTrue(Hash::check('user123', (string) $customer->mobile_password));
         $this->assertTrue((bool) $customer->mobile_force_password_change);
     }
 
@@ -189,6 +189,11 @@ class MobileCustomerAuthTest extends TestCase
 
         $this->postJson('/api/customer/login', [
             'identifier' => 'LEGACY-USER-01',
+        ])->assertStatus(422);
+
+        $this->postJson('/api/customer/login', [
+            'identifier' => 'LEGACY-USER-01',
+            'password' => 'user123',
         ])->assertOk()->assertJson([
             'success' => true,
             'message' => 'Login berhasil',

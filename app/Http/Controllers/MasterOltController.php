@@ -111,6 +111,8 @@ class MasterOltController extends Controller
             'password' => 'nullable|string|max:100',
             'snmp_port' => 'nullable|integer|min:1|max:65535',
             'telnet_port' => 'nullable|integer|min:1|max:65535',
+            'ssh_port' => 'nullable|integer|min:1|max:65535',
+            'http_port' => 'nullable|integer|min:1|max:65535',
             'snmp_community' => 'nullable|string|max:100',
             'snmp_version' => 'nullable|string|in:1,2c,3',
             'name' => 'nullable|string|max:150',
@@ -150,34 +152,34 @@ class MasterOltController extends Controller
             'total_pon_ports' => $validated['total_pon_ports'] ?? 2,
             'is_active' => $isActive,
             'simulation_mode' => false,
-            'latitude' => $validated['latitude'] ?? -5.63272765,
-            'longitude' => $validated['longitude'] ?? 105.54801464,
-            'location_address' => $validated['location_address'] ?? 'Sentral NOC Server Room, Kalianda',
+            'latitude' => $validated['latitude'] ?? null,
+            'longitude' => $validated['longitude'] ?? null,
+            'location_address' => $validated['location_address'] ?? null,
             'description' => $validated['description'] ?? null,
-            'last_status' => 'online',
-            'last_checked_at' => now(),
+            'last_status' => 'offline',
+            'last_checked_at' => null,
         ]);
 
         // Auto-discover directly from physical OLT
         $discovery = $this->oltSnmpService->autoDiscoverOltDevice($olt);
 
-        // If device was unreachable and no ports exist yet, create initial placeholder ports
+        // If device was unreachable and no ports exist yet, create structural port placeholders without fabricated optical metrics
         if ($olt->ponPorts()->count() === 0) {
-            $fallbackPorts = max(1, (int) ($olt->total_pon_ports ?: 4));
+            $fallbackPorts = max(1, (int) ($olt->total_pon_ports ?: 2));
             for ($i = 1; $i <= $fallbackPorts; $i++) {
                 OltPonPort::create([
                     'olt_id' => $olt->id,
                     'pon_index' => $i,
-                    'pon_identifier' => 'epon0/' . $i,
+                    'pon_identifier' => 'pon0/' . $i,
                     'name' => 'PON ' . $i,
                     'admin_status' => 'up',
-                    'oper_status' => 'up',
-                    'tx_power_dbm' => 4.80,
-                    'temperature' => 41.5,
-                    'voltage' => 3.30,
-                    'current_ma' => 14.8,
+                    'oper_status' => 'unknown',
+                    'tx_power_dbm' => null,
+                    'temperature' => null,
+                    'voltage' => null,
+                    'current_ma' => null,
                     'max_onu_capacity' => 64,
-                    'description' => 'Port SFP Optical Modul',
+                    'description' => 'Port SFP Optical Modul (Menunggu Sinkronisasi)',
                 ]);
             }
         }
@@ -223,6 +225,8 @@ class MasterOltController extends Controller
             'password' => 'nullable|string|max:100',
             'snmp_port' => 'nullable|integer|min:1|max:65535',
             'telnet_port' => 'nullable|integer|min:1|max:65535',
+            'ssh_port' => 'nullable|integer|min:1|max:65535',
+            'http_port' => 'nullable|integer|min:1|max:65535',
             'snmp_community' => 'nullable|string|max:100',
             'snmp_version' => 'nullable|string|in:1,2c,3',
             'name' => 'nullable|string|max:150',

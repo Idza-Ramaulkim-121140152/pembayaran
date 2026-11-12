@@ -556,11 +556,7 @@ class BillingAutoInvoiceService
     private function sendSingleMessage(Customer $customer, string $message): array
     {
         try {
-            $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://localhost:3001'), '/');
-            $response = Http::timeout(30)->post($gatewayUrl . '/send', [
-                'phone' => (string) $customer->phone,
-                'message' => $message,
-            ]);
+            $response = app(WhatsAppGatewayService::class)->send((string) $customer->phone, $message, null, 30);
 
             $payload = $response->json();
             if ((bool) ($payload['success'] ?? false) === true || $response->successful()) {

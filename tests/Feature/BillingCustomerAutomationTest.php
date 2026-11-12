@@ -150,7 +150,14 @@ class BillingCustomerAutomationTest extends TestCase
             'reference_code' => 'ref-match-skip',
             'fingerprint' => 'fp-match-skip-001',
             'match_status' => 'pending',
-            'meta' => [],
+            'meta' => [
+                'validation' => [
+                    'flags' => [
+                        'success_status' => true,
+                        'is_payment_proof' => true,
+                    ],
+                ],
+            ],
         ]);
 
         $this->actingAs($superadmin)

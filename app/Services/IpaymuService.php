@@ -13,9 +13,9 @@ class IpaymuService
 
     public function __construct()
     {
-        $this->va = SiteSetting::get('ipaymu_va', env('IPAYMU_VA', '1179002377569258'));
-        $this->apiKey = SiteSetting::get('ipaymu_api_key', env('IPAYMU_API_KEY', '6670407D-18BA-4683-A5A8-E7EDEA2C66C7'));
-        $this->env = SiteSetting::get('ipaymu_env', env('IPAYMU_ENV', 'production'));
+        $this->va = trim((string) SiteSetting::get('ipaymu_va', config('services.ipaymu.va', '')));
+        $this->apiKey = trim((string) SiteSetting::get('ipaymu_api_key', config('services.ipaymu.api_key', '')));
+        $this->env = trim((string) SiteSetting::get('ipaymu_env', config('services.ipaymu.env', 'production')));
     }
 
     public function getVa(): string

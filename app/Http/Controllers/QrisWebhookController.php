@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Invoice;
+use App\Models\QrisSettlement;
 use App\Models\QrisWebhookLog;
 use App\Models\SiteSetting;
 use App\Services\DynamicQrisService;
+use App\Services\QrisSettlementReconciliationService;
 use App\Services\QrisWebhookService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,8 +17,11 @@ class QrisWebhookController extends Controller
 {
     public function __construct(
         protected QrisWebhookService $webhookService,
-        protected DynamicQrisService $dynamicQrisService
-    ) {}
+        protected DynamicQrisService $dynamicQrisService,
+        protected ?QrisSettlementReconciliationService $reconciliationService = null
+    ) {
+        $this->reconciliationService = $reconciliationService ?? app(QrisSettlementReconciliationService::class);
+    }
 
     /**
      * Endpoint Webhook penerima notifikasi GoBiz / e-wallet dari MacroDroid (HP Android).
@@ -25,12 +30,11 @@ class QrisWebhookController extends Controller
     public function webhook(Request $request): JsonResponse
     {
         try {
-            // Tangkap secret token dari berbagai variasi header / parameter
+            // Tangkap secret token dari header HTTP resmi
             $secret = $request->header('X-QRIS-SECRET')
                 ?: $request->header('X-Webhook-Secret')
                 ?: $request->header('Authorization')
-                ?: $request->input('secret')
-                ?: $request->query('secret');
+                ?: $request->input('secret');
 
             // Bersihkan prefix 'Bearer ' jika dikirim via Authorization header
             if ($secret && str_starts_with(strtolower($secret), 'bearer ')) {
@@ -146,12 +150,24 @@ class QrisWebhookController extends Controller
     }
 
     /**
+     * Endpoint status publik minimal (tanpa membocorkan secret atau log transaksi).
+     * GET /api/qris/status
+     */
+    public function publicStatus(): JsonResponse
+    {
+        return response()->json([
+            'status' => 'active',
+            'configured' => $this->dynamicQrisService->isConfigured(),
+        ]);
+    }
+
+    /**
      * Mengambil status sistem Dynamic QRIS, URL Webhook, Secret, dan riwayat log untuk Admin Console.
      * GET /api/settings/qris
      */
     public function getSettings(): JsonResponse
     {
-        $webhookSecret = SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'rknet-secret-qris-key');
+        $webhookSecret = (string) SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, '');
         $staticPayload = $this->dynamicQrisService->getStaticPayload();
         $codeMin = (int) SiteSetting::get(DynamicQrisService::SETTING_UNIQUE_CODE_MIN, 101);
         $codeMax = (int) SiteSetting::get(DynamicQrisService::SETTING_UNIQUE_CODE_MAX, 499);
@@ -238,7 +254,7 @@ class QrisWebhookController extends Controller
         $parsed = $this->webhookService->parseNotificationText($request->input('text'), $request->input('title'));
 
         $matchingInvoice = null;
-        if ($parsed['amount']) {
+        if ($parsed['amount'] && empty($parsed['is_non_incoming_event'])) {
             $matchingInvoice = Invoice::query()
                 ->where('status', '!=', 'paid')
                 ->where(function ($q) use ($parsed) {
@@ -260,5 +276,139 @@ class QrisWebhookController extends Controller
                 'qris_expected_amount' => $matchingInvoice->qris_expected_amount,
             ] : null,
         ]);
+    }
+
+    /**
+     * Data ringkasan, konfigurasi, dan riwayat rekonsiliasi pencairan QRIS GoPay Merchant.
+     * GET /api/settings/qris/reconciliation
+     */
+    public function getReconciliation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'cycle_date' => 'nullable|date',
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->reconciliationService->dashboardPayload($validated['cycle_date'] ?? null),
+        ]);
+    }
+
+    /**
+     * Simpan konfigurasi rekonsiliasi QRIS (cut-off 21:00, jam cek, MDR, biaya, toleransi, penerima WA).
+     * POST /api/settings/qris/reconciliation/config
+     */
+    public function updateReconciliationConfig(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'enabled' => 'nullable|boolean',
+            'cutoff_time' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d$/'],
+            'check_time' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d$/'],
+            'grace_minutes' => 'nullable|integer|min:0|max:180',
+            'mdr_percent' => 'nullable|numeric|min:0|max:10',
+            'payout_fee' => 'nullable|numeric|min:0|max:100000',
+            'tolerance_amount' => 'nullable|numeric|min:0|max:100000',
+            'include_owner_recipients' => 'nullable|boolean',
+            'alert_recipients_raw' => 'nullable|string|max:2000',
+        ]);
+
+        $config = $this->reconciliationService->updateConfig($validated);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Konfigurasi rekonsiliasi pencairan QRIS berhasil disimpan.',
+            'data' => $config,
+        ]);
+    }
+
+    /**
+     * Jalankan rekonsiliasi manual untuk siklus tanggal tertentu dan opsional kirim alert WA jika selisih.
+     * POST /api/settings/qris/reconciliation/run
+     */
+    public function runReconciliation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'cycle_date' => 'nullable|date',
+            'send_alert' => 'nullable|boolean',
+            'force_alert' => 'nullable|boolean',
+        ]);
+
+        $cycleDate = $validated['cycle_date'] ?? now(QrisSettlementReconciliationService::TZ)->toDateString();
+        $sendAlert = (bool) ($validated['send_alert'] ?? true);
+        $forceAlert = (bool) ($validated['force_alert'] ?? false);
+
+        $record = $this->reconciliationService->reconcileCycle(
+            $cycleDate,
+            sendAlertOnMismatch: false,
+            forceAlert: false,
+            treatOngoingAsFinal: true,
+            dryRun: false
+        );
+
+        $alertResult = null;
+        if ($sendAlert && $record->status === 'mismatch') {
+            $alertResult = $this->reconciliationService->dispatchMismatchAlert($record, $forceAlert);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Rekonsiliasi QRIS berhasil dijalankan.',
+            'data' => $record->fresh(),
+            'alert_result' => $alertResult,
+        ]);
+    }
+
+    /**
+     * Catat pencairan dana GoPay secara manual jika notifikasi Android terlewat.
+     * POST /api/settings/qris/reconciliation/settlements
+     */
+    public function storeManualSettlement(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1',
+            'settled_at' => 'nullable|date',
+            'cycle_date' => 'nullable|date',
+            'settlement_type' => 'nullable|in:manual,auto',
+            'reference_code' => 'nullable|string|max:120',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        $result = $this->reconciliationService->recordManualSettlement($validated, $request->user()?->id);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Pencairan QRIS manual berhasil dicatat dan direkonsiliasi.',
+            'data' => $result,
+        ]);
+    }
+
+    /**
+     * Hapus entri pencairan GoPay yang keliru dan hitung ulang rekonsiliasi siklus terkait.
+     * DELETE /api/settings/qris/reconciliation/settlements/{settlement}
+     */
+    public function deleteSettlement(QrisSettlement $settlement): JsonResponse
+    {
+        $reconciliation = $this->reconciliationService->deleteSettlement($settlement);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Catatan pencairan QRIS dihapus dan rekonsiliasi dihitung ulang.',
+            'data' => $reconciliation,
+        ]);
+    }
+
+    /**
+     * Kirim pesan WhatsApp uji coba peringatan ketidakcocokan QRIS.
+     * POST /api/settings/qris/reconciliation/test-alert
+     */
+    public function testReconciliationAlert(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'phone' => 'nullable|string|max:40',
+        ]);
+
+        $result = $this->reconciliationService->sendTestAlert($validated['phone'] ?? null);
+
+        return response()->json($result, $result['success'] ? 200 : 422);
     }
 }

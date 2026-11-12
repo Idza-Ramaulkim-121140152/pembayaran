@@ -330,17 +330,11 @@ class GenieAcsMonitoringController extends Controller
         $fallbackWaUrl = "https://wa.me/{$cleanPhone}?text=" . rawurlencode($message);
 
         // Attempt sending via internal WhatsApp Gateway (same pattern as BillingController / PaymentCapture)
-        $gatewayUrl = rtrim((string) env('WA_GATEWAY_URL', 'http://127.0.0.1:3001'), '/');
-        
         try {
-            $response = \Illuminate\Support\Facades\Http::timeout(30)->post($gatewayUrl . '/send-bulk', [
-                'recipients' => [[
-                    'phone' => $cleanPhone,
-                    'name' => $customerName,
-                ]],
-                'message' => $message,
-                'delay' => 0,
-            ]);
+            $response = app(\App\Services\WhatsAppGatewayService::class)->sendBulk([[
+                'phone' => $cleanPhone,
+                'name' => $customerName,
+            ]], $message, 0, 30);
 
             $payload = $response->json();
             $results = is_array($payload['results'] ?? null) ? $payload['results'] : [];

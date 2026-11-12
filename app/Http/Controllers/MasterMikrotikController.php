@@ -141,9 +141,7 @@ class MasterMikrotikController extends Controller
                 $updatePayload['password_encrypted'] = $validated['password'];
             }
 
-            MasterMikrotik::query()
-                ->whereKey($masterMikrotik->id)
-                ->update($updatePayload);
+            $masterMikrotik->update($updatePayload);
 
             DB::commit();
 
