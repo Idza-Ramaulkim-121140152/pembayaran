@@ -59,16 +59,14 @@ const SystemActivityLogsPage = lazy(() => import('./pages/Settings/SystemActivit
 const PaymentVerificationPage = lazy(() => import('./pages/Settings/PaymentVerificationPage'));
 const AutoConfirmationHistoryPage = lazy(() => import('./pages/Settings/AutoConfirmationHistoryPage'));
 const NetworkStatusPage = lazy(() => import('./pages/NetworkStatusPage'));
-const Monitoring = lazy(() => import('./pages/Monitoring'));
+const MonitoringHubPage = lazy(() => import('./pages/MonitoringHubPage'));
 const SuperPanelPage = lazy(() => import('./pages/SuperPanel/SuperPanelPage'));
-const MonitoringGenieAcsPage = lazy(() => import('./pages/MonitoringGenieAcsPage'));
 const RemoteOntPage = lazy(() => import('./pages/RemoteOnt/RemoteOntPage'));
 const OdpPortScannerPage = lazy(() => import('./pages/Odp/OdpPortScannerPage'));
 const CustomerPublicPortalPage = lazy(() => import('./pages/CustomerPublicPortalPage'));
 const CustomerIsolirPortalPage = lazy(() => import('./pages/Portal/CustomerIsolirPortalPage'));
 const MassOutagePage = lazy(() => import('./pages/Portal/MassOutagePage'));
 const IsolirPage = lazy(() => import('./pages/Isolir/IsolirPage'));
-const MonitoringMaps = lazy(() => import('./pages/MonitoringMaps'));
 const PayrollPage = lazy(() => import('./pages/Payroll/PayrollPage'));
 const MutasiPage = lazy(() => import('./pages/Finance/MutasiPage'));
 const CashObligationCalendarPage = lazy(() => import('./pages/Finance/CashObligationCalendarPage'));
@@ -507,9 +505,9 @@ function App() {
                     
                     {/* Monitoring */}
                     <Route path="/super-panel" element={<GuardedRoute permissionKey="monitoring.view" element={<SuperPanelPage />} />} />
-                    <Route path="/monitoring" element={<GuardedRoute permissionKey="monitoring.view" element={<Monitoring />} />} />
-                    <Route path="/monitoring-maps" element={<GuardedRoute permissionKey="monitoring.maps.view" element={<MonitoringMaps />} />} />
-                    <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringGenieAcsPage />} />} />
+                    <Route path="/monitoring" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringHubPage defaultTab="mikrotik" />} />} />
+                    <Route path="/monitoring-maps" element={<GuardedRoute permissionKey="monitoring.maps.view" element={<MonitoringHubPage defaultTab="maps" />} />} />
+                    <Route path="/monitoring-genieacs" element={<GuardedRoute permissionKey="monitoring.view" element={<MonitoringHubPage defaultTab="genieacs" />} />} />
                     <Route path="/remote-ont" element={<GuardedRoute permissionKey="monitoring.view" element={<RemoteOntPage />} />} />
                     
                     {/* Isolir (Admin) */}
