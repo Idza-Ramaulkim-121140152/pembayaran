@@ -699,4 +699,54 @@ class DynamicQrisPaymentTest extends TestCase
         ]);
         $this->assertSame('unpaid', $invoice->fresh()->status);
     }
+
+    public function test_webhook_uses_default_secret_fallback_and_query_param_when_unset(): void
+    {
+        SiteSetting::where('key', DynamicQrisService::SETTING_WEBHOOK_SECRET)->delete();
+
+        $package = Package::create([
+            'name' => 'Paket 1K',
+            'price' => 1000,
+            'speed' => '5M',
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Pelanggan Default Secret',
+            'phone' => '085158025559',
+            'package_id' => $package->id,
+            'status' => 'active',
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'inv_test_default_secret',
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->addDays(7)->toDateString(),
+            'amount' => 1000,
+            'qris_unique_code' => 188,
+            'qris_expected_amount' => 1188,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+        ]);
+
+        // Request tanpa secret tetap ditolak 401
+        $this->postJson('/api/qris/webhook', [
+            'text' => 'Pembayaran QRIS Rp1.188 berhasil diterima',
+        ])->assertStatus(401);
+
+        // Request menggunakan default secret 'rknet-secret-qris-key' via query ?secret= berhasil melunasi kode unik
+        $res = $this->postJson('/api/qris/webhook?secret=rknet-secret-qris-key', [
+            'title' => 'GoPay Merchant',
+            'text' => 'Pembayaran QRIS sebesar Rp1.188 berhasil diterima. Ref: DEFAULT-SEC-01',
+            'device_name' => 'HP-MacroDroid',
+        ]);
+
+        $res->assertStatus(200)->assertJson([
+            'status' => 'settled',
+            'invoice_id' => $invoice->id,
+            'amount' => 1188,
+        ]);
+
+        $this->assertSame('paid', $invoice->fresh()->status);
+    }
 }

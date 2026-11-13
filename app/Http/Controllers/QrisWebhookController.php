@@ -30,11 +30,12 @@ class QrisWebhookController extends Controller
     public function webhook(Request $request): JsonResponse
     {
         try {
-            // Tangkap secret token dari header HTTP resmi
+            // Tangkap secret token dari header HTTP resmi / parameter fallback
             $secret = $request->header('X-QRIS-SECRET')
                 ?: $request->header('X-Webhook-Secret')
                 ?: $request->header('Authorization')
-                ?: $request->input('secret');
+                ?: $request->input('secret')
+                ?: $request->query('secret');
 
             // Bersihkan prefix 'Bearer ' jika dikirim via Authorization header
             if ($secret && str_starts_with(strtolower($secret), 'bearer ')) {
@@ -167,7 +168,10 @@ class QrisWebhookController extends Controller
      */
     public function getSettings(): JsonResponse
     {
-        $webhookSecret = (string) SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, '');
+        $webhookSecret = trim((string) SiteSetting::get(DynamicQrisService::SETTING_WEBHOOK_SECRET, 'rknet-secret-qris-key'));
+        if ($webhookSecret === '') {
+            $webhookSecret = 'rknet-secret-qris-key';
+        }
         $staticPayload = $this->dynamicQrisService->getStaticPayload();
         $codeMin = (int) SiteSetting::get(DynamicQrisService::SETTING_UNIQUE_CODE_MIN, 101);
         $codeMax = (int) SiteSetting::get(DynamicQrisService::SETTING_UNIQUE_CODE_MAX, 499);
