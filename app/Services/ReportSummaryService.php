@@ -267,18 +267,10 @@ class ReportSummaryService
 
     private function cashBalanceBefore(CarbonImmutable $start): float
     {
-        $transactions = $this->financialTransactions()
+        return (float) ($this->financialTransactions()
             ->whereDate('transaction_date', '<', $start->toDateString())
-            ->get(['type', 'amount']);
-
-        return (float) $transactions->sum(function (FinancialTransaction $transaction) {
-            return match ($transaction->type) {
-                'income' => (float) $transaction->amount,
-                'expense' => -1 * (float) $transaction->amount,
-                'adjustment' => (float) $transaction->amount,
-                default => 0.0,
-            };
-        });
+            ->selectRaw("COALESCE(SUM(CASE WHEN type = 'income' THEN amount WHEN type = 'expense' THEN -amount WHEN type = 'adjustment' THEN amount ELSE 0 END), 0) as total_balance")
+            ->value('total_balance') ?? 0);
     }
 
     private function inventoryValueAsOf(CarbonImmutable $end): float

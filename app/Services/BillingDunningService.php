@@ -345,8 +345,11 @@ class BillingDunningService
 
     private function isWithinSendWindow(Carbon $now, string $configuredTime): bool
     {
-        $configured = Carbon::parse($configuredTime, $now->getTimezone())->format('H:i');
-        return $now->format('H:i') === $configured;
+        $configured = Carbon::parse($configuredTime, $now->getTimezone())
+            ->setDate($now->year, $now->month, $now->day);
+        $diffMinutes = $configured->diffInMinutes($now, false);
+
+        return $diffMinutes >= 0 && $diffMinutes <= 20;
     }
 
     private function defaultConfigAttributes(): array

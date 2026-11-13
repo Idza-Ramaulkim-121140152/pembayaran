@@ -37,7 +37,7 @@ class PaymentProofValidationService
         if ($refCode !== '' && strlen($refCode) >= 4) {
             $isDuplicateCapture = BillingPaymentCapture::query()
                 ->where('id', '!=', $capture->id)
-                ->where('match_status', 'approved')
+                ->whereIn('match_status', ['approved', 'needs_review', 'pending'])
                 ->whereRaw('LOWER(reference_code) = ?', [strtolower($refCode)])
                 ->exists();
 
@@ -59,7 +59,10 @@ class PaymentProofValidationService
                                 ->orWhereNull('reference_type');
                         }
                     })
-                    ->where('meta->qris_transaction_number', $refCode)
+                    ->where(function ($query) use ($refCode) {
+                        $query->where('meta->qris_transaction_number', $refCode)
+                            ->orWhere('meta->payment_proof->reference_code', $refCode);
+                    })
                     ->exists();
             }
 
@@ -82,7 +85,7 @@ class PaymentProofValidationService
         if ($fileHash) {
             $isDuplicateImage = BillingPaymentCapture::query()
                 ->where('id', '!=', $capture->id)
-                ->where('match_status', 'approved')
+                ->whereIn('match_status', ['approved', 'needs_review', 'pending'])
                 ->where(function ($q) use ($fileHash) {
                     $q->where('meta->media->file_hash', $fileHash)
                       ->orWhere('meta->file_hash', $fileHash);
@@ -303,20 +306,26 @@ class PaymentProofValidationService
                     }
                 }
 
-                // 3. Name & Alias match
+                // 3. Name & Alias match (support 3-char bank codes on destination fields; block generic wallet names against raw OCR text)
                 $needles = array_filter([
                     $this->normalizeText((string) ($row['name'] ?? '')),
                     ...array_map(fn ($alias) => $this->normalizeText((string) $alias), is_array($row['aliases'] ?? null) ? $row['aliases'] : []),
                 ]);
 
+                $genericWalletTerms = ['gopay', 'ovo', 'dana', 'shopeepay', 'qris', 'linkaja'];
+                $destOnlyHaystacks = array_filter([
+                    $this->normalizeText((string) ($destinationIdentity['name'] ?? '')),
+                    $this->normalizeText((string) ($destinationIdentity['raw'] ?? '')),
+                ]);
+
                 foreach ($needles as $needle) {
-                    if (strlen($needle) < 4) {
+                    if (strlen($needle) < 3) {
                         continue;
                     }
 
                     $destName = $this->normalizeText((string) ($destinationIdentity['name'] ?? ''));
                     if ($destName !== '') {
-                        if (str_contains($destName, $needle) || (strlen($destName) >= 4 && str_contains($needle, $destName))) {
+                        if (str_contains($destName, $needle) || (strlen($destName) >= 3 && str_contains($needle, $destName))) {
                             return [
                                 'matched' => true,
                                 'configured' => true,
@@ -326,7 +335,11 @@ class PaymentProofValidationService
                         }
                     }
 
-                    foreach ($haystacks as $haystack) {
+                    $targetHaystacks = in_array($needle, $genericWalletTerms, true)
+                        ? $destOnlyHaystacks
+                        : (strlen($needle) >= 4 ? $haystacks : $destOnlyHaystacks);
+
+                    foreach ($targetHaystacks as $haystack) {
                         if (str_contains($haystack, $needle)) {
                             return [
                                 'matched' => true,

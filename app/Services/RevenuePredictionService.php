@@ -68,11 +68,11 @@ class RevenuePredictionService
                 : (float) $deltas[$middle];
         }
 
-        // Tentukan Probabilitas Kepatuhan Bayar (0.65 s/d 0.99)
+        // Tentukan Probabilitas Kepatuhan Bayar (0.15 s/d 0.99)
         if ($totalPaid >= 2) {
             $paidRatio = $totalInvoices > 0 ? ($totalPaid / $totalInvoices) : 1.0;
             $ontimeOrEarlyRatio = ($earlyCount + $ontimeCount) / $totalPaid;
-            $probability = round(min(0.99, max(0.65, ($paidRatio * 0.7) + ($ontimeOrEarlyRatio * 0.3))), 4);
+            $probability = round(min(0.99, max(0.15, ($paidRatio * 0.7) + ($ontimeOrEarlyRatio * 0.3))), 4);
         } elseif ($totalPaid > 0) {
             $probability = 0.9600;
         } else {
@@ -260,7 +260,8 @@ class RevenuePredictionService
             }
 
             // Tentukan besaran tagihan bulanan pelanggan
-            $billAmount = (float) ($customer->custom_package ?: ($customer->package?->price ?: 0));
+            $customPrice = is_numeric($customer->custom_package) ? (float) $customer->custom_package : 0.0;
+            $billAmount = $customPrice > 0 ? $customPrice : (float) ($customer->package?->price ?: 0);
             if ($billAmount <= 0) {
                 // Fallback ke invoice terakhir jika paket 0
                 $lastInv = Invoice::where('customer_id', $customer->id)->where('amount', '>', 0)->latest('id')->first();
@@ -344,7 +345,14 @@ class RevenuePredictionService
                 continue;
             }
 
-            $probability = $profile->payment_probability;
+            $probability = (float) $profile->payment_probability;
+            $dueDateCarbon = Carbon::parse($matchedCycle['due_date'])->startOfDay();
+            if ($dueDateCarbon->lt($today)) {
+                $overdueDays = (int) $dueDateCarbon->diffInDays($today);
+                if ((bool) $customer->is_service_isolated && $overdueDays > 15) {
+                    $probability = round(max(0.10, $probability * exp(-0.035 * min($overdueDays, 90))), 4);
+                }
+            }
             $expectedIncome = round($billAmount * $probability, 2);
             $payDateStr = $matchedCycle['estimated_pay_date'];
 

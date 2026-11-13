@@ -120,6 +120,7 @@ class ExecutiveDailyReportService
             $transferIncome = $totalIncome;
             $transferCount = $incomeCount;
         }
+        $otherIncome = max(0.0, $totalIncome - ($qrisIncome + $transferIncome + $cashIncome));
 
         // 2. Kas Keluar Hari Ini
         $expenseTrx = FinancialTransaction::query()
@@ -189,6 +190,7 @@ class ExecutiveDailyReportService
             'transfer_count' => $transferCount,
             'cash_income' => $cashIncome,
             'cash_count' => $cashCount,
+            'other_income' => $otherIncome,
             'total_expense' => $totalExpense,
             'expense_highlights' => $expenseHighlights,
             'closing_balance' => $closingBalance,
@@ -234,6 +236,9 @@ class ExecutiveDailyReportService
         }
         if ($data['cash_count'] > 0) {
             $message .= "  - Tunai (Cash): Rp " . number_format($data['cash_income'], 0, ',', '.') . " ({$data['cash_count']} trx)\n";
+        }
+        if (($data['other_income'] ?? 0) > 0) {
+            $message .= "  - Pemasukan Lain / Pemasangan: Rp " . number_format($data['other_income'], 0, ',', '.') . "\n";
         }
 
         $message .= "• Kas Keluar: {$expenseFormatted}{$expenseDesc}\n" .

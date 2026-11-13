@@ -125,8 +125,8 @@ class MonthlyFinancialReportService
         $terminatedCount = 0;
         if (Schema::hasTable('customer_termination_requests')) {
             $terminatedCount = CustomerTerminationRequest::query()
-                ->where('status', 'approved')
-                ->whereBetween('updated_at', [$startDate, $endDate])
+                ->where('status', 'completed')
+                ->whereBetween('completed_at', [$startDate, $endDate])
                 ->count();
         }
 

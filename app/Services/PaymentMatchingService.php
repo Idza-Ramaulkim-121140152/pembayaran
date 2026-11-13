@@ -756,7 +756,9 @@ class PaymentMatchingService
             $wasAlreadyPaid = strtolower((string) $invoice->status) === 'paid';
 
             if (!$wasAlreadyPaid) {
-                $invoice->amount = (float) $capture->amount > 0 ? (float) $capture->amount : (float) $invoice->amount;
+                if ((float) $invoice->amount <= 0 && (float) $capture->amount > 0) {
+                    $invoice->amount = (float) $capture->amount;
+                }
                 $invoice->status = 'paid';
                 $invoice->paid_at = $paidTimestamp;
                 $invoice->tolak_info = null;
@@ -1050,10 +1052,23 @@ class PaymentMatchingService
 
     private function fingerprint(array $normalized): string
     {
+        $fileHash = trim((string) data_get($normalized, 'meta.media.file_hash', data_get($normalized, 'meta.file_hash', '')));
+        $senderPhone = trim((string) data_get($normalized, 'meta.sender_phone', ''));
+        $ref = $normalized['reference_code'] ?? '';
+        $extraEntropy = $ref !== ''
+            ? $ref
+            : implode(':', array_filter([
+                'noref',
+                $normalized['customer_id'] ?? '',
+                $normalized['invoice_id'] ?? '',
+                $senderPhone,
+                $fileHash,
+            ]));
+
         return sha1(
             $normalized['source']
             . '|'
-            . ($normalized['reference_code'] ?? '-')
+            . $extraEntropy
             . '|'
             . number_format((float) $normalized['amount'], 2, '.', '')
             . '|'

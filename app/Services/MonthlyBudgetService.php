@@ -10,6 +10,7 @@ use App\Models\Invoice;
 use App\Models\MonthlyBudget;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class MonthlyBudgetService
@@ -220,7 +221,7 @@ class MonthlyBudgetService
 
         $actualBreakdown = $this->buildActualBreakdown($startDate->copy(), $actualRangeEnd);
         $historicalAverages = $this->buildHistoricalMonthlyAverages($startDate->copy()->startOfMonth());
-        $forecastBreakdown = $this->buildForecastBreakdown($startDate->copy(), $endDate->copy(), $actualBreakdown, $projectionData);
+        $forecastBreakdown = $this->buildForecastBreakdown($startDate->copy(), $endDate->copy(), $actualBreakdown, $projectionData, $historicalAverages);
         $loanCashImpact = $this->buildLoanCashImpact($startDate->copy(), $endDate->copy());
         $systemRecommendation = $this->buildSystemBudgetRecommendation(
             $startDate->copy(),
@@ -326,8 +327,13 @@ class MonthlyBudgetService
         ];
     }
 
-    private function buildForecastBreakdown(Carbon $startDate, Carbon $endDate, array $actualBreakdown, ?array $projectionData = null): array
-    {
+    private function buildForecastBreakdown(
+        Carbon $startDate,
+        Carbon $endDate,
+        array $actualBreakdown,
+        ?array $projectionData = null,
+        ?array $precomputedHistoricalAverages = null
+    ): array {
         $today = Carbon::today()->startOfDay();
         $monthStart = $startDate->copy()->startOfMonth();
         $monthEnd = $endDate->copy()->endOfMonth();
@@ -339,7 +345,7 @@ class MonthlyBudgetService
             $elapsedDays = $daysInMonth;
         }
 
-        $historicalAverages = $this->buildHistoricalMonthlyAverages($monthStart->copy());
+        $historicalAverages = $precomputedHistoricalAverages ?? $this->buildHistoricalMonthlyAverages($monthStart->copy());
         $projectionSummary = $projectionData['summary'] ?? [];
 
         if ($monthEnd->lt($today)) {
@@ -510,7 +516,12 @@ class MonthlyBudgetService
         array $systemRecommendation
     ): array {
         $projectionSummary = $projectionData['summary'] ?? [];
-        $ledgerBalance = (float) ($projectionSummary['actual_balance_today'] ?? $projectionSummary['projected_ending_balance'] ?? 0);
+        $hasProjectionBalance = array_key_exists('actual_balance_today', $projectionSummary)
+            || array_key_exists('projected_ending_balance', $projectionSummary);
+        $fallbackBalance = $hasProjectionBalance
+            ? 0.0
+            : (float) (app(FinancialLedgerService::class)->getSummary()['balance'] ?? 0);
+        $ledgerBalance = (float) ($projectionSummary['actual_balance_today'] ?? $projectionSummary['projected_ending_balance'] ?? $fallbackBalance);
         $projectedEndingCash = (float) ($projectionSummary['projected_ending_balance'] ?? $ledgerBalance);
         $loanOutstanding = (float) ($loanCashImpact['current_outstanding'] ?? 0);
         $forecastLoanSettlement = (float) ($forecastBreakdown[self::CATEGORY_LOAN_SETTLEMENT] ?? 0);
@@ -829,13 +840,19 @@ class MonthlyBudgetService
         $historyStart = $referenceMonthStart->copy()->subMonthsNoOverflow(12)->startOfMonth();
         $historyEnd = $referenceMonthStart->copy()->subMonthNoOverflow()->endOfMonth();
 
+        $driver = DB::connection()->getDriverName();
+        $monthExpr = $driver === 'sqlite'
+            ? "strftime('%Y-%m', paid_at)"
+            : "DATE_FORMAT(paid_at, '%Y-%m')";
+
         $rows = Invoice::query()
             ->where('status', 'paid')
             ->whereNotNull('paid_at')
             ->whereBetween('paid_at', [$historyStart->copy()->startOfDay(), $historyEnd->copy()->endOfDay()])
-            ->get(['amount', 'paid_at'])
-            ->groupBy(fn (Invoice $invoice) => optional($invoice->paid_at)->format('Y-m'))
-            ->map(fn (Collection $items) => (float) $items->sum('amount'))
+            ->selectRaw("{$monthExpr} as ym, SUM(amount) as total_amount")
+            ->groupBy('ym')
+            ->pluck('total_amount', 'ym')
+            ->map(fn ($amount) => (float) $amount)
             ->filter(fn (float $amount) => $amount > 0);
 
         $basisMonthsCount = $rows->count();

@@ -527,7 +527,12 @@ class FinancialTransactionController extends Controller
             // If receiver is NOT company finance, money is held by receiver => create borrower debt if not already recorded.
             if ($receiver && !$isCompanyFinance && $lockedTransaction->type === 'income') {
                 $existingLoan = BorrowerLoan::query()
-                    ->where('meta->financial_transaction_id', $lockedTransaction->id)
+                    ->where(function ($query) use ($lockedTransaction) {
+                        $query->where('meta->financial_transaction_id', $lockedTransaction->id);
+                        if ($lockedTransaction->reference_type === Invoice::class && $lockedTransaction->reference_id) {
+                            $query->orWhere('invoice_id', $lockedTransaction->reference_id);
+                        }
+                    })
                     ->first();
 
                 if ($existingLoan) {

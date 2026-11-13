@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\BillingPaymentCapture;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -135,46 +136,41 @@ PROMPT;
 
         // 1. Try AI Vision if raw bytes are available
         if ($rawBytes) {
+            $imageHash = hash('sha256', $rawBytes);
+            $cacheKey = 'payment_proof_ai_v1:' . $imageHash;
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached) && !empty($cached['provider_used']) && $cached['provider_used'] !== 'local_ocr_fallback') {
+                $cached['cached'] = true;
+                return $cached;
+            }
+
             $processedBytes = $this->preprocessImageBytes($rawBytes, $mimeType);
             $imageData = base64_encode($processedBytes);
+            $effectiveMimeType = ($processedBytes !== $rawBytes) ? 'image/jpeg' : $mimeType;
 
-            // Provider 1: OpenRouter (Primary if selected or auto with key)
-            if (($preferredProvider === 'openrouter' || $preferredProvider === 'auto') && $openrouterKey !== '') {
-                $openrouterResult = $this->analyzeWithOpenRouter($capture, $openrouterKey, $imageData, $mimeType, $prompt, $config);
-                if ($openrouterResult !== null) {
-                    return $openrouterResult;
-                }
-            }
+            $providerOrder = match ($preferredProvider) {
+                'gemini' => ['gemini', 'openrouter', 'openai'],
+                'openai' => ['openai', 'openrouter', 'gemini'],
+                default => ['openrouter', 'gemini', 'openai'],
+            };
 
-            // Provider 2: Gemini Direct
-            if (($preferredProvider === 'gemini' || ($preferredProvider === 'auto' && $openrouterKey === '')) && $geminiKey !== '') {
-                $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
-                if ($geminiResult !== null) {
-                    return $geminiResult;
-                }
-            }
+            foreach ($providerOrder as $provider) {
+                $result = match ($provider) {
+                    'openrouter' => $openrouterKey !== ''
+                        ? $this->analyzeWithOpenRouter($capture, $openrouterKey, $imageData, $effectiveMimeType, $prompt, $config)
+                        : null,
+                    'gemini' => $geminiKey !== ''
+                        ? $this->analyzeWithGemini($capture, $geminiKey, $imageData, $effectiveMimeType, $prompt, $config)
+                        : null,
+                    'openai' => $openAiKey !== ''
+                        ? $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $effectiveMimeType, $prompt, $config)
+                        : null,
+                    default => null,
+                };
 
-            // Provider 3: OpenAI Direct
-            if (($preferredProvider === 'openai' || $preferredProvider === 'auto') && $openAiKey !== '') {
-                $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
-                if ($openAiResult !== null) {
-                    return $openAiResult;
-                }
-            }
-
-            // Fallback chain if preferred OpenRouter failed
-            if ($preferredProvider === 'openrouter') {
-                if ($geminiKey !== '') {
-                    $geminiResult = $this->analyzeWithGemini($capture, $geminiKey, $imageData, $mimeType, $prompt, $config);
-                    if ($geminiResult !== null) {
-                        return $geminiResult;
-                    }
-                }
-                if ($openAiKey !== '') {
-                    $openAiResult = $this->analyzeWithOpenAi($capture, $openAiKey, $imageData, $mimeType, $prompt, $config);
-                    if ($openAiResult !== null) {
-                        return $openAiResult;
-                    }
+                if ($result !== null) {
+                    Cache::put($cacheKey, $result, now()->addDays(7));
+                    return $result;
                 }
             }
         }
@@ -203,17 +199,19 @@ PROMPT;
             $height = imagesy($img);
             $maxDim = max($width, $height);
 
-            // Downscale only if extremely large (> 2048px) to conserve API bandwidth and avoid timeout
-            if ($maxDim > 2048) {
-                $scale = 2048 / $maxDim;
+            // Downscale if larger than 1280px to reduce vision token cost & avoid timeouts
+            if ($maxDim > 1280) {
+                $scale = 1280 / $maxDim;
                 $newWidth = (int) round($width * $scale);
                 $newHeight = (int) round($height * $scale);
                 $resampled = imagecreatetruecolor($newWidth, $newHeight);
+                $white = imagecolorallocate($resampled, 255, 255, 255);
+                imagefill($resampled, 0, 0, $white);
                 imagecopyresampled($resampled, $img, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
                 imagedestroy($img);
 
                 ob_start();
-                imagejpeg($resampled, null, 92);
+                imagejpeg($resampled, null, 85);
                 $cleanBytes = ob_get_clean();
                 imagedestroy($resampled);
                 return $cleanBytes ?: $rawBytes;
@@ -243,15 +241,14 @@ PROMPT;
 
         $modelsToTry = array_values(array_unique([
             $model,
-            'nvidia/nemotron-3.5-super-vl:free',
             'google/gemini-2.5-flash',
             'openai/gpt-4o-mini',
-            'google/gemini-3.5-flash',
+            'nvidia/nemotron-3.5-super-vl:free',
         ]));
 
         foreach ($modelsToTry as $currentModel) {
             try {
-                $response = Http::timeout(35)
+                $response = Http::timeout(20)
                     ->withHeaders([
                         'Authorization' => 'Bearer ' . $apiKey,
                         'HTTP-Referer' => 'https://rumahkitanet.my.id',
@@ -335,7 +332,7 @@ PROMPT;
                                 ['text' => $prompt],
                                 [
                                     'inline_data' => [
-                                        'mime_type' => 'image/jpeg',
+                                        'mime_type' => $mimeType ?: 'image/jpeg',
                                         'data' => $imageData,
                                     ],
                                 ],

@@ -25,6 +25,7 @@ class ReconciliationCenterService
     public const ISSUE_FINANCIAL_TRANSACTION_PENDING_REVIEW = 'financial_transaction_pending_review';
     public const ISSUE_DUPLICATE_CONFIRMED_REFERENCE = 'duplicate_confirmed_reference';
     public const ISSUE_QRIS_SETTLEMENT_MISMATCH = 'qris_settlement_mismatch';
+    public const ISSUE_INVOICE_LEDGER_AMOUNT_MISMATCH = 'invoice_ledger_amount_mismatch';
 
     public const SOURCE_GROUP_INVOICE_RECEIPTS = 'invoice_receipts';
     public const SOURCE_GROUP_LEDGER_SOURCE = 'ledger_vs_source';
@@ -266,6 +267,7 @@ class ReconciliationCenterService
         return collect()
             ->concat($this->detectPaymentCaptureIssues())
             ->concat($this->detectInvoiceLedgerMissingIssues())
+            ->concat($this->detectInvoiceLedgerAmountMismatchIssues())
             ->concat($this->detectInvoiceLedgerOrphanIssues())
             ->concat($this->detectPengeluaranMissingLedgerIssues())
             ->concat($this->detectPengeluaranLedgerOrphanIssues())
@@ -283,10 +285,17 @@ class ReconciliationCenterService
 
         return BillingPaymentCapture::query()
             ->with(['invoice:id,invoice_link,status', 'matchReviews:id,capture_id,candidate_invoice_id,score,reason,status'])
-            ->whereIn('match_status', ['needs_review', 'unmatched'])
+            ->where(function ($query) {
+                $query->whereIn('match_status', ['needs_review', 'unmatched'])
+                    ->orWhere(function ($staleQuery) {
+                        $staleQuery->where('match_status', 'pending')
+                            ->where('created_at', '<=', now()->subMinutes(30));
+                    });
+            })
             ->orderByDesc('paid_date')
             ->get()
             ->map(function (BillingPaymentCapture $capture) {
+                $isStalePending = $capture->match_status === 'pending';
                 $issueType = $capture->match_status === 'unmatched'
                     ? self::ISSUE_PAYMENT_CAPTURE_UNMATCHED
                     : self::ISSUE_PAYMENT_CAPTURE_NEEDS_REVIEW;
@@ -301,15 +310,19 @@ class ReconciliationCenterService
                     $issueType,
                     $capture->id,
                     [
-                        'severity' => $capture->match_status === 'unmatched'
+                        'severity' => ($capture->match_status === 'unmatched' || $isStalePending)
                             ? ReconciliationIssue::SEVERITY_CRITICAL
                             : ReconciliationIssue::SEVERITY_HIGH,
-                        'title' => $capture->match_status === 'unmatched'
-                            ? 'Capture pembayaran belum menemukan invoice'
-                            : 'Capture pembayaran perlu review',
-                        'description' => $topReview
-                            ? 'Kandidat teratas skor ' . number_format((float) $topReview->score, 0) . '% dengan alasan: ' . (($topReview->reason ?: 'tanpa alasan') . '.')
-                            : 'Capture pembayaran belum bisa dipastikan ke invoice yang tepat.',
+                        'title' => $isStalePending
+                            ? 'Capture pembayaran macet di antrean (pending > 30 menit)'
+                            : ($capture->match_status === 'unmatched'
+                                ? 'Capture pembayaran belum menemukan invoice'
+                                : 'Capture pembayaran perlu review'),
+                        'description' => $isStalePending
+                            ? 'Capture masih berstatus pending melebihi 30 menit (kemungkinan worker OCR/AI gagal atau terhenti). Jalankan ulang pencocokan.'
+                            : ($topReview
+                                ? 'Kandidat teratas skor ' . number_format((float) $topReview->score, 0) . '% dengan alasan: ' . (($topReview->reason ?: 'tanpa alasan') . '.')
+                                : 'Capture pembayaran belum bisa dipastikan ke invoice yang tepat.'),
                         'primary_entity_type' => BillingPaymentCapture::class,
                         'primary_entity_id' => $capture->id,
                         'amount' => (float) $capture->amount,
@@ -375,6 +388,77 @@ class ReconciliationCenterService
                     ]
                 );
             });
+    }
+
+    private function detectInvoiceLedgerAmountMismatchIssues(): Collection
+    {
+        if (!Schema::hasTable('invoices') || !Schema::hasTable('financial_transactions')) {
+            return collect();
+        }
+
+        $ledgerByInvoice = FinancialTransaction::query()
+            ->where('source', 'invoice_payment')
+            ->where('reference_type', Invoice::class)
+            ->where('status', FinancialTransaction::STATUS_CONFIRMED)
+            ->get(['id', 'reference_id', 'amount', 'transaction_date'])
+            ->groupBy('reference_id');
+
+        if ($ledgerByInvoice->isEmpty()) {
+            return collect();
+        }
+
+        $invoiceIds = $ledgerByInvoice->keys()->filter()->map(fn ($id) => (int) $id)->values()->all();
+
+        return Invoice::query()
+            ->whereIn('id', $invoiceIds)
+            ->where('status', 'paid')
+            ->get(['id', 'invoice_link', 'amount', 'qris_expected_amount', 'paid_at'])
+            ->map(function (Invoice $invoice) use ($ledgerByInvoice) {
+                $txs = $ledgerByInvoice->get($invoice->id, collect());
+                $ledgerTotal = (float) $txs->sum('amount');
+                $invoiceAmount = (float) $invoice->amount;
+                $qrisExpected = (float) ($invoice->qris_expected_amount ?? 0);
+
+                $matchesBase = abs($ledgerTotal - $invoiceAmount) <= 1.0;
+                $matchesQrisExpected = $qrisExpected > 0 && abs($ledgerTotal - $qrisExpected) <= 1.0;
+                if ($matchesBase || $matchesQrisExpected) {
+                    return null;
+                }
+
+                $diff = $ledgerTotal - $invoiceAmount;
+
+                return $this->makePayload(
+                    self::ISSUE_INVOICE_LEDGER_AMOUNT_MISMATCH,
+                    $invoice->id,
+                    [
+                        'severity' => ReconciliationIssue::SEVERITY_HIGH,
+                        'title' => 'Selisih nominal invoice vs mutasi ledger',
+                        'description' => sprintf(
+                            'Invoice %s bernominal Rp %s tetapi mutasi ledger tercatat Rp %s (selisih Rp %s).',
+                            $invoice->invoice_link,
+                            number_format($invoiceAmount, 0, ',', '.'),
+                            number_format($ledgerTotal, 0, ',', '.'),
+                            number_format(abs($diff), 0, ',', '.')
+                        ),
+                        'primary_entity_type' => Invoice::class,
+                        'primary_entity_id' => $invoice->id,
+                        'amount' => abs($diff),
+                        'occurred_at' => optional($invoice->paid_at)?->toDateString(),
+                        'source_group' => self::SOURCE_GROUP_LEDGER_SOURCE,
+                        'source_url' => '/mutasi',
+                        'available_actions' => ['resync_invoice_ledger'],
+                        'extra_meta' => [
+                            'invoice_id' => $invoice->id,
+                            'invoice_link' => $invoice->invoice_link,
+                            'invoice_amount' => $invoiceAmount,
+                            'ledger_amount' => $ledgerTotal,
+                            'difference' => $diff,
+                        ],
+                    ]
+                );
+            })
+            ->filter()
+            ->values();
     }
 
     private function detectInvoiceLedgerOrphanIssues(): Collection

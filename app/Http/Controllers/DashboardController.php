@@ -3629,6 +3629,17 @@ class DashboardController extends Controller
         }
 
         $loanDailyImpactMap = $this->buildLoanDailyImpactMap($rangeStart->copy(), $rangeEnd->copy());
+        $cashObligationsByDate = [];
+        if (Schema::hasTable('cash_obligation_entries')) {
+            $pendingObligations = \App\Models\CashObligationEntry::query()
+                ->where('status', \App\Models\CashObligationEntry::STATUS_PENDING)
+                ->whereBetween('due_date', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
+                ->get(['id', 'due_date', 'amount', 'title']);
+            foreach ($pendingObligations as $obl) {
+                $oblDate = Carbon::parse($obl->due_date)->toDateString();
+                $cashObligationsByDate[$oblDate] = ($cashObligationsByDate[$oblDate] ?? 0.0) + (float) $obl->amount;
+            }
+        }
         $minimumCashReserveTarget = 0.0;
         $monthlyBudgetService = app(MonthlyBudgetService::class);
         if ($monthlyBudgetService->isReady()) {
@@ -3674,6 +3685,11 @@ class DashboardController extends Controller
 
             $predictedIncomeTotal += $incomeForSummary;
             $cash += $cashflowBeforeMandatory;
+
+            $cashObligationToday = $cursor->gt($today) ? (float) ($cashObligationsByDate[$dateKey] ?? 0.0) : 0.0;
+            if ($cashObligationToday > 0) {
+                $cash -= $cashObligationToday;
+            }
 
             $mandatorySpentToday = 0.0;
             foreach (($eventsByDate[$dateKey] ?? []) as $event) {
@@ -3748,8 +3764,9 @@ class DashboardController extends Controller
                 'income_source' => $incomeSource,
                 'cashflow_before_mandatory' => (int) round($cashflowBeforeMandatory),
                 'mandatory_expense' => (int) round($mandatorySpentToday),
-                'daily_total_expense' => (int) round($dailyTotalExpense),
+                'daily_total_expense' => (int) round($dailyTotalExpense + $cashObligationToday),
                 'daily_total_expense_source' => $dailyTotalExpenseSource,
+                'cash_obligation_expense' => (int) round($cashObligationToday),
                 'projected_balance' => (int) round($cash),
                 '__projected_balance_raw' => $cash,
                 '__mandatory_expense_raw' => $mandatorySpentToday,
@@ -6756,7 +6773,7 @@ class DashboardController extends Controller
             'Saldo Bebas display = max((90% x total saldo) - reserve wajib pending - akumulasi alokasi wajib bulanan terkonfirmasi, 0).',
         ];
 
-        return [
+        $assistantPayload = [
             'assistant_name' => 'Asisten AI Proyeksi Keuangan',
             'model' => 'rule-based-financial-assistant-v1',
             'generated_at' => now()->toIso8601String(),
@@ -6767,6 +6784,79 @@ class DashboardController extends Controller
             'recommended_actions' => $recommendedActions,
             'assumptions' => $assumptions,
         ];
+
+        return $this->enrichAssistantWithLlmIfAvailable($assistantPayload, $summary);
+    }
+
+    private function enrichAssistantWithLlmIfAvailable(array $assistantPayload, array $summary): array
+    {
+        if (app()->runningUnitTests()) {
+            return $assistantPayload;
+        }
+
+        try {
+            $config = app(PaymentVerificationConfigService::class)->getConfig();
+            $apiKey = trim((string) ($config['openrouter_api_key'] ?? ''));
+            if ($apiKey === '') {
+                return $assistantPayload;
+            }
+
+            $sig = md5(json_encode([
+                'score' => $assistantPayload['score'] ?? 0,
+                'risk' => $assistantPayload['risk_level'] ?? 'sedang',
+                'ending' => (int) round((float) ($summary['projected_ending_balance'] ?? 0)),
+                'shortfall' => (int) round((float) ($summary['mandatory_shortfall_total'] ?? 0)),
+                'today' => (int) round((float) ($summary['actual_balance_today'] ?? 0)),
+            ]));
+            $cacheKey = 'financial_ai_advisor_v1:' . $sig;
+            $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+            if (is_array($cached)) {
+                return array_merge($assistantPayload, $cached);
+            }
+
+            $prompt = "Anda adalah Penasihat Keuangan ISP. Berikan 1 kalimat ringkasan eksekutif ('headline') dan maksimal 2 rekomendasi taktis ('recommended_actions': [{priority, title, detail}]) dalam Bahasa Indonesia berdasarkan ringkasan proyeksi berikut (balas JSON valid saja):\n"
+                . json_encode([
+                    'score' => $assistantPayload['score'],
+                    'risk_level' => $assistantPayload['risk_level'],
+                    'actual_balance_today' => $summary['actual_balance_today'] ?? 0,
+                    'projected_ending_balance' => $summary['projected_ending_balance'] ?? 0,
+                    'mandatory_shortfall_total' => $summary['mandatory_shortfall_total'] ?? 0,
+                    'operational_spending_budget' => $summary['operational_spending_budget'] ?? 0,
+                ]);
+
+            $response = \Illuminate\Support\Facades\Http::timeout(8)
+                ->withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                    'Content-Type' => 'application/json',
+                ])
+                ->post('https://openrouter.ai/api/v1/chat/completions', [
+                    'model' => 'google/gemini-2.5-flash',
+                    'max_tokens' => 450,
+                    'response_format' => ['type' => 'json_object'],
+                    'messages' => [['role' => 'user', 'content' => $prompt]],
+                ]);
+
+            if ($response->successful()) {
+                $raw = (string) data_get($response->json(), 'choices.0.message.content', '');
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded) && !empty($decoded['headline'])) {
+                    $override = [
+                        'model' => 'google/gemini-2.5-flash',
+                        'headline' => (string) $decoded['headline'],
+                    ];
+                    if (!empty($decoded['recommended_actions']) && is_array($decoded['recommended_actions'])) {
+                        $override['recommended_actions'] = array_values(array_slice($decoded['recommended_actions'], 0, 3));
+                    }
+                    \Illuminate\Support\Facades\Cache::put($cacheKey, $override, now()->addMinutes(30));
+
+                    return array_merge($assistantPayload, $override);
+                }
+            }
+        } catch (\Throwable) {
+            // Fallback silently to deterministic assistant
+        }
+
+        return $assistantPayload;
     }
 
     private function safeAverage(float $sum, int $count): float
