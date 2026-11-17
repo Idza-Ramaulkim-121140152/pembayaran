@@ -890,6 +890,8 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::get('/api/settings/qris', [\App\Http\Controllers\QrisWebhookController::class, 'getSettings'])->name('api.settings.qris');
         Route::post('/api/settings/qris', [\App\Http\Controllers\QrisWebhookController::class, 'updateSettings'])->name('api.settings.qris.update');
         Route::post('/api/settings/qris/test-parser', [\App\Http\Controllers\QrisWebhookController::class, 'testParser'])->name('api.settings.qris.test-parser');
+        Route::post('/api/settings/qris/manual-confirm/lookup', [\App\Http\Controllers\QrisWebhookController::class, 'lookupManualConfirmation'])->name('api.settings.qris.manual-confirm.lookup');
+        Route::post('/api/settings/qris/manual-confirm', [\App\Http\Controllers\QrisWebhookController::class, 'executeManualConfirmation'])->name('api.settings.qris.manual-confirm');
 
         // Executive Reports WhatsApp Settings for Owner
         Route::get('/settings/executive-reports', fn() => view('app'))->name('settings.executive-reports');

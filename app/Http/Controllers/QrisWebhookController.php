@@ -283,6 +283,89 @@ class QrisWebhookController extends Controller
     }
 
     /**
+     * Cari tagihan yang cocok dengan nominal kode unik QRIS untuk konfirmasi manual saat MacroDroid timeout.
+     * POST /api/settings/qris/manual-confirm/lookup
+     */
+    public function lookupManualConfirmation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1000',
+        ]);
+
+        $amountInt = (int) round((float) $validated['amount']);
+
+        $uniqueMatches = Invoice::query()
+            ->with('customer:id,name,phone,pppoe_username,package_type,is_service_isolated')
+            ->where('status', '!=', 'paid')
+            ->where('qris_expected_amount', $amountInt)
+            ->orderByDesc('updated_at')
+            ->get()
+            ->map(fn (Invoice $inv) => [
+                'id' => $inv->id,
+                'invoice_link' => $inv->invoice_link,
+                'status' => $inv->status,
+                'customer_name' => $inv->customer?->name ?? '-',
+                'pppoe_username' => $inv->customer?->pppoe_username,
+                'package_name' => $inv->customer?->package_type,
+                'is_service_isolated' => (bool) ($inv->customer?->is_service_isolated ?? false),
+                'base_amount' => (float) $inv->amount,
+                'qris_unique_code' => $inv->qris_unique_code !== null ? (int) $inv->qris_unique_code : null,
+                'qris_expected_amount' => (float) $inv->qris_expected_amount,
+                'qris_expired_at' => $inv->qris_expired_at?->toIso8601String(),
+            ])
+            ->values();
+
+        $alreadyPaidRecent = Invoice::query()
+            ->with('customer:id,name,pppoe_username')
+            ->where('status', 'paid')
+            ->where('qris_expected_amount', $amountInt)
+            ->where('paid_at', '>=', now()->subHours(24))
+            ->latest('paid_at')
+            ->limit(3)
+            ->get()
+            ->map(fn (Invoice $inv) => [
+                'id' => $inv->id,
+                'invoice_link' => $inv->invoice_link,
+                'customer_name' => $inv->customer?->name ?? '-',
+                'paid_at' => $inv->paid_at?->toIso8601String(),
+                'qris_expected_amount' => (float) $inv->qris_expected_amount,
+            ])
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'amount' => $amountInt,
+            'unique_matches' => $uniqueMatches,
+            'already_paid_recent' => $alreadyPaidRecent,
+        ]);
+    }
+
+    /**
+     * Eksekusi konfirmasi manual kode unik QRIS (identik dengan webhook MacroDroid).
+     * POST /api/settings/qris/manual-confirm
+     */
+    public function executeManualConfirmation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1000',
+            'invoice_id' => 'nullable|integer|exists:invoices,id',
+            'sender_name' => 'nullable|string|max:120',
+            'reference_code' => 'nullable|string|max:120',
+        ]);
+
+        $actorName = (string) ($request->user()?->name ?: 'Admin');
+        $result = $this->webhookService->manualConfirmByAmount(
+            (float) $validated['amount'],
+            isset($validated['invoice_id']) ? (int) $validated['invoice_id'] : null,
+            $validated['sender_name'] ?? null,
+            $validated['reference_code'] ?? null,
+            $actorName
+        );
+
+        return response()->json($result, $result['http_code'] ?? ($result['success'] ? 200 : 400));
+    }
+
+    /**
      * Data ringkasan, konfigurasi, dan riwayat rekonsiliasi pencairan QRIS GoPay Merchant.
      * GET /api/settings/qris/reconciliation
      */

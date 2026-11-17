@@ -614,6 +614,124 @@ class QrisWebhookService
         }
     }
 
+    /**
+     * Konfirmasi manual oleh Admin saat webhook MacroDroid gagal terkirim (misal: read time out).
+     * Menjalankan alur pelunasan, buka isolir MikroTik, mutasi kode unik, dan WA persis seperti webhook MacroDroid.
+     */
+    public function manualConfirmByAmount(
+        int|float $amount,
+        ?int $invoiceId = null,
+        ?string $senderName = null,
+        ?string $referenceCode = null,
+        string $actorName = 'Admin'
+    ): array {
+        $amountInt = (int) round((float) $amount);
+        if ($amountInt < 1000) {
+            return [
+                'success' => false,
+                'status' => 'invalid_amount',
+                'http_code' => 422,
+                'message' => 'Nominal transaksi minimal Rp 1.000.',
+            ];
+        }
+
+        $execute = function () use ($amountInt, $invoiceId, $senderName, $referenceCode, $actorName) {
+            $query = Invoice::query()
+                ->with('customer')
+                ->where('status', '!=', 'paid')
+                ->where('qris_expected_amount', $amountInt)
+                ->orderByDesc('updated_at');
+
+            if ($invoiceId) {
+                $query->where('id', $invoiceId);
+            }
+
+            $candidates = $query->get();
+
+            if ($candidates->isEmpty()) {
+                return [
+                    'success' => false,
+                    'status' => 'unmatched',
+                    'http_code' => 404,
+                    'message' => 'Tidak ditemukan tagihan belum lunas dengan nominal kode unik Rp ' . number_format($amountInt, 0, ',', '.') . '.',
+                    'amount' => $amountInt,
+                ];
+            }
+
+            if ($candidates->count() > 1) {
+                return [
+                    'success' => false,
+                    'status' => 'ambiguous',
+                    'http_code' => 422,
+                    'message' => 'Ditemukan lebih dari satu tagihan dengan nominal kode unik ini. Pilih invoice yang spesifik.',
+                    'amount' => $amountInt,
+                ];
+            }
+
+            $invoice = $candidates->first();
+            $deviceName = 'Manual-Admin (' . trim($actorName ?: 'Admin') . ')';
+            $cleanSender = trim((string) ($senderName ?? ''));
+            $cleanRef = trim((string) ($referenceCode ?? ''));
+
+            $parsed = [
+                'amount' => $amountInt,
+                'matched_nominal_str' => number_format($amountInt, 0, ',', '.'),
+                'sender' => $cleanSender !== '' ? $cleanSender : ($invoice->customer?->name ?? 'GoPay QRIS'),
+                'reference_code' => $cleanRef !== '' ? $cleanRef : null,
+                'combined_text' => 'Konfirmasi manual kode unik QRIS sebesar Rp ' . number_format($amountInt, 0, ',', '.') . ' oleh ' . $actorName,
+                'distinct_amounts' => [$amountInt],
+                'has_multiple_amounts' => false,
+                'is_non_incoming_event' => false,
+                'is_settlement_success' => false,
+                'is_suspicious' => false,
+            ];
+
+            $settleResult = $this->settleInvoice($invoice, $amountInt, $parsed, $deviceName);
+
+            $this->safeLog([
+                'device_name' => $deviceName,
+                'raw_title' => 'Konfirmasi Manual Kode Unik QRIS',
+                'raw_text' => $parsed['combined_text'],
+                'extracted_amount' => $amountInt,
+                'status' => 'settled',
+                'invoice_id' => $invoice->id,
+                'meta' => [
+                    'manual_fallback' => true,
+                    'actor_name' => $actorName,
+                    'settle_result' => $settleResult,
+                    'parsed' => $parsed,
+                ],
+            ]);
+
+            return [
+                'success' => true,
+                'status' => 'settled',
+                'http_code' => 200,
+                'message' => "Pembayaran tagihan {$invoice->invoice_link} sebesar Rp " . number_format($amountInt, 0, ',', '.') . ' berhasil dikonfirmasi lunas (Kode Unik QRIS).',
+                'invoice_id' => $invoice->id,
+                'invoice_link' => $invoice->invoice_link,
+                'amount' => $amountInt,
+                'customer_name' => $invoice->customer?->name,
+                'isolation_restored' => $settleResult['isolation_restored'] ?? false,
+                'whatsapp_sent' => $settleResult['whatsapp_sent'] ?? false,
+            ];
+        };
+
+        $lockKey = "qris_settle_lock_{$amountInt}";
+        try {
+            $lock = Cache::lock($lockKey, 15);
+            return $lock->get($execute) ?? [
+                'success' => false,
+                'status' => 'locked',
+                'http_code' => 429,
+                'message' => 'Transaksi sedang diproses bersamaan oleh sistem. Silakan coba sesaat lagi.',
+            ];
+        } catch (\Throwable $lockEx) {
+            Log::info('Cache lock not supported or failed, executing manual settlement directly: ' . $lockEx->getMessage());
+            return $execute();
+        }
+    }
+
     protected function holdForManualReview(
         int|float $amount,
         array $parsed,

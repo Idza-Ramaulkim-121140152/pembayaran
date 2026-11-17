@@ -749,4 +749,73 @@ class DynamicQrisPaymentTest extends TestCase
 
         $this->assertSame('paid', $invoice->fresh()->status);
     }
+
+    public function test_admin_can_lookup_and_manually_confirm_unique_code_qris_when_macrodroid_times_out(): void
+    {
+        $admin = \App\Models\User::factory()->create([
+            'role' => 'superadmin',
+            'name' => 'Super Admin',
+        ]);
+
+        $package = Package::create([
+            'name' => 'Home Wifi 20M',
+            'price' => 200000,
+            'speed' => '20M',
+        ]);
+
+        $customer = Customer::create([
+            'name' => 'Hidayatullah',
+            'phone' => '085158025590',
+            'package_id' => $package->id,
+            'status' => 'active',
+            'pppoe_username' => 'hidayat_295',
+        ]);
+
+        $invoice = Invoice::create([
+            'customer_id' => $customer->id,
+            'invoice_link' => 'inv_manual_qris_295',
+            'invoice_date' => now()->toDateString(),
+            'due_date' => now()->addDays(7)->toDateString(),
+            'amount' => 200000,
+            'qris_unique_code' => 295,
+            'qris_expected_amount' => 200295,
+            'qris_expired_at' => now()->addHours(3),
+            'status' => 'unpaid',
+        ]);
+
+        $lookup = $this->actingAs($admin)
+            ->postJson('/api/settings/qris/manual-confirm/lookup', [
+                'amount' => 200295,
+            ]);
+
+        $lookup->assertOk()
+            ->assertJsonPath('amount', 200295)
+            ->assertJsonCount(1, 'unique_matches')
+            ->assertJsonPath('unique_matches.0.invoice_link', 'inv_manual_qris_295');
+
+        $confirm = $this->actingAs($admin)
+            ->postJson('/api/settings/qris/manual-confirm', [
+                'amount' => 200295,
+                'invoice_id' => $invoice->id,
+                'sender_name' => 'Hidayatullah',
+                'reference_code' => 'GOPAY-TIMEOUT-01',
+            ]);
+
+        $confirm->assertOk()->assertJson([
+            'success' => true,
+            'status' => 'settled',
+            'invoice_id' => $invoice->id,
+            'amount' => 200295,
+        ]);
+
+        $invoice->refresh();
+        $this->assertSame('paid', $invoice->status);
+        $this->assertSame('GOPAY-TIMEOUT-01', $invoice->qris_transaction_number);
+
+        $this->assertDatabaseHas('qris_webhook_logs', [
+            'invoice_id' => $invoice->id,
+            'extracted_amount' => 200295,
+            'status' => 'settled',
+        ]);
+    }
 }

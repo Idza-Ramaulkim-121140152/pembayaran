@@ -96,6 +96,16 @@ export default function QrisSettingsPage() {
     const [testResult, setTestResult] = useState(null);
     const [showGuide, setShowGuide] = useState(true);
 
+    // Manual Confirmation (MacroDroid Timeout Fallback) State
+    const [manualConfirmAmount, setManualConfirmAmount] = useState('');
+    const [manualConfirmSender, setManualConfirmSender] = useState('');
+    const [manualConfirmRef, setManualConfirmRef] = useState('');
+    const [manualConfirmLookupLoading, setManualConfirmLookupLoading] = useState(false);
+    const [manualConfirmSubmitting, setManualConfirmSubmitting] = useState(false);
+    const [manualConfirmLookup, setManualConfirmLookup] = useState(null);
+    const [manualConfirmSelectedInvoiceId, setManualConfirmSelectedInvoiceId] = useState(null);
+    const [manualConfirmFeedback, setManualConfirmFeedback] = useState(null);
+
     const loadReconciliation = async (targetDate = reconDate) => {
         try {
             const params = targetDate ? { cycle_date: targetDate } : {};
@@ -283,6 +293,77 @@ export default function QrisSettingsPage() {
             });
         } finally {
             setManualSettlementSaving(false);
+        }
+    };
+
+    const parseNominalInput = (raw) => {
+        const digits = String(raw || '').replace(/[^\d]/g, '');
+        return digits ? Number(digits) : 0;
+    };
+
+    const handleLookupManualConfirm = async (e) => {
+        if (e) e.preventDefault();
+        const amt = parseNominalInput(manualConfirmAmount);
+        if (amt < 1000) {
+            setManualConfirmFeedback({ type: 'error', message: 'Masukkan nominal transaksi minimal Rp 1.000.' });
+            return;
+        }
+        setManualConfirmLookupLoading(true);
+        setManualConfirmFeedback(null);
+        setManualConfirmLookup(null);
+        setManualConfirmSelectedInvoiceId(null);
+        try {
+            const res = await apiClient.post('/settings/qris/manual-confirm/lookup', { amount: amt });
+            const payload = res.data;
+            setManualConfirmLookup(payload);
+            const matches = payload?.unique_matches || [];
+            if (matches.length === 1) {
+                setManualConfirmSelectedInvoiceId(matches[0].id);
+            }
+        } catch (err) {
+            setManualConfirmFeedback({
+                type: 'error',
+                message: err.response?.data?.message || 'Gagal mencari tagihan dengan nominal tersebut.',
+            });
+        } finally {
+            setManualConfirmLookupLoading(false);
+        }
+    };
+
+    const handleExecuteManualConfirm = async () => {
+        const amt = parseNominalInput(manualConfirmAmount);
+        if (amt < 1000) return;
+        setManualConfirmSubmitting(true);
+        setManualConfirmFeedback(null);
+        try {
+            const res = await apiClient.post('/settings/qris/manual-confirm', {
+                amount: amt,
+                invoice_id: manualConfirmSelectedInvoiceId || undefined,
+                sender_name: manualConfirmSender.trim() || undefined,
+                reference_code: manualConfirmRef.trim() || undefined,
+            });
+            const dataRes = res.data;
+            let msg = dataRes.message || 'Tagihan berhasil dikonfirmasi lunas.';
+            if (dataRes.isolation_restored) {
+                msg += ' Isolir MikroTik pelanggan otomatis dibuka.';
+            }
+            if (dataRes.whatsapp_sent) {
+                msg += ' Kuitansi WhatsApp terkirim ke pelanggan.';
+            }
+            setManualConfirmFeedback({ type: 'success', message: msg });
+            setManualConfirmLookup(null);
+            setManualConfirmSelectedInvoiceId(null);
+            setManualConfirmAmount('');
+            setManualConfirmSender('');
+            setManualConfirmRef('');
+            await fetchSettings();
+        } catch (err) {
+            setManualConfirmFeedback({
+                type: 'error',
+                message: err.response?.data?.message || 'Gagal mengonfirmasi pembayaran manual.',
+            });
+        } finally {
+            setManualConfirmSubmitting(false);
         }
     };
 
@@ -784,6 +865,165 @@ export default function QrisSettingsPage() {
                         )}
                     </div>
                 </div>
+            </div>
+
+            {/* Manual Confirmation Card (Fallback when MacroDroid times out) */}
+            <div className="rounded-3xl border border-amber-200 bg-white p-6 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            <CheckCircle2 className="h-5 w-5 text-amber-600" />
+                            Konfirmasi Manual Kode Unik QRIS (Cadangan Timeout MacroDroid)
+                        </h2>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            Jika MacroDroid gagal mengirim karena <b>read time out</b> / kendala sinyal, masukkan nominal pas transfer (beserta kode uniknya) untuk mengecek dan melunaskan tagihan secara identik dengan auto-konfirmasi MacroDroid.
+                        </p>
+                    </div>
+                </div>
+
+                {manualConfirmFeedback && (
+                    <div className={`rounded-2xl border p-3.5 text-xs font-semibold flex items-center gap-2 ${
+                        manualConfirmFeedback.type === 'success'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                            : 'border-rose-200 bg-rose-50 text-rose-900'
+                    }`}>
+                        {manualConfirmFeedback.type === 'success' ? <CheckCircle2 size={16} className="text-emerald-600 shrink-0" /> : <AlertTriangle size={16} className="text-rose-600 shrink-0" />}
+                        <span>{manualConfirmFeedback.message}</span>
+                    </div>
+                )}
+
+                <form onSubmit={handleLookupManualConfirm} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                    <div className="md:col-span-4">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                            Nominal Transaksi (Kode Unik)
+                        </label>
+                        <input
+                            type="text"
+                            value={manualConfirmAmount}
+                            onChange={(e) => setManualConfirmAmount(e.target.value)}
+                            placeholder="Contoh: 200295 atau Rp 200.295"
+                            className="mt-1.5 w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-sm font-mono font-bold text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                    </div>
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                            Nama Pengirim (Opsional)
+                        </label>
+                        <input
+                            type="text"
+                            value={manualConfirmSender}
+                            onChange={(e) => setManualConfirmSender(e.target.value)}
+                            placeholder="Nama di GoPay/Bank"
+                            className="mt-1.5 w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-xs text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                    </div>
+                    <div className="md:col-span-3">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-600">
+                            No. Referensi (Opsional)
+                        </label>
+                        <input
+                            type="text"
+                            value={manualConfirmRef}
+                            onChange={(e) => setManualConfirmRef(e.target.value)}
+                            placeholder="Ref transaksi GoPay"
+                            className="mt-1.5 w-full rounded-xl border border-gray-300 px-3.5 py-2.5 text-xs font-mono text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                    </div>
+                    <div className="md:col-span-2">
+                        <button
+                            type="submit"
+                            disabled={manualConfirmLookupLoading || !manualConfirmAmount.trim()}
+                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-amber-700 transition disabled:opacity-50"
+                        >
+                            <RefreshCw size={14} className={manualConfirmLookupLoading ? 'animate-spin' : ''} />
+                            {manualConfirmLookupLoading ? 'Mencari...' : 'Cek Nominal'}
+                        </button>
+                    </div>
+                </form>
+
+                {manualConfirmLookup && (
+                    <div className="rounded-2xl border border-gray-200 bg-gray-50/80 p-4 space-y-3">
+                        {manualConfirmLookup.already_paid_recent?.length > 0 && (
+                            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                                <p className="font-bold">Info: Sudah ada tagihan dengan nominal {formatRupiah(manualConfirmLookup.amount)} yang lunas dalam 24 jam terakhir:</p>
+                                {manualConfirmLookup.already_paid_recent.map((paidInv) => (
+                                    <p key={paidInv.id} className="mt-0.5">
+                                        • <b>{paidInv.invoice_link}</b> ({paidInv.customer_name})
+                                    </p>
+                                ))}
+                            </div>
+                        )}
+
+                        {(!manualConfirmLookup.unique_matches || manualConfirmLookup.unique_matches.length === 0) ? (
+                            <div className="text-xs font-semibold text-amber-800 flex items-center gap-2">
+                                <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+                                <span>Tidak ditemukan tagihan belum lunas dengan kode unik <b>{formatRupiah(manualConfirmLookup.amount)}</b>.</span>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                <p className="text-xs font-bold text-emerald-800">
+                                    Ditemukan {manualConfirmLookup.unique_matches.length} tagihan cocok dengan kode unik {formatRupiah(manualConfirmLookup.amount)}:
+                                </p>
+                                <div className="space-y-2">
+                                    {manualConfirmLookup.unique_matches.map((inv) => {
+                                        const isSelected = manualConfirmSelectedInvoiceId === inv.id;
+                                        return (
+                                            <label
+                                                key={inv.id}
+                                                className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border p-3 cursor-pointer transition text-xs ${
+                                                    isSelected
+                                                        ? 'border-emerald-500 bg-emerald-50/80 shadow-sm'
+                                                        : 'border-gray-200 bg-white hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <div className="flex items-start gap-2.5">
+                                                    <input
+                                                        type="radio"
+                                                        name="manualConfirmInvoice"
+                                                        checked={isSelected}
+                                                        onChange={() => setManualConfirmSelectedInvoiceId(inv.id)}
+                                                        className="mt-1 text-emerald-600 focus:ring-emerald-500"
+                                                    />
+                                                    <div>
+                                                        <div className="font-bold text-gray-900">
+                                                            {inv.customer_name}{' '}
+                                                            {inv.pppoe_username && <span className="font-mono text-gray-500">({inv.pppoe_username})</span>}
+                                                        </div>
+                                                        <div className="text-gray-600 mt-0.5">
+                                                            Invoice: <b className="font-mono">{inv.invoice_link}</b> • Pokok: {formatRupiah(inv.base_amount)} + Kode Unik: <b>{inv.qris_unique_code ?? '-'}</b>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    {inv.is_service_isolated && (
+                                                        <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[10px] font-bold text-rose-700">
+                                                            Sedang Isolir (Akan Dibuka)
+                                                        </span>
+                                                    )}
+                                                    <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                                                        {formatRupiah(inv.qris_expected_amount)}
+                                                    </span>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="flex justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={handleExecuteManualConfirm}
+                                        disabled={manualConfirmSubmitting || !manualConfirmSelectedInvoiceId}
+                                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50"
+                                    >
+                                        <CheckCircle2 size={15} />
+                                        {manualConfirmSubmitting ? 'Mengonfirmasi...' : 'Konfirmasi & Lunaskan Tagihan'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Realtime Webhook Logs Table */}
