@@ -38,6 +38,7 @@ class AttendanceController extends Controller
             'photo' => 'nullable|string',
             'smile_score' => 'nullable|numeric|min:0|max:1',
             'late_reason' => 'nullable|string|max:255',
+            'outside_location_reason' => 'nullable|string|max:255',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'notes' => 'nullable|string|max:500',
@@ -45,7 +46,7 @@ class AttendanceController extends Controller
 
         $attendance = $this->attendanceService->clockIn(
             $request->user(),
-            $request->only(['photo', 'smile_score', 'late_reason', 'latitude', 'longitude', 'notes']),
+            $request->only(['photo', 'smile_score', 'late_reason', 'outside_location_reason', 'latitude', 'longitude', 'notes']),
             $request->ip(),
             $request->userAgent()
         );
@@ -69,6 +70,7 @@ class AttendanceController extends Controller
         $request->validate([
             'photo' => 'nullable|string',
             'smile_score' => 'nullable|numeric|min:0|max:1',
+            'outside_location_reason' => 'nullable|string|max:255',
             'latitude' => 'nullable|numeric|between:-90,90',
             'longitude' => 'nullable|numeric|between:-180,180',
             'notes' => 'nullable|string|max:500',
@@ -76,7 +78,7 @@ class AttendanceController extends Controller
 
         $attendance = $this->attendanceService->clockOut(
             $request->user(),
-            $request->only(['photo', 'smile_score', 'latitude', 'longitude', 'notes']),
+            $request->only(['photo', 'smile_score', 'outside_location_reason', 'latitude', 'longitude', 'notes']),
             $request->ip(),
             $request->userAgent()
         );
@@ -115,6 +117,10 @@ class AttendanceController extends Controller
             'work_end_time' => 'required|string|regex:/^\d{2}:\d{2}$/',
             'monthly_reset_day' => 'required|integer|min:1|max:28',
             'late_tolerance_minutes' => 'nullable|integer|min:0|max:120',
+            'office_latitude' => 'nullable|numeric|between:-90,90',
+            'office_longitude' => 'nullable|numeric|between:-180,180',
+            'location_radius_meters' => 'nullable|integer|min:10|max:5000',
+            'location_name' => 'nullable|string|max:120',
         ]);
 
         $settings = $this->attendanceService->updateSettings($validated);

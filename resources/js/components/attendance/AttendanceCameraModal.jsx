@@ -2,6 +2,17 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, CheckCircle2, AlertTriangle, RefreshCw, X, Sparkles, Clock, Smile, MapPin } from 'lucide-react';
 import { initFaceDetectionModels, detectFaceAndSmile, captureVideoFrame } from '../../utils/smileDetector';
 
+function calculateDistanceMeters(lat1, lng1, lat2, lng2) {
+    const earthRadius = 6371000;
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return earthRadius * c;
+}
+
 export default function AttendanceCameraModal({
     isOpen,
     onClose,
@@ -10,6 +21,7 @@ export default function AttendanceCameraModal({
     workEndTime = '17:00',
     isLate = false,
     lateMinutes = 0,
+    officeLocation = null,
     onSubmit,
 }) {
     const videoRef = useRef(null);
@@ -32,6 +44,9 @@ export default function AttendanceCameraModal({
     const [lateReasonCategory, setLateReasonCategory] = useState('');
     const [lateReasonCustom, setLateReasonCustom] = useState('');
     const [lateReasonError, setLateReasonError] = useState('');
+    const [outsideReasonCategory, setOutsideReasonCategory] = useState('');
+    const [outsideReasonCustom, setOutsideReasonCustom] = useState('');
+    const [outsideReasonError, setOutsideReasonError] = useState('');
     const [locationState, setLocationState] = useState({
         status: 'idle', // 'idle', 'locating', 'success', 'error'
         latitude: null,
@@ -239,6 +254,30 @@ export default function AttendanceCameraModal({
         startCamera();
     };
 
+    const geofenceEnabled = Boolean(
+        officeLocation?.location_geofence_enabled
+        && officeLocation?.office_latitude !== null
+        && officeLocation?.office_longitude !== null
+    );
+    const radiusMeters = Number(officeLocation?.location_radius_meters || 50);
+    const distanceMeters = (
+        geofenceEnabled
+        && locationState.status === 'success'
+        && locationState.latitude !== null
+        && locationState.longitude !== null
+    )
+        ? Math.round(calculateDistanceMeters(
+            Number(officeLocation.office_latitude),
+            Number(officeLocation.office_longitude),
+            Number(locationState.latitude),
+            Number(locationState.longitude)
+        ))
+        : null;
+    const isOutsideLocation = geofenceEnabled && (
+        (locationState.status === 'success' && distanceMeters !== null && distanceMeters > radiusMeters)
+        || locationState.status === 'error'
+    );
+
     const handleConfirmSubmit = async () => {
         if (!capturedImage) return;
 
@@ -253,9 +292,21 @@ export default function AttendanceCameraModal({
             }
         }
 
+        if (isOutsideLocation) {
+            if (!outsideReasonCategory) {
+                setOutsideReasonError('Mohon pilih alasan mengapa berada di luar titik lokasi yang diizinkan');
+                return;
+            }
+            if (outsideReasonCategory === 'Lainnya' && !outsideReasonCustom.trim()) {
+                setOutsideReasonError('Mohon jelaskan alasan berada di luar titik lokasi');
+                return;
+            }
+        }
+
         try {
             setSubmitting(true);
             setLateReasonError('');
+            setOutsideReasonError('');
 
             let finalLateReason = null;
             if (isClockIn && isLate) {
@@ -264,10 +315,18 @@ export default function AttendanceCameraModal({
                     : lateReasonCategory;
             }
 
+            let finalOutsideReason = null;
+            if (isOutsideLocation) {
+                finalOutsideReason = outsideReasonCategory === 'Lainnya'
+                    ? `Lainnya: ${outsideReasonCustom.trim()}`
+                    : outsideReasonCategory;
+            }
+
             await onSubmit({
                 photo: capturedImage,
                 smile_score: capturedSmileScore,
                 late_reason: finalLateReason,
+                outside_location_reason: finalOutsideReason,
                 latitude: locationState.latitude,
                 longitude: locationState.longitude,
                 notes: notes.trim() || null,
@@ -275,8 +334,12 @@ export default function AttendanceCameraModal({
             onClose();
         } catch (err) {
             console.error('Submit attendance error:', err);
-            const serverMsg = err?.response?.data?.errors?.late_reason?.[0] || err?.response?.data?.message;
-            if (serverMsg) {
+            const lateMsg = err?.response?.data?.errors?.late_reason?.[0];
+            const outsideMsg = err?.response?.data?.errors?.outside_location_reason?.[0];
+            const serverMsg = lateMsg || outsideMsg || err?.response?.data?.message;
+            if (outsideMsg) {
+                setOutsideReasonError(outsideMsg);
+            } else if (serverMsg) {
                 setLateReasonError(serverMsg);
             }
         } finally {
@@ -388,6 +451,15 @@ export default function AttendanceCameraModal({
                                         {locationState.accuracy && (
                                             <p className="text-[11px] text-emerald-700 mt-0.5">
                                                 Akurasi sinyal: &plusmn;{Math.round(locationState.accuracy)} meter
+                                            </p>
+                                        )}
+                                        {geofenceEnabled && distanceMeters !== null && (
+                                            <p className={`text-[11px] font-bold mt-1 ${
+                                                distanceMeters <= radiusMeters ? 'text-emerald-800' : 'text-rose-700'
+                                            }`}>
+                                                {distanceMeters <= radiusMeters
+                                                    ? `✓ Dalam titik "${officeLocation?.location_name || 'Kantor'}" (jarak ${distanceMeters} m / maks ${radiusMeters} m)`
+                                                    : `⚠ Di luar titik "${officeLocation?.location_name || 'Kantor'}" (jarak ${distanceMeters} m, toleransi ${radiusMeters} m) — wajib isi alasan`}
                                             </p>
                                         )}
                                     </div>
@@ -572,6 +644,68 @@ export default function AttendanceCameraModal({
                                         <p className="text-xs font-semibold text-rose-600 flex items-center gap-1.5 pt-0.5">
                                             <AlertTriangle size={13} />
                                             {lateReasonError}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Outside Location Reason section when outside geofence */}
+                            {isOutsideLocation && (
+                                <div className="space-y-2 rounded-xl border border-rose-200 bg-rose-50/70 p-3.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <label className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
+                                            <MapPin size={15} className="text-rose-600 shrink-0" />
+                                            Alasan Di Luar Titik Lokasi ({distanceMeters !== null ? `${distanceMeters} m` : 'GPS Error'})
+                                        </label>
+                                        <span className="text-[11px] font-bold text-rose-700 bg-white border border-rose-200 px-2 py-0.5 rounded-full shrink-0">
+                                            Wajib Diisi
+                                        </span>
+                                    </div>
+
+                                    <p className="text-[11px] text-rose-800">
+                                        Anda tetap bisa absen, namun wajib memberikan alasan mengapa tidak berada pada titik lokasi yang diizinkan (toleransi {radiusMeters} m).
+                                    </p>
+
+                                    <select
+                                        value={outsideReasonCategory}
+                                        onChange={(e) => {
+                                            setOutsideReasonCategory(e.target.value);
+                                            if (outsideReasonError) setOutsideReasonError('');
+                                        }}
+                                        className="w-full rounded-xl border border-rose-300 bg-white px-3.5 py-2.5 text-xs font-medium text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200 shadow-sm"
+                                    >
+                                        <option value="">-- Pilih Alasan Di Luar Titik Lokasi --</option>
+                                        <option value="Tugas Lapangan / Pemasangan Pelanggan">Tugas Lapangan / Pemasangan Pelanggan</option>
+                                        <option value="Perbaikan Gangguan / Maintenance ODP">Perbaikan Gangguan / Maintenance ODP</option>
+                                        <option value="Penagihan / Kunjungan Pelanggan">Penagihan / Kunjungan Pelanggan</option>
+                                        <option value="Izin WFA / Tugas Khusus">Izin WFA / Tugas Khusus</option>
+                                        <option value="Sinyal GPS Tidak Akurat">Sinyal GPS Tidak Akurat</option>
+                                        <option value="Lainnya">Lainnya</option>
+                                    </select>
+
+                                    {outsideReasonCategory === 'Lainnya' && (
+                                        <div className="space-y-1 pt-1 animate-in fade-in duration-150">
+                                            <label className="text-[11px] font-semibold text-slate-700">
+                                                Jelaskan Alasan Lokasi: <span className="text-rose-500">*</span>
+                                            </label>
+                                            <textarea
+                                                rows={2}
+                                                value={outsideReasonCustom}
+                                                onChange={(e) => {
+                                                    setOutsideReasonCustom(e.target.value);
+                                                    if (outsideReasonError) setOutsideReasonError('');
+                                                }}
+                                                placeholder="Tuliskan alasan mengapa Anda absen di luar titik yang diizinkan..."
+                                                maxLength={250}
+                                                className="w-full rounded-xl border border-rose-300 bg-white px-3.5 py-2 text-xs text-slate-900 outline-none transition focus:border-rose-500 focus:ring-2 focus:ring-rose-200 placeholder:text-slate-400 shadow-sm"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {outsideReasonError && (
+                                        <p className="text-xs font-semibold text-rose-600 flex items-center gap-1.5 pt-0.5">
+                                            <AlertTriangle size={13} />
+                                            {outsideReasonError}
                                         </p>
                                     )}
                                 </div>

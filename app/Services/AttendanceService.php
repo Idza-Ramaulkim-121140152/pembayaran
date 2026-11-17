@@ -22,11 +22,16 @@ class AttendanceService
     public const SETTING_WORK_END_TIME = 'attendance_work_end_time';
     public const SETTING_MONTHLY_RESET_DAY = 'attendance_monthly_reset_day';
     public const SETTING_LATE_TOLERANCE = 'attendance_late_tolerance_minutes';
+    public const SETTING_OFFICE_LATITUDE = 'attendance_office_latitude';
+    public const SETTING_OFFICE_LONGITUDE = 'attendance_office_longitude';
+    public const SETTING_LOCATION_RADIUS_METERS = 'attendance_location_radius_meters';
+    public const SETTING_LOCATION_NAME = 'attendance_location_name';
 
     public const DEFAULT_WORK_START = '08:00';
     public const DEFAULT_WORK_END = '17:00';
     public const DEFAULT_RESET_DAY = 25;
     public const DEFAULT_LATE_TOLERANCE = 0;
+    public const DEFAULT_LOCATION_RADIUS_METERS = 50;
 
     /**
      * Ensure attendance table exists (auto-bootstrap if migration not yet run).
@@ -46,12 +51,18 @@ class AttendanceService
                     $table->string('late_reason', 255)->nullable();
                     $table->decimal('clock_in_latitude', 10, 8)->nullable();
                     $table->decimal('clock_in_longitude', 11, 8)->nullable();
+                    $table->decimal('clock_in_distance_meters', 10, 2)->nullable();
+                    $table->boolean('clock_in_outside_location')->default(false);
+                    $table->string('clock_in_outside_reason', 255)->nullable();
                     $table->text('clock_in_notes')->nullable();
 
                     $table->dateTime('clock_out_at')->nullable();
                     $table->string('clock_out_photo')->nullable();
                     $table->decimal('clock_out_latitude', 10, 8)->nullable();
                     $table->decimal('clock_out_longitude', 11, 8)->nullable();
+                    $table->decimal('clock_out_distance_meters', 10, 2)->nullable();
+                    $table->boolean('clock_out_outside_location')->default(false);
+                    $table->string('clock_out_outside_reason', 255)->nullable();
                     $table->text('clock_out_notes')->nullable();
 
                     $table->unsignedInteger('work_duration_minutes')->nullable();
@@ -81,11 +92,26 @@ class AttendanceService
             $resetDay = self::DEFAULT_RESET_DAY;
         }
 
+        $rawLat = SiteSetting::get(self::SETTING_OFFICE_LATITUDE);
+        $rawLng = SiteSetting::get(self::SETTING_OFFICE_LONGITUDE);
+        $officeLat = ($rawLat !== null && $rawLat !== '' && is_numeric($rawLat)) ? (float) $rawLat : null;
+        $officeLng = ($rawLng !== null && $rawLng !== '' && is_numeric($rawLng)) ? (float) $rawLng : null;
+        $radiusMeters = (int) SiteSetting::get(self::SETTING_LOCATION_RADIUS_METERS, self::DEFAULT_LOCATION_RADIUS_METERS);
+        if ($radiusMeters < 10 || $radiusMeters > 5000) {
+            $radiusMeters = self::DEFAULT_LOCATION_RADIUS_METERS;
+        }
+        $locationName = trim((string) SiteSetting::get(self::SETTING_LOCATION_NAME, 'Kantor Pusat'));
+
         return [
             'work_start_time' => (string) SiteSetting::get(self::SETTING_WORK_START_TIME, self::DEFAULT_WORK_START),
             'work_end_time' => (string) SiteSetting::get(self::SETTING_WORK_END_TIME, self::DEFAULT_WORK_END),
             'monthly_reset_day' => $resetDay,
             'late_tolerance_minutes' => (int) SiteSetting::get(self::SETTING_LATE_TOLERANCE, self::DEFAULT_LATE_TOLERANCE),
+            'office_latitude' => $officeLat,
+            'office_longitude' => $officeLng,
+            'location_radius_meters' => $radiusMeters,
+            'location_name' => $locationName !== '' ? $locationName : 'Kantor Pusat',
+            'location_geofence_enabled' => $officeLat !== null && $officeLng !== null,
         ];
     }
 
@@ -107,6 +133,27 @@ class AttendanceService
         if (isset($data['late_tolerance_minutes'])) {
             $tolerance = max(0, min(120, (int) $data['late_tolerance_minutes']));
             SiteSetting::set(self::SETTING_LATE_TOLERANCE, (string) $tolerance);
+        }
+        if (array_key_exists('office_latitude', $data)) {
+            $latVal = $data['office_latitude'];
+            SiteSetting::set(
+                self::SETTING_OFFICE_LATITUDE,
+                ($latVal !== null && $latVal !== '' && is_numeric($latVal)) ? (string) (float) $latVal : ''
+            );
+        }
+        if (array_key_exists('office_longitude', $data)) {
+            $lngVal = $data['office_longitude'];
+            SiteSetting::set(
+                self::SETTING_OFFICE_LONGITUDE,
+                ($lngVal !== null && $lngVal !== '' && is_numeric($lngVal)) ? (string) (float) $lngVal : ''
+            );
+        }
+        if (isset($data['location_radius_meters'])) {
+            $radius = max(10, min(5000, (int) $data['location_radius_meters']));
+            SiteSetting::set(self::SETTING_LOCATION_RADIUS_METERS, (string) $radius);
+        }
+        if (array_key_exists('location_name', $data)) {
+            SiteSetting::set(self::SETTING_LOCATION_NAME, trim((string) ($data['location_name'] ?? '')));
         }
 
         return $this->getSettings();
@@ -168,7 +215,7 @@ class AttendanceService
         $attendanceToday = null;
         if ($isEmployee) {
             $attendanceToday = EmployeeAttendance::where('user_id', $user->id)
-                ->where('date', $today->toDateString())
+                ->whereDate('date', $today->toDateString())
                 ->first();
         }
 
@@ -243,7 +290,7 @@ class AttendanceService
         $todayDate = $today->toDateString();
 
         $existing = EmployeeAttendance::where('user_id', $user->id)
-            ->where('date', $todayDate)
+            ->whereDate('date', $todayDate)
             ->first();
 
         if ($existing && $existing->clock_in_at) {
@@ -284,13 +331,25 @@ class AttendanceService
 
         $smileScore = isset($data['smile_score']) ? (float) $data['smile_score'] : null;
 
+        $latitude = isset($data['latitude']) && is_numeric($data['latitude']) ? (float) $data['latitude'] : null;
+        $longitude = isset($data['longitude']) && is_numeric($data['longitude']) ? (float) $data['longitude'] : null;
+        $locationCheck = $this->evaluateLocationPolicy(
+            $latitude,
+            $longitude,
+            $data['outside_location_reason'] ?? null,
+            $settings
+        );
+
         $notes = $data['notes'] ?? null;
         if ($lateReason) {
             $notes = "[Alasan Terlambat: {$lateReason}]" . ($notes ? ' ' . $notes : '');
         }
-
-        $latitude = isset($data['latitude']) && is_numeric($data['latitude']) ? (float) $data['latitude'] : null;
-        $longitude = isset($data['longitude']) && is_numeric($data['longitude']) ? (float) $data['longitude'] : null;
+        if ($locationCheck['is_outside'] && !empty($locationCheck['reason'])) {
+            $distanceLabel = $locationCheck['distance_meters'] !== null
+                ? number_format($locationCheck['distance_meters'], 0, ',', '.') . ' m'
+                : 'GPS tidak terdeteksi';
+            $notes = "[Di Luar Titik Lokasi ({$distanceLabel}): {$locationCheck['reason']}]" . ($notes ? ' ' . $notes : '');
+        }
 
         $attendance = $existing ?: new EmployeeAttendance();
         $attendance->user_id = $user->id;
@@ -305,6 +364,11 @@ class AttendanceService
         if (Schema::hasColumn('employee_attendances', 'clock_in_latitude')) {
             $attendance->clock_in_latitude = $latitude ?: $attendance->clock_in_latitude;
             $attendance->clock_in_longitude = $longitude ?: $attendance->clock_in_longitude;
+        }
+        if (Schema::hasColumn('employee_attendances', 'clock_in_distance_meters')) {
+            $attendance->clock_in_distance_meters = $locationCheck['distance_meters'];
+            $attendance->clock_in_outside_location = $locationCheck['is_outside'];
+            $attendance->clock_in_outside_reason = $locationCheck['reason'];
         }
         $attendance->clock_in_notes = $notes;
         $attendance->status = $status;
@@ -333,7 +397,7 @@ class AttendanceService
         $todayDate = $today->toDateString();
 
         $attendance = EmployeeAttendance::where('user_id', $user->id)
-            ->where('date', $todayDate)
+            ->whereDate('date', $todayDate)
             ->first();
 
         if (!$attendance || !$attendance->clock_in_at) {
@@ -359,9 +423,24 @@ class AttendanceService
             $photoPath = $this->saveBase64Photo($data['photo'], 'out', $user->id);
         }
 
+        $settings = $this->getSettings();
         $smileScore = isset($data['smile_score']) ? (float) $data['smile_score'] : null;
         $latitude = isset($data['latitude']) && is_numeric($data['latitude']) ? (float) $data['latitude'] : null;
         $longitude = isset($data['longitude']) && is_numeric($data['longitude']) ? (float) $data['longitude'] : null;
+        $locationCheck = $this->evaluateLocationPolicy(
+            $latitude,
+            $longitude,
+            $data['outside_location_reason'] ?? null,
+            $settings
+        );
+
+        $clockOutNotes = $data['notes'] ?? $attendance->clock_out_notes;
+        if ($locationCheck['is_outside'] && !empty($locationCheck['reason'])) {
+            $distanceLabel = $locationCheck['distance_meters'] !== null
+                ? number_format($locationCheck['distance_meters'], 0, ',', '.') . ' m'
+                : 'GPS tidak terdeteksi';
+            $clockOutNotes = "[Di Luar Titik Lokasi ({$distanceLabel}): {$locationCheck['reason']}]" . ($clockOutNotes ? ' ' . $clockOutNotes : '');
+        }
 
         $attendance->clock_out_at = $now;
         if ($photoPath) {
@@ -371,12 +450,79 @@ class AttendanceService
             $attendance->clock_out_latitude = $latitude;
             $attendance->clock_out_longitude = $longitude;
         }
-        $attendance->clock_out_notes = $data['notes'] ?? $attendance->clock_out_notes;
+        if (Schema::hasColumn('employee_attendances', 'clock_out_distance_meters')) {
+            $attendance->clock_out_distance_meters = $locationCheck['distance_meters'];
+            $attendance->clock_out_outside_location = $locationCheck['is_outside'];
+            $attendance->clock_out_outside_reason = $locationCheck['reason'];
+        }
+        $attendance->clock_out_notes = $clockOutNotes;
         $attendance->work_duration_minutes = $workDurationMinutes;
         $attendance->smile_score_out = $smileScore;
         $attendance->save();
 
         return $attendance->fresh(['user']);
+    }
+
+    /**
+     * Evaluate employee GPS coordinates against allowed attendance geofence point.
+     */
+    protected function evaluateLocationPolicy(?float $latitude, ?float $longitude, ?string $outsideReason, array $settings): array
+    {
+        $officeLat = $settings['office_latitude'] ?? null;
+        $officeLng = $settings['office_longitude'] ?? null;
+        $radiusMeters = (int) ($settings['location_radius_meters'] ?? self::DEFAULT_LOCATION_RADIUS_METERS);
+
+        if ($officeLat === null || $officeLng === null) {
+            return [
+                'configured' => false,
+                'distance_meters' => null,
+                'is_outside' => false,
+                'reason' => null,
+            ];
+        }
+
+        $distanceMeters = null;
+        $isOutside = false;
+
+        if ($latitude !== null && $longitude !== null) {
+            $distanceMeters = round($this->calculateDistanceMeters((float) $officeLat, (float) $officeLng, $latitude, $longitude), 2);
+            $isOutside = $distanceMeters > $radiusMeters;
+        } else {
+            $isOutside = true;
+        }
+
+        $cleanReason = trim((string) ($outsideReason ?? ''));
+        if ($isOutside && $cleanReason === '') {
+            $distanceText = $distanceMeters !== null
+                ? ' (jarak ' . number_format($distanceMeters, 0, ',', '.') . " m, toleransi {$radiusMeters} m)"
+                : ' (lokasi GPS tidak terdeteksi)';
+            throw ValidationException::withMessages([
+                'outside_location_reason' => "Anda berada di luar titik lokasi yang diizinkan{$distanceText}. Wajib mengisi alasan agar tetap dapat absen.",
+            ]);
+        }
+
+        return [
+            'configured' => true,
+            'distance_meters' => $distanceMeters,
+            'is_outside' => $isOutside,
+            'reason' => $isOutside ? $cleanReason : null,
+        ];
+    }
+
+    /**
+     * Calculate Haversine distance in meters between two GPS coordinates.
+     */
+    public function calculateDistanceMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadius = 6371000.0;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+
+        $a = sin($dLat / 2) * sin($dLat / 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) * sin($dLng / 2);
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadius * $c;
     }
 
     /**

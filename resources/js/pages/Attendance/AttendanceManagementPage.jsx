@@ -39,7 +39,12 @@ export default function AttendanceManagementPage() {
         work_end_time: '17:00',
         monthly_reset_day: 25,
         late_tolerance_minutes: 0,
+        location_name: 'Kantor Pusat',
+        office_latitude: '',
+        office_longitude: '',
+        location_radius_meters: 50,
     });
+    const [locatingOffice, setLocatingOffice] = useState(false);
 
     // Filters state
     const [filters, setFilters] = useState({
@@ -99,6 +104,10 @@ export default function AttendanceManagementPage() {
                         work_end_time: payload.settings.work_end_time || '17:00',
                         monthly_reset_day: Number(payload.settings.monthly_reset_day || 25),
                         late_tolerance_minutes: Number(payload.settings.late_tolerance_minutes || 0),
+                        location_name: payload.settings.location_name || 'Kantor Pusat',
+                        office_latitude: payload.settings.office_latitude !== null && payload.settings.office_latitude !== undefined ? String(payload.settings.office_latitude) : '',
+                        office_longitude: payload.settings.office_longitude !== null && payload.settings.office_longitude !== undefined ? String(payload.settings.office_longitude) : '',
+                        location_radius_meters: Number(payload.settings.location_radius_meters || 50),
                     });
                 }
             }
@@ -119,7 +128,13 @@ export default function AttendanceManagementPage() {
         e.preventDefault();
         try {
             setSavingSettings(true);
-            const res = await apiClient.post('/attendance/settings', settingsForm);
+            const payload = {
+                ...settingsForm,
+                office_latitude: settingsForm.office_latitude === '' ? null : Number(settingsForm.office_latitude),
+                office_longitude: settingsForm.office_longitude === '' ? null : Number(settingsForm.office_longitude),
+                location_radius_meters: Number(settingsForm.location_radius_meters || 50),
+            };
+            const res = await apiClient.post('/attendance/settings', payload);
             if (res.data?.success) {
                 showToast('success', res.data.message || 'Pengaturan absensi berhasil disimpan.');
                 fetchData();
@@ -130,6 +145,30 @@ export default function AttendanceManagementPage() {
         } finally {
             setSavingSettings(false);
         }
+    };
+
+    const handleUseCurrentGpsForOffice = () => {
+        if (!navigator.geolocation) {
+            showToast('error', 'Browser tidak mendukung GPS.');
+            return;
+        }
+        setLocatingOffice(true);
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setSettingsForm((prev) => ({
+                    ...prev,
+                    office_latitude: pos.coords.latitude.toFixed(7),
+                    office_longitude: pos.coords.longitude.toFixed(7),
+                }));
+                setLocatingOffice(false);
+                showToast('success', 'Koordinat GPS saat ini berhasil diisi. Klik Simpan Pengaturan untuk menerapkan.');
+            },
+            () => {
+                setLocatingOffice(false);
+                showToast('error', 'Gagal mengambil koordinat GPS. Pastikan izin lokasi aktif.');
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
     };
 
     // Export CSV
@@ -326,6 +365,92 @@ export default function AttendanceManagementPage() {
                                 </select>
                             </div>
                             <span className="text-[11px] text-slate-400 mt-1 block">Siklus: Tgl {settingsForm.monthly_reset_day} s/d Tgl {settingsForm.monthly_reset_day - 1 || 28}</span>
+                        </div>
+                    </div>
+
+                    {/* Titik Lokasi Diizinkan Absen (Geofence) */}
+                    <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <MapPin size={16} className="text-blue-600 shrink-0" />
+                                <div>
+                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                                        Titik Lokasi Diizinkan Absen &amp; Toleransi Jarak
+                                    </h3>
+                                    <p className="text-[11px] text-slate-500">
+                                        Pegawai di luar radius toleransi tetap bisa absen, namun wajib mengisi alasan mengapa tidak berada di titik lokasi.
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleUseCurrentGpsForOffice}
+                                    disabled={locatingOffice}
+                                    className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm hover:bg-blue-50 disabled:opacity-50"
+                                >
+                                    {locatingOffice ? <RefreshCw size={12} className="animate-spin" /> : <MapPin size={12} />}
+                                    Gunakan Lokasi Saya
+                                </button>
+                                {settingsForm.office_latitude !== '' && settingsForm.office_longitude !== '' && (
+                                    <a
+                                        href={`https://www.google.com/maps?q=${settingsForm.office_latitude},${settingsForm.office_longitude}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                                    >
+                                        Cek Peta
+                                        <ExternalLink size={11} />
+                                    </a>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">Nama Titik Lokasi</label>
+                                <input
+                                    type="text"
+                                    value={settingsForm.location_name}
+                                    onChange={(e) => setSettingsForm({ ...settingsForm, location_name: e.target.value })}
+                                    placeholder="Kantor Pusat"
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">Latitude Titik</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={settingsForm.office_latitude}
+                                    onChange={(e) => setSettingsForm({ ...settingsForm, office_latitude: e.target.value })}
+                                    placeholder="-5.632728"
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono font-semibold text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">Longitude Titik</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={settingsForm.office_longitude}
+                                    onChange={(e) => setSettingsForm({ ...settingsForm, office_longitude: e.target.value })}
+                                    placeholder="105.548015"
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono font-semibold text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600">Toleransi Jarak (Meter)</label>
+                                <input
+                                    type="number"
+                                    min="10"
+                                    max="5000"
+                                    value={settingsForm.location_radius_meters}
+                                    onChange={(e) => setSettingsForm({ ...settingsForm, location_radius_meters: Number(e.target.value) })}
+                                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                                <span className="mt-0.5 block text-[10px] text-slate-500">Default: 50 meter</span>
+                            </div>
                         </div>
                     </div>
 
@@ -606,6 +731,25 @@ export default function AttendanceManagementPage() {
                                                                 <span>GPS: {Number(row.clock_in_latitude).toFixed(4)}, {Number(row.clock_in_longitude).toFixed(4)}</span>
                                                                 <ExternalLink size={9} className="opacity-60" />
                                                             </a>
+                                                        )}
+                                                        {row.clock_in_outside_location ? (
+                                                            <div className="space-y-0.5">
+                                                                <span className="inline-flex items-center gap-1 rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 border border-rose-200">
+                                                                    <AlertTriangle size={10} />
+                                                                    Di Luar Titik{row.clock_in_distance_meters !== null && row.clock_in_distance_meters !== undefined ? ` (${Math.round(row.clock_in_distance_meters)} m)` : ' (No GPS)'}
+                                                                </span>
+                                                                {row.clock_in_outside_reason && (
+                                                                    <span className="block rounded-md bg-rose-50/70 px-1.5 py-0.5 text-[10px] font-medium text-rose-900 border border-rose-200/70 max-w-[220px] truncate" title={row.clock_in_outside_reason}>
+                                                                        Alasan Lokasi: {row.clock_in_outside_reason}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            row.clock_in_distance_meters !== null && row.clock_in_distance_meters !== undefined && (
+                                                                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                                                                    Dalam Radius ({Math.round(row.clock_in_distance_meters)} m)
+                                                                </span>
+                                                            )
                                                         )}
                                                     </div>
                                                 </div>

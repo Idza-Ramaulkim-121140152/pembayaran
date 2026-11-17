@@ -436,6 +436,7 @@ export default function EmployeeAttendanceWidget() {
                 workEndTime={workEndTime}
                 isLate={isPastStart}
                 lateMinutes={currentLateDiffMinutes}
+                officeLocation={data?.settings || null}
                 onClose={handleCloseModal}
                 onSubmit={handleAttendanceSubmit}
             />
