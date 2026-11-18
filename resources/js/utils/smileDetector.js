@@ -3,9 +3,10 @@
  * Uses locally hosted face-api.js and tiny neural network models with fallback heuristics.
  */
 
-let isScriptLoading = false;
 let isModelsLoaded = false;
 let loadPromise = null;
+let modelsLoadPromise = null;
+let cachedFallbackCanvas = null;
 
 /**
  * Load face-api.js script asynchronously if not already loaded.
@@ -46,7 +47,10 @@ export function loadFaceApiScript() {
                 if (window.faceapi) resolve(window.faceapi);
                 else reject(new Error('CDN faceapi load failed'));
             };
-            cdnScript.onerror = () => reject(new Error('All face-api sources failed to load'));
+            cdnScript.onerror = () => {
+                loadPromise = null;
+                reject(new Error('All face-api sources failed to load'));
+            };
             document.head.appendChild(cdnScript);
         };
 
@@ -57,30 +61,37 @@ export function loadFaceApiScript() {
 }
 
 /**
- * Load tiny face detector, landmarks, and expression models.
+ * Load tiny face detector and expression models (skips heavy 68-landmark net for fast mobile inference).
  */
 export async function initFaceDetectionModels() {
     if (isModelsLoaded) {
         return true;
     }
 
-    try {
-        const faceapi = await loadFaceApiScript();
-
-        const modelPath = '/models/face-api';
-
-        await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(modelPath),
-            faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
-            faceapi.nets.faceExpressionNet.loadFromUri(modelPath),
-        ]);
-
-        isModelsLoaded = true;
-        return true;
-    } catch (err) {
-        console.warn('Could not load neural network face-api models:', err);
-        return false;
+    if (modelsLoadPromise) {
+        return modelsLoadPromise;
     }
+
+    modelsLoadPromise = (async () => {
+        try {
+            const faceapi = await loadFaceApiScript();
+            const modelPath = '/models/face-api';
+
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(modelPath),
+                faceapi.nets.faceExpressionNet.loadFromUri(modelPath),
+            ]);
+
+            isModelsLoaded = true;
+            return true;
+        } catch (err) {
+            modelsLoadPromise = null;
+            console.warn('Could not load neural network face-api models:', err);
+            return false;
+        }
+    })();
+
+    return modelsLoadPromise;
 }
 
 /**
@@ -112,13 +123,12 @@ export async function detectFaceAndSmile(video) {
         const faceapi = window.faceapi;
         if (faceapi && isModelsLoaded) {
             const options = new faceapi.TinyFaceDetectorOptions({
-                inputSize: 224,
-                scoreThreshold: 0.45,
+                inputSize: 160,
+                scoreThreshold: 0.4,
             });
 
             const detection = await faceapi
                 .detectSingleFace(video, options)
-                .withFaceLandmarks()
                 .withFaceExpressions();
 
             if (!detection) {
@@ -187,25 +197,28 @@ function fallbackCanvasFaceAndSmile(video) {
     }
 
     try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 160;
-        canvas.height = 120;
-        const ctx = canvas.getContext('2d');
+        if (!cachedFallbackCanvas) {
+            cachedFallbackCanvas = document.createElement('canvas');
+            cachedFallbackCanvas.width = 160;
+            cachedFallbackCanvas.height = 120;
+        }
+        const canvas = cachedFallbackCanvas;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) throw new Error('Canvas context not available');
 
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-        // Sample skin tone and contrast in the center third (face & mouth area)
+        // Sample skin tone and contrast in the center third (2px stride = 4x faster)
         let skinPixels = 0;
-        let mouthBrightPixels = 0; // teeth/smile contrast
+        let mouthBrightPixels = 0;
         const centerX = canvas.width / 2;
         const centerY = canvas.height / 2;
         const radiusX = canvas.width * 0.28;
         const radiusY = canvas.height * 0.35;
 
-        for (let y = 0; y < canvas.height; y++) {
-            for (let x = 0; x < canvas.width; x++) {
+        for (let y = 0; y < canvas.height; y += 2) {
+            for (let x = 0; x < canvas.width; x += 2) {
                 const dx = (x - centerX) / radiusX;
                 const dy = (y - centerY) / radiusY;
                 if (dx * dx + dy * dy <= 1.0) {
@@ -214,12 +227,10 @@ function fallbackCanvasFaceAndSmile(video) {
                     const g = imgData[idx + 1];
                     const b = imgData[idx + 2];
 
-                    // Heuristic skin color filter
                     if (r > 60 && g > 40 && b > 20 && r > g && r > b && (Math.max(r, g, b) - Math.min(r, g, b) > 15)) {
                         skinPixels++;
                     }
 
-                    // Lower half of face (mouth region)
                     if (dy > 0.1 && dy < 0.65 && Math.abs(dx) < 0.5) {
                         const brightness = (r + g + b) / 3;
                         if (brightness > 130 && Math.abs(r - g) < 30 && Math.abs(g - b) < 30) {
@@ -230,7 +241,7 @@ function fallbackCanvasFaceAndSmile(video) {
             }
         }
 
-        const faceDetected = skinPixels > 600;
+        const faceDetected = skinPixels > 150;
         const smileRatio = mouthBrightPixels / Math.max(1, skinPixels * 0.15);
         const smilePercentage = Math.min(100, Math.round(smileRatio * 100));
         const isSmiling = faceDetected && smilePercentage >= 50;
@@ -262,14 +273,14 @@ function fallbackCanvasFaceAndSmile(video) {
  * @param {number} quality JPEG quality between 0.1 and 1.0
  * @returns {string} base64 data URL
  */
-export function captureVideoFrame(video, quality = 0.82) {
+export function captureVideoFrame(video, quality = 0.75) {
     if (!video) return null;
 
     const width = video.videoWidth || 640;
     const height = video.videoHeight || 480;
 
     const canvas = document.createElement('canvas');
-    canvas.width = Math.min(800, width);
+    canvas.width = Math.min(640, width);
     canvas.height = Math.round((canvas.width / width) * height);
 
     const ctx = canvas.getContext('2d');

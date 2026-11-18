@@ -55,7 +55,7 @@ export default function AttendanceCameraModal({
         errorMessage: '',
     });
     const [submitting, setSubmitting] = useState(false);
-    const [countdown, setCountdown] = useState(null);
+    const [allowManualSnap, setAllowManualSnap] = useState(false);
 
     const smileHoldCounterRef = useRef(0);
 
@@ -167,29 +167,33 @@ export default function AttendanceCameraModal({
         }
     }, []);
 
-    // Loop detection
+    // Loop detection (sequential setTimeout to avoid blocking mobile UI thread)
     useEffect(() => {
-        if (!isOpen || cameraState !== 'ready') return;
+        if (!isOpen || cameraState !== 'ready') {
+            setAllowManualSnap(false);
+            return;
+        }
 
         let isRunning = true;
-        let lastCheckTime = 0;
+        let timerId = null;
 
-        const loop = async (timestamp) => {
+        const manualTimer = setTimeout(() => {
+            if (isRunning) setAllowManualSnap(true);
+        }, 2000);
+
+        const runCheck = async () => {
             if (!isRunning) return;
 
-            // Check roughly every 100ms for optimal performance
-            if (timestamp - lastCheckTime >= 100 && videoRef.current) {
-                lastCheckTime = timestamp;
+            if (videoRef.current && document.visibilityState !== 'hidden') {
                 const result = await detectFaceAndSmile(videoRef.current);
                 if (isRunning) {
                     setFaceStatus(result);
 
-                    // Check smile hold for auto capture
                     if (result.faceDetected && result.isSmiling && result.smilePercentage >= 50) {
                         smileHoldCounterRef.current += 1;
 
-                        // After smiling consistently for ~1 second (10 checks)
-                        if (smileHoldCounterRef.current >= 8 && !capturedImage) {
+                        // Auto capture after ~1 second of consistent smile (3 checks @ 350ms)
+                        if (smileHoldCounterRef.current >= 3 && !capturedImage) {
                             handleSnapPhoto(result.smileScore);
                             return;
                         }
@@ -199,15 +203,18 @@ export default function AttendanceCameraModal({
                 }
             }
 
-            animationFrameRef.current = requestAnimationFrame(loop);
+            if (isRunning) {
+                timerId = setTimeout(runCheck, 350);
+            }
         };
 
-        animationFrameRef.current = requestAnimationFrame(loop);
+        timerId = setTimeout(runCheck, 250);
 
         return () => {
             isRunning = false;
-            if (animationFrameRef.current) {
-                cancelAnimationFrame(animationFrameRef.current);
+            clearTimeout(manualTimer);
+            if (timerId) {
+                clearTimeout(timerId);
             }
         };
     }, [isOpen, cameraState, capturedImage]);
@@ -773,7 +780,7 @@ export default function AttendanceCameraModal({
                             <button
                                 type="button"
                                 onClick={() => handleSnapPhoto(faceStatus.smileScore)}
-                                disabled={cameraState !== 'ready' || !faceStatus.faceDetected}
+                                disabled={cameraState !== 'ready' || (!faceStatus.faceDetected && !allowManualSnap)}
                                 className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow transition disabled:opacity-50 ${
                                     faceStatus.isSmiling
                                         ? 'bg-emerald-500 hover:bg-emerald-600 animate-pulse'

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import apiClient from '../../services/api';
 import AttendanceCameraModal from './AttendanceCameraModal';
+import { initFaceDetectionModels } from '../../utils/smileDetector';
 
 export default function EmployeeAttendanceWidget() {
     const [loading, setLoading] = useState(true);
@@ -26,11 +27,11 @@ export default function EmployeeAttendanceWidget() {
     });
     const [toastMessage, setToastMessage] = useState(null);
 
-    // Live clock ticker
+    // Live clock ticker (15s interval to avoid unnecessary re-renders every second)
     useEffect(() => {
         const timer = setInterval(() => {
             setCurrentTime(new Date());
-        }, 1000);
+        }, 15000);
         return () => clearInterval(timer);
     }, []);
 
@@ -51,6 +52,18 @@ export default function EmployeeAttendanceWidget() {
     useEffect(() => {
         fetchAttendanceData();
     }, [fetchAttendanceData]);
+
+    // Preload face-api models silently in background if employee still needs to clock in/out today
+    useEffect(() => {
+        if (!data?.is_employee) return;
+        const att = data?.attendance_today;
+        if (att?.clock_in_at && att?.clock_out_at) return;
+
+        const preloadTimer = setTimeout(() => {
+            initFaceDetectionModels().catch(() => {});
+        }, 1500);
+        return () => clearTimeout(preloadTimer);
+    }, [data]);
 
     const handleOpenModal = (type) => {
         setModalConfig({
