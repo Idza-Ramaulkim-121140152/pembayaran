@@ -142,6 +142,32 @@ class DynamicQrisService
     }
 
     /**
+     * Generate preview QRIS Dinamis + kode unik untuk biaya pemasangan sebelum verifikasi disimpan.
+     */
+    public function generatePreviewForAmount(int|float $baseAmount, ?int $preferredCode = null): array
+    {
+        $baseInt = (int) round((float) $baseAmount);
+        $min = (int) SiteSetting::get(self::SETTING_UNIQUE_CODE_MIN, 101);
+        $max = (int) SiteSetting::get(self::SETTING_UNIQUE_CODE_MAX, 499);
+
+        $uniqueCode = ($preferredCode !== null && $preferredCode >= $min && $preferredCode <= $max)
+            ? $preferredCode
+            : $this->generateUniqueCode($baseInt);
+
+        $expectedAmount = $baseInt + $uniqueCode;
+        $staticPayload = $this->getStaticPayload();
+        $dynamicPayload = $this->convertStaticToDynamic($staticPayload, $expectedAmount);
+
+        return [
+            'base_amount' => $baseInt,
+            'unique_code' => $uniqueCode,
+            'expected_amount' => $expectedAmount,
+            'payload' => $dynamicPayload,
+            'qr_data_uri' => $this->renderQrDataUri($dynamicPayload),
+        ];
+    }
+
+    /**
      * Mempersiapkan QRIS Dinamis lengkap untuk sebuah Invoice.
      * Kode unik bersifat BAKU (permanen & tidak berubah-ubah) untuk invoice tersebut.
      */

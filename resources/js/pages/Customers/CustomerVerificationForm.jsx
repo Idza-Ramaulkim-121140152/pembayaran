@@ -89,6 +89,9 @@ function CustomerVerificationForm() {
     const [loadingPaymentReceivers, setLoadingPaymentReceivers] = useState(false);
     const [paymentReceiptOptionId, setPaymentReceiptOptionId] = useState('');
     const [paymentMethodType, setPaymentMethodType] = useState('tunai'); // 'tunai' | 'transfer'
+    const [transferQrisPreview, setTransferQrisPreview] = useState(null);
+    const [loadingTransferQris, setLoadingTransferQris] = useState(false);
+    const [installationPaymentQris, setInstallationPaymentQris] = useState(null);
     const [paymentReceiverUserId, setPaymentReceiverUserId] = useState(window.appUserId ? String(window.appUserId) : '');
     const [installationPaymentModal, setInstallationPaymentModal] = useState({ open: false });
     const [otherReceiverModal, setOtherReceiverModal] = useState({ open: false, selectedReceiver: null });
@@ -922,6 +925,9 @@ function CustomerVerificationForm() {
                 }
 
                 payload.payment_receipt_option_id = selectedOptionId ? Number(selectedOptionId) : null;
+                if (transferQrisPreview?.unique_code && (paymentMethodType === 'transfer' || !isTeknisi)) {
+                    payload.installation_qris_unique_code = Number(transferQrisPreview.unique_code);
+                }
                 payload.payment_receiver_user_id = canChoosePaymentReceiver && paymentReceiverUserId
                     ? Number(paymentReceiverUserId)
                     : null;
@@ -993,6 +999,7 @@ function CustomerVerificationForm() {
             setSecretInfo(result.secret || null);
             setAgreementInfo(result.agreement || null);
             setVerifiedCustomer(result.customer || null);
+            setInstallationPaymentQris(result.installation_payment_qris || null);
             setShowSecretModal(true);
             setSuccess(true);
         } catch (err) {
@@ -1005,6 +1012,58 @@ function CustomerVerificationForm() {
             setSubmitting(false);
         }
     };
+
+    const selectedReceiptOptionObj = useMemo(
+        () => paymentReceiptOptions.find((opt) => String(opt.id) === String(paymentReceiptOptionId)) || null,
+        [paymentReceiptOptions, paymentReceiptOptionId]
+    );
+
+    const isTransferSelectedInModal = useMemo(() => {
+        if (isTeknisi) {
+            return paymentMethodType === 'transfer';
+        }
+        const name = String(selectedReceiptOptionObj?.name || '').toLowerCase();
+        return name.includes('transfer') || name.includes('qris') || name.includes('bank');
+    }, [isTeknisi, paymentMethodType, selectedReceiptOptionObj]);
+
+    useEffect(() => {
+        const fee = Number(formData.installation_fee || 0);
+        if (!installationPaymentModal.open || !isTransferSelectedInModal || fee < 1000) {
+            return;
+        }
+        if (transferQrisPreview && Number(transferQrisPreview.base_amount) === Math.round(fee)) {
+            return;
+        }
+
+        let cancelled = false;
+        const loadPreview = async () => {
+            setLoadingTransferQris(true);
+            try {
+                const res = await fetch('/api/customer-verification/installation-qris-preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                        Accept: 'application/json',
+                    },
+                    body: JSON.stringify({ amount: fee }),
+                });
+                const json = await res.json();
+                if (!cancelled && res.ok && json?.data) {
+                    setTransferQrisPreview(json.data);
+                }
+            } catch (err) {
+                console.warn('Gagal memuat preview kode unik pemasangan:', err);
+            } finally {
+                if (!cancelled) setLoadingTransferQris(false);
+            }
+        };
+        loadPreview();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [installationPaymentModal.open, isTransferSelectedInModal, formData.installation_fee, transferQrisPreview]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -2107,12 +2166,55 @@ function CustomerVerificationForm() {
                                                 </p>
                                             ) : (
                                                 <p className="text-amber-800 dark:text-amber-200">
-                                                    Biaya pemasangan transfer akan masuk ke <strong>pendingan keuangan</strong> dan menunggu pengecekan mutasi bank oleh petugas, admin, atau finance kantor.
+                                                    Biaya pemasangan transfer menggunakan <strong>kode unik QRIS</strong> (sama seperti invoice). Pesan nominal pas transfer &amp; link pembayaran akan otomatis dikirim ke WhatsApp pelanggan.
                                                 </p>
                                             )}
                                         </div>
                                     </div>
                                 </div>
+
+                                {/* Preview Kode Unik & QRIS untuk Transfer */}
+                                {paymentMethodType === 'transfer' && Number(formData.installation_fee || 0) >= 1000 && (
+                                    <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 p-4 space-y-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
+                                                Kode Unik &amp; QRIS Pemasangan
+                                            </span>
+                                            <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                                Auto-Verifikasi Aktif
+                                            </span>
+                                        </div>
+                                        {loadingTransferQris ? (
+                                            <p className="text-xs text-emerald-800 dark:text-emerald-300">Menyiapkan kode unik &amp; QRIS...</p>
+                                        ) : transferQrisPreview ? (
+                                            <div className="flex flex-col sm:flex-row items-center gap-4">
+                                                {transferQrisPreview.qr_data_uri && (
+                                                    <div className="rounded-xl bg-white p-2 border border-emerald-200 shadow-sm shrink-0">
+                                                        <img
+                                                            src={transferQrisPreview.qr_data_uri}
+                                                            alt="QRIS Biaya Pemasangan"
+                                                            className="w-36 h-36 object-contain"
+                                                        />
+                                                    </div>
+                                                )}
+                                                <div className="flex-1 text-center sm:text-left space-y-1">
+                                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                                                        Nominal Pas Transfer Pelanggan
+                                                    </p>
+                                                    <p className="text-2xl font-extrabold text-emerald-900 dark:text-white tracking-tight">
+                                                        {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(transferQrisPreview.expected_amount || 0))}
+                                                    </p>
+                                                    <p className="text-xs text-emerald-800 dark:text-emerald-200">
+                                                        Biaya Pasang: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(transferQrisPreview.base_amount || 0))} + Kode Unik: <strong>Rp {transferQrisPreview.unique_code}</strong>
+                                                    </p>
+                                                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300 pt-1">
+                                                        Tunjukkan QRIS / nominal pas ini ke pelanggan. Link bayar juga otomatis dikirim via WhatsApp saat verifikasi selesai.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             /* Admin/Superadmin standard view */
@@ -2151,6 +2253,44 @@ function CustomerVerificationForm() {
                                 <div className="rounded-2xl border border-blue-200 dark:border-blue-800/80 bg-blue-50 dark:bg-blue-950/40 p-3.5 sm:p-4 text-xs sm:text-sm text-blue-900 dark:text-blue-200 leading-relaxed">
                                     Jika akun penerima bukan diri sendiri, sistem bisa meminta approval akun penerima atau langsung memasukkan biaya pemasangan ke hutang sesuai keputusan Anda.
                                 </div>
+                                {isTransferSelectedInModal && Number(formData.installation_fee || 0) >= 1000 && (
+                                    <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 p-4 space-y-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-emerald-900 dark:text-emerald-200">
+                                                Kode Unik &amp; QRIS Pemasangan
+                                            </span>
+                                            <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                                                Auto-Verifikasi Aktif
+                                            </span>
+                                        </div>
+                                        {loadingTransferQris ? (
+                                            <p className="text-xs text-emerald-800 dark:text-emerald-300">Menyiapkan kode unik &amp; QRIS...</p>
+                                        ) : transferQrisPreview ? (
+                                            <div className="flex flex-col sm:flex-row items-center gap-3">
+                                                {transferQrisPreview.qr_data_uri && (
+                                                    <div className="rounded-xl bg-white p-2 border border-emerald-200 shrink-0">
+                                                        <img
+                                                            src={transferQrisPreview.qr_data_uri}
+                                                            alt="QRIS Pemasangan"
+                                                            className="w-28 h-28 object-contain"
+                                                        />
+                                                    </div>
+                                                )}
+                                                <div className="flex-1 text-center sm:text-left space-y-1">
+                                                    <p className="text-xl font-extrabold text-emerald-900 dark:text-white">
+                                                        {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(transferQrisPreview.expected_amount || 0))}
+                                                    </p>
+                                                    <p className="text-xs text-emerald-800 dark:text-emerald-200">
+                                                        Pokok {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(transferQrisPreview.base_amount || 0))} + Kode Unik <strong>Rp {transferQrisPreview.unique_code}</strong>
+                                                    </p>
+                                                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                                                        Otomatis kirim pesan nominal pas transfer &amp; link QRIS ke WA pelanggan.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -2265,7 +2405,7 @@ function CustomerVerificationForm() {
                 {/* Secret Info Modal */}
                 {showSecretModal && secretInfo && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-5 sm:p-6 text-slate-900 dark:text-slate-100">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg max-h-[92vh] overflow-y-auto w-full p-5 sm:p-6 text-slate-900 dark:text-slate-100">
                             <div className="flex items-center gap-3 mb-4">
                                 <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-950/60 rounded-xl flex items-center justify-center shrink-0">
                                     <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
@@ -2294,6 +2434,55 @@ function CustomerVerificationForm() {
                                     <p className="text-sm font-mono font-medium text-slate-900 dark:text-slate-200">{secretInfo.remote_address}</p>
                                 </div>
                             </div>
+
+                            {installationPaymentQris && (
+                                <div className="mb-4 rounded-2xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/90 dark:bg-emerald-950/40 p-4 space-y-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                                            Pembayaran Pemasangan (Kode Unik)
+                                        </p>
+                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                            installationPaymentQris.whatsapp_sent
+                                                ? 'bg-emerald-600 text-white'
+                                                : 'bg-amber-100 text-amber-800'
+                                        }`}>
+                                            {installationPaymentQris.whatsapp_sent ? 'WA Terkirim' : 'WA Pending'}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col sm:flex-row items-center gap-3">
+                                        {installationPaymentQris.qr_data_uri && (
+                                            <div className="rounded-xl bg-white p-2 border border-emerald-200 shrink-0">
+                                                <img
+                                                    src={installationPaymentQris.qr_data_uri}
+                                                    alt="QRIS Pemasangan"
+                                                    className="w-32 h-32 object-contain"
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="flex-1 text-center sm:text-left space-y-1">
+                                            <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                                Nominal Pas Transfer
+                                            </p>
+                                            <p className="text-2xl font-extrabold text-emerald-900 dark:text-white select-all">
+                                                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(installationPaymentQris.expected_amount || 0))}
+                                            </p>
+                                            <p className="text-[11px] text-emerald-800 dark:text-emerald-200">
+                                                Pokok {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(installationPaymentQris.base_amount || 0))} + Kode Unik <strong>Rp {installationPaymentQris.unique_code}</strong>
+                                            </p>
+                                            <div className="pt-1 flex flex-wrap justify-center sm:justify-start gap-2">
+                                                <a
+                                                    href={installationPaymentQris.payment_url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                                                >
+                                                    Buka Halaman Bayar
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             {agreementInfo && (
                                 <div className="mb-4 rounded-xl border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/90 dark:bg-emerald-950/40 p-3.5 sm:p-4">

@@ -386,6 +386,7 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::get('/get/{timestamp}', [\App\Http\Controllers\CustomerVerificationController::class, 'getCustomerForVerification'])->name('customer-verification.get');
             Route::get('/odps/options', [\App\Http\Controllers\CustomerVerificationController::class, 'odpOptions'])->name('customer-verification.odps.options');
             Route::post('/verify', [\App\Http\Controllers\CustomerVerificationController::class, 'verifyCustomer'])->name('customer-verification.verify');
+            Route::post('/installation-qris-preview', [\App\Http\Controllers\CustomerVerificationController::class, 'previewInstallationQris'])->name('customer-verification.installation-qris-preview');
             Route::get('/verified', [\App\Http\Controllers\CustomerVerificationController::class, 'getVerifiedTimestamps'])->name('customer-verification.verified');
             Route::delete('/pending/{timestamp?}', [\App\Http\Controllers\CustomerVerificationController::class, 'deletePendingCustomer'])->name('customer-verification.pending.delete');
         });

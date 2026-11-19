@@ -367,4 +367,87 @@ class CustomerVerificationInstallationIncomeFlowTest extends TestCase
             'enable_installation_team' => 0,
         ], $overrides);
     }
+
+    public function test_technician_transfer_verification_generates_unique_code_qris_sends_wa_and_auto_settles_via_webhook(): void
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            '*' => \Illuminate\Support\Facades\Http::response(['success' => true], 200),
+        ]);
+        \App\Models\SiteSetting::set(\App\Services\DynamicQrisService::SETTING_WEBHOOK_SECRET, 'inst-qris-secret');
+
+        $teknisi = User::factory()->create([
+            'role' => User::ROLE_TEKNISI,
+            'name' => 'Teknisi Lapangan',
+        ]);
+        $transferOption = PaymentReceiptOption::query()->create([
+            'name' => 'Transfer BRI Kantor',
+            'is_active' => true,
+            'sort_order' => 1,
+        ]);
+
+        // 1. Preview kode unik & QRIS pemasangan
+        $preview = $this->actingAs($teknisi)
+            ->postJson('/api/customer-verification/installation-qris-preview', [
+                'amount' => 250000,
+                'preferred_code' => 245,
+            ]);
+
+        $preview->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.base_amount', 250000)
+            ->assertJsonPath('data.unique_code', 245)
+            ->assertJsonPath('data.expected_amount', 250245);
+
+        // 2. Submit verifikasi dengan metode transfer & kode unik tersebut
+        $payload = $this->verificationPayload([
+            'google_sheets_timestamp' => 'ts-transfer-qris-245',
+            'name' => 'Budi Pemasangan',
+            'phone' => '081234567890',
+            'installation_fee' => 250000,
+            'payment_method_type' => 'transfer',
+            'payment_receipt_option_id' => $transferOption->id,
+            'installation_qris_unique_code' => 245,
+        ]);
+
+        $verify = $this->actingAs($teknisi)
+            ->postJson('/api/customer-verification/verify', $payload);
+
+        $verify->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('installation_payment_qris.base_amount', 250000)
+            ->assertJsonPath('installation_payment_qris.unique_code', 245)
+            ->assertJsonPath('installation_payment_qris.expected_amount', 250245)
+            ->assertJsonPath('installation_payment_qris.whatsapp_sent', true);
+
+        $invoiceId = $verify->json('installation_payment_qris.invoice_id');
+        $this->assertNotNull($invoiceId);
+
+        $this->assertDatabaseHas('invoices', [
+            'id' => $invoiceId,
+            'amount' => 250000,
+            'qris_unique_code' => 245,
+            'qris_expected_amount' => 250245,
+            'status' => 'unpaid',
+        ]);
+
+        // 3. Simulasi webhook MacroDroid menerima nominal pas Rp 250.245 -> otomatis lunas!
+        $webhook = $this->postJson('/api/qris/webhook', [
+            'title' => 'GoPay Merchant',
+            'text' => 'Pembayaran QRIS sebesar Rp 250.245 berhasil diterima dari BUDI PEMASANGAN. Ref: INST245OK',
+            'device_name' => 'HP-MacroDroid',
+        ], [
+            'X-QRIS-SECRET' => 'inst-qris-secret',
+        ]);
+
+        $webhook->assertOk()->assertJson([
+            'status' => 'settled',
+            'invoice_id' => $invoiceId,
+            'amount' => 250245,
+        ]);
+
+        $this->assertDatabaseHas('invoices', [
+            'id' => $invoiceId,
+            'status' => 'paid',
+        ]);
+    }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Invoice;
 use App\Models\InventoryItem;
 use App\Models\MasterWilayahDesa;
 use App\Models\MasterWilayahDusun;
@@ -22,6 +23,7 @@ use App\Services\BorrowerLoanService;
 use App\Services\CustomerAgreementService;
 use App\Services\CustomerAgreementWhatsAppService;
 use App\Services\CustomerInstallationCostSnapshotService;
+use App\Services\DynamicQrisService;
 use App\Services\FinancialLedgerService;
 use App\Services\GoogleSheetsService;
 use App\Services\InstallationPricingService;
@@ -29,6 +31,7 @@ use App\Services\InventoryService;
 use App\Services\MacAddressScannerService;
 use App\Services\MikroTikService;
 use App\Services\PaymentReceiverService;
+use App\Services\WhatsAppGatewayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -869,6 +872,76 @@ class CustomerVerificationController extends Controller
 
             $this->sendVerificationWelcomeMessage($customer, $agreement);
 
+            $installationPaymentQris = null;
+            $isTransferInstallation = $installationFee > 0 && (
+                ($validated['payment_method_type'] ?? null) === 'transfer'
+                || (
+                    ($validated['payment_method_type'] ?? null) !== 'tunai'
+                    && $installationPaymentFlow['receipt_option']
+                    && (
+                        stripos((string) $installationPaymentFlow['receipt_option']->name, 'transfer') !== false
+                        || stripos((string) $installationPaymentFlow['receipt_option']->name, 'qris') !== false
+                        || stripos((string) $installationPaymentFlow['receipt_option']->name, 'bank') !== false
+                    )
+                )
+            );
+
+            if ($isTransferInstallation) {
+                try {
+                    $qrisService = app(DynamicQrisService::class);
+                    $preferredCode = isset($validated['installation_qris_unique_code'])
+                        ? (int) $validated['installation_qris_unique_code']
+                        : null;
+                    $uniqueCode = ($preferredCode && $preferredCode >= 1 && $preferredCode <= 999)
+                        ? $preferredCode
+                        : $qrisService->generateUniqueCode($installationFee);
+
+                    $installationInvoice = Invoice::create([
+                        'customer_id' => $customer->id,
+                        'invoice_link' => 'inv_inst_' . Str::lower(Str::random(10)),
+                        'invoice_date' => now('Asia/Jakarta')->toDateString(),
+                        'due_date' => now('Asia/Jakarta')->addDays(1)->toDateString(),
+                        'amount' => $installationFee,
+                        'status' => 'unpaid',
+                        'qris_unique_code' => $uniqueCode,
+                    ]);
+
+                    $qrisData = $qrisService->generateForInvoice($installationInvoice);
+
+                    if ($installationMutation) {
+                        $mutMeta = is_array($installationMutation->meta) ? $installationMutation->meta : [];
+                        $mutMeta['installation_invoice_id'] = $installationInvoice->id;
+                        $mutMeta['installation_invoice_link'] = $installationInvoice->invoice_link;
+                        $mutMeta['qris_unique_code'] = $qrisData['unique_code'];
+                        $mutMeta['qris_expected_amount'] = $qrisData['expected_amount'];
+                        $installationMutation->update(['meta' => $mutMeta]);
+                    }
+
+                    $waSent = $this->sendInstallationTransferWhatsApp(
+                        $customer,
+                        $installationInvoice,
+                        $qrisData,
+                        $installationPaymentFlow['receipt_option'] ?? null
+                    );
+
+                    $installationPaymentQris = [
+                        'invoice_id' => $installationInvoice->id,
+                        'invoice_link' => $installationInvoice->invoice_link,
+                        'payment_url' => url('/invoice/' . $installationInvoice->invoice_link),
+                        'base_amount' => $qrisData['base_amount'],
+                        'unique_code' => $qrisData['unique_code'],
+                        'expected_amount' => $qrisData['expected_amount'],
+                        'qr_data_uri' => $qrisData['qr_data_uri'],
+                        'whatsapp_sent' => $waSent,
+                    ];
+                } catch (\Throwable $qrisEx) {
+                    Log::warning('Failed to generate installation transfer unique code / WA notification', [
+                        'customer_id' => $customer->id,
+                        'error' => $qrisEx->getMessage(),
+                    ]);
+                }
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => 'Customer verified and saved successfully',
@@ -880,6 +953,7 @@ class CustomerVerificationController extends Controller
                     'status' => $installationPaymentFlow['mutation_status'],
                     'message' => $installationPaymentFlow['message'],
                 ] : null,
+                'installation_payment_qris' => $installationPaymentQris,
             ]);
 
         } catch (ValidationException $e) {
@@ -904,6 +978,88 @@ class CustomerVerificationController extends Controller
                 'error' => 'Failed to verify customer',
                 'message' => $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Generate preview kode unik & QRIS dinamis untuk pembayaran pemasangan via transfer sebelum submit verifikasi.
+     * POST /api/customer-verification/installation-qris-preview
+     */
+    public function previewInstallationQris(Request $request)
+    {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:1000',
+            'preferred_code' => 'nullable|integer|min:1|max:999',
+        ]);
+
+        $preview = app(DynamicQrisService::class)->generatePreviewForAmount(
+            (float) $validated['amount'],
+            isset($validated['preferred_code']) ? (int) $validated['preferred_code'] : null
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $preview,
+        ]);
+    }
+
+    /**
+     * Kirim pesan WhatsApp tagihan biaya pemasangan ber-kode unik ke pelanggan.
+     */
+    private function sendInstallationTransferWhatsApp(
+        Customer $customer,
+        Invoice $invoice,
+        array $qrisData,
+        ?PaymentReceiptOption $receiptOption = null
+    ): bool {
+        $phone = trim((string) ($customer->phone ?? ''));
+        if ($phone === '') {
+            return false;
+        }
+
+        $baseFormatted = 'Rp ' . number_format((float) ($qrisData['base_amount'] ?? $invoice->amount), 0, ',', '.');
+        $codeFormatted = 'Rp ' . number_format((int) ($qrisData['unique_code'] ?? 0), 0, ',', '.');
+        $expectedFormatted = 'Rp ' . number_format((float) ($qrisData['expected_amount'] ?? $invoice->amount), 0, ',', '.');
+        $paymentUrl = url('/invoice/' . $invoice->invoice_link);
+        $channelLabel = $receiptOption?->name ?: 'Transfer / QRIS Rumah Kita Net';
+
+        $message = "Halo Bapak/Ibu *{$customer->name}*,\n\n"
+            . "Terima kasih telah melakukan pemasangan layanan internet *Rumah Kita Net*.\n\n"
+            . "Berikut rincian pembayaran *Biaya Pemasangan* via Transfer / QRIS:\n"
+            . "• Biaya Pemasangan: {$baseFormatted}\n"
+            . "• Kode Unik Otomatis: {$codeFormatted}\n"
+            . "• *Nominal Pas Transfer: {$expectedFormatted}*\n"
+            . "• Tujuan: {$channelLabel}\n\n"
+            . "⚠️ Mohon transfer sesuai *nominal pas hingga 3 digit terakhir* ({$expectedFormatted}) agar pembayaran Anda terverifikasi otomatis oleh sistem.\n\n"
+            . "Silakan scan QRIS atau lihat detail rekening pada tautan berikut:\n"
+            . "{$paymentUrl}\n\n"
+            . "Terima kasih telah bergabung bersama *Rumah Kita Net*.";
+
+        try {
+            $response = app(WhatsAppGatewayService::class)->sendBulk([[
+                'phone' => $phone,
+                'name' => (string) ($customer->name ?? 'Pelanggan'),
+            ]], $message, 0, 25);
+
+            $json = $response->json();
+            $success = (bool) ($json['success'] ?? false);
+
+            NotificationLog::create([
+                'customer_id' => $customer->id,
+                'phone' => $phone,
+                'message' => $message,
+                'notice_id' => null,
+                'status' => $success ? 'sent' : 'failed',
+            ]);
+
+            return $success;
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send installation transfer WhatsApp message', [
+                'customer_id' => $customer->id,
+                'invoice_id' => $invoice->id,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
         }
     }
 
@@ -985,6 +1141,7 @@ class CustomerVerificationController extends Controller
             'pppoe_password' => 'nullable|string|max:64',
             'odp' => 'nullable|string|max:64',
             'installation_fee' => 'nullable|numeric',
+            'installation_qris_unique_code' => 'nullable|integer|min:1|max:999',
             'payment_method_type' => 'nullable|string|in:tunai,transfer',
             'payment_receipt_option_id' => 'nullable|integer',
             'payment_receiver_user_id' => 'nullable|integer|exists:users,id',

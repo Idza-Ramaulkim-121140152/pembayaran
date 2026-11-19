@@ -967,6 +967,16 @@ class QrisWebhookService
 
         // 3. Sinkronisasi Buku Kas / Mutasi Keuangan (Konfirmasi via Kode Unik QRIS Dinamis)
         try {
+            // Jika invoice ini adalah tagihan pemasangan (inv_inst_*), bersihkan pending installation_income agar tidak ganda
+            if (str_starts_with((string) $invoice->invoice_link, 'inv_inst_') && Schema::hasTable('financial_transactions')) {
+                \App\Models\FinancialTransaction::query()
+                    ->where('source', 'installation_income')
+                    ->where('reference_type', Customer::class)
+                    ->where('reference_id', $invoice->customer_id)
+                    ->where('status', \App\Models\FinancialTransaction::STATUS_PENDING_REVIEW)
+                    ->delete();
+            }
+
             $this->financialLedgerService->syncInvoicePayment(
                 $invoice->fresh(), 
                 $defaultFinanceId, 
