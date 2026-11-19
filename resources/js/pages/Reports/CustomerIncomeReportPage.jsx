@@ -3,6 +3,12 @@ import { AlertTriangle, BarChart3, Cable, Calendar, DollarSign, Package, Router,
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
+import {
+    ReportActionBar,
+    ReportPaginationBar,
+    exportRowsToCsv,
+    formatReportStatusLabel,
+} from '../../components/reports/ReportShared';
 import reportService from '../../services/reportService';
 
 function formatCurrency(value) {
@@ -35,12 +41,12 @@ function SummaryCard({ icon: Icon, title, value, subtitle, tone = 'blue' }) {
     return (
         <div className="app-card p-5">
             <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0">
                     <p className="text-sm text-gray-500">{title}</p>
-                    <p className="mt-2 text-2xl font-bold text-gray-900">{value}</p>
+                    <p className="mt-2 break-words text-xl sm:text-2xl font-bold text-gray-900">{value}</p>
                     {subtitle && <p className="mt-1 text-xs text-gray-500">{subtitle}</p>}
                 </div>
-                <div className={`rounded-xl p-3 ${tones[tone] || tones.blue}`}>
+                <div className={`shrink-0 rounded-xl p-3 ${tones[tone] || tones.blue}`}>
                     <Icon size={22} />
                 </div>
             </div>
@@ -132,6 +138,18 @@ function CustomerIncomeReportPage() {
         });
     }, [rows, tableSearch]);
 
+    const [page, setPage] = useState(1);
+    const pageSize = 25;
+
+    useEffect(() => {
+        setPage(1);
+    }, [tableSearch, tableFilters]);
+
+    const pagedRows = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredRows.slice(start, start + pageSize);
+    }, [filteredRows, page]);
+
     const headline = useMemo(() => {
         if (!summary.customer_count) {
             return 'Belum ada pelanggan yang bisa dihitung.';
@@ -216,14 +234,37 @@ function CustomerIncomeReportPage() {
                     <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Laporan Income Pelanggan</h1>
                     <p className="mt-1 text-gray-600">Membandingkan biaya pemasangan rumah pelanggan dengan uang pemasangan dan seluruh invoice yang sudah dibayar.</p>
                 </div>
-                <button
-                    type="button"
-                    onClick={openPricingModal}
-                    className="inline-flex items-center gap-2 self-start rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
-                >
-                    <Settings size={16} />
-                    Pengaturan Harga
-                </button>
+                <div className="no-print flex flex-wrap items-center gap-2 self-start">
+                    <button
+                        type="button"
+                        onClick={openPricingModal}
+                        className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                        <Settings size={16} />
+                        Pengaturan Harga
+                    </button>
+                    <ReportActionBar
+                        disabled={filteredRows.length === 0}
+                        onExportCsv={() => {
+                            exportRowsToCsv(
+                                'laporan-profit-pelanggan.csv',
+                                ['Pelanggan', 'PPPoE', 'No HP', 'Aktivasi', 'Biaya Pasang', 'Uang Pasang', 'Invoice Paid', 'Total Pemasukan', 'Margin', 'Status'],
+                                filteredRows.map((row) => [
+                                    row.customer_name,
+                                    row.pppoe_username || '-',
+                                    row.phone || '-',
+                                    row.activation_date || '-',
+                                    row.installation_cost_total || 0,
+                                    row.installation_income_total || 0,
+                                    row.invoice_income_total || 0,
+                                    row.total_customer_income || 0,
+                                    row.gross_margin || 0,
+                                    formatReportStatusLabel(row.profit_status),
+                                ])
+                            );
+                        }}
+                    />
+                </div>
             </div>
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
@@ -322,7 +363,7 @@ function CustomerIncomeReportPage() {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100 bg-white">
-                                        {filteredRows.map((row) => (
+                                        {pagedRows.map((row) => (
                                             <tr key={row.customer_id}>
                                                 <td className="px-4 py-3 align-top">
                                                     <div className="font-semibold text-gray-900">{row.customer_name}</div>
@@ -346,7 +387,7 @@ function CustomerIncomeReportPage() {
                                                             <Cable size={12} />
                                                             Kabel {Number(row.cost_breakdown?.cable_used_meter || 0).toLocaleString('id-ID')} m
                                                         </div>
-                                                        <div>Connector {row.cost_breakdown?.connector_quantity || 0}x · Router Ya</div>
+                                                        <div>Connector {row.cost_breakdown?.connector_quantity || 0}x · Router {row.cost_breakdown?.router_used === false ? 'Tidak' : 'Ya'}</div>
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-3 align-top text-right text-gray-700">{formatCurrency(row.installation_income_total)}</td>
@@ -357,7 +398,7 @@ function CustomerIncomeReportPage() {
                                                 </td>
                                                 <td className="px-4 py-3 align-top">
                                                     <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${statusClass(row.profit_status)}`}>
-                                                        {row.profit_status}
+                                                        {formatReportStatusLabel(row.profit_status)}
                                                     </span>
                                                     <div className="mt-2 text-[11px] text-gray-500">
                                                         {row.snapshot_label || 'Snapshot biaya instalasi'}
@@ -379,6 +420,12 @@ function CustomerIncomeReportPage() {
                                         ))}
                                     </tbody>
                                 </table>
+                                <ReportPaginationBar
+                                    page={page}
+                                    totalItems={filteredRows.length}
+                                    pageSize={pageSize}
+                                    onPageChange={setPage}
+                                />
                             </div>
                         )}
                     </div>

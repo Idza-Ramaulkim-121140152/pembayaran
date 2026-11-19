@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, DollarSign, FolderKanban, MapPin, Plus, Save, Settings, TrendingDown, TrendingUp, Users, Wallet } from 'lucide-react';
+import { BarChart3, DollarSign, FolderKanban, MapPin, Plus, Save, Search, Settings, TrendingDown, TrendingUp, Users, Wallet } from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
+import { ReportActionBar, exportRowsToCsv, formatReportStatusLabel } from '../../components/reports/ReportShared';
 import reportService from '../../services/reportService';
 
 function formatCurrency(value) {
@@ -153,7 +154,9 @@ function ProjectReportPage() {
     const [detailLoading, setDetailLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
+    const [modalError, setModalError] = useState(null);
     const [success, setSuccess] = useState(null);
+    const [projectSearch, setProjectSearch] = useState('');
     const [selectedId, setSelectedId] = useState(null);
     const [selectedDetail, setSelectedDetail] = useState(null);
     const [modalOpen, setModalOpen] = useState(false);
@@ -333,6 +336,7 @@ function ProjectReportPage() {
         event.preventDefault();
         setSaving(true);
         setError(null);
+        setModalError(null);
         setSuccess(null);
 
         try {
@@ -369,9 +373,9 @@ function ProjectReportPage() {
             const validation = err.response?.data?.errors;
             if (validation) {
                 const firstError = Object.values(validation).flat()[0];
-                setError(firstError || 'Validasi project report gagal.');
+                setModalError(firstError || 'Validasi project report gagal.');
             } else {
-                setError(err.response?.data?.message || 'Gagal menyimpan project report.');
+                setModalError(err.response?.data?.message || 'Gagal menyimpan project report.');
             }
         } finally {
             setSaving(false);
@@ -388,11 +392,11 @@ function ProjectReportPage() {
                         laporan income pelanggan, sedangkan biaya manual dipakai untuk tambahan pengeluaran project.
                     </p>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="no-print flex flex-wrap gap-2">
                     <button
                         type="button"
                         onClick={openCreateModal}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+                        className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
                     >
                         <Plus size={16} />
                         Project Baru
@@ -406,6 +410,23 @@ function ProjectReportPage() {
                         <Settings size={16} />
                         Pengaturan Project
                     </button>
+                    <ReportActionBar
+                        disabled={rows.length === 0}
+                        onExportCsv={() => {
+                            exportRowsToCsv(
+                                'laporan-project-area.csv',
+                                ['Nama Project', 'Status', 'Pelanggan', 'Total Pemasukan', 'Total Biaya', 'Margin'],
+                                rows.map((row) => [
+                                    row.name,
+                                    formatReportStatusLabel(row.status),
+                                    row.customer_count || 0,
+                                    row.total_income || 0,
+                                    row.total_expense || 0,
+                                    row.margin || 0,
+                                ])
+                            );
+                        }}
+                    />
                 </div>
             </div>
 
@@ -659,6 +680,7 @@ function ProjectReportPage() {
                 size="2xl"
             >
                 <form onSubmit={handleSubmit} className="space-y-6">
+                    {modalError && <Alert type="error" message={modalError} onClose={() => setModalError(null)} />}
                     <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
                         Pelanggan yang dipilih akan membawa income dan biaya instalasi masing-masing, mengikuti logika yang sama
                         dengan laporan income pelanggan. Biaya manual dipakai untuk tambahan pengeluaran project.
@@ -730,7 +752,12 @@ function ProjectReportPage() {
                             </select>
                             <select
                                 value={wilayahPicker.kecamatan_id}
-                                onChange={(event) => setWilayahPicker((prev) => ({ ...prev, kecamatan_id: event.target.value, desa_id: '', wilayah_id: event.target.value }))}
+                                onChange={(event) => setWilayahPicker((prev) => ({
+                                    ...prev,
+                                    kecamatan_id: event.target.value,
+                                    desa_id: '',
+                                    wilayah_id: prev.level === 'kecamatan' ? event.target.value : '',
+                                }))}
                                 className="rounded-2xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none"
                             >
                                 <option value="">Pilih kecamatan</option>
@@ -740,7 +767,11 @@ function ProjectReportPage() {
                             </select>
                             <select
                                 value={wilayahPicker.desa_id}
-                                onChange={(event) => setWilayahPicker((prev) => ({ ...prev, desa_id: event.target.value, wilayah_id: event.target.value }))}
+                                onChange={(event) => setWilayahPicker((prev) => ({
+                                    ...prev,
+                                    desa_id: event.target.value,
+                                    wilayah_id: prev.level === 'desa' ? event.target.value : '',
+                                }))}
                                 disabled={wilayahPicker.level === 'kecamatan' || !wilayahPicker.kecamatan_id}
                                 className="rounded-2xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
                             >

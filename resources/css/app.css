@@ -434,3 +434,36 @@
     -webkit-filter: none !important;
     mix-blend-mode: normal !important;
 }
+
+@media print {
+    header,
+    nav,
+    .no-print,
+    .app-navbar,
+    .app-sidebar {
+        display: none !important;
+    }
+
+    body,
+    .app-content {
+        background: #ffffff !important;
+        color: #0f172a !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .overflow-x-auto,
+    .overflow-auto {
+        overflow: visible !important;
+    }
+
+    table {
+        page-break-inside: auto;
+        font-size: 11px !important;
+    }
+
+    tr {
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+}

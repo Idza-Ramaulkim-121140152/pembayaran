@@ -221,11 +221,7 @@ const MENU_GROUPS = [
         label: 'Laporan',
         icon: FileText,
         items: [
-            { key: 'reportsFinancial', label: 'Laporan Keuangan', to: '/laporan', icon: FileText, match: (p) => p === '/laporan' },
-            { key: 'reportsCustomerIncome', label: 'Laporan Income Pelanggan', to: '/laporan/income-pelanggan', icon: DollarSign, match: (p) => p.startsWith('/laporan/income-pelanggan') },
-            { key: 'reportsInstallations', label: 'Laporan Pemasangan', to: '/laporan/pemasangan', icon: ClipboardList, match: (p) => p.startsWith('/laporan/pemasangan') },
-            { key: 'reportsInactiveCustomers', label: 'Laporan Pelanggan Nonaktif', to: '/laporan/pelanggan-nonaktif', icon: AlertTriangle, match: (p) => p.startsWith('/laporan/pelanggan-nonaktif') },
-            { key: 'reportsProject', label: 'Laporan Project', to: '/laporan/project', icon: FolderKanban, match: (p) => p.startsWith('/laporan/project') },
+            { key: 'reportsFinancial', label: 'Pusat Laporan', to: '/laporan', icon: FileText, match: (p) => p.startsWith('/laporan') },
         ],
     },
     {

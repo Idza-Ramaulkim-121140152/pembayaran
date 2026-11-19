@@ -52,7 +52,7 @@ class CustomerIncomeReportService
             ->unique()
             ->values();
 
-        $customers = Customer::query()
+        $customers = Customer::withTrashed()
             ->with('installationCostSnapshot')
             ->whereIn('id', $customerIds)
             ->orderBy('name')
@@ -60,7 +60,7 @@ class CustomerIncomeReportService
 
         $allRows = $customers->map(function (Customer $customer) use ($invoiceTotals, $invoiceRows, $installationIncomeTotals) {
             $snapshot = $this->snapshotService->resolveForReport($customer);
-            $effectiveRouterUsed = true;
+            $effectiveRouterUsed = array_key_exists('router_used', $snapshot) ? (bool) $snapshot['router_used'] : true;
             $effectiveInstallationCost = $this->calculateEffectiveInstallationCost($snapshot, $effectiveRouterUsed);
             $installationIncome = (float) ($installationIncomeTotals[$customer->id] ?? 0);
             $invoiceIncome = (float) ($invoiceTotals[$customer->id] ?? 0);
@@ -165,11 +165,23 @@ class CustomerIncomeReportService
 
     private function applyFilters(Collection $rows, array $filters): Collection
     {
+        $search = mb_strtolower(trim((string) ($filters['search'] ?? '')));
         $profitStatus = (string) ($filters['profit_status'] ?? 'all');
         $includeEstimated = !array_key_exists('include_estimated', $filters) || filter_var($filters['include_estimated'], FILTER_VALIDATE_BOOL);
         $hasCableOnly = array_key_exists('has_cable_only', $filters) && filter_var($filters['has_cable_only'], FILTER_VALIDATE_BOOL);
 
-        return $rows->filter(function (array $row) use ($profitStatus, $includeEstimated, $hasCableOnly) {
+        return $rows->filter(function (array $row) use ($search, $profitStatus, $includeEstimated, $hasCableOnly) {
+            if ($search !== '') {
+                $haystack = mb_strtolower(implode(' ', [
+                    $row['customer_name'] ?? '',
+                    $row['pppoe_username'] ?? '',
+                    $row['phone'] ?? '',
+                ]));
+                if (!str_contains($haystack, $search)) {
+                    return false;
+                }
+            }
+
             if ($profitStatus !== 'all' && $row['profit_status'] !== $profitStatus) {
                 return false;
             }

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertTriangle, Calendar, Clock, CreditCard, Download, ExternalLink, MapPin, Search, ShieldAlert, ShieldCheck, Users, Wallet } from 'lucide-react';
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import { ReportActionBar, ReportPaginationBar, exportRowsToCsv } from '../../components/reports/ReportShared';
 import reportService from '../../services/reportService';
 
 function toDateInput(date) {
@@ -54,7 +56,7 @@ function SummaryCard({ icon: Icon, title, value, subtitle, tone = 'blue' }) {
             <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-500">{title}</p>
-                    <p className="mt-2 whitespace-nowrap text-2xl font-bold leading-tight text-slate-900 [font-variant-numeric:tabular-nums]">{value}</p>
+                    <p className="mt-2 break-words text-xl sm:text-2xl font-bold leading-tight text-slate-900 [font-variant-numeric:tabular-nums]">{value}</p>
                     {subtitle && <p className="mt-2 text-xs leading-5 text-slate-500">{subtitle}</p>}
                 </div>
                 <div className={`rounded-2xl p-3 ${tones[tone] || tones.blue}`}>
@@ -129,10 +131,16 @@ function InactiveCustomerReportPage() {
     const summary = report?.summary || {};
     const radar = report?.radar || {};
     const rows = report?.rows || [];
-    const visibleRows = useMemo(() => rows.slice(0, 150), [rows]);
+    const [page, setPage] = useState(1);
+    const pageSize = 25;
+    const visibleRows = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return rows.slice(start, start + pageSize);
+    }, [rows, page]);
 
     const applyFilters = (event) => {
         event.preventDefault();
+        setPage(1);
         fetchReport();
     };
 
@@ -141,19 +149,33 @@ function InactiveCustomerReportPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                     <p className="text-sm font-semibold uppercase tracking-[0.18em] text-rose-600">Laporan</p>
-                    <h1 className="mt-1 text-2xl font-bold text-slate-900 md:text-3xl">Laporan Pelanggan Nonaktif</h1>
+                    <h1 className="mt-1 text-2xl font-bold text-slate-900 md:text-3xl">Tunggakan &amp; Isolir Pelanggan</h1>
                     <p className="mt-2 max-w-3xl text-slate-600">
-                        Memantau pelanggan lewat jatuh tempo, membedakan yang sudah isolir dan belum isolir, serta membantu menentukan prioritas follow-up.
+                        Memantau pelanggan aktif yang lewat jatuh tempo (overdue), membedakan yang sudah isolir dan belum isolir, serta membantu menentukan prioritas follow-up.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-                >
-                    <Download size={16} />
-                    Cetak
-                </button>
+                <ReportActionBar
+                    disabled={rows.length === 0}
+                    onExportCsv={() => {
+                        exportRowsToCsv(
+                            `laporan-tunggakan-isolir-${filters.as_of_date}.csv`,
+                            ['Pelanggan', 'PPPoE', 'No HP', 'Wilayah', 'Jatuh Tempo', 'Telat (Hari)', 'Status Isolir', 'Prioritas', 'Status Invoice', 'Invoice Terbuka', 'Estimasi Tunggakan'],
+                            rows.map((row) => [
+                                row.customer_name,
+                                row.pppoe_username || '-',
+                                row.phone || '-',
+                                row.region_label || '-',
+                                row.due_date || '-',
+                                row.days_overdue || 0,
+                                row.isolation_label || '-',
+                                row.priority_level || '-',
+                                row.invoice_status || '-',
+                                row.open_invoice_count || 0,
+                                row.overdue_amount || 0,
+                            ])
+                        );
+                    }}
+                />
             </div>
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
@@ -232,7 +254,7 @@ function InactiveCustomerReportPage() {
                 </div>
             ) : (
                 <>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <SummaryCard icon={Users} title="Lewat Jatuh Tempo" value={summary.customer_count || 0} subtitle={report?.meta?.definition} tone="red" />
                         <SummaryCard icon={ShieldCheck} title="Sudah Isolir" value={summary.isolated_count || 0} subtitle="Layanan sudah masuk status isolir" tone="green" />
                         <SummaryCard icon={ShieldAlert} title="Belum Isolir" value={summary.not_isolated_count || 0} subtitle={`${summary.not_isolated_ratio || 0}% dari overdue`} tone="red" />
@@ -242,7 +264,7 @@ function InactiveCustomerReportPage() {
                     </div>
 
                     <SectionCard title="Radar Tindakan" subtitle="Sinyal cepat untuk menentukan pekerjaan penagihan dan isolir.">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <RadarTile label="Belum isolir" value={radar.not_isolated} tone={radar.not_isolated > 0 ? 'red' : 'green'} />
                             <RadarTile label="Sudah isolir" value={radar.isolated} tone="green" />
                             <RadarTile label="Menunggu konfirmasi" value={radar.pending_confirmation} tone={radar.pending_confirmation > 0 ? 'amber' : 'green'} />
@@ -399,9 +421,9 @@ function InactiveCustomerReportPage() {
                                             <td className="px-4 py-3 text-slate-600">{formatDate(row.last_paid_at)}</td>
                                             <td className="px-4 py-3">
                                                 <div className="flex flex-wrap gap-2">
-                                                    <a href={`/customers/${row.customer_id}/edit`} className="inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
+                                                    <Link to={`/customers/${row.customer_id}/edit`} className="inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">
                                                         Detail
-                                                    </a>
+                                                    </Link>
                                                     {row.latest_invoice?.invoice_link && (
                                                         <a href={`/invoice/${row.latest_invoice.invoice_link}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">
                                                             Invoice <ExternalLink size={12} />
@@ -413,6 +435,7 @@ function InactiveCustomerReportPage() {
                                     ))}
                                 </tbody>
                             </table>
+                            <ReportPaginationBar page={page} totalItems={rows.length} pageSize={pageSize} onPageChange={setPage} />
                         </div>
                     </SectionCard>
                 </>

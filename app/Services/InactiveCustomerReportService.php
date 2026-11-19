@@ -92,6 +92,10 @@ class InactiveCustomerReportService
         return Invoice::query()
             ->whereIn('customer_id', $customerIds)
             ->whereNotIn('status', ['paid', 'cancelled'])
+            ->where(function ($q) use ($asOfDate) {
+                $q->whereNull('due_date')
+                    ->orWhereDate('due_date', '<=', $asOfDate->toDateString());
+            })
             ->selectRaw('customer_id, COUNT(*) as invoice_count, COALESCE(SUM(amount), 0) as amount_total, MIN(due_date) as oldest_due_date')
             ->groupBy('customer_id')
             ->get()
@@ -118,6 +122,7 @@ class InactiveCustomerReportService
             ->whereIn('customer_id', $customerIds)
             ->where('status', 'paid')
             ->whereNotNull('paid_at')
+            ->where('paid_at', '<=', now('Asia/Jakarta')->endOfDay())
             ->orderByDesc('paid_at')
             ->get(['id', 'customer_id', 'amount', 'paid_at'])
             ->groupBy('customer_id')

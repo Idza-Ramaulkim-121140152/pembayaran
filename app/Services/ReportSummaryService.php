@@ -31,8 +31,12 @@ class ReportSummaryService
 
         $overdueInvoices = Invoice::query()
             ->with(['customer.package:id,name', 'customer.kecamatan:id,name', 'customer.desa:id,name,kecamatan_id', 'customer.dusun:id,name,desa_id'])
-            ->whereNotIn('status', ['paid', 'cancelled'])
-            ->whereDate('due_date', '<=', $end->toDateString())
+            ->where('status', '!=', 'cancelled')
+            ->where(function ($q) use ($end) {
+                $q->where('status', '!=', 'paid')
+                    ->orWhere('paid_at', '>', $end->copy()->endOfDay());
+            })
+            ->whereDate('due_date', '<', $end->toDateString())
             ->get();
 
         $dueInvoicesInPeriod = Invoice::query()
@@ -129,6 +133,7 @@ class ReportSummaryService
                 'net_cashflow_real' => $cashAdjustedNet,
                 'purchase_total' => $purchaseTotal,
                 'expense_total' => $expenseTotal,
+                'adjustment_total' => (float) ($financialStatement['income_statement']['adjustment_total'] ?? 0),
                 'net_cashflow' => $ledgerIncome - $purchaseTotal - $expenseTotal,
                 'arpu' => $paidCustomerCount > 0 ? round((float) $paidInvoices->sum('amount') / $paidCustomerCount, 2) : 0.0,
                 'termination_count' => $terminations->count(),

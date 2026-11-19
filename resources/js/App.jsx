@@ -72,7 +72,7 @@ const MutasiPage = lazy(() => import('./pages/Finance/MutasiPage'));
 const CashObligationCalendarPage = lazy(() => import('./pages/Finance/CashObligationCalendarPage'));
 const RevenuePredictionPage = lazy(() => import('./pages/Finance/RevenuePredictionPage'));
 const ReconciliationCenterPage = lazy(() => import('./pages/Finance/ReconciliationCenterPage'));
-const ReportsPage = lazy(() => import('./pages/Reports/ReportsPage'));
+const ReportsHubPage = lazy(() => import('./pages/Reports/ReportsHubPage'));
 const DistributionRoutePage = lazy(() => import('./pages/DistributionRoute/DistributionRoutePage'));
 const InventoryPage = lazy(() => import('./pages/Inventory/InventoryPage'));
 const InventoryMasterPage = lazy(() => import('./pages/Inventory/InventoryMasterPage'));
@@ -83,10 +83,6 @@ const PaymentReceiverApprovalPopup = lazy(() => import('./components/PaymentRece
 import { enhanceMobileTables, setupMobileTableObserver } from './utils/mobileTableEnhancer';
 
 const InstallationPricingPage = lazy(() => import('./pages/Settings/InstallationPricingPage'));
-const CustomerIncomeReportPage = lazy(() => import('./pages/Reports/CustomerIncomeReportPage'));
-const InstallationReportPage = lazy(() => import('./pages/Reports/InstallationReportPage'));
-const InactiveCustomerReportPage = lazy(() => import('./pages/Reports/InactiveCustomerReportPage'));
-const ProjectReportPage = lazy(() => import('./pages/Reports/ProjectReportPage'));
 const CustomerWifiLinksPage = lazy(() => import('./pages/Settings/CustomerWifiLinksPage'));
 const CustomerDismantlePage = lazy(() => import('./pages/CustomerDismantle/CustomerDismantlePage'));
 const AttendanceManagementPage = lazy(() => import('./pages/Attendance/AttendanceManagementPage'));
@@ -385,11 +381,11 @@ function App() {
                     {/* Dashboard */}
                     <Route path="/dashboard" element={<GuardedRoute permissionKey="dashboard.view" element={<Dashboard />} />} />
                     <Route path="/dashboard/prediksi" element={<GuardedRoute permissionKey="dashboard.prediction.view" element={<DashboardPredictionPage />} />} />
-                    <Route path="/laporan" element={<GuardedRoute permissionKey="report.view" element={<ReportsPage />} />} />
-                    <Route path="/laporan/income-pelanggan" element={<GuardedRoute permissionKey="report.view" element={<CustomerIncomeReportPage />} />} />
-                    <Route path="/laporan/pemasangan" element={<GuardedRoute permissionKey="report.view" element={<InstallationReportPage />} />} />
-                    <Route path="/laporan/pelanggan-nonaktif" element={<GuardedRoute permissionKey="report.view" element={<InactiveCustomerReportPage />} />} />
-                    <Route path="/laporan/project" element={<GuardedRoute permissionKey="report.view" element={<ProjectReportPage />} />} />
+                    <Route path="/laporan" element={<GuardedRoute permissionKey="report.view" element={<ReportsHubPage defaultTab="keuangan" />} />} />
+                    <Route path="/laporan/income-pelanggan" element={<GuardedRoute permissionKey="report.view" element={<ReportsHubPage defaultTab="income-pelanggan" />} />} />
+                    <Route path="/laporan/pemasangan" element={<GuardedRoute permissionKey="report.view" element={<ReportsHubPage defaultTab="pemasangan" />} />} />
+                    <Route path="/laporan/pelanggan-nonaktif" element={<GuardedRoute permissionKey="report.view" element={<ReportsHubPage defaultTab="tunggakan" />} />} />
+                    <Route path="/laporan/project" element={<GuardedRoute permissionKey="report.view" element={<ReportsHubPage defaultTab="project" />} />} />
                     
                     {/* Billing/Penagihan */}
                     <Route path="/penagihan" element={<GuardedRoute permissionKey="billing.invoice.view" element={<BillingPage />} />} />

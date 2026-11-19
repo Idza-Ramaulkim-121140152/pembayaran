@@ -3,6 +3,12 @@ import { AlertTriangle, Cable, Calendar, ClipboardList, DollarSign, Download, Ma
 import Alert from '../../components/common/Alert';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import Modal from '../../components/common/Modal';
+import {
+    ReportActionBar,
+    ReportPaginationBar,
+    exportRowsToCsv,
+    formatReportStatusLabel,
+} from '../../components/reports/ReportShared';
 import reportService from '../../services/reportService';
 
 function formatCurrency(value) {
@@ -52,7 +58,7 @@ function SummaryCard({ icon: Icon, title, value, subtitle, tone = 'blue' }) {
             <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-500">{title}</p>
-                    <p className="mt-2 whitespace-nowrap text-2xl font-bold leading-tight tracking-tight text-gray-900 [font-variant-numeric:tabular-nums]">
+                    <p className="mt-2 break-words text-xl sm:text-2xl font-bold leading-tight tracking-tight text-gray-900 [font-variant-numeric:tabular-nums]">
                         {value}
                     </p>
                     {subtitle && <p className="mt-2 text-xs leading-5 text-gray-500">{subtitle}</p>}
@@ -133,10 +139,16 @@ function InstallationReportPage() {
     const health = report?.operational_health || {};
     const material = report?.material_efficiency || {};
     const rows = report?.rows || [];
-    const visibleRows = useMemo(() => rows.slice(0, 100), [rows]);
+    const [page, setPage] = useState(1);
+    const pageSize = 25;
+    const visibleRows = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return rows.slice(start, start + pageSize);
+    }, [rows, page]);
 
     const applyFilters = (event) => {
         event.preventDefault();
+        setPage(1);
         fetchReport();
     };
 
@@ -150,14 +162,27 @@ function InstallationReportPage() {
                         Pusat evaluasi pemasangan: operasional, biaya material/payroll, pemasukan pemasangan, margin, wilayah, dan kualitas data.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
-                >
-                    <Download size={16} />
-                    Cetak
-                </button>
+                <ReportActionBar
+                    disabled={rows.length === 0}
+                    onExportCsv={() => {
+                        exportRowsToCsv(
+                            `laporan-pemasangan-${filters.start_date}-${filters.end_date}.csv`,
+                            ['Pelanggan', 'PPPoE', 'Paket', 'Tanggal Aktivasi', 'Wilayah', 'Pemasukan', 'Biaya', 'Margin', 'Kabel (m)', 'Status'],
+                            rows.map((row) => [
+                                row.customer_name,
+                                row.pppoe_username || '-',
+                                row.package_label || '-',
+                                row.activation_date || '-',
+                                row.region_label || '-',
+                                row.installation_income_total || 0,
+                                row.installation_cost_total || 0,
+                                row.gross_margin || 0,
+                                row.cost_breakdown?.cable_used_meter || 0,
+                                formatReportStatusLabel(row.profit_status),
+                            ])
+                        );
+                    }}
+                />
             </div>
 
             {error && <Alert type="error" message={error} onClose={() => setError(null)} />}
@@ -223,7 +248,7 @@ function InstallationReportPage() {
                 </div>
             ) : (
                 <>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <SummaryCard icon={ClipboardList} title="Total Pemasangan" value={summary.installation_count || 0} subtitle="Berdasarkan tanggal aktivasi" />
                         <SummaryCard icon={DollarSign} title="Pemasukan" value={formatCurrency(summary.installation_income_total)} subtitle={`Fallback fee ${formatCurrency(summary.installation_fee_fallback_total)}`} tone="green" />
                         <SummaryCard icon={Wallet} title="Biaya" value={formatCurrency(summary.installation_cost_total)} subtitle="Kabel + router + connector + labor" tone="red" />
@@ -233,7 +258,7 @@ function InstallationReportPage() {
                     </div>
 
                     <SectionCard title="Radar Operasional" subtitle="Sinyal cepat untuk mengecek kualitas data dan pekerjaan pemasangan.">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                             <HealthTile label="Pemasangan selesai" value={health.completed_installations} tone="green" />
                             <HealthTile label="Belum ada snapshot" value={health.missing_snapshot} tone={health.missing_snapshot > 0 ? 'amber' : 'green'} />
                             <HealthTile label="Data estimasi" value={health.estimated_snapshot} tone={health.estimated_snapshot > 0 ? 'amber' : 'green'} />
@@ -359,6 +384,7 @@ function InstallationReportPage() {
                                     ))}
                                 </tbody>
                             </table>
+                            <ReportPaginationBar page={page} totalItems={rows.length} pageSize={pageSize} onPageChange={setPage} />
                         </div>
                     </SectionCard>
                 </>
@@ -368,6 +394,7 @@ function InstallationReportPage() {
                 isOpen={!!selectedDetail}
                 onClose={() => setSelectedDetail(null)}
                 title={selectedDetail ? `Detail Pemasangan · ${selectedDetail.customer?.name}` : 'Detail Pemasangan'}
+                size="2xl"
             >
                 {selectedDetail && (
                     <div className="space-y-5">
