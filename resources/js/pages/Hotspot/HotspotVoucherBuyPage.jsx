@@ -578,6 +578,31 @@ export default function HotspotVoucherBuyPage() {
                     </form>
                 )}
 
+                {/* CS Support Card */}
+                <div className="mt-4 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-4 text-center text-white">
+                    <p className="text-xs text-sky-100 leading-relaxed">
+                        Jika mendapati kendala pembelian atau login WiFi, Anda bisa hubungi nomor CS kami:
+                    </p>
+                    <div className="mt-2.5 flex items-center justify-center gap-2 flex-wrap">
+                        <a
+                            href="https://wa.me/6285158025553?text=Halo%20CS%20Rumah%20Kita%20Net%2C%20saya%20butuh%20bantuan%20terkait%20Voucher%20Hotspot."
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold shadow transition"
+                        >
+                            <MessageCircle className="w-4 h-4" />
+                            WhatsApp CS: 085158025553
+                        </a>
+                        <a
+                            href="tel:085158025553"
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-semibold transition"
+                        >
+                            <Smartphone className="w-3.5 h-3.5" />
+                            Telepon
+                        </a>
+                    </div>
+                </div>
+
                 <div className="text-center mt-5 text-xs text-sky-200/80">
                     &copy; {new Date().getFullYear()} Rumah Kita Net &bull; Layanan WiFi Hotspot Mandiri
                 </div>
