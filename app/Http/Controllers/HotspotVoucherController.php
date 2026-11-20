@@ -488,9 +488,14 @@ class HotspotVoucherController extends Controller
 add dst-host={$parsedHost} action=allow comment="Rumah Kita Net - Beli Voucher"
 add dst-host=*.{$parsedHost} action=allow comment="Rumah Kita Net - Subdomain"
 
-# 2. (Opsional) Jika server Ubuntu juga diakses lewat IP lokal / publik langsung:
+# 2. WAJIB untuk akses HTTPS (port 443) agar tidak ERR_SSL_PROTOCOL_ERROR sebelum login:
 /ip hotspot walled-garden ip
-add dst-address=10.1.0.5 action=accept comment="Server Pembayaran Ubuntu"
+add dst-address=10.1.0.5 action=accept comment="Server Pembayaran Ubuntu (Local)"
+add dst-host={$parsedHost} action=accept comment="HTTPS Beli Voucher ({$parsedHost})"
+
+# 3. Split DNS lokal agar klien hotspot langsung akses server 10.1.0.5 (lebih cepat & tanpa Hairpin NAT):
+/ip dns static
+add name={$parsedHost} address=10.1.0.5 comment="Local DNS Server Pembayaran"
 
 # 3. Pastikan DNS Name pada Server Profile hsprof1 adalah rumahkita.id
 #    dan HTML Directory mengarah ke folder "hotspot" (tempat upload file login.html)
