@@ -515,7 +515,9 @@ class MikroTikService
 
         $this->write($command, false);
         foreach ($params as $key => $value) {
-            $this->write('=' . $key . '=' . $value, false);
+            $keyStr = (string) $key;
+            $prefix = str_starts_with($keyStr, '?') ? '' : '=';
+            $this->write($prefix . $keyStr . '=' . $value, false);
         }
         $this->write('', true);
         

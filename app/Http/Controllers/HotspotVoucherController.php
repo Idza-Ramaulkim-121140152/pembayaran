@@ -490,7 +490,7 @@ add dst-host=*.{$parsedHost} action=allow comment="Rumah Kita Net - Subdomain"
 
 # 2. (Opsional) Jika server Ubuntu juga diakses lewat IP lokal / publik langsung:
 /ip hotspot walled-garden ip
-add dst-address=10.1.0.5 action=allow comment="Server Pembayaran Ubuntu"
+add dst-address=10.1.0.5 action=accept comment="Server Pembayaran Ubuntu"
 
 # 3. Pastikan DNS Name pada Server Profile hsprof1 adalah rumahkita.id
 #    dan HTML Directory mengarah ke folder "hotspot" (tempat upload file login.html)
