@@ -359,6 +359,7 @@ class MikroTikService
 
         $response = [];
         $i = 0;
+        $sawDone = false;
         
         while (true) {
             $i++;
@@ -384,14 +385,19 @@ class MikroTikService
                     if ($parsed) {
                         $response[] = $parsed;
                         if (isset($parsed['!done'])) {
-                            $this->decodeLength();
-                            break;
+                            $sawDone = true;
                         }
                     }
                 } else {
                     $response[] = $line;
+                    if ($line === '!done') {
+                        $sawDone = true;
+                    }
                 }
             } else {
+                if ($sawDone) {
+                    break;
+                }
                 $read = [$this->socket];
                 $write = null;
                 $except = null;
@@ -1510,9 +1516,21 @@ class MikroTikService
             '?name' => $cleanName,
         ], false) ?? [];
 
-        if (!empty($existing) && !empty($existing[0]['.id'])) {
+        $matchedProfile = null;
+        foreach ($existing as $item) {
+            if (
+                is_array($item)
+                && !empty($item['.id'])
+                && strcasecmp((string) ($item['name'] ?? ''), $cleanName) === 0
+            ) {
+                $matchedProfile = $item;
+                break;
+            }
+        }
+
+        if ($matchedProfile !== null) {
             $this->command('/ip/hotspot/user/profile/set', array_merge([
-                '.id' => $existing[0]['.id'],
+                '.id' => $matchedProfile['.id'],
             ], $params), false);
 
             return ['action' => 'updated', 'profile' => $cleanName];
@@ -1544,8 +1562,14 @@ class MikroTikService
             '?name' => $cleanCode,
         ], false) ?? [];
 
-        if (!empty($existing)) {
-            return ['action' => 'exists', 'voucher_code' => $cleanCode];
+        foreach ($existing as $item) {
+            if (
+                is_array($item)
+                && !empty($item['.id'])
+                && strcasecmp((string) ($item['name'] ?? ''), $cleanCode) === 0
+            ) {
+                return ['action' => 'exists', 'voucher_code' => $cleanCode];
+            }
         }
 
         $params = [
@@ -1582,13 +1606,19 @@ class MikroTikService
             '?name' => $cleanCode,
         ], false) ?? [];
 
+        $removed = false;
         foreach ($existing as $item) {
-            if (!empty($item['.id'])) {
+            if (
+                is_array($item)
+                && !empty($item['.id'])
+                && strcasecmp((string) ($item['name'] ?? ''), $cleanCode) === 0
+            ) {
                 $this->command('/ip/hotspot/user/remove', ['.id' => $item['.id']], false);
+                $removed = true;
             }
         }
 
-        return !empty($existing);
+        return $removed;
     }
 
     public function __destruct()
