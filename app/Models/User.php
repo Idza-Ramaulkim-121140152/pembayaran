@@ -71,6 +71,11 @@ class User extends Authenticatable
         return in_array($this->role, $roles);
     }
 
+    public function hasPermission(string $permissionKey): bool
+    {
+        return app(\App\Services\AccessPolicyService::class)->has($this, $permissionKey);
+    }
+
     /**
      * The attributes that should be hidden for serialization.
      *

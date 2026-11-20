@@ -1024,12 +1024,16 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         // 1. If request originated from an authenticated ONT gateway session via Referer, proxy it cleanly
         $referer = (string) $request->header('referer', '');
         $ontIp = null;
-        if ($request->user()?->hasPermission('monitoring.view') && preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
+        $canMonitor = $request->user()
+            ? app(\App\Services\AccessPolicyService::class)->has($request->user(), 'monitoring.view')
+            : false;
+
+        if ($canMonitor && preg_match('#/ont-gateway/(\d+\.\d+\.\d+\.\d+)#', $referer, $matches)) {
             $ontIp = $matches[1];
         }
 
         // 2. Fallback to active ONT session or cookie if path looks like an ONT asset or endpoint
-        if (!$ontIp && $request->user()?->hasPermission('monitoring.view')) {
+        if (!$ontIp && $canMonitor) {
             $candidateIp = session('active_ont_ip') ?? $request->cookie('active_ont_gateway_ip');
             if ($candidateIp && filter_var($candidateIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
                 $ext = strtolower(pathinfo(parse_url($path, PHP_URL_PATH) ?? '', PATHINFO_EXTENSION));

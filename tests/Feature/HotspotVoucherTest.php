@@ -220,5 +220,9 @@ class HotspotVoucherTest extends TestCase
         $tplRes->assertOk()
             ->assertJsonCount(5, 'files');
         $this->assertStringContainsString('/ip hotspot walled-garden', (string) $tplRes->json('walled_garden_cli'));
+
+        // Refreshing SPA routes via catch-all must return 200 (never 500)
+        $this->actingAs($admin)->get('/hotspot-vouchers')->assertOk();
+        $this->actingAs($admin)->get('/monitoring')->assertOk();
     }
 }
