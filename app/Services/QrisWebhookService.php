@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\BillingPaymentCapture;
 use App\Models\BillingPaymentMatchReview;
 use App\Models\Customer;
+use App\Models\HotspotVoucherOrder;
 use App\Models\Invoice;
 use App\Models\NotificationLog;
 use App\Models\PaymentReceiptOption;
@@ -530,6 +531,98 @@ class QrisWebhookService
                     'customer_name' => $invoice->customer?->name,
                     'isolation_restored' => $settleResult['isolation_restored'] ?? false,
                 ];
+            }
+
+            // G2. Cek apakah nominal cocok dengan pesanan Voucher Hotspot pending (kode unik QRIS)
+            if (Schema::hasTable('hotspot_voucher_orders')) {
+                $voucherOrder = HotspotVoucherOrder::query()
+                    ->with('package')
+                    ->where('status', HotspotVoucherOrder::STATUS_PENDING)
+                    ->whereNotNull('qris_expected_amount')
+                    ->where('qris_expected_amount', $amount)
+                    ->where(function ($q) {
+                        $q->whereNull('qris_expired_at')
+                          ->orWhere('qris_expired_at', '>', now());
+                    })
+                    ->latest('id')
+                    ->first();
+
+                if ($voucherOrder) {
+                    $voucherResult = app(HotspotVoucherService::class)->settleOrder(
+                        $voucherOrder,
+                        (float) $amount,
+                        $parsed,
+                        $deviceName,
+                        true
+                    );
+
+                    $this->safeLog([
+                        'device_name' => $deviceName,
+                        'raw_title' => $rawTitle ?: null,
+                        'raw_text' => $rawText ?: null,
+                        'extracted_amount' => $amount,
+                        'status' => 'settled',
+                        'invoice_id' => null,
+                        'meta' => [
+                            'type' => 'hotspot_voucher',
+                            'voucher_order_id' => $voucherOrder->id,
+                            'order_code' => $voucherOrder->order_code,
+                            'voucher_code' => $voucherResult['voucher_code'] ?? $voucherOrder->voucher_code,
+                            'mikrotik_synced' => $voucherResult['mikrotik_synced'] ?? false,
+                            'whatsapp_sent' => $voucherResult['whatsapp_sent'] ?? false,
+                            'parsed' => $parsed,
+                        ],
+                    ]);
+
+                    return [
+                        'success' => true,
+                        'status' => 'settled',
+                        'http_code' => 200,
+                        'type' => 'hotspot_voucher',
+                        'message' => "Pembayaran Voucher Hotspot {$voucherOrder->order_code} sebesar Rp " . number_format($amount, 0, ',', '.') . " berhasil dikonfirmasi otomatis. Kode voucher: " . ($voucherResult['voucher_code'] ?? $voucherOrder->voucher_code),
+                        'voucher_order_id' => $voucherOrder->id,
+                        'order_code' => $voucherOrder->order_code,
+                        'voucher_code' => $voucherResult['voucher_code'] ?? $voucherOrder->voucher_code,
+                        'amount' => $amount,
+                    ];
+                }
+
+                // Multi-HP Deduplication untuk Voucher Hotspot yang baru saja lunas
+                $recentlyPaidVoucher = HotspotVoucherOrder::query()
+                    ->where('status', HotspotVoucherOrder::STATUS_PAID)
+                    ->where('paid_at', '>=', now()->subHours(3))
+                    ->where('qris_expected_amount', $amount)
+                    ->latest('paid_at')
+                    ->first();
+
+                if ($recentlyPaidVoucher) {
+                    $this->safeLog([
+                        'device_name' => $deviceName,
+                        'raw_title' => $rawTitle ?: null,
+                        'raw_text' => $rawText ?: null,
+                        'extracted_amount' => $amount,
+                        'status' => 'duplicate_ignored',
+                        'invoice_id' => null,
+                        'meta' => [
+                            'type' => 'hotspot_voucher',
+                            'voucher_order_id' => $recentlyPaidVoucher->id,
+                            'order_code' => $recentlyPaidVoucher->order_code,
+                            'reason' => 'Pesanan voucher hotspot sudah diselesaikan sebelumnya oleh perangkat lain.',
+                            'original_settled_at' => $recentlyPaidVoucher->paid_at?->toIso8601String(),
+                        ],
+                    ]);
+
+                    return [
+                        'success' => true,
+                        'status' => 'duplicate_ignored',
+                        'http_code' => 200,
+                        'type' => 'hotspot_voucher',
+                        'message' => 'Notifikasi duplikat voucher hotspot diterima dan diabaikan dengan aman (order sudah lunas).',
+                        'voucher_order_id' => $recentlyPaidVoucher->id,
+                        'order_code' => $recentlyPaidVoucher->order_code,
+                        'amount' => $amount,
+                    ];
+                }
             }
 
             // H. Jika tidak ada invoice pending: cek apakah baru saja lunas oleh perangkat lain (Multi-HP Deduplication)

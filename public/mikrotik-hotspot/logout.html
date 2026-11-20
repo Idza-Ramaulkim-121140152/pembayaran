@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="-1">
+<title>Logout - Rumah Kita Net</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    min-height: 100vh;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 20px;
+    padding: 28px 24px;
+    max-width: 380px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  }
+  h1 { font-size: 19px; color: #0f172a; margin: 0 0 8px; }
+  p { font-size: 13.5px; color: #64748b; margin: 0 0 18px; }
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border-radius: 12px;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  .btn-primary { background: #2563eb; color: #fff; }
+  .btn-buy { background: #f97316; color: #fff; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Anda Telah Logout</h1>
+  <p>Terima kasih telah menggunakan WiFi Hotspot Rumah Kita Net. Durasi terpakai: <strong>$(uptime)</strong>.</p>
+  <a class="btn btn-primary" href="$(link-login)">Login Lagi dengan Voucher</a>
+  <a class="btn btn-buy" href="https://rumahkitanet.my.id/hotspot/beli?link-login=$(link-login-only-esc)&mac=$(mac-esc)&ip=$(ip-esc)">Beli Voucher Baru (QRIS)</a>
+</div>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+$(if refresh-timeout)
+<meta http-equiv="refresh" content="$(refresh-timeout-secs)">
+$(endif)
+<meta http-equiv="pragma" content="no-cache">
+<meta http-equiv="expires" content="-1">
+<title>Status Koneksi - Rumah Kita Net</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 60%, #0369a1 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: #fff;
+    border-radius: 22px;
+    padding: 26px 22px;
+    box-shadow: 0 24px 55px rgba(2, 6, 23, 0.35);
+  }
+  .status-pill {
+    display: inline-block;
+    background: #dcfce7;
+    color: #166534;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 999px;
+    margin-bottom: 10px;
+  }
+  h1 { font-size: 20px; color: #0f172a; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+  .info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+    font-size: 13.5px;
+  }
+  .info-table tr { border-bottom: 1px solid #f1f5f9; }
+  .info-table td { padding: 10px 4px; }
+  .info-table td:first-child { color: #64748b; }
+  .info-table td:last-child { text-align: right; font-weight: 700; color: #0f172a; }
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 13px;
+    border-radius: 13px;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    margin-bottom: 10px;
+  }
+  .btn-logout { background: #ef4444; color: #fff; }
+  .btn-buy { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+</style>
+</head>
+<body>
+<div class="card">
+  <span class="status-pill">&#9679; Terhubung ke Internet</span>
+  <h1>Voucher: $(username)</h1>
+  <p class="sub">Rumah Kita Net WiFi Hotspot</p>
+
+  <table class="info-table">
+    <tr><td>IP Address</td><td>$(ip)</td></tr>
+    <tr><td>Durasi Terpakai</td><td>$(uptime)</td></tr>
+    $(if session-time-left)
+    <tr><td>Sisa Waktu</td><td>$(session-time-left)</td></tr>
+    $(endif)
+    <tr><td>Unduh / Unggah</td><td>$(bytes-out-nice) / $(bytes-in-nice)</td></tr>
+  </table>
+
+  <form action="$(link-logout)" name="logout" onsubmit="return confirm('Keluar dari sesi WiFi sekarang?');">
+    <button type="submit" class="btn btn-logout">Logout WiFi</button>
+  </form>
+  <a class="btn btn-buy" href="https://rumahkitanet.my.id/hotspot/beli?link-login=$(link-login-only-esc)&mac=$(mac-esc)&ip=$(ip-esc)">
+    Beli Voucher Tambahan (QRIS)
+  </a>
+</div>
+</body>
+</html>

@@ -130,6 +130,17 @@ class DynamicQrisService
             ->map(fn($amt) => (int) round($amt))
             ->flip();
 
+        if (\Illuminate\Support\Facades\Schema::hasTable('hotspot_voucher_orders')) {
+            $activeVoucherAmounts = \App\Models\HotspotVoucherOrder::query()
+                ->where('status', 'pending')
+                ->whereNotNull('qris_expected_amount')
+                ->where('qris_expired_at', '>', $now)
+                ->pluck('qris_expected_amount')
+                ->map(fn ($amt) => (int) round($amt))
+                ->flip();
+            $activeAmounts = $activeAmounts->union($activeVoucherAmounts);
+        }
+
         for ($i = 0; $i < 50; $i++) {
             $code = random_int($min, $max);
             $target = (int) round($baseAmount) + $code;

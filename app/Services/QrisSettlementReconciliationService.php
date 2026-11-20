@@ -1104,6 +1104,17 @@ class QrisSettlementReconciliationService
             }
         }
 
+        if ($tx->source === 'hotspot_voucher') {
+            $settled = (float) data_get($tx->meta, 'qris_settled_amount', 0);
+            if ($settled > 0) {
+                return $settled;
+            }
+            $expected = (float) data_get($tx->meta, 'qris_expected_amount', 0);
+            if ($expected > 0) {
+                return $expected;
+            }
+        }
+
         return abs((float) $tx->amount);
     }
 

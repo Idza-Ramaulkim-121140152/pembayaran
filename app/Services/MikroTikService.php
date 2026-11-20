@@ -1454,6 +1454,141 @@ class MikroTikService
         }
     }
 
+    /**
+     * Format duration in minutes to RouterOS time interval string (e.g. 1d, 3h, 90m).
+     */
+    public function formatRouterOsInterval(int $minutes): string
+    {
+        $mins = max(1, $minutes);
+        if ($mins % 1440 === 0) {
+            return (int) ($mins / 1440) . 'd';
+        }
+        if ($mins % 60 === 0) {
+            return (int) ($mins / 60) . 'h';
+        }
+
+        return "{$mins}m";
+    }
+
+    /**
+     * Buat atau perbarui Hotspot User Profile di MikroTik (shared-users, optional rate-limit, dan on-login validity script).
+     */
+    public function syncHotspotUserProfile(
+        string $profileName,
+        int $sharedUsers = 1,
+        ?string $rateLimit = null,
+        ?int $validityMinutes = null
+    ): array {
+        $cleanName = trim($profileName);
+        if ($cleanName === '') {
+            throw new Exception('Nama profile hotspot tidak boleh kosong.');
+        }
+
+        $shared = max(1, min(20, $sharedUsers));
+        $params = [
+            'shared-users' => (string) $shared,
+        ];
+
+        $cleanRate = trim((string) ($rateLimit ?? ''));
+        if ($cleanRate !== '') {
+            $params['rate-limit'] = $cleanRate;
+        }
+
+        if ($validityMinutes !== null && $validityMinutes > 0) {
+            $interval = $this->formatRouterOsInterval($validityMinutes);
+            $params['session-timeout'] = $interval;
+            // On-login script (Validity mode): mulai hitung mundur sejak login pertama & hapus user otomatis saat habis
+            $params['on-login'] = sprintf(
+                ':local u $user; :if ([/system scheduler find name=("exp-" . $u)] = "") do={ /system scheduler add name=("exp-" . $u) interval=%s on-event=("/ip hotspot active remove [find user=\"" . $u . "\"]; /ip hotspot user remove [find name=\"" . $u . "\"]; /system scheduler remove [find name=\"exp-" . $u . "\"]") }',
+                $interval
+            );
+        }
+
+        $existing = $this->command('/ip/hotspot/user/profile/print', [
+            '?name' => $cleanName,
+        ], false) ?? [];
+
+        if (!empty($existing) && !empty($existing[0]['.id'])) {
+            $this->command('/ip/hotspot/user/profile/set', array_merge([
+                '.id' => $existing[0]['.id'],
+            ], $params), false);
+
+            return ['action' => 'updated', 'profile' => $cleanName];
+        }
+
+        $this->command('/ip/hotspot/user/profile/add', array_merge([
+            'name' => $cleanName,
+        ], $params), false);
+
+        return ['action' => 'created', 'profile' => $cleanName];
+    }
+
+    /**
+     * Buat user voucher hotspot di MikroTik (username = password = kode voucher).
+     */
+    public function createHotspotUser(
+        string $voucherCode,
+        string $profileName,
+        ?int $limitUptimeMinutes = null,
+        string $server = 'hotspot1',
+        string $comment = ''
+    ): array {
+        $cleanCode = trim($voucherCode);
+        if ($cleanCode === '') {
+            throw new Exception('Kode voucher tidak boleh kosong.');
+        }
+
+        $existing = $this->command('/ip/hotspot/user/print', [
+            '?name' => $cleanCode,
+        ], false) ?? [];
+
+        if (!empty($existing)) {
+            return ['action' => 'exists', 'voucher_code' => $cleanCode];
+        }
+
+        $params = [
+            'name' => $cleanCode,
+            'password' => $cleanCode,
+            'profile' => trim($profileName) ?: 'default',
+            'server' => trim($server) ?: 'all',
+        ];
+
+        if ($limitUptimeMinutes !== null && $limitUptimeMinutes > 0) {
+            $params['limit-uptime'] = $this->formatRouterOsInterval($limitUptimeMinutes);
+        }
+
+        if (trim($comment) !== '') {
+            $params['comment'] = trim($comment);
+        }
+
+        $this->command('/ip/hotspot/user/add', $params, false);
+
+        return ['action' => 'created', 'voucher_code' => $cleanCode];
+    }
+
+    /**
+     * Hapus user voucher hotspot dari MikroTik.
+     */
+    public function removeHotspotUser(string $voucherCode): bool
+    {
+        $cleanCode = trim($voucherCode);
+        if ($cleanCode === '') {
+            return false;
+        }
+
+        $existing = $this->command('/ip/hotspot/user/print', [
+            '?name' => $cleanCode,
+        ], false) ?? [];
+
+        foreach ($existing as $item) {
+            if (!empty($item['.id'])) {
+                $this->command('/ip/hotspot/user/remove', ['.id' => $item['.id']], false);
+            }
+        }
+
+        return !empty($existing);
+    }
+
     public function __destruct()
     {
         if (!$this->shouldUseConnectionPool()) {

@@ -89,6 +89,8 @@ const AttendanceManagementPage = lazy(() => import('./pages/Attendance/Attendanc
 const AreaIncidentActionPage = lazy(() => import('./pages/AreaIncidentActionPage'));
 const MonitoringPekerjaanPage = lazy(() => import('./pages/TechnicianJobs/MonitoringPekerjaanPage'));
 const MasterPegawaiPage = lazy(() => import('./pages/Settings/MasterPegawaiPage'));
+const HotspotVoucherBuyPage = lazy(() => import('./pages/Hotspot/HotspotVoucherBuyPage'));
+const HotspotVoucherAdminPage = lazy(() => import('./pages/Hotspot/HotspotVoucherAdminPage'));
 
 
 const ROUTE_FALLBACK_ROLES = {
@@ -225,7 +227,8 @@ function AppLayout({ children }) {
     const isPublicPortal = location.pathname.startsWith('/portal-pelanggan/') || location.pathname.startsWith('/portal_pelanggan/');
     const isAreaIncidentPage = location.pathname.startsWith('/area-incident/');
     const isPublicIsolirPage = location.pathname.startsWith('/isolir') || location.pathname.startsWith('/portal/isolir') || location.pathname.startsWith('/blocked') || location.pathname.startsWith('/gangguan');
-    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal || isAreaIncidentPage || isPublicIsolirPage;
+    const isPublicHotspotPage = location.pathname.startsWith('/hotspot/');
+    const isPublicPage = noNavbarRoutes.includes(location.pathname) || isInvoicePage || isCustomerRoute || isPublicRegistration || isPublicPortal || isAreaIncidentPage || isPublicIsolirPage || isPublicHotspotPage;
     const showNavbar = !isPublicPage;
 
     const shouldCheckWhatsAppConnection = showNavbar
@@ -537,6 +540,11 @@ function App() {
                     {/* Customer Portal */}
                     <Route path="/customer/login" element={<RouteSuspense><CustomerLoginPage /></RouteSuspense>} />
                     <Route path="/customer/dashboard" element={<RouteSuspense><CustomerDashboard /></RouteSuspense>} />
+
+                    {/* Hotspot Voucher (Public Self-Service & Admin Management) */}
+                    <Route path="/hotspot/beli" element={<RouteSuspense><HotspotVoucherBuyPage /></RouteSuspense>} />
+                    <Route path="/hotspot/order/:orderCode" element={<RouteSuspense><HotspotVoucherBuyPage /></RouteSuspense>} />
+                    <Route path="/hotspot-vouchers" element={<GuardedRoute allowedRoles={['superadmin', 'admin']} element={<HotspotVoucherAdminPage />} />} />
                     
                     {/* 404 */}
                     <Route path="*" element={<RouteSuspense><NotFoundPage /></RouteSuspense>} />

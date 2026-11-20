@@ -106,6 +106,7 @@ const ACCESS = {
     systemLogs: ['superadmin'],
     systemHealth: ['superadmin'],
     attendanceManagement: ['superadmin'],
+    hotspotVouchers: ['superadmin', 'admin'],
     profile: ['superadmin', 'admin', 'teknisi', 'finance'],
 };
 
@@ -196,6 +197,7 @@ const MENU_GROUPS = [
             { key: 'monitoring', label: 'Monitoring', to: '/monitoring', icon: Activity, match: (p) => p === '/monitoring' || p === '/monitoring-maps' || p.startsWith('/monitoring-genieacs') || p.startsWith('/genieacs') },
             { key: 'remoteOnt', label: 'Remote ONT', to: '/remote-ont', icon: Router, match: (p) => p.startsWith('/remote-ont') },
             { key: 'isolir', label: 'Isolir & Telat', to: '/pelanggan-terisolir', icon: AlertTriangle, match: (p) => p.startsWith('/pelanggan-terisolir') || p.startsWith('/admin/isolir') },
+            { key: 'hotspotVouchers', label: 'Voucher Hotspot', to: '/hotspot-vouchers', icon: Wifi, match: (p) => p.startsWith('/hotspot-vouchers') },
             { key: 'customerDismantle', label: 'Alat Bisa Dicopot', to: '/alat-bisa-dicopot', icon: Unplug, match: (p) => p.startsWith('/alat-bisa-dicopot') },
         ],
     },

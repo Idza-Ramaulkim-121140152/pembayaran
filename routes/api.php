@@ -44,5 +44,16 @@ Route::get('/invoice/{invoice_link}/dynamic-qris', [\App\Http\Controllers\QrisWe
 Route::get('/invoice/{invoice_link}/check-status', [\App\Http\Controllers\QrisWebhookController::class, 'checkInvoiceStatus'])
     ->name('api.invoice.check-status');
 
+// Public Self-Service Hotspot Voucher API (Tanpa Login)
+Route::prefix('hotspot')->group(function () {
+    Route::get('/packages', [\App\Http\Controllers\HotspotVoucherController::class, 'publicPackages'])
+        ->name('api.hotspot.packages');
+    Route::post('/orders', [\App\Http\Controllers\HotspotVoucherController::class, 'createPublicOrder'])
+        ->middleware('throttle:20,1')
+        ->name('api.hotspot.orders.create');
+    Route::get('/orders/{orderCode}/status', [\App\Http\Controllers\HotspotVoucherController::class, 'publicOrderStatus'])
+        ->name('api.hotspot.orders.status');
+});
+
 
 

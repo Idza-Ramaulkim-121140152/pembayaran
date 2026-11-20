@@ -66,6 +66,7 @@ use App\Http\Controllers\GenieAcsMonitoringController;
 use App\Http\Controllers\IpaymuIntegrationController;
 use App\Http\Controllers\SuperPanelController;
 use App\Http\Controllers\AttendanceController;
+use App\Http\Controllers\HotspotVoucherController;
 
 // Root domain redirect: ke /dashboard jika sudah login, ke /login jika belum login
 // Menangani juga intercept captive portal / isolir jika diakses via host non-standar
@@ -104,6 +105,10 @@ Route::get('/mobile/status.php', fn() => redirect('http://10.1.0.5/isolir', 302)
 Route::get('/gangguan', fn() => view('app'))->name('portal.gangguan');
 Route::get('/gangguan-massal', fn() => view('app'))->name('portal.gangguan-massal');
 Route::get('/outage', fn() => redirect('/gangguan'));
+
+// Public Self-Service Hotspot Voucher Purchase Page (Tanpa Login)
+Route::get('/hotspot/beli', fn() => view('app'))->name('public.hotspot.buy');
+Route::get('/hotspot/order/{orderCode}', fn() => view('app'))->name('public.hotspot.order');
 
 // APIs for Isolir Portal & Mass Outage
 Route::get('/api/public/isolir/check', [CustomerIsolationPortalController::class, 'check'])->name('api.public.isolir.check');
@@ -982,6 +987,20 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
         Route::post('/api/customers/{customer}/termination/{termination}/send-whatsapp', [CustomerTerminationController::class, 'sendWhatsApp'])->name('api.customers.termination.send-whatsapp');
         Route::post('/api/customers/{customer}/termination/{termination}/finalize', [CustomerTerminationController::class, 'finalize'])->name('api.customers.termination.finalize');
         Route::post('/api/customers/{customer}/termination/{termination}/cancel', [CustomerTerminationController::class, 'cancel'])->name('api.customers.termination.cancel');
+
+        // Manajemen Voucher Hotspot (Admin & Superadmin)
+        Route::prefix('/api/admin/hotspot')->group(function () {
+            Route::get('/dashboard', [HotspotVoucherController::class, 'adminDashboard'])->name('api.admin.hotspot.dashboard');
+            Route::post('/packages', [HotspotVoucherController::class, 'storePackage'])->name('api.admin.hotspot.packages.store');
+            Route::put('/packages/{package}', [HotspotVoucherController::class, 'updatePackage'])->name('api.admin.hotspot.packages.update');
+            Route::delete('/packages/{package}', [HotspotVoucherController::class, 'destroyPackage'])->name('api.admin.hotspot.packages.destroy');
+            Route::post('/packages/{package}/sync', [HotspotVoucherController::class, 'syncPackageProfile'])->name('api.admin.hotspot.packages.sync');
+            Route::post('/orders/{order}/confirm', [HotspotVoucherController::class, 'confirmOrderManual'])->name('api.admin.hotspot.orders.confirm');
+            Route::post('/orders/{order}/resend-wa', [HotspotVoucherController::class, 'resendOrderWhatsApp'])->name('api.admin.hotspot.orders.resend-wa');
+            Route::post('/orders/{order}/retry-mikrotik', [HotspotVoucherController::class, 'retryOrderMikroTik'])->name('api.admin.hotspot.orders.retry-mikrotik');
+            Route::post('/orders/manual-generate', [HotspotVoucherController::class, 'generateManualVoucher'])->name('api.admin.hotspot.orders.manual-generate');
+            Route::get('/mikrotik-template', [HotspotVoucherController::class, 'mikrotikTemplate'])->name('api.admin.hotspot.mikrotik-template');
+        });
     });
 
     // Remote ONT Web Gateway (MikroTik PPPoE & In-App Reverse Proxy) - requires monitoring.view permission
