@@ -50,6 +50,8 @@ Route::prefix('hotspot')->group(function () {
         ->name('api.hotspot.packages');
     Route::get('/locations', [\App\Http\Controllers\HotspotVoucherController::class, 'publicLocations'])
         ->name('api.hotspot.locations');
+    Route::get('/voucher-status/{voucherCode}', [\App\Http\Controllers\HotspotVoucherController::class, 'publicVoucherStatus'])
+        ->name('api.hotspot.voucher-status');
     Route::post('/orders', [\App\Http\Controllers\HotspotVoucherController::class, 'createPublicOrder'])
         ->middleware('throttle:20,1')
         ->name('api.hotspot.orders.create');

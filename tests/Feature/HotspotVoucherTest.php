@@ -256,4 +256,41 @@ class HotspotVoucherTest extends TestCase
         $this->assertArrayNotHasKey('customer_id', $publicRes->json('locations.0'));
         $this->assertArrayNotHasKey('customer_name', $publicRes->json('locations.0'));
     }
+
+    public function test_public_voucher_status_returns_elapsed_and_remaining_days_with_cors(): void
+    {
+        $package = HotspotVoucherPackage::create([
+            'name' => 'Voucher 30 Hari',
+            'code' => 'voucher-30-hari',
+            'mikrotik_profile_name' => 'vc-voucher-30-hari',
+            'hotspot_server' => 'hotspot1',
+            'price' => 55000,
+            'duration_minutes' => 43200, // 30 days
+            'max_devices' => 1,
+            'is_active' => true,
+        ]);
+
+        $order = HotspotVoucherOrder::create([
+            'order_code' => 'VCH-20261124-TEST1',
+            'package_id' => $package->id,
+            'customer_phone' => '081234567890',
+            'base_amount' => 55000,
+            'status' => HotspotVoucherOrder::STATUS_PAID,
+            'voucher_code' => 'RK30DY',
+            'voucher_status' => HotspotVoucherOrder::VOUCHER_ACTIVE,
+            'first_login_at' => now()->subDays(2)->subHours(3),
+            'expires_at' => now()->addDays(27)->addHours(21),
+        ]);
+
+        $res = $this->getJson('/api/hotspot/voucher-status/' . $order->voucher_code);
+        $res->assertOk()
+            ->assertHeader('Access-Control-Allow-Origin', '*')
+            ->assertJsonPath('found', true)
+            ->assertJsonPath('package_name', 'Voucher 30 Hari')
+            ->assertJsonPath('remaining_days', 27)
+            ->assertJsonPath('is_expired', false);
+
+        $this->assertStringContainsString('2 Hari', (string) $res->json('elapsed_label'));
+        $this->assertStringContainsString('27 Hari', (string) $res->json('remaining_label'));
+    }
 }

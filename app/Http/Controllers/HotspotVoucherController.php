@@ -8,6 +8,8 @@ use App\Models\HotspotVoucherOrder;
 use App\Models\HotspotVoucherPackage;
 use App\Services\DynamicQrisService;
 use App\Services\HotspotVoucherService;
+use App\Services\MikroTikService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
@@ -511,6 +513,117 @@ CLI;
             'walled_garden_cli' => $walledGardenCli,
             'files' => $files,
         ]);
+    }
+
+    /**
+     * PUBLIC: Informasi live status voucher (sudah aktif berapa lama, sisa hari/jam/menit, tanggal berakhir).
+     * Dipanggil dari halaman status.html MikroTik (http://rumahkita.id/status) dengan CORS terbuka.
+     */
+    public function publicVoucherStatus(string $voucherCode): JsonResponse
+    {
+        $cleanCode = strtoupper(trim($voucherCode));
+        $corsHeaders = [
+            'Access-Control-Allow-Origin' => '*',
+            'Access-Control-Allow-Methods' => 'GET, OPTIONS',
+            'Access-Control-Allow-Headers' => 'Accept, Content-Type',
+        ];
+
+        if ($cleanCode === '') {
+            return response()->json(['found' => false, 'message' => 'Kode voucher kosong.'], 404, $corsHeaders);
+        }
+
+        $order = Schema::hasTable('hotspot_voucher_orders')
+            ? HotspotVoucherOrder::query()
+                ->with('package')
+                ->whereRaw('UPPER(voucher_code) = ?', [$cleanCode])
+                ->latest('id')
+                ->first()
+            : null;
+
+        $now = now('Asia/Jakarta');
+
+        if ($order && $order->package) {
+            $durationMinutes = max(1, (int) $order->package->duration_minutes);
+            $totalSeconds = $durationMinutes * 60;
+
+            $firstLoginAt = $order->first_login_at ? $order->first_login_at->copy()->timezone('Asia/Jakarta') : null;
+            $expiresAt = $order->expires_at ? $order->expires_at->copy()->timezone('Asia/Jakarta') : null;
+
+            // Jika belum tercatat first_login_at, berarti ini pertama kali pelanggan membuka status setelah login!
+            if (!$firstLoginAt) {
+                $firstLoginAt = $now->copy();
+                $expiresAt = $firstLoginAt->copy()->addMinutes($durationMinutes);
+                $order->first_login_at = $firstLoginAt->copy()->timezone(config('app.timezone'));
+                $order->expires_at = $expiresAt->copy()->timezone(config('app.timezone'));
+                $order->voucher_status = HotspotVoucherOrder::VOUCHER_ACTIVE;
+                $order->save();
+            } elseif (!$expiresAt) {
+                $expiresAt = $firstLoginAt->copy()->addMinutes($durationMinutes);
+                $order->expires_at = $expiresAt->copy()->timezone(config('app.timezone'));
+                $order->save();
+            }
+
+            $elapsedSeconds = max(0, (int) $firstLoginAt->diffInSeconds($now, false));
+            $remainingSeconds = max(0, (int) $now->diffInSeconds($expiresAt, false));
+            $progressPercent = $totalSeconds > 0
+                ? min(100, max(0, (int) round(($elapsedSeconds / $totalSeconds) * 100)))
+                : 0;
+
+            if ($remainingSeconds <= 0 && $order->voucher_status !== HotspotVoucherOrder::VOUCHER_EXPIRED) {
+                $order->voucher_status = HotspotVoucherOrder::VOUCHER_EXPIRED;
+                $order->save();
+            }
+
+            return response()->json([
+                'found' => true,
+                'source' => 'voucher_order',
+                'voucher_code' => $order->voucher_code,
+                'package_name' => $order->package->name,
+                'duration_label' => $order->package->duration_label,
+                'max_devices' => (int) $order->package->max_devices,
+                'first_login_at' => $firstLoginAt->toIso8601String(),
+                'first_login_label' => $firstLoginAt->locale('id')->translatedFormat('d M Y, H:i') . ' WIB',
+                'expires_at' => $expiresAt->toIso8601String(),
+                'expires_label' => $expiresAt->locale('id')->translatedFormat('d M Y, H:i') . ' WIB',
+                'total_seconds' => $totalSeconds,
+                'elapsed_seconds' => $elapsedSeconds,
+                'elapsed_label' => $this->formatIndonesianDuration($elapsedSeconds),
+                'remaining_seconds' => $remainingSeconds,
+                'remaining_label' => $remainingSeconds > 0
+                    ? $this->formatIndonesianDuration($remainingSeconds)
+                    : 'Masa aktif habis',
+                'remaining_days' => (int) floor($remainingSeconds / 86400),
+                'progress_percent' => $progressPercent,
+                'is_expired' => $remainingSeconds <= 0,
+            ], 200, $corsHeaders);
+        }
+
+        // Fallback untuk user hotspot manual yang dibuat langsung di WinBox (tidak lewat sistem voucher)
+        return response()->json([
+            'found' => false,
+            'source' => 'manual_mikrotik',
+            'voucher_code' => $cleanCode,
+            'message' => 'User hotspot manual (tidak terdaftar sebagai voucher otomatis).',
+        ], 200, $corsHeaders);
+    }
+
+    protected function formatIndonesianDuration(int $seconds): string
+    {
+        $secs = max(0, $seconds);
+        $days = (int) floor($secs / 86400);
+        $hours = (int) floor(($secs % 86400) / 3600);
+        $minutes = (int) floor(($secs % 3600) / 60);
+
+        $parts = [];
+        if ($days > 0) {
+            $parts[] = "{$days} Hari";
+        }
+        if ($hours > 0 || $days > 0) {
+            $parts[] = "{$hours} Jam";
+        }
+        $parts[] = "{$minutes} Menit";
+
+        return implode(' ', $parts);
     }
 
     /**
