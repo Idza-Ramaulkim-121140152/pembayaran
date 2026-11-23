@@ -953,82 +953,11 @@ export default function HotspotVoucherAdminPage() {
             {activeTab === 'locations' && (
                 <div className="space-y-5">
                     <div className="app-card p-5 space-y-4">
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                            <div>
-                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
-                                    <MapPin className="w-5 h-5 text-orange-500" />
-                                    Titik WiFi Hotspot Aktif di Halaman Beli ({locationsList.length})
-                                </h3>
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                    Titik di bawah ini tampil di halaman <b>/hotspot/beli</b> dan otomatis diurutkan terdekat dari lokasi pengunjung. <b>Nama pelanggan TIDAK pernah ditampilkan ke publik</b> — hanya label area/titik.
-                                </p>
-                            </div>
-                        </div>
-
-                        {locationsList.length === 0 ? (
-                            <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center text-sm text-slate-500">
-                                Belum ada titik WiFi yang dipilih. Pilih titik pelanggan yang sudah dipasang AP Hotspot pada daftar di bawah.
-                            </div>
-                        ) : (
-                            <div className="space-y-2.5">
-                                {locationsList.map((loc) => (
-                                    <div
-                                        key={loc.id}
-                                        className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center gap-3 justify-between"
-                                    >
-                                        <div className="min-w-0 flex-1 space-y-1.5">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
-                                                    Tampil Publik
-                                                </span>
-                                                <span className="text-xs text-slate-500">
-                                                    Ref. Internal Admin: <b>{loc.customer_name || 'Manual'}</b> ({loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)})
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="text"
-                                                    value={editingLabelMap[loc.id] ?? ''}
-                                                    onChange={(e) =>
-                                                        setEditingLabelMap((prev) => ({
-                                                            ...prev,
-                                                            [loc.id]: e.target.value,
-                                                        }))
-                                                    }
-                                                    placeholder="Label publik (contoh: Area Dusun 01, Dekat Masjid)"
-                                                    className="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-sm"
-                                                />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSaveLocationLabel(loc)}
-                                                    disabled={busyLocationKey === `loc-${loc.id}`}
-                                                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-50"
-                                                >
-                                                    Simpan Label
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDeleteLocation(loc)}
-                                                    disabled={busyLocationKey === `loc-${loc.id}`}
-                                                    className="p-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600"
-                                                    title="Hapus dari peta publik"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="app-card p-5 space-y-4">
                         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                             <div>
                                 <h3 className="font-bold text-slate-900">Pilih Titik Lokasi dari Pelanggan Terpasang</h3>
                                 <p className="text-xs text-slate-500 mt-0.5">
-                                    Centang pelanggan yang lokasinya sudah dipasangi WiFi Voucher Hotspot. Koordinat diambil otomatis dari data pelanggan.
+                                    Pilih pelanggan yang lokasinya sudah dipasangi WiFi Voucher Hotspot. Koordinat diambil otomatis dari data pelanggan dan <b>nama pelanggan tidak ditampilkan ke publik</b>.
                                 </p>
                             </div>
                             <div className="relative">
@@ -1043,9 +972,9 @@ export default function HotspotVoucherAdminPage() {
                             </div>
                         </div>
 
-                        <div className="overflow-x-auto">
+                        <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
                             <table className="w-full text-sm text-left">
-                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-y border-slate-200">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-y border-slate-200 sticky top-0 z-10">
                                     <tr>
                                         <th className="py-2.5 px-3">Pelanggan (Hanya Terlihat Admin)</th>
                                         <th className="py-2.5 px-3">Wilayah (Label Publik Default)</th>
@@ -1099,6 +1028,77 @@ export default function HotspotVoucherAdminPage() {
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+
+                    <div className="app-card p-5 space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <div>
+                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                    <MapPin className="w-5 h-5 text-orange-500" />
+                                    Titik WiFi Hotspot Aktif di Halaman Beli ({locationsList.length})
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Titik di bawah ini tampil di halaman <b>/hotspot/beli</b> dan otomatis diurutkan terdekat dari lokasi pengunjung. <b>Nama pelanggan TIDAK pernah ditampilkan ke publik</b> — hanya label area/titik.
+                                </p>
+                            </div>
+                        </div>
+
+                        {locationsList.length === 0 ? (
+                            <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center text-sm text-slate-500">
+                                Belum ada titik WiFi yang dipilih. Pilih titik pelanggan yang sudah dipasang AP Hotspot pada daftar di atas.
+                            </div>
+                        ) : (
+                            <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                                {locationsList.map((loc) => (
+                                    <div
+                                        key={loc.id}
+                                        className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center gap-3 justify-between"
+                                    >
+                                        <div className="min-w-0 flex-1 space-y-1.5">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
+                                                    Tampil Publik
+                                                </span>
+                                                <span className="text-xs text-slate-500">
+                                                    Ref. Internal Admin: <b>{loc.customer_name || 'Manual'}</b> ({loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)})
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={editingLabelMap[loc.id] ?? ''}
+                                                    onChange={(e) =>
+                                                        setEditingLabelMap((prev) => ({
+                                                            ...prev,
+                                                            [loc.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="Label publik (contoh: Area Dusun 01, Dekat Masjid)"
+                                                    className="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-sm"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSaveLocationLabel(loc)}
+                                                    disabled={busyLocationKey === `loc-${loc.id}`}
+                                                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-50"
+                                                >
+                                                    Simpan Label
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteLocation(loc)}
+                                                    disabled={busyLocationKey === `loc-${loc.id}`}
+                                                    className="p-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600"
+                                                    title="Hapus dari peta publik"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
