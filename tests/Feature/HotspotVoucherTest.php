@@ -225,4 +225,35 @@ class HotspotVoucherTest extends TestCase
         $this->actingAs($admin)->get('/hotspot-vouchers')->assertOk();
         $this->actingAs($admin)->get('/monitoring')->assertOk();
     }
+
+    public function test_admin_can_toggle_hotspot_locations_and_public_api_hides_customer_name(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $customer = \App\Models\Customer::create([
+            'name' => 'Rahasia Nama Pelanggan',
+            'phone' => '081234500001',
+            'pppoe_username' => 'rahasia01',
+            'latitude' => -5.73612000,
+            'longitude' => 105.59521000,
+            'is_active' => true,
+        ]);
+
+        // Admin enables this customer coordinate as a Hotspot WiFi point
+        $this->actingAs($admin)->postJson('/api/admin/hotspot/locations/toggle', [
+            'customer_id' => $customer->id,
+            'enabled' => true,
+            'label' => 'Area Simpang Pasar',
+        ])->assertOk()->assertJsonPath('enabled', true);
+
+        // Public API returns the point WITHOUT exposing customer name/id/phone
+        $publicRes = $this->getJson('/api/hotspot/locations')->assertOk();
+        $publicRes->assertJsonCount(1, 'locations')
+            ->assertJsonPath('locations.0.label', 'Area Simpang Pasar');
+
+        $payload = json_encode($publicRes->json());
+        $this->assertStringNotContainsString('Rahasia Nama Pelanggan', (string) $payload);
+        $this->assertStringNotContainsString('081234500001', (string) $payload);
+        $this->assertArrayNotHasKey('customer_id', $publicRes->json('locations.0'));
+        $this->assertArrayNotHasKey('customer_name', $publicRes->json('locations.0'));
+    }
 }

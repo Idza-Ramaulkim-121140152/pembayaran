@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import HotspotLocationsMapSection from './HotspotLocationsMapSection';
 import {
     Check,
     CheckCircle2,
@@ -577,6 +578,9 @@ export default function HotspotVoucherBuyPage() {
                         </div>
                     </form>
                 )}
+
+                {/* Available WiFi Voucher Hotspot Points (Privacy-safe, nearest first) */}
+                <HotspotLocationsMapSection />
 
                 {/* CS Support Card */}
                 <div className="mt-4 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-4 text-center text-white">

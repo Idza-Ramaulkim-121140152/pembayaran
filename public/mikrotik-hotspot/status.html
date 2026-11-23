@@ -40,6 +40,28 @@ $(endif)
   }
   h1 { font-size: 20px; color: #0f172a; margin-bottom: 4px; }
   .sub { font-size: 13px; color: #64748b; margin-bottom: 18px; }
+  .time-box {
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    border: 1px solid #bfdbfe;
+    border-radius: 16px;
+    padding: 14px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .time-box .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #1d4ed8;
+  }
+  .time-box .value {
+    font-size: 26px;
+    font-weight: 800;
+    color: #0f172a;
+    margin-top: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
   .info-table {
     width: 100%;
     border-collapse: collapse;
@@ -73,13 +95,24 @@ $(endif)
   <h1>Voucher: $(username)</h1>
   <p class="sub">Rumah Kita Net WiFi Hotspot</p>
 
+  $(if session-time-left)
+  <div class="time-box">
+    <div class="label">Sisa Waktu Aktif Voucher</div>
+    <div class="value">$(session-time-left)</div>
+  </div>
+  $(endif)
+
   <table class="info-table">
+    <tr><td>Kode Voucher</td><td>$(username)</td></tr>
     <tr><td>IP Address</td><td>$(ip)</td></tr>
     <tr><td>Durasi Terpakai</td><td>$(uptime)</td></tr>
     $(if session-time-left)
     <tr><td>Sisa Waktu</td><td>$(session-time-left)</td></tr>
     $(endif)
     <tr><td>Unduh / Unggah</td><td>$(bytes-out-nice) / $(bytes-in-nice)</td></tr>
+    $(if refresh-timeout)
+    <tr><td>Auto Refresh</td><td>$(refresh-timeout)</td></tr>
+    $(endif)
   </table>
 
   <form action="$(link-logout)" name="logout" onsubmit="return confirm('Keluar dari sesi WiFi sekarang?');">

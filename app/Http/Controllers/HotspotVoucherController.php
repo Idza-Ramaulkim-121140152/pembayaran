@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
+use App\Models\HotspotLocation;
 use App\Models\HotspotVoucherOrder;
 use App\Models\HotspotVoucherPackage;
 use App\Services\DynamicQrisService;
@@ -508,6 +510,198 @@ CLI;
             'hotspot_dns' => 'rumahkita.id',
             'walled_garden_cli' => $walledGardenCli,
             'files' => $files,
+        ]);
+    }
+
+    /**
+     * PUBLIC: Daftar titik lokasi WiFi Voucher Hotspot yang tersedia (TANPA nama pelanggan).
+     */
+    public function publicLocations(): JsonResponse
+    {
+        if (!Schema::hasTable('hotspot_locations')) {
+            return response()->json(['locations' => []]);
+        }
+
+        $locations = HotspotLocation::query()
+            ->where('is_active', true)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->orderBy('id')
+            ->get()
+            ->values()
+            ->map(function (HotspotLocation $loc, int $idx) {
+                $cleanLabel = trim((string) ($loc->label ?? ''));
+                return [
+                    'id' => $loc->id,
+                    'label' => $cleanLabel !== '' ? $cleanLabel : ('Titik WiFi Hotspot #' . ($idx + 1)),
+                    'latitude' => (float) $loc->latitude,
+                    'longitude' => (float) $loc->longitude,
+                ];
+            });
+
+        return response()->json([
+            'locations' => $locations,
+        ]);
+    }
+
+    /**
+     * ADMIN: Daftar titik WiFi Hotspot terpasang + daftar titik pelanggan berkoordinat untuk dipilih.
+     */
+    public function adminLocations(Request $request): JsonResponse
+    {
+        if (!Schema::hasTable('hotspot_locations')) {
+            return response()->json([
+                'locations' => [],
+                'customers' => [],
+            ]);
+        }
+
+        $search = trim((string) $request->query('search', ''));
+
+        $locations = HotspotLocation::query()
+            ->with(['customer.dusun', 'customer.desa', 'customer.kecamatan'])
+            ->orderByDesc('is_active')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (HotspotLocation $loc) => [
+                'id' => $loc->id,
+                'customer_id' => $loc->customer_id,
+                'customer_name' => $loc->customer?->name,
+                'customer_wilayah' => $loc->customer?->wilayah_lengkap,
+                'label' => $loc->label,
+                'latitude' => (float) $loc->latitude,
+                'longitude' => (float) $loc->longitude,
+                'is_active' => (bool) $loc->is_active,
+                'notes' => $loc->notes,
+            ])
+            ->values();
+
+        $installedCustomerIds = $locations
+            ->filter(fn ($l) => $l['customer_id'] !== null && $l['is_active'])
+            ->pluck('customer_id')
+            ->flip();
+
+        $customers = Customer::query()
+            ->with(['dusun', 'desa', 'kecamatan'])
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->where('latitude', '!=', 0)
+            ->where('longitude', '!=', 0)
+            ->when($search !== '', function ($q) use ($search) {
+                $like = '%' . $search . '%';
+                $q->where(function ($sub) use ($like) {
+                    $sub->where('name', 'like', $like)
+                        ->orWhere('pppoe_username', 'like', $like)
+                        ->orWhere('address', 'like', $like);
+                });
+            })
+            ->orderBy('name')
+            ->limit(250)
+            ->get()
+            ->map(fn (Customer $c) => [
+                'id' => $c->id,
+                'name' => $c->name,
+                'pppoe_username' => $c->pppoe_username,
+                'wilayah' => $c->wilayah_lengkap,
+                'latitude' => (float) $c->latitude,
+                'longitude' => (float) $c->longitude,
+                'is_hotspot_installed' => $installedCustomerIds->has($c->id),
+            ])
+            ->values();
+
+        return response()->json([
+            'locations' => $locations,
+            'customers' => $customers,
+        ]);
+    }
+
+    /**
+     * ADMIN: Aktifkan / nonaktifkan titik pelanggan sebagai titik WiFi Voucher Hotspot.
+     */
+    public function toggleCustomerLocation(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'customer_id' => ['required', 'integer', 'exists:customers,id'],
+            'enabled' => ['required', 'boolean'],
+            'label' => ['nullable', 'string', 'max:150'],
+        ]);
+
+        $customer = Customer::with(['dusun', 'desa', 'kecamatan'])->findOrFail($validated['customer_id']);
+
+        if (!$validated['enabled']) {
+            HotspotLocation::where('customer_id', $customer->id)->delete();
+
+            return response()->json([
+                'message' => 'Titik WiFi Hotspot berhasil dinonaktifkan dari peta publik.',
+                'enabled' => false,
+            ]);
+        }
+
+        if (!$customer->latitude || !$customer->longitude) {
+            return response()->json([
+                'message' => 'Pelanggan ini belum memiliki koordinat latitude/longitude.',
+            ], 422);
+        }
+
+        // Default label publik HANYA menggunakan wilayah (TANPA nama pelanggan)
+        $wilayah = trim((string) $customer->wilayah_lengkap);
+        $defaultPublicLabel = ($wilayah !== '' && $wilayah !== '-')
+            ? 'Area ' . $wilayah
+            : 'Titik WiFi Hotspot';
+
+        $label = isset($validated['label']) && trim((string) $validated['label']) !== ''
+            ? trim((string) $validated['label'])
+            : $defaultPublicLabel;
+
+        $location = HotspotLocation::updateOrCreate(
+            ['customer_id' => $customer->id],
+            [
+                'label' => $label,
+                'latitude' => (float) $customer->latitude,
+                'longitude' => (float) $customer->longitude,
+                'is_active' => true,
+            ]
+        );
+
+        return response()->json([
+            'message' => 'Titik WiFi Hotspot berhasil ditampilkan di peta publik (tanpa nama pelanggan).',
+            'enabled' => true,
+            'location' => $location,
+        ]);
+    }
+
+    /**
+     * ADMIN: Perbarui label publik / status aktif titik WiFi Hotspot.
+     */
+    public function updateLocation(Request $request, HotspotLocation $location): JsonResponse
+    {
+        $validated = $request->validate([
+            'label' => ['nullable', 'string', 'max:150'],
+            'is_active' => ['nullable', 'boolean'],
+            'notes' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $location->update([
+            'label' => array_key_exists('label', $validated) ? (trim((string) $validated['label']) ?: null) : $location->label,
+            'is_active' => array_key_exists('is_active', $validated) ? (bool) $validated['is_active'] : $location->is_active,
+            'notes' => array_key_exists('notes', $validated) ? (trim((string) $validated['notes']) ?: null) : $location->notes,
+        ]);
+
+        return response()->json([
+            'message' => 'Titik WiFi Hotspot berhasil diperbarui.',
+            'location' => $location->fresh(),
+        ]);
+    }
+
+    /**
+     * ADMIN: Hapus titik WiFi Hotspot.
+     */
+    public function destroyLocation(HotspotLocation $location): JsonResponse
+    {
+        $location->delete();
+
+        return response()->json([
+            'message' => 'Titik WiFi Hotspot berhasil dihapus.',
         ]);
     }
 

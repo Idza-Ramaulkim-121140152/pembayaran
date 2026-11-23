@@ -48,6 +48,8 @@ Route::get('/invoice/{invoice_link}/check-status', [\App\Http\Controllers\QrisWe
 Route::prefix('hotspot')->group(function () {
     Route::get('/packages', [\App\Http\Controllers\HotspotVoucherController::class, 'publicPackages'])
         ->name('api.hotspot.packages');
+    Route::get('/locations', [\App\Http\Controllers\HotspotVoucherController::class, 'publicLocations'])
+        ->name('api.hotspot.locations');
     Route::post('/orders', [\App\Http\Controllers\HotspotVoucherController::class, 'createPublicOrder'])
         ->middleware('throttle:20,1')
         ->name('api.hotspot.orders.create');

@@ -163,7 +163,7 @@ $(if chap-id)
 <form name="sendin" action="$(link-login-only)" method="post" style="display:none">
   <input type="hidden" name="username" />
   <input type="hidden" name="password" />
-  <input type="hidden" name="dst" value="$(link-orig)" />
+  <input type="hidden" name="dst" value="$(link-status)" />
   <input type="hidden" name="popup" value="true" />
 </form>
 <script type="text/javascript" src="md5.js"></script>
@@ -183,7 +183,7 @@ $(endif)
   $(endif)
 
   <form name="login" action="$(link-login-only)" method="post" onsubmit="return doLogin();">
-    <input type="hidden" name="dst" value="$(link-orig)" />
+    <input type="hidden" name="dst" value="$(link-status)" />
     <input type="hidden" name="popup" value="true" />
     <input type="hidden" name="username" id="hidden-username" value="" />
     <input type="hidden" name="password" id="hidden-password" value="" />

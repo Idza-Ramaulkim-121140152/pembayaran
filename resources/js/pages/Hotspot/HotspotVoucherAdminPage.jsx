@@ -10,6 +10,7 @@ import {
     ExternalLink,
     FileCode2,
     Gauge,
+    MapPin,
     MessageCircle,
     Plus,
     RefreshCw,
@@ -113,6 +114,14 @@ export default function HotspotVoucherAdminPage() {
     const [loadingTemplate, setLoadingTemplate] = useState(false);
     const [copiedKey, setCopiedKey] = useState('');
 
+    // Hotspot Locations Tab (Titik WiFi dari koordinat pelanggan, tampil publik tanpa nama pelanggan)
+    const [locationsList, setLocationsList] = useState([]);
+    const [locationCustomers, setLocationCustomers] = useState([]);
+    const [locationSearch, setLocationSearch] = useState('');
+    const [loadingLocations, setLoadingLocations] = useState(false);
+    const [busyLocationKey, setBusyLocationKey] = useState(null);
+    const [editingLabelMap, setEditingLabelMap] = useState({});
+
     const showNotice = (type, text) => {
         setNotice({ type, text });
         setTimeout(() => setNotice(null), 6000);
@@ -161,6 +170,32 @@ export default function HotspotVoucherAdminPage() {
         }
     }, [templateData]);
 
+    const loadLocations = useCallback(async (searchText = '') => {
+        try {
+            setLoadingLocations(true);
+            const params = new URLSearchParams();
+            if (searchText.trim()) params.set('search', searchText.trim());
+            const res = await fetch(`/api/admin/hotspot/locations?${params.toString()}`, {
+                headers: { Accept: 'application/json' },
+            });
+            const data = await res.json();
+            if (res.ok) {
+                const locs = Array.isArray(data.locations) ? data.locations : [];
+                setLocationsList(locs);
+                setLocationCustomers(Array.isArray(data.customers) ? data.customers : []);
+                const nextLabels = {};
+                locs.forEach((l) => {
+                    nextLabels[l.id] = l.label || '';
+                });
+                setEditingLabelMap(nextLabels);
+            }
+        } catch {
+            showNotice('error', 'Gagal memuat data titik WiFi Hotspot.');
+        } finally {
+            setLoadingLocations(false);
+        }
+    }, []);
+
     useEffect(() => {
         loadDashboard();
     }, [loadDashboard]);
@@ -169,7 +204,75 @@ export default function HotspotVoucherAdminPage() {
         if (activeTab === 'mikrotik') {
             loadMikrotikTemplate();
         }
-    }, [activeTab, loadMikrotikTemplate]);
+        if (activeTab === 'locations') {
+            loadLocations(locationSearch);
+        }
+    }, [activeTab, loadMikrotikTemplate, loadLocations, locationSearch]);
+
+    const handleToggleCustomerLocation = async (customer, enabled) => {
+        try {
+            setBusyLocationKey(`cust-${customer.id}`);
+            const res = await fetch('/api/admin/hotspot/locations/toggle', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    customer_id: customer.id,
+                    enabled,
+                }),
+            });
+            const data = await res.json();
+            showNotice(res.ok ? 'success' : 'error', data.message || 'Status titik WiFi diperbarui.');
+            loadLocations(locationSearch);
+        } finally {
+            setBusyLocationKey(null);
+        }
+    };
+
+    const handleSaveLocationLabel = async (loc) => {
+        try {
+            setBusyLocationKey(`loc-${loc.id}`);
+            const res = await fetch(`/api/admin/hotspot/locations/${loc.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    label: editingLabelMap[loc.id] ?? loc.label,
+                    is_active: loc.is_active,
+                }),
+            });
+            const data = await res.json();
+            showNotice(res.ok ? 'success' : 'error', data.message || 'Label titik WiFi disimpan.');
+            loadLocations(locationSearch);
+        } finally {
+            setBusyLocationKey(null);
+        }
+    };
+
+    const handleDeleteLocation = async (loc) => {
+        if (!window.confirm('Hapus titik WiFi ini dari peta publik?')) return;
+        try {
+            setBusyLocationKey(`loc-${loc.id}`);
+            const res = await fetch(`/api/admin/hotspot/locations/${loc.id}`, {
+                method: 'DELETE',
+                headers: {
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+            });
+            const data = await res.json();
+            showNotice(res.ok ? 'success' : 'error', data.message || 'Titik WiFi dihapus.');
+            loadLocations(locationSearch);
+        } finally {
+            setBusyLocationKey(null);
+        }
+    };
 
     const copyText = async (text, key) => {
         try {
@@ -513,6 +616,7 @@ export default function HotspotVoucherAdminPage() {
                 {[
                     { id: 'orders', label: 'Riwayat Pembelian', icon: Ticket },
                     { id: 'packages', label: `Paket Voucher (${packages.length})`, icon: Wifi },
+                    { id: 'locations', label: `Titik WiFi Hotspot (${locationsList.length})`, icon: MapPin },
                     { id: 'mikrotik', label: 'Template MikroTik & Walled Garden', icon: FileCode2 },
                 ].map((tab) => {
                     const Icon = tab.icon;
@@ -845,7 +949,161 @@ export default function HotspotVoucherAdminPage() {
                 </div>
             )}
 
-            {/* TAB 3: MIKROTIK TEMPLATE & WALLED GARDEN */}
+            {/* TAB 3: HOTSPOT LOCATIONS (TITIK WIFI VOUCHER) */}
+            {activeTab === 'locations' && (
+                <div className="space-y-5">
+                    <div className="app-card p-5 space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <div>
+                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                    <MapPin className="w-5 h-5 text-orange-500" />
+                                    Titik WiFi Hotspot Aktif di Halaman Beli ({locationsList.length})
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Titik di bawah ini tampil di halaman <b>/hotspot/beli</b> dan otomatis diurutkan terdekat dari lokasi pengunjung. <b>Nama pelanggan TIDAK pernah ditampilkan ke publik</b> — hanya label area/titik.
+                                </p>
+                            </div>
+                        </div>
+
+                        {locationsList.length === 0 ? (
+                            <div className="p-6 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center text-sm text-slate-500">
+                                Belum ada titik WiFi yang dipilih. Pilih titik pelanggan yang sudah dipasang AP Hotspot pada daftar di bawah.
+                            </div>
+                        ) : (
+                            <div className="space-y-2.5">
+                                {locationsList.map((loc) => (
+                                    <div
+                                        key={loc.id}
+                                        className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/70 flex flex-col lg:flex-row lg:items-center gap-3 justify-between"
+                                    >
+                                        <div className="min-w-0 flex-1 space-y-1.5">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">
+                                                    Tampil Publik
+                                                </span>
+                                                <span className="text-xs text-slate-500">
+                                                    Ref. Internal Admin: <b>{loc.customer_name || 'Manual'}</b> ({loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)})
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={editingLabelMap[loc.id] ?? ''}
+                                                    onChange={(e) =>
+                                                        setEditingLabelMap((prev) => ({
+                                                            ...prev,
+                                                            [loc.id]: e.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="Label publik (contoh: Area Dusun 01, Dekat Masjid)"
+                                                    className="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 bg-white text-sm"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleSaveLocationLabel(loc)}
+                                                    disabled={busyLocationKey === `loc-${loc.id}`}
+                                                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-50"
+                                                >
+                                                    Simpan Label
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteLocation(loc)}
+                                                    disabled={busyLocationKey === `loc-${loc.id}`}
+                                                    className="p-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600"
+                                                    title="Hapus dari peta publik"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="app-card p-5 space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <div>
+                                <h3 className="font-bold text-slate-900">Pilih Titik Lokasi dari Pelanggan Terpasang</h3>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                    Centang pelanggan yang lokasinya sudah dipasangi WiFi Voucher Hotspot. Koordinat diambil otomatis dari data pelanggan.
+                                </p>
+                            </div>
+                            <div className="relative">
+                                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    value={locationSearch}
+                                    onChange={(e) => setLocationSearch(e.target.value)}
+                                    placeholder="Cari nama pelanggan / PPPoE / alamat..."
+                                    className="pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-sm w-72 outline-none focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-50 text-slate-500 text-xs uppercase border-y border-slate-200">
+                                    <tr>
+                                        <th className="py-2.5 px-3">Pelanggan (Hanya Terlihat Admin)</th>
+                                        <th className="py-2.5 px-3">Wilayah (Label Publik Default)</th>
+                                        <th className="py-2.5 px-3">Koordinat</th>
+                                        <th className="py-2.5 px-3 text-right">Tampilkan di Peta Voucher</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {loadingLocations ? (
+                                        <tr>
+                                            <td colSpan={4} className="py-8 text-center text-slate-400">
+                                                Memuat daftar titik pelanggan...
+                                            </td>
+                                        </tr>
+                                    ) : locationCustomers.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={4} className="py-8 text-center text-slate-400">
+                                                Tidak ditemukan pelanggan dengan koordinat GPS.
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        locationCustomers.map((c) => (
+                                            <tr key={c.id} className="hover:bg-slate-50/70">
+                                                <td className="py-2.5 px-3">
+                                                    <div className="font-semibold text-slate-900">{c.name}</div>
+                                                    {c.pppoe_username && (
+                                                        <div className="text-xs font-mono text-slate-400">{c.pppoe_username}</div>
+                                                    )}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-xs text-slate-600">{c.wilayah || '-'}</td>
+                                                <td className="py-2.5 px-3 font-mono text-xs text-slate-500">
+                                                    {c.latitude.toFixed(5)}, {c.longitude.toFixed(5)}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right">
+                                                    <button
+                                                        type="button"
+                                                        disabled={busyLocationKey === `cust-${c.id}`}
+                                                        onClick={() => handleToggleCustomerLocation(c, !c.is_hotspot_installed)}
+                                                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition disabled:opacity-50 ${
+                                                            c.is_hotspot_installed
+                                                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                                                : 'bg-slate-100 hover:bg-orange-500 hover:text-white text-slate-700'
+                                                        }`}
+                                                    >
+                                                        {c.is_hotspot_installed ? 'Terpasang (Aktif)' : '+ Pilih Titik Ini'}
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* TAB 4: MIKROTIK TEMPLATE & WALLED GARDEN */}
             {activeTab === 'mikrotik' && (
                 <div className="space-y-5">
                     {loadingTemplate ? (

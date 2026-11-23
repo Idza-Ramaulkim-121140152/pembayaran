@@ -1000,6 +1000,10 @@ Route::middleware(['auth', 'track.user.activity'])->group(function () {
             Route::post('/orders/{order}/retry-mikrotik', [HotspotVoucherController::class, 'retryOrderMikroTik'])->name('api.admin.hotspot.orders.retry-mikrotik');
             Route::post('/orders/manual-generate', [HotspotVoucherController::class, 'generateManualVoucher'])->name('api.admin.hotspot.orders.manual-generate');
             Route::get('/mikrotik-template', [HotspotVoucherController::class, 'mikrotikTemplate'])->name('api.admin.hotspot.mikrotik-template');
+            Route::get('/locations', [HotspotVoucherController::class, 'adminLocations'])->name('api.admin.hotspot.locations.index');
+            Route::post('/locations/toggle', [HotspotVoucherController::class, 'toggleCustomerLocation'])->name('api.admin.hotspot.locations.toggle');
+            Route::put('/locations/{location}', [HotspotVoucherController::class, 'updateLocation'])->name('api.admin.hotspot.locations.update');
+            Route::delete('/locations/{location}', [HotspotVoucherController::class, 'destroyLocation'])->name('api.admin.hotspot.locations.destroy');
         });
     });
 

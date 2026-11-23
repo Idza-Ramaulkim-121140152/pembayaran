@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="2; url=$(link-redirect)">
+<meta http-equiv="refresh" content="1; url=$(link-status)">
 <meta http-equiv="pragma" content="no-cache">
 <meta http-equiv="expires" content="-1">
 <title>Berhasil Login - Rumah Kita Net</title>
@@ -56,8 +56,13 @@
 <div class="card">
   <div class="check">&#10003;</div>
   <h1>Anda Sudah Terhubung!</h1>
-  <p>Mengalihkan ke halaman tujuan secara otomatis...</p>
-  <a href="$(link-status)">Lihat Status Voucher</a>
+  <p>Membuka informasi status &amp; sisa waktu voucher Anda...</p>
+  <a href="$(link-status)">Lihat Status &amp; Sisa Waktu</a>
 </div>
+<script type="text/javascript">
+  setTimeout(function () {
+    window.location.href = "$(link-status)";
+  }, 800);
+</script>
 </body>
 </html>
