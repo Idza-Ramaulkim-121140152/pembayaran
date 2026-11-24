@@ -127,13 +127,14 @@ export default function HotspotVoucherAdminPage() {
         setTimeout(() => setNotice(null), 6000);
     };
 
-    const loadDashboard = useCallback(async () => {
+    const loadDashboard = useCallback(async (forceSync = false) => {
         try {
             setLoading(true);
             const params = new URLSearchParams();
             if (statusFilter !== 'all') params.set('status', statusFilter);
             if (packageFilter !== 'all') params.set('package_id', packageFilter);
             if (searchQuery.trim()) params.set('search', searchQuery.trim());
+            if (forceSync) params.set('force_sync', '1');
 
             const res = await fetch(`/api/admin/hotspot/dashboard?${params.toString()}`, {
                 headers: { Accept: 'application/json' },
@@ -616,7 +617,11 @@ export default function HotspotVoucherAdminPage() {
                 {[
                     { id: 'orders', label: 'Riwayat Pembelian', icon: Ticket },
                     { id: 'packages', label: `Paket Voucher (${packages.length})`, icon: Wifi },
-                    { id: 'locations', label: `Titik WiFi Hotspot (${locationsList.length})`, icon: MapPin },
+                    {
+                        id: 'locations',
+                        label: `Titik WiFi Hotspot (${locationsList.length || summary.active_locations || 0})`,
+                        icon: MapPin,
+                    },
                     { id: 'mikrotik', label: 'Template MikroTik & Walled Garden', icon: FileCode2 },
                 ].map((tab) => {
                     const Icon = tab.icon;
@@ -680,7 +685,7 @@ export default function HotspotVoucherAdminPage() {
 
                         <button
                             type="button"
-                            onClick={loadDashboard}
+                            onClick={() => loadDashboard(true)}
                             className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold transition"
                         >
                             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -697,6 +702,7 @@ export default function HotspotVoucherAdminPage() {
                                     <th className="py-3 px-3">Pelanggan (WA)</th>
                                     <th className="py-3 px-3">Nominal QRIS</th>
                                     <th className="py-3 px-3">Kode Voucher</th>
+                                    <th className="py-3 px-3">Pemakaian Voucher</th>
                                     <th className="py-3 px-3">Status &amp; Sync</th>
                                     <th className="py-3 px-3 text-right">Aksi</th>
                                 </tr>
@@ -704,13 +710,13 @@ export default function HotspotVoucherAdminPage() {
                             <tbody className="divide-y divide-slate-100">
                                 {loading ? (
                                     <tr>
-                                        <td colSpan={7} className="py-10 text-center text-slate-400">
+                                        <td colSpan={8} className="py-10 text-center text-slate-400">
                                             Memuat riwayat pembelian voucher...
                                         </td>
                                     </tr>
                                 ) : orders.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="py-10 text-center text-slate-400">
+                                        <td colSpan={8} className="py-10 text-center text-slate-400">
                                             Belum ada transaksi pembelian voucher hotspot.
                                         </td>
                                     </tr>
@@ -760,6 +766,57 @@ export default function HotspotVoucherAdminPage() {
                                                     </button>
                                                 ) : (
                                                     <span className="text-xs text-slate-400">-</span>
+                                                )}
+                                            </td>
+                                            <td className="py-3 px-3">
+                                                {o.status !== 'paid' ? (
+                                                    <span className="text-xs text-slate-400">-</span>
+                                                ) : o.usage_status === 'expired' ? (
+                                                    <div className="space-y-0.5">
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700">
+                                                            Waktu Habis
+                                                        </span>
+                                                        {o.first_login_label && (
+                                                            <div className="text-[11px] text-slate-500">
+                                                                Dipakai: <b>{o.first_login_label}</b>
+                                                            </div>
+                                                        )}
+                                                        {o.expires_label && (
+                                                            <div className="text-[11px] text-rose-600">
+                                                                Habis: {o.expires_label}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : o.usage_status === 'active' ? (
+                                                    <div className="space-y-0.5">
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-700">
+                                                            Sudah Digunakan (Aktif)
+                                                        </span>
+                                                        {o.first_login_label && (
+                                                            <div className="text-[11px] text-slate-600">
+                                                                Dipakai: <b>{o.first_login_label}</b>
+                                                            </div>
+                                                        )}
+                                                        {o.remaining_label && (
+                                                            <div className="text-[11px] text-emerald-700 font-semibold">
+                                                                Sisa: {o.remaining_label}
+                                                            </div>
+                                                        )}
+                                                        {o.expires_label && (
+                                                            <div className="text-[10px] text-slate-400">
+                                                                s/d {o.expires_label}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-0.5">
+                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-700">
+                                                            Belum Digunakan
+                                                        </span>
+                                                        <div className="text-[11px] text-slate-400">
+                                                            Menunggu login pertama
+                                                        </div>
+                                                    </div>
                                                 )}
                                             </td>
                                             <td className="py-3 px-3 space-y-1">

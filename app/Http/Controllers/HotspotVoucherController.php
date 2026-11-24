@@ -12,7 +12,9 @@ use App\Services\MikroTikService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
@@ -167,6 +169,19 @@ class HotspotVoucherController extends Controller
                 'voucher_status' => HotspotVoucherOrder::VOUCHER_EXPIRED,
             ]);
 
+        // Auto-mark paid vouchers whose expires_at has passed
+        HotspotVoucherOrder::query()
+            ->where('status', HotspotVoucherOrder::STATUS_PAID)
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now())
+            ->where('voucher_status', '!=', HotspotVoucherOrder::VOUCHER_EXPIRED)
+            ->update([
+                'voucher_status' => HotspotVoucherOrder::VOUCHER_EXPIRED,
+            ]);
+
+        // Lightweight cached sync (30s) dari MikroTik untuk mendeteksi voucher yg sudah dipakai / habis
+        $this->syncVoucherUsageFromMikroTik((bool) $request->boolean('force_sync', false));
+
         $packages = HotspotVoucherPackage::query()
             ->withCount([
                 'orders',
@@ -213,30 +228,66 @@ class HotspotVoucherController extends Controller
             })
             ->latest('id');
 
-        $orders = $ordersQuery->limit($limit)->get()->map(fn (HotspotVoucherOrder $o) => [
-            'id' => $o->id,
-            'order_code' => $o->order_code,
-            'package_id' => $o->package_id,
-            'package_name' => $o->package?->name,
-            'duration_label' => $o->package?->duration_label,
-            'max_devices' => (int) ($o->package?->max_devices ?? 1),
-            'customer_phone' => $o->customer_phone,
-            'customer_name' => $o->customer_name,
-            'base_amount' => (float) $o->base_amount,
-            'qris_unique_code' => $o->qris_unique_code,
-            'qris_expected_amount' => $o->qris_expected_amount ? (float) $o->qris_expected_amount : null,
-            'status' => $o->status,
-            'voucher_code' => $o->voucher_code,
-            'voucher_status' => $o->voucher_status,
-            'mikrotik_synced' => $o->mikrotik_synced_at !== null,
-            'mikrotik_synced_at' => $o->mikrotik_synced_at?->toIso8601String(),
-            'mikrotik_error' => data_get($o->meta, 'mikrotik_error'),
-            'whatsapp_sent_at' => $o->whatsapp_sent_at?->toIso8601String(),
-            'paid_at' => $o->paid_at?->toIso8601String(),
-            'qris_expired_at' => $o->qris_expired_at?->toIso8601String(),
-            'settled_via' => data_get($o->meta, 'settled_via', 'qris'),
-            'created_at' => $o->created_at?->toIso8601String(),
-        ])->values();
+        $nowWib = now('Asia/Jakarta');
+
+        $orders = $ordersQuery->limit($limit)->get()->map(function (HotspotVoucherOrder $o) use ($nowWib) {
+            $firstLoginWib = $o->first_login_at ? $o->first_login_at->copy()->timezone('Asia/Jakarta') : null;
+            $expiresWib = $o->expires_at ? $o->expires_at->copy()->timezone('Asia/Jakarta') : null;
+
+            $usageStatus = 'pending';
+            $usageLabel = '-';
+            $remainingLabel = null;
+
+            if ($o->status === HotspotVoucherOrder::STATUS_PAID) {
+                $isExpiredByTime = $expiresWib && $expiresWib->lessThanOrEqualTo($nowWib);
+                if ($o->voucher_status === HotspotVoucherOrder::VOUCHER_EXPIRED || $isExpiredByTime) {
+                    $usageStatus = 'expired';
+                    $usageLabel = 'Waktu Habis';
+                } elseif ($firstLoginWib || $o->voucher_status === HotspotVoucherOrder::VOUCHER_ACTIVE) {
+                    $usageStatus = 'active';
+                    $usageLabel = 'Sedang Aktif';
+                    if ($expiresWib) {
+                        $remSecs = max(0, (int) $nowWib->diffInSeconds($expiresWib, false));
+                        $remainingLabel = $this->formatIndonesianDuration($remSecs);
+                    }
+                } else {
+                    $usageStatus = 'unused';
+                    $usageLabel = 'Belum Digunakan';
+                }
+            }
+
+            return [
+                'id' => $o->id,
+                'order_code' => $o->order_code,
+                'package_id' => $o->package_id,
+                'package_name' => $o->package?->name,
+                'duration_label' => $o->package?->duration_label,
+                'max_devices' => (int) ($o->package?->max_devices ?? 1),
+                'customer_phone' => $o->customer_phone,
+                'customer_name' => $o->customer_name,
+                'base_amount' => (float) $o->base_amount,
+                'qris_unique_code' => $o->qris_unique_code,
+                'qris_expected_amount' => $o->qris_expected_amount ? (float) $o->qris_expected_amount : null,
+                'status' => $o->status,
+                'voucher_code' => $o->voucher_code,
+                'voucher_status' => $o->voucher_status,
+                'usage_status' => $usageStatus,
+                'usage_label' => $usageLabel,
+                'first_login_at' => $o->first_login_at?->toIso8601String(),
+                'first_login_label' => $firstLoginWib ? $firstLoginWib->locale('id')->translatedFormat('d M Y, H:i') . ' WIB' : null,
+                'expires_at' => $o->expires_at?->toIso8601String(),
+                'expires_label' => $expiresWib ? $expiresWib->locale('id')->translatedFormat('d M Y, H:i') . ' WIB' : null,
+                'remaining_label' => $remainingLabel,
+                'mikrotik_synced' => $o->mikrotik_synced_at !== null,
+                'mikrotik_synced_at' => $o->mikrotik_synced_at?->toIso8601String(),
+                'mikrotik_error' => data_get($o->meta, 'mikrotik_error'),
+                'whatsapp_sent_at' => $o->whatsapp_sent_at?->toIso8601String(),
+                'paid_at' => $o->paid_at?->toIso8601String(),
+                'qris_expired_at' => $o->qris_expired_at?->toIso8601String(),
+                'settled_via' => data_get($o->meta, 'settled_via', 'qris'),
+                'created_at' => $o->created_at?->toIso8601String(),
+            ];
+        })->values();
 
         $todayWib = now('Asia/Jakarta')->toDateString();
         $paidBaseQuery = HotspotVoucherOrder::query()->where('status', HotspotVoucherOrder::STATUS_PAID);
@@ -252,6 +303,9 @@ class HotspotVoucherController extends Controller
                 ->whereNull('mikrotik_synced_at')
                 ->count(),
             'active_packages' => HotspotVoucherPackage::query()->where('is_active', true)->count(),
+            'active_locations' => Schema::hasTable('hotspot_locations')
+                ? HotspotLocation::query()->where('is_active', true)->count()
+                : 0,
         ];
 
         return response()->json([
@@ -624,6 +678,130 @@ CLI;
         $parts[] = "{$minutes} Menit";
 
         return implode(' ', $parts);
+    }
+
+    /**
+     * Sinkronisasi ringan status pemakaian voucher dari MikroTik (cached 30 detik agar dashboard tetap cepat).
+     */
+    protected function syncVoucherUsageFromMikroTik(bool $force = false): void
+    {
+        if (app()->runningUnitTests()) {
+            return;
+        }
+
+        $cacheKey = 'hotspot_voucher_mikrotik_usage_sync';
+        if (!$force && Cache::has($cacheKey)) {
+            return;
+        }
+
+        Cache::put($cacheKey, true, now()->addSeconds(30));
+
+        $candidates = HotspotVoucherOrder::query()
+            ->with('package')
+            ->where('status', HotspotVoucherOrder::STATUS_PAID)
+            ->whereNotNull('voucher_code')
+            ->whereNotNull('mikrotik_synced_at')
+            ->whereIn('voucher_status', [
+                HotspotVoucherOrder::VOUCHER_UNUSED,
+                HotspotVoucherOrder::VOUCHER_ACTIVE,
+                HotspotVoucherOrder::VOUCHER_PENDING,
+            ])
+            ->latest('id')
+            ->limit(120)
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return;
+        }
+
+        try {
+            $mikrotik = app(MikroTikService::class);
+            $usersRaw = $mikrotik->command('/ip/hotspot/user/print', [], false) ?? [];
+            $schedulersRaw = $mikrotik->command('/system/scheduler/print', [], false) ?? [];
+
+            $usersByName = [];
+            foreach ($usersRaw as $u) {
+                $name = strtoupper(trim((string) ($u['name'] ?? '')));
+                if ($name !== '') {
+                    $usersByName[$name] = $u;
+                }
+            }
+
+            $schedulersByCode = [];
+            foreach ($schedulersRaw as $sc) {
+                $scName = trim((string) ($sc['name'] ?? ''));
+                if (str_starts_with(strtolower($scName), 'exp-')) {
+                    $code = strtoupper(substr($scName, 4));
+                    $schedulersByCode[$code] = $sc;
+                }
+            }
+
+            foreach ($candidates as $order) {
+                $code = strtoupper(trim((string) $order->voucher_code));
+                if ($code === '') {
+                    continue;
+                }
+
+                $userRow = $usersByName[$code] ?? null;
+                $schedRow = $schedulersByCode[$code] ?? null;
+                $durationMinutes = max(1, (int) ($order->package?->duration_minutes ?? 60));
+
+                // 1. Jika user sudah tidak ada di MikroTik padahal sudah pernah disync -> waktu habis & sudah dihapus scheduler
+                if (!$userRow) {
+                    $order->voucher_status = HotspotVoucherOrder::VOUCHER_EXPIRED;
+                    if (!$order->expires_at) {
+                        $order->expires_at = $order->first_login_at
+                            ? $order->first_login_at->copy()->addMinutes($durationMinutes)
+                            : now();
+                    }
+                    $order->save();
+                    continue;
+                }
+
+                // 2. Jika ada scheduler exp-{code} -> pasti sudah pernah login pertama kali
+                if ($schedRow) {
+                    $startDate = trim((string) ($schedRow['start-date'] ?? ''));
+                    $startTime = trim((string) ($schedRow['start-time'] ?? ''));
+                    $parsedStart = null;
+                    if ($startDate !== '' && $startTime !== '') {
+                        try {
+                            $parsedStart = Carbon::parse($startDate . ' ' . $startTime, 'Asia/Jakarta');
+                        } catch (\Throwable) {
+                            $parsedStart = null;
+                        }
+                    }
+
+                    $firstLogin = $order->first_login_at
+                        ? $order->first_login_at->copy()->timezone('Asia/Jakarta')
+                        : ($parsedStart ?: now('Asia/Jakarta'));
+
+                    $expires = $firstLogin->copy()->addMinutes($durationMinutes);
+
+                    $order->first_login_at = $firstLogin->copy()->timezone(config('app.timezone'));
+                    $order->expires_at = $expires->copy()->timezone(config('app.timezone'));
+                    $order->voucher_status = $expires->isPast()
+                        ? HotspotVoucherOrder::VOUCHER_EXPIRED
+                        : HotspotVoucherOrder::VOUCHER_ACTIVE;
+                    $order->save();
+                    continue;
+                }
+
+                // 3. Cek uptime user di MikroTik (jika > 0s berarti sudah digunakan)
+                $uptimeStr = trim((string) ($userRow['uptime'] ?? ''));
+                if ($uptimeStr !== '' && $uptimeStr !== '0s') {
+                    if (!$order->first_login_at) {
+                        $order->first_login_at = now();
+                        $order->expires_at = now()->addMinutes($durationMinutes);
+                    }
+                    $order->voucher_status = ($order->expires_at && $order->expires_at->isPast())
+                        ? HotspotVoucherOrder::VOUCHER_EXPIRED
+                        : HotspotVoucherOrder::VOUCHER_ACTIVE;
+                    $order->save();
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug('HotspotVoucherController: syncVoucherUsageFromMikroTik skipped: ' . $e->getMessage());
+        }
     }
 
     /**
