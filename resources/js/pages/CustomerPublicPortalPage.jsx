@@ -184,17 +184,19 @@ export default function CustomerPublicPortalPage() {
             <header className="sticky top-0 z-30 bg-slate-900/80 backdrop-blur-lg border-b border-slate-800/80 px-4 py-3.5 shadow-sm">
                 <div className="max-w-3xl mx-auto flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white font-extrabold shadow-md shadow-emerald-900/40">
-                            <Wifi size={18} />
+                        <div className="inline-flex items-center gap-2 bg-white/95 px-2.5 py-1 rounded-xl shadow-sm shrink-0">
+                            <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-6 w-auto object-contain" />
+                            <span className="h-5 w-px bg-slate-300" />
+                            <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-7 w-auto object-contain" />
                         </div>
                         <div>
                             <h1 className="text-sm font-black tracking-tight text-white flex items-center gap-1.5">
-                                Rumah Kita Net
+                                RUMAH KITA NETWORK
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                                     Portal Pelanggan
                                 </span>
                             </h1>
-                            <p className="text-[11px] text-slate-400">Pusat Informasi & Monitoring Layanan WiFi</p>
+                            <p className="text-[10px] text-slate-400">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                         </div>
                     </div>
 
@@ -854,7 +856,7 @@ export default function CustomerPublicPortalPage() {
                 </div>
 
                 <footer className="text-center text-[11px] text-slate-500 pt-4">
-                    © {new Date().getFullYear()} Rumah Kita Net · Layanan Internet Cepat & Terpercaya
+                    © {new Date().getFullYear()} RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
                 </footer>
             </main>
 

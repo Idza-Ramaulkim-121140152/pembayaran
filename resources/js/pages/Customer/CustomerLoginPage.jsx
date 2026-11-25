@@ -93,11 +93,15 @@ function CustomerLoginPage() {
             <div className="w-full max-w-md">
                 {/* Logo & Title */}
                 <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-orange-500 to-amber-500 rounded-2xl shadow-lg shadow-orange-500/30 mb-4">
-                        <Wifi size={40} className="text-white" />
+                    <div className="inline-flex items-center justify-center gap-3 bg-white px-4 py-2.5 rounded-2xl shadow-md mb-4">
+                        <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-10 w-auto object-contain" />
+                        <span className="h-8 w-px bg-gray-300" />
+                        <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-11 w-auto object-contain" />
                     </div>
                     <h1 className="text-2xl font-bold text-gray-900">Portal Pelanggan</h1>
-                    <p className="text-gray-600 mt-1">Rumah Kita Network</p>
+                    <p className="text-xs font-semibold text-gray-600 mt-1">
+                        RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
+                    </p>
                 </div>
 
                 {/* Login Card */}

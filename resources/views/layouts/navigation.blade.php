@@ -3,9 +3,14 @@
         <div class="flex justify-between items-center h-16">
             <!-- Logo -->
             <div class="flex items-center gap-3">
-                <a href="/dashboard" class="flex items-center gap-2">
-                    <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Net" class="h-10 w-auto" />
-                    <span class="font-bold text-lg text-gray-800 hidden sm:inline">Rumah Kita Net</span>
+                <a href="/dashboard" class="flex items-center gap-2.5">
+                    <img src="{{ asset('logo-mms.png') }}" alt="PT. Megarap Mitra Solusi (MMS)" class="h-8 w-auto" />
+                    <span class="h-6 w-px bg-gray-300"></span>
+                    <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Network" class="h-9 w-auto" />
+                    <div class="hidden sm:flex flex-col leading-tight">
+                        <span class="font-bold text-sm text-gray-800">RUMAH KITA NETWORK</span>
+                        <span class="text-[10px] font-medium text-gray-500">POWERED BY PT. Megarap Mitra Solusi (MMS)</span>
+                    </div>
                 </a>
             </div>
 

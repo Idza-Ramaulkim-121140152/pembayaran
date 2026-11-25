@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../../components/common/PartnerLogoPair';
 import { 
     Wifi, User, Phone, MapPin, Camera, CheckCircle2, 
     AlertCircle, Loader2, Sparkles, Shield, ArrowRight, 
@@ -316,9 +317,12 @@ function PublicCustomerRegistrationPage() {
                 <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-purple-900 rounded-3xl p-6 sm:p-8 border border-indigo-500/30 shadow-2xl relative overflow-hidden">
                     <div className="absolute -right-8 -bottom-8 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
                     
-                    <div className="flex items-center gap-3 text-indigo-300 text-xs font-bold uppercase tracking-widest mb-2">
-                        <Wifi size={16} />
-                        <span>Rumah Kita Network · Pendaftaran Online</span>
+                    <div className="mb-4">
+                        <PartnerLogoPair size="sm" dark />
+                    </div>
+                    <div className="flex items-center gap-2 text-indigo-200 text-xs font-bold uppercase tracking-wider mb-2">
+                        <Wifi size={15} />
+                        <span>{BRAND_FULL_NAME} · Pendaftaran Online</span>
                     </div>
                     
                     <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">

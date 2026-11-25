@@ -20,7 +20,7 @@ use Illuminate\Support\Str;
 
 class CustomerAgreementService
 {
-    private const DEFAULT_COMPANY_NAME = 'PT. RUMAH KITA NETWORK';
+    private const DEFAULT_COMPANY_NAME = 'RUMAH KITA NETWORK';
     private const DEFAULT_COMPANY_ADDRESS = 'Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)';
 
     public function generate(Customer $customer, array $input = [], array $files = [], ?int $generatedBy = null): CustomerAgreement
@@ -172,13 +172,13 @@ class CustomerAgreementService
     {
         $verifyUrl = route('contracts.public.verify', ['token' => $agreement->public_token], true);
 
-        $companyStatement = 'Dokumen ini ditanda tangani digital oleh Direktur Utama Idza Ramaulkim';
+        $companyStatement = 'Dokumen ini ditanda tangani digital oleh Idza Ramaulkim';
         $customerStatement = 'Pelanggan sudah setuju dengan perjanjian ini dan di tanda tangani digital';
 
         return [
             'company' => [
                 'signer' => 'Idza Ramaulkim',
-                'role' => 'Direktur Utama',
+                'role' => '',
                 'statement' => $companyStatement,
                 'qr' => $this->qrDataUri("Nomor Kontrak: {$agreement->agreement_number}\n{$companyStatement}\nVerifikasi: {$verifyUrl}"),
             ],
@@ -224,6 +224,7 @@ class CustomerAgreementService
             'attachments' => $attachmentItems,
             'sheetPhotos' => $this->resolveSheetPhotos($agreement->customer_data['photo_links'] ?? []),
             'signatureMeta' => $agreement->signature_meta ?: [],
+            'mmsLogoDataUri' => PdfImageHelper::toDataUri(public_path('logo-mms.png')),
             'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
         ])->setPaper('a4');
 

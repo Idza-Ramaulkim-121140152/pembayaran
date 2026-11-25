@@ -21,9 +21,14 @@
 <body>
     <main class="wrap">
         <section class="card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+                <img src="{{ asset('logo-mms.png') }}" alt="PT. Megarap Mitra Solusi (MMS)" style="height:32px;width:auto;">
+                <span style="width:1px;height:24px;background:#cbd5e1;"></span>
+                <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Network" style="height:34px;width:auto;">
+            </div>
             <span class="badge">DOKUMEN VALID</span>
             <h1>Verifikasi Kontrak Pelanggan</h1>
-            <p>Dokumen ini tercatat pada sistem Rumah Kita Network.</p>
+            <p>Dokumen ini tercatat pada sistem RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS).</p>
 
             <div class="grid">
                 <div class="label">Nomor Kontrak</div><div><strong>{{ $agreement->agreement_number }}</strong></div>
@@ -33,8 +38,8 @@
             </div>
 
             <div class="box">
-                <strong>Pihak PT</strong>
-                <p>{{ $signatureMeta['company']['statement'] ?? 'Dokumen ini ditanda tangani digital oleh Direktur Utama Idza Ramaulkim' }}</p>
+                <strong>Pihak Pertama (RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS))</strong>
+                <p>Dokumen ini ditanda tangani digital oleh {{ $signatureMeta['company']['signer'] ?? 'Idza Ramaulkim' }}</p>
                 <strong>Pelanggan</strong>
                 <p>{{ $signatureMeta['customer']['statement'] ?? 'Pelanggan sudah setuju dengan perjanjian ini dan di tanda tangani digital' }}</p>
             </div>

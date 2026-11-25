@@ -21,7 +21,7 @@ class BillingMessageTemplateService
             "Segera lakukan pembayaran. Jika lewat tanggal pembayaran maka layanan akan dinonaktifkan otomatis. Segera bayar untuk menghindari nonaktif otomatis.\n\n" .
             "Layanan Call Center 085158025553\n\n" .
             "Salam Hangat,\n" .
-            "Tim Layanan Pelanggan Rumah Kita Net";
+            "RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)";
 
         return $withAutoLabel ? $this->appendAutoLabel($message) : $message;
     }
@@ -43,10 +43,10 @@ class BillingMessageTemplateService
             "Pembayaran Anda telah kami terima dan layanan tetap aktif seperti biasa.\n" .
             "Paket aktif sampai: " . $activeUntil . ".\n" .
             "Jika ada pertanyaan atau kendala, jangan ragu untuk menghubungi kami melalui WhatsApp ini.\n\n" .
-            "Terima kasih telah mempercayakan koneksi internet Anda kepada Rumah Kita Network.\n" .
+            "Terima kasih telah mempercayakan koneksi internet Anda kepada RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS).\n" .
             "Semoga layanan kami selalu memenuhi kebutuhan digital Anda.\n\n" .
             "Salam hangat,\n" .
-            "Rumah Kita Network, Menjaga Hangatnya Kebersamaan";
+            "RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)";
 
         return $withAutoLabel ? $this->appendAutoLabel($message) : $message;
     }
@@ -63,7 +63,7 @@ class BillingMessageTemplateService
             "Jam Operasional: 08:00-17:00 WIB\n\n" .
             "Terima kasih atas perhatian dan kerja samanya.\n" .
             "Salam,\n" .
-            "Tim Rumah Kita Network";
+            "RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)";
 
         return $withAutoLabel ? $this->appendAutoLabel($message) : $message;
     }
@@ -110,7 +110,7 @@ class BillingMessageTemplateService
             "Paket aktif sampai: " . $activeUntil . "\n\n" .
             "Silakan login dan segera ganti password untuk keamanan akun Anda.\n\n" .
             "Salam hangat,\n" .
-            "Tim Rumah Kita Network";
+            "RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)";
 
         return $withAutoLabel ? $this->appendAutoLabel($message) : $message;
     }

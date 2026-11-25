@@ -16,8 +16,8 @@ use Illuminate\Support\Str;
 class InvoiceDocumentService
 {
     private const SIGNER_NAME = 'Idza Ramaulkim';
-    private const SIGNER_ROLE = 'Direktur Utama';
-    private const SIGNATURE_STATEMENT = 'Invoice ini ditandatangani secara digital oleh Idza Ramaulkim selaku Direktur Utama Rumah Kita Network.';
+    private const SIGNER_ROLE = '';
+    private const SIGNATURE_STATEMENT = 'Dokumen ini ditanda tangani digital oleh Idza Ramaulkim';
 
     public function ensureGenerated(Invoice $invoice, bool $force = false): Invoice
     {
@@ -106,6 +106,7 @@ class InvoiceDocumentService
             'taxTotal' => $calculatedRows->sum('tax'),
             'grossTotal' => $calculatedRows->sum('gross'),
             'signatureMeta' => $invoice->signature_meta ?: [],
+            'mmsLogoDataUri' => PdfImageHelper::toDataUri(public_path('logo-mms.png')),
             'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
             'autoPrint' => $autoPrint,
         ];

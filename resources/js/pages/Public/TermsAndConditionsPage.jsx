@@ -9,6 +9,7 @@ import {
     MapPin,
     Calendar
 } from 'lucide-react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../../components/common/PartnerLogoPair';
 
 export default function TermsAndConditionsPage() {
     return (
@@ -17,15 +18,13 @@ export default function TermsAndConditionsPage() {
             <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/90 border-b border-slate-800">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                     <a href="/promo" className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold shadow-md shadow-emerald-950/50">
-                            <Wifi size={18} />
-                        </div>
-                        <div>
-                            <span className="font-extrabold text-base tracking-tight text-white block leading-none">
-                                Rumah Kita <span className="text-emerald-400">Net</span>
+                        <PartnerLogoPair size="xs" dark />
+                        <div className="hidden sm:block">
+                            <span className="font-extrabold text-sm tracking-tight text-white block leading-none">
+                                RUMAH KITA <span className="text-emerald-400">NETWORK</span>
                             </span>
-                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Syarat &amp; Ketentuan Layanan
+                            <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
+                                POWERED BY PT. Megarap Mitra Solusi (MMS)
                             </span>
                         </div>
                     </a>
@@ -69,10 +68,10 @@ export default function TermsAndConditionsPage() {
                 {/* Intro */}
                 <div className="p-6 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-3">
                     <p>
-                        Selamat datang di <strong>Rumah Kita Net (Rumah Kita Network)</strong>. Syarat dan Ketentuan berikut mengatur hak, kewajiban, serta tata cara penggunaan layanan akses internet berbasis Fiber Optic yang disediakan oleh Rumah Kita Net kepada Pelanggan (perorangan, keluarga, badan usaha, atau institusi).
+                        Selamat datang di <strong>{BRAND_FULL_NAME}</strong>. Syarat dan Ketentuan berikut mengatur hak, kewajiban, serta tata cara penggunaan layanan akses internet berbasis Fiber Optic yang disediakan melalui kemitraan resmi <strong>PT. Megarap Mitra Solusi (MMS)</strong> bersama <strong>RUMAH KITA NETWORK</strong> kepada Pelanggan (perorangan, keluarga, badan usaha, atau institusi).
                     </p>
                     <p>
-                        Dengan mendaftar, mengaktifkan, dan/atau menggunakan layanan Rumah Kita Net, Anda menyatakan telah membaca, memahami, dan menyetujui seluruh ketentuan yang tercantum dalam dokumen ini.
+                        Dengan mendaftar, mengaktifkan, dan/atau menggunakan layanan {BRAND_FULL_NAME}, Anda menyatakan telah membaca, memahami, dan menyetujui seluruh ketentuan yang tercantum dalam dokumen ini.
                     </p>
                 </div>
 
@@ -83,7 +82,7 @@ export default function TermsAndConditionsPage() {
                         Definisi Layanan
                     </h2>
                     <ul className="list-disc list-inside space-y-1.5 pl-2 text-slate-300">
-                        <li><strong>Penyedia Layanan:</strong> Rumah Kita Net (Rumah Kita Network), unit usaha penyedia jasa akses internet fiber optic yang beroperasi di wilayah Lampung Selatan.</li>
+                        <li><strong>Penyedia Layanan:</strong> {BRAND_FULL_NAME}, penyelenggara layanan akses internet fiber optic melalui kemitraan resmi ISP berizin PT. Megarap Mitra Solusi (MMS) yang beroperasi di wilayah Lampung Selatan.</li>
                         <li><strong>Pelanggan:</strong> Pihak yang telah terdaftar resmi dan menggunakan jasa sambungan internet Rumah Kita Net.</li>
                         <li><strong>Perangkat CPE/ONT:</strong> Optical Network Terminal (Router WiFi) yang dipinjamkan oleh Penyedia Layanan kepada Pelanggan selama masa berlangganan.</li>
                         <li><strong>Portal Mandiri:</strong> Tautan web khusus pelanggan untuk mengelola kata sandi WiFi dan pemantauan perangkat.</li>
@@ -222,7 +221,7 @@ export default function TermsAndConditionsPage() {
                     </div>
 
                     <div className="pt-6 border-t border-slate-900 text-center text-[11px] text-slate-500">
-                        &copy; {new Date().getFullYear()} Rumah Kita Net (Rumah Kita Network). All Rights Reserved.
+                        &copy; {new Date().getFullYear()} {BRAND_FULL_NAME}. All Rights Reserved.
                     </div>
                 </div>
             </footer>

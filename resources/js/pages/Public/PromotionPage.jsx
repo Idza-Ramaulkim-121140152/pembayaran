@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../../components/common/PartnerLogoPair';
 import {
     Wifi,
     Zap,
@@ -323,17 +324,13 @@ export default function PromotionPage() {
 
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                        <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 p-0.5 shadow-lg shadow-emerald-950/50 flex items-center justify-center">
-                            <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-emerald-400">
-                                <Wifi size={20} className="stroke-[2.5]" />
-                            </div>
-                        </div>
-                        <div>
-                            <span className="font-extrabold text-base tracking-tight text-white block leading-none">
-                                Rumah Kita <span className="text-emerald-400">Net</span>
+                        <PartnerLogoPair size="xs" dark />
+                        <div className="hidden sm:block">
+                            <span className="font-extrabold text-sm tracking-tight text-white block leading-none">
+                                RUMAH KITA <span className="text-emerald-400">NETWORK</span>
                             </span>
-                            <span className="text-[10px] font-semibold text-emerald-400/90 tracking-wider uppercase">
-                                100% Fiber Optic
+                            <span className="text-[9px] font-semibold text-emerald-400/90 tracking-wide">
+                                POWERED BY PT. Megarap Mitra Solusi (MMS)
                             </span>
                         </div>
                     </div>
@@ -1111,7 +1108,7 @@ export default function PromotionPage() {
                     </div>
 
                     <div className="pt-8 border-t border-slate-900 text-center text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
-                        <span>&copy; {new Date().getFullYear()} Rumah Kita Net (Rumah Kita Network). All Rights Reserved.</span>
+                        <span>&copy; {new Date().getFullYear()} {BRAND_FULL_NAME}. All Rights Reserved.</span>
                         <div className="flex items-center gap-4">
                             <a href="/faq" className="hover:text-slate-400">FAQ</a>
                             <span>&middot;</span>

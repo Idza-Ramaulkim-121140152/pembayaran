@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../components/common/PartnerLogoPair';
 import { 
     Wifi, Phone, MessageCircle, ChevronRight, ChevronLeft, 
     Zap, Shield, Clock, Users, Star, Check, MapPin, Mail,
@@ -101,10 +102,10 @@ function LandingPage() {
                 <div className="max-w-7xl mx-auto px-4 py-3">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                            <img src="/logo_baru.png" alt="Logo" className="h-10 md:h-12" />
+                            <PartnerLogoPair size="sm" />
                             <div className="hidden sm:block">
-                                <h1 className="font-bold text-gray-900 text-lg">{settings.company_name || 'Rumah Kita Network'}</h1>
-                                <p className="text-xs text-gray-500">{settings.company_tagline || 'Wifi Rumahan Murah dan Stabil'}</p>
+                                <h1 className="font-bold text-gray-900 text-base leading-tight">RUMAH KITA NETWORK</h1>
+                                <p className="text-[11px] font-semibold text-gray-500">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                             </div>
                         </div>
                         <div className="flex items-center gap-2 md:gap-3">
@@ -401,8 +402,9 @@ function LandingPage() {
                 <div className="max-w-7xl mx-auto px-4">
                     <div className="grid md:grid-cols-3 gap-8">
                         <div>
-                            <img src="/logo_baru.png" alt="Logo" className="h-12 mb-4 brightness-0 invert" />
-                            <p className="text-gray-400">{settings.company_tagline}</p>
+                            <PartnerLogoPair size="md" dark className="mb-3" />
+                            <p className="text-xs font-semibold text-gray-300 mb-1">{BRAND_FULL_NAME}</p>
+                            <p className="text-gray-400 text-sm">{settings.company_tagline}</p>
                         </div>
                         <div>
                             <h4 className="font-bold mb-4">Kontak</h4>

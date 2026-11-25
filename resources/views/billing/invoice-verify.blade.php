@@ -22,9 +22,14 @@
 <body>
     <main class="wrap">
         <section class="card">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+                <img src="{{ asset('logo-mms.png') }}" alt="PT. Megarap Mitra Solusi (MMS)" style="height:32px;width:auto;">
+                <span style="width:1px;height:24px;background:#cbd5e1;"></span>
+                <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Network" style="height:34px;width:auto;">
+            </div>
             <span class="badge">DOKUMEN VALID</span>
             <h1>Verifikasi Invoice Digital</h1>
-            <p>Dokumen ini tercatat dan diterbitkan oleh sistem Rumah Kita Network.</p>
+            <p>Dokumen ini tercatat dan diterbitkan oleh sistem RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS).</p>
 
             <div class="grid">
                 <div class="label">Nomor Invoice</div><div><strong>{{ $invoice->invoice_link }}</strong></div>
@@ -39,8 +44,7 @@
 
             <div class="box">
                 <strong>{{ $signatureMeta['signer'] ?? 'Idza Ramaulkim' }}</strong>
-                <div>{{ $signatureMeta['role'] ?? 'Direktur Utama' }}</div>
-                <p>{{ $signatureMeta['statement'] ?? 'Invoice ini ditandatangani secara digital oleh Rumah Kita Network.' }}</p>
+                <p>Dokumen ini ditanda tangani digital oleh {{ $signatureMeta['signer'] ?? 'Idza Ramaulkim' }}</p>
             </div>
 
             <p>

@@ -16,6 +16,7 @@ import {
     Mail,
     Sparkles
 } from 'lucide-react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../../components/common/PartnerLogoPair';
 
 export default function FaqPage() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -35,8 +36,8 @@ export default function FaqPage() {
         // Layanan & Paket
         {
             category: 'layanan',
-            q: 'Apa itu layanan internet Rumah Kita Net?',
-            a: 'Rumah Kita Net (Rumah Kita Network) adalah penyedia jasa layanan internet berbasis 100% Fiber Optic (FTTH - Fiber to the Home) yang melayani kebutuhan internet rumah, tempat usaha, kantor, dan sekolah dengan koneksi stabil, berkecepatan tinggi, dan tanpa batas kuota.',
+            q: 'Apa itu layanan internet Rumah Kita Network?',
+            a: 'RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS) adalah layanan akses internet 100% Fiber Optic (FTTH - Fiber to the Home) melalui kemitraan resmi dengan ISP berizin PT. Megarap Mitra Solusi (MMS) yang melayani kebutuhan internet rumah, tempat usaha, kantor, dan sekolah dengan koneksi stabil, berkecepatan tinggi, dan tanpa batas kuota.',
         },
         {
             category: 'layanan',
@@ -113,15 +114,13 @@ export default function FaqPage() {
             <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/90 border-b border-slate-800">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                     <a href="/promo" className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold shadow-md shadow-emerald-950/50">
-                            <Wifi size={18} />
-                        </div>
-                        <div>
-                            <span className="font-extrabold text-base tracking-tight text-white block leading-none">
-                                Rumah Kita <span className="text-emerald-400">Net</span>
+                        <PartnerLogoPair size="xs" dark />
+                        <div className="hidden sm:block">
+                            <span className="font-extrabold text-sm tracking-tight text-white block leading-none">
+                                RUMAH KITA <span className="text-emerald-400">NETWORK</span>
                             </span>
-                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Pusat Bantuan &amp; FAQ
+                            <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
+                                POWERED BY PT. Megarap Mitra Solusi (MMS)
                             </span>
                         </div>
                     </a>

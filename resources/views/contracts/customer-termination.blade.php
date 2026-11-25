@@ -41,9 +41,17 @@
 
     <div class="header">
         <div class="brand">
-            <h2>PT. RUMAH KITA NETWORK</h2>
-            <div>Internet Service Provider</div>
-            <div>Networking & Maintenance</div>
+            <div style="margin-bottom: 6px;">
+                @if (!empty($mmsLogoDataUri))
+                    <img src="{{ $mmsLogoDataUri }}" alt="PT. Megarap Mitra Solusi (MMS)" style="height: 30px; width: auto; vertical-align: middle; margin-right: 10px;">
+                @endif
+                @if (!empty($logoDataUri))
+                    <img src="{{ $logoDataUri }}" alt="Rumah Kita Network" style="height: 32px; width: auto; vertical-align: middle;">
+                @endif
+            </div>
+            <h2>RUMAH KITA NETWORK</h2>
+            <div style="font-size: 10px; font-weight: bold;">POWERED BY PT. Megarap Mitra Solusi (MMS)</div>
+            <div style="font-size: 10px;">Networking &amp; Maintenance</div>
         </div>
         <div class="box">
             <div>Dusun Kebun Agung Selatan No.RT.07, rw01, Kec. Kalianda, Kabupaten Lampung Selatan, Lampung 35551</div>
@@ -57,7 +65,7 @@
     </div>
 
     <p class="paragraph">
-        Dengan ini PT. Rumah Kita Network menyampaikan pemberitahuan rencana pencopotan layanan dan penarikan perangkat kepada pelanggan berikut:
+        Dengan ini RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS) menyampaikan pemberitahuan rencana pencopotan layanan dan penarikan perangkat kepada pelanggan berikut:
     </p>
 
     <table class="field-table">
@@ -97,12 +105,13 @@
             <tr>
                 <td>
                     <strong>PIHAK PERTAMA</strong><br>
-                    PT. RUMAH KITA NETWORK
+                    RUMAH KITA NETWORK<br>
+                    <span class="small">POWERED BY PT. Megarap Mitra Solusi (MMS)</span>
                     @if (!empty($signatureMeta['qr']))
                         <img class="qr" src="{{ $signatureMeta['qr'] }}" alt="QR Verifikasi Surat">
                     @endif
-                    <div>Idza Ramaulkim</div>
-                    <div class="small">Direktur Utama</div>
+                    <div><strong>Idza Ramaulkim</strong></div>
+                    <div class="small">Dokumen ini ditanda tangani digital oleh Idza Ramaulkim</div>
                 </td>
                 <td>
                     <strong>PIHAK KEDUA</strong><br>

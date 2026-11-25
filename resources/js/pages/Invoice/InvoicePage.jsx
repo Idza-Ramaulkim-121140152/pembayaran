@@ -423,7 +423,14 @@ function InvoicePage() {
                     
                     {/* Logo & Title */}
                     <div className="relative text-center mb-6">
-                        <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-14 mx-auto mb-3" />
+                        <div className="inline-flex items-center justify-center gap-3 mb-2">
+                            <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-10 w-auto object-contain" />
+                            <span className="h-8 w-px bg-gray-300" />
+                            <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-12 w-auto object-contain" />
+                        </div>
+                        <p className="text-[11px] font-semibold text-slate-500 mb-2">
+                            RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
+                        </p>
                         <h1 className="text-xl font-bold text-gray-900">Invoice Pembayaran</h1>
                         <p className="text-sm text-gray-500">#{invoice?.invoice_number || invoiceLink.slice(0, 8).toUpperCase()}</p>
                         <button

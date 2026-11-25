@@ -56,15 +56,24 @@ export default function MassOutagePage() {
                     style={{ colorScheme: 'light', backgroundColor: '#ffffff' }}
                 >
                     <div className="flex items-center gap-3">
-                        <img 
-                            src="/logo_baru.png" 
-                            alt="Rumah Kita Net" 
-                            className="h-10 w-auto object-contain"
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                        />
+                        <div className="inline-flex items-center gap-2 shrink-0">
+                            <img
+                                src="/logo-mms.png"
+                                alt="PT. Megarap Mitra Solusi (MMS)"
+                                className="h-8 w-auto object-contain"
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                            <span className="h-6 w-px bg-slate-300" />
+                            <img
+                                src="/logo_baru.png"
+                                alt="Rumah Kita Network"
+                                className="h-9 w-auto object-contain"
+                                onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                        </div>
                         <div>
-                            <h1 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">Rumah Kita Net</h1>
-                            <p className="text-xs text-slate-500">Pusat Informasi Gangguan Jaringan (NOC)</p>
+                            <h1 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">RUMAH KITA NETWORK</h1>
+                            <p className="text-[11px] font-semibold text-slate-500">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                         </div>
                     </div>
                     <button

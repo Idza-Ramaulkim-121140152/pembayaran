@@ -167,7 +167,7 @@ class CustomerTerminationService
             : '-';
 
         return "Halo {$request->customer?->name},\n\n" .
-            "Kami mengirimkan surat pengingat rencana pencopotan/penarikan perangkat layanan Rumah Kita Network.\n\n" .
+            "Kami mengirimkan surat pengingat rencana pencopotan/penarikan perangkat layanan RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS).\n\n" .
             "Nomor dokumen: {$request->document_number}\n" .
             "Rencana tanggal: {$plannedDate}\n" .
             "Alasan: {$request->reason}\n\n" .
@@ -213,7 +213,7 @@ class CustomerTerminationService
     private function signatureMeta(CustomerTerminationRequest $request): array
     {
         $verifyUrl = route('terminations.public.verify', ['token' => $request->public_token], true);
-        $statement = 'Dokumen surat copot pemasangan ini diterbitkan secara digital oleh Rumah Kita Network.';
+        $statement = 'Dokumen ini ditanda tangani digital oleh Idza Ramaulkim';
 
         return [
             'statement' => $statement,
@@ -232,6 +232,7 @@ class CustomerTerminationService
             'customerData' => $request->customer_data ?: [],
             'deviceData' => $request->device_data ?: [],
             'signatureMeta' => $request->signature_meta ?: [],
+            'mmsLogoDataUri' => PdfImageHelper::toDataUri(public_path('logo-mms.png')),
             'logoDataUri' => PdfImageHelper::toDataUri(public_path('logo_baru.png')),
         ])->setPaper('a4');
 

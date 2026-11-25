@@ -22,8 +22,13 @@
     <div class="wrap">
         <div class="card">
             <div class="head">
+                <div style="display:inline-flex;align-items:center;gap:10px;background:#fff;padding:6px 12px;border-radius:10px;margin-bottom:10px;">
+                    <img src="{{ asset('logo-mms.png') }}" alt="PT. Megarap Mitra Solusi (MMS)" style="height:26px;width:auto;">
+                    <span style="width:1px;height:20px;background:#cbd5e1;"></span>
+                    <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Network" style="height:28px;width:auto;">
+                </div>
                 <h1>Verifikasi Surat Copot Pemasangan</h1>
-                <p>PT. Rumah Kita Network</p>
+                <p>RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
             </div>
             <div class="body">
                 <p><span class="badge">DOKUMEN VALID</span></p>

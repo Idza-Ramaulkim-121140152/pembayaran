@@ -180,13 +180,17 @@
                 <td class="brand-cell">
                     <table class="company-table">
                         <tr>
-                            <td>
+                            <td style="white-space: nowrap; padding-right: 10px;">
+                                @if (!empty($mmsLogoDataUri))
+                                    <img src="{{ $mmsLogoDataUri }}" alt="PT. Megarap Mitra Solusi (MMS)" class="logo" style="margin-right: 8px; max-height: 46px; width: auto;">
+                                @endif
                                 @if ($logoDataUri)
-                                    <img src="{{ $logoDataUri }}" alt="Rumah Kita Network" class="logo">
+                                    <img src="{{ $logoDataUri }}" alt="Rumah Kita Network" class="logo" style="max-height: 46px; width: auto;">
                                 @endif
                             </td>
                             <td>
                                 <p class="company-name">RUMAH KITA NETWORK</p>
+                                <p class="company-address" style="font-weight: 700; color: #1e293b;">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                                 <p class="company-address">Kebun Agung, RT:002 RW:001, Taman Agung, Kalianda, Lampung Selatan, Lampung (35551)</p>
                                 <p class="company-address">Email: rumahkita69@gmail.com | Telp: +6285158025553</p>
                             </td>
@@ -259,12 +263,12 @@
 
         <section class="signature">
             <div class="signature-title">RUMAH KITA NETWORK</div>
+            <div style="font-size: 9px; color: #475569; margin-bottom: 4px;">POWERED BY PT. Megarap Mitra Solusi (MMS)</div>
             @if (!empty($signatureMeta['qr']))
                 <img class="signature-qr" src="{{ $signatureMeta['qr'] }}" alt="QR tanda tangan digital">
             @endif
             <div class="signature-name">{{ $signatureMeta['signer'] ?? 'Idza Ramaulkim' }}</div>
-            <div class="signature-role">{{ $signatureMeta['role'] ?? 'Direktur Utama' }}</div>
-            <div class="signature-note">Ditandatangani digital. Scan QR untuk verifikasi.</div>
+            <div class="signature-note">Dokumen ini ditanda tangani digital oleh {{ $signatureMeta['signer'] ?? 'Idza Ramaulkim' }}. Scan QR untuk verifikasi.</div>
         </section>
     </main>
 

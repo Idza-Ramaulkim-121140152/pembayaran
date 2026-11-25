@@ -68,7 +68,12 @@
         @endif
 
         <div class="flex flex-col items-center mb-4">
-            <img src="{{ asset('logo_baru.png') }}" alt="Logo" class="h-14 w-auto mb-2">
+            <div class="flex items-center justify-center gap-3 mb-2">
+                <img src="{{ asset('logo-mms.png') }}" alt="PT. Megarap Mitra Solusi (MMS)" class="h-10 w-auto">
+                <span class="h-8 w-px bg-gray-300"></span>
+                <img src="{{ asset('logo_baru.png') }}" alt="Rumah Kita Network" class="h-12 w-auto">
+            </div>
+            <p class="text-[11px] font-semibold text-gray-500 text-center">RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
         </div>
 
         @if($invoice->status !== 'paid')

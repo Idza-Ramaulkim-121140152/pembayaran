@@ -14,6 +14,7 @@ import {
     Globe,
     User
 } from 'lucide-react';
+import PartnerLogoPair, { BRAND_FULL_NAME } from '../../components/common/PartnerLogoPair';
 
 export default function ContactPage() {
     const [form, setForm] = useState({
@@ -45,15 +46,13 @@ export default function ContactPage() {
             <header className="sticky top-0 z-50 backdrop-blur-md bg-slate-950/90 border-b border-slate-800">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                     <a href="/promo" className="flex items-center gap-2.5">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold shadow-md shadow-emerald-950/50">
-                            <Wifi size={18} />
-                        </div>
-                        <div>
-                            <span className="font-extrabold text-base tracking-tight text-white block leading-none">
-                                Rumah Kita <span className="text-emerald-400">Net</span>
+                        <PartnerLogoPair size="xs" dark />
+                        <div className="hidden sm:block">
+                            <span className="font-extrabold text-sm tracking-tight text-white block leading-none">
+                                RUMAH KITA <span className="text-emerald-400">NETWORK</span>
                             </span>
-                            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                Kontak &amp; Lokasi Usaha
+                            <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
+                                POWERED BY PT. Megarap Mitra Solusi (MMS)
                             </span>
                         </div>
                     </a>
@@ -107,7 +106,7 @@ export default function ContactPage() {
                         </div>
                         <div className="space-y-1.5">
                             <h3 className="font-extrabold text-white text-base">Alamat Kantor Usaha</h3>
-                            <p className="text-xs font-semibold text-emerald-400">Rumah Kita Net (Rumah Kita Network)</p>
+                            <p className="text-xs font-semibold text-emerald-400">{BRAND_FULL_NAME}</p>
                             <p className="text-xs text-slate-300 leading-relaxed">
                                 Kebun Agung, RT:002 RW:001, Taman Agung,<br />
                                 Kecamatan Kalianda, Kabupaten Lampung Selatan,<br />
@@ -365,7 +364,7 @@ export default function ContactPage() {
                     </div>
 
                     <div className="pt-6 border-t border-slate-900 text-center text-[11px] text-slate-500">
-                        &copy; {new Date().getFullYear()} Rumah Kita Net (Rumah Kita Network). All Rights Reserved.
+                        &copy; {new Date().getFullYear()} {BRAND_FULL_NAME}. All Rights Reserved.
                     </div>
                 </div>
             </footer>

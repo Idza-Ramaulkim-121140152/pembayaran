@@ -198,10 +198,15 @@ export default function HotspotVoucherBuyPage() {
             <div className="max-w-lg mx-auto">
                 {/* Brand Header */}
                 <div className="text-center mb-6 text-white">
-                    <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-lg shadow-orange-500/30">
-                        <Wifi className="w-7 h-7 text-white" />
+                    <div className="inline-flex items-center justify-center gap-3 bg-white/95 px-4 py-2 rounded-2xl shadow-lg mb-3">
+                        <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-8 w-auto object-contain" />
+                        <span className="h-7 w-px bg-slate-300" />
+                        <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-9 w-auto object-contain" />
                     </div>
-                    <h1 className="text-2xl font-extrabold tracking-tight">Voucher WiFi Rumah Kita Net</h1>
+                    <h1 className="text-2xl font-extrabold tracking-tight">Voucher WiFi RUMAH KITA NETWORK</h1>
+                    <p className="text-xs font-bold text-amber-300 mt-0.5">
+                        POWERED BY PT. Megarap Mitra Solusi (MMS)
+                    </p>
                     <p className="text-sm text-sky-200 mt-1">
                         Beli voucher mandiri 24 jam &bull; Bayar QRIS &bull; Kode langsung ke WhatsApp
                     </p>
@@ -608,7 +613,7 @@ export default function HotspotVoucherBuyPage() {
                 </div>
 
                 <div className="text-center mt-5 text-xs text-sky-200/80">
-                    &copy; {new Date().getFullYear()} Rumah Kita Net &bull; Layanan WiFi Hotspot Mandiri
+                    &copy; {new Date().getFullYear()} RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
                 </div>
             </div>
         </div>

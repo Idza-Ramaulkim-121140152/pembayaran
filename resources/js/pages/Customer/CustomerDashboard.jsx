@@ -923,11 +923,13 @@ function CustomerDashboard() {
             <header className="sticky top-0 z-50 bg-white/90 shadow-sm backdrop-blur">
                 <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
                     <div className="flex items-center gap-3">
-                        <a href="/" className="flex items-center gap-3">
-                            <img src="/logo_baru.png" alt="Logo" className="h-10" />
+                        <a href="/" className="flex items-center gap-2.5">
+                            <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-8 w-auto" />
+                            <span className="h-6 w-px bg-gray-300" />
+                            <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-9 w-auto" />
                             <div className="hidden sm:block">
-                                <p className="font-bold text-gray-900">Rumah Kita Net</p>
-                                <p className="text-xs text-gray-500">Portal Pelanggan V2</p>
+                                <p className="font-bold text-gray-900 text-sm leading-tight">RUMAH KITA NETWORK</p>
+                                <p className="text-[11px] text-gray-500">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                             </div>
                         </a>
                     </div>

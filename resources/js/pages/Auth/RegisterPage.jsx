@@ -66,7 +66,14 @@ function RegisterPage() {
             <div className="w-full max-w-md">
                 {/* Logo */}
                 <div className="text-center mb-8">
-                    <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-16 mx-auto mb-4" />
+                    <div className="inline-flex items-center justify-center gap-3 mb-3">
+                        <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-11 w-auto object-contain" />
+                        <span className="h-9 w-px bg-gray-300" />
+                        <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-13 w-auto object-contain" />
+                    </div>
+                    <p className="text-xs font-semibold text-gray-500 mb-2">
+                        RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
+                    </p>
                     <h1 className="text-2xl font-bold text-gray-900">Buat Akun Baru</h1>
                     <p className="text-gray-600 mt-1">Daftar untuk mengakses sistem</p>
                 </div>

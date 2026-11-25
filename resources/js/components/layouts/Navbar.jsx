@@ -379,11 +379,15 @@ function Navbar() {
         <nav className="sticky top-0 z-50 border-b border-[var(--app-border)] bg-white/90 backdrop-blur-xl shadow-[0_8px_24px_rgba(15,23,42,0.08)]" ref={navRef}>
             <div className="w-full max-w-none px-4 md:px-6">
                 <div className="h-16 flex items-center justify-between gap-4">
-                    <Link to="/dashboard" className="flex items-center gap-2 min-w-0">
-                        <img src="/logo_baru.png" alt="Rumah Kita Net" className="h-9 w-auto" />
+                    <Link to="/dashboard" className="flex items-center gap-2.5 min-w-0">
+                        <div className="inline-flex items-center gap-2 shrink-0">
+                            <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-7 w-auto object-contain" />
+                            <span className="h-5 w-px bg-slate-300" />
+                            <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-8 w-auto object-contain" />
+                        </div>
                         <div className="min-w-0 hidden sm:block">
-                            <p className="font-bold text-slate-800 truncate">Rumah Kita Net</p>
-                            <p className="text-xs text-slate-500 truncate">ISP Management Console</p>
+                            <p className="font-bold text-slate-800 text-sm leading-tight truncate">RUMAH KITA NETWORK</p>
+                            <p className="text-[10px] font-medium text-slate-500 truncate">POWERED BY PT. Megarap Mitra Solusi (MMS)</p>
                         </div>
                     </Link>
 

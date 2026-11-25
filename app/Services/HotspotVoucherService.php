@@ -343,7 +343,7 @@ class HotspotVoucherService
         $loginLink = $order->login_url ?: 'http://rumahkita.id/login';
 
         $message = "✅ *PEMBAYARAN VOUCHER HOTSPOT BERHASIL*\n\n"
-            . "Terima kasih telah membeli voucher WiFi *Rumah Kita Net*.\n\n"
+            . "Terima kasih telah membeli voucher WiFi *RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)*.\n\n"
             . "🎟️ *KODE VOUCHER ANDA:*\n"
             . "*{$order->voucher_code}*\n\n"
             . "📋 *Detail Paket:*\n"
@@ -352,10 +352,11 @@ class HotspotVoucherService
             . "• Maksimal Perangkat: {$maxDevices} perangkat{$rateText}\n"
             . "• No. Order: {$order->order_code}\n\n"
             . "📶 *Cara Menggunakan:*\n"
-            . "1. Hubungkan HP ke WiFi Hotspot Rumah Kita Net\n"
+            . "1. Hubungkan HP ke WiFi Hotspot Rumah Kita Network\n"
             . "2. Buka halaman login ({$loginLink})\n"
             . "3. Masukkan kode voucher *{$order->voucher_code}* pada kolom voucher lalu klik Login.\n\n"
-            . "Selamat berselancar! 🚀";
+            . "Selamat berselancar! 🚀\n"
+            . "_RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)_";
 
         try {
             $response = app(WhatsAppGatewayService::class)->sendBulk([[

@@ -57,10 +57,18 @@
 
     <div class="header">
         <div class="brand">
-            <div class="brand-text">
-                <h2>{{ $customerData['company_name'] ?? 'PT. RUMAH KITA NETWORK' }}</h2>
-                <div>Internet Service Provider</div>
-                <div>Networking & Maintenance</div>
+            <div style="margin-bottom: 6px;">
+                @if (!empty($mmsLogoDataUri))
+                    <img src="{{ $mmsLogoDataUri }}" alt="PT. Megarap Mitra Solusi (MMS)" style="height: 30px; width: auto; vertical-align: middle; margin-right: 10px;">
+                @endif
+                @if (!empty($logoDataUri))
+                    <img src="{{ $logoDataUri }}" alt="Rumah Kita Network" style="height: 32px; width: auto; vertical-align: middle;">
+                @endif
+            </div>
+            <div class="brand-text" style="padding-top: 2px;">
+                <h2>RUMAH KITA NETWORK</h2>
+                <div style="font-size: 10px; font-weight: bold;">POWERED BY PT. Megarap Mitra Solusi (MMS)</div>
+                <div style="font-size: 10px;">Networking &amp; Maintenance</div>
             </div>
         </div>
         <div class="box">
@@ -77,11 +85,11 @@
 
     <p class="paragraph">Saya yang bertanda tangan di bawah ini:</p>
     <table class="field-table">
-        <tr><td class="field-label">Nama Perusahaan</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['company_name'] ?? 'PT. Rumah Kita Network' }}</td></tr>
+        <tr><td class="field-label">Penyedia Layanan</td><td class="field-colon">:</td><td class="field-value">RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)</td></tr>
         <tr><td class="field-label">Alamat</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['company_address'] ?: '-' }}</td></tr>
         <tr><td class="field-label">Telepon</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['company_phone'] ?? '-' }}</td></tr>
     </table>
-    <p class="paragraph">Dalam hal ini bertindak untuk dan atas nama {{ $customerData['company_name'] ?? 'PT. Rumah Kita Network' }}, selanjutnya disebut sebagai <strong>PIHAK PERTAMA</strong>.</p>
+    <p class="paragraph">Dalam hal ini bertindak untuk dan atas nama RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS), selanjutnya disebut sebagai <strong>PIHAK PERTAMA</strong>.</p>
 
     <table class="field-table">
         <tr><td class="field-label">Nama Pelanggan</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['customer_name'] ?? '-' }}</td></tr>
@@ -182,12 +190,12 @@
             <tr>
                 <td>
                     <span class="signature-party-title">PIHAK PERTAMA</span>
-                    <span class="signature-party-subtitle">{{ $customerData['company_name'] ?? 'PT. Rumah Kita Network' }}</span>
+                    <span class="signature-party-subtitle">RUMAH KITA NETWORK<br><span style="font-size: 9px;">POWERED BY PT. Megarap Mitra Solusi (MMS)</span></span>
                     @if (!empty($signatureMeta['company']['qr']))
-                        <img class="qr" src="{{ $signatureMeta['company']['qr'] }}" alt="QR Tanda Tangan PT">
+                        <img class="qr" src="{{ $signatureMeta['company']['qr'] }}" alt="QR Tanda Tangan Pihak Pertama">
                     @endif
                     <div class="signature-signer">{{ $signatureMeta['company']['signer'] ?? 'Idza Ramaulkim' }}</div>
-                    <div class="small signature-statement">{{ $signatureMeta['company']['statement'] ?? '' }}</div>
+                    <div class="small signature-statement">Dokumen ini ditanda tangani digital oleh {{ $signatureMeta['company']['signer'] ?? 'Idza Ramaulkim' }}</div>
                 </td>
                 <td>
                     <span class="signature-party-title">PIHAK KEDUA</span>
