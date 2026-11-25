@@ -69,7 +69,7 @@ function RegisterPage() {
                     <div className="inline-flex items-center justify-center gap-3 mb-3">
                         <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-11 w-auto object-contain" />
                         <span className="h-9 w-px bg-gray-300" />
-                        <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-13 w-auto object-contain" />
+                        <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-12 w-auto object-contain" />
                     </div>
                     <p className="text-xs font-semibold text-gray-500 mb-2">
                         RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)
