@@ -115,9 +115,10 @@
         <li>Seluruh perangkat wajib dikembalikan apabila layanan berakhir atau dihentikan.</li>
     </ol>
 
-    <div class="article">PASAL 3<br>HAK DAN KEWAJIBAN</div>
+    <div class="article">PASAL 3<br>HAK, KEWAJIBAN, DAN STANDAR LAYANAN (SLA)</div>
     <ol>
         <li>PIHAK PERTAMA wajib menyediakan layanan internet sesuai paket dan melakukan pemeliharaan jaringan apabila diperlukan.</li>
+        <li>PIHAK PERTAMA menyediakan saluran pengaduan dan penanganan gangguan resmi melalui Customer Service WhatsApp/Telepon <strong>085158025553</strong> dengan komitmen standar kualitas layanan (SLA) sesuai ketentuan <strong>PT. Megarap Mitra Solusi (MMS)</strong>.</li>
         <li>PIHAK PERTAMA berhak menonaktifkan layanan apabila PIHAK KEDUA tidak memenuhi kewajiban pembayaran.</li>
         <li>PIHAK KEDUA wajib membayar biaya berlangganan tepat waktu, menjaga perangkat, dan memberi akses kepada petugas untuk pemeriksaan, perbaikan, atau pengambilan perangkat.</li>
         <li>PIHAK KEDUA bertanggung jawab atas kehilangan atau kerusakan perangkat akibat kelalaian.</li>

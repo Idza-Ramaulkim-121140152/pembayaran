@@ -169,7 +169,7 @@ export default function ContactPage() {
                             <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Identitas Usaha</span>
                             <h3 className="text-xl font-bold text-white">Profil Bisnis Resmi</h3>
                             <p className="text-xs text-slate-400 leading-relaxed">
-                                Rumah Kita Net adalah unit usaha penyedia layanan internet kabel fiber optic terpercaya di wilayah Lampung Selatan.
+                                {BRAND_FULL_NAME} merupakan mitra resmi penyelenggara jasa akses internet kabel fiber optic (FTTH) berizin PT. Megarap Mitra Solusi (MMS) yang melayani wilayah Lampung Selatan.
                             </p>
                         </div>
 
@@ -178,7 +178,7 @@ export default function ContactPage() {
                                 <Building2 size={18} className="text-emerald-400 shrink-0" />
                                 <div>
                                     <p className="text-[10px] text-slate-500">Nama Bisnis / Brand</p>
-                                    <p className="font-bold text-white">Rumah Kita Net (Rumah Kita Network)</p>
+                                    <p className="font-bold text-white">{BRAND_FULL_NAME}</p>
                                 </div>
                             </div>
 
@@ -186,7 +186,7 @@ export default function ContactPage() {
                                 <Globe size={18} className="text-cyan-400 shrink-0" />
                                 <div>
                                     <p className="text-[10px] text-slate-500">Website Resmi</p>
-                                    <p className="font-bold text-white">https://rumahkitanet.site</p>
+                                    <p className="font-bold text-white">https://rumahkitanet.my.id</p>
                                 </div>
                             </div>
 
@@ -194,7 +194,7 @@ export default function ContactPage() {
                                 <Shield size={18} className="text-teal-400 shrink-0" />
                                 <div>
                                     <p className="text-[10px] text-slate-500">Kategori Layanan</p>
-                                    <p className="font-bold text-white">Internet Service Provider (FTTH &amp; Broadband)</p>
+                                    <p className="font-bold text-white">Mitra Resmi Penyelenggara Jasa Internet — PT. Megarap Mitra Solusi (MMS)</p>
                                 </div>
                             </div>
                         </div>

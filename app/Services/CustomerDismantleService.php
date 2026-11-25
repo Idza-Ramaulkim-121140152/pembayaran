@@ -441,7 +441,7 @@ class CustomerDismantleService
 
         return <<<TXT
 🔧 *SURAT TUGAS PENCABUTAN PERANGKAT (OFF > 2 BULAN)*
-*Rumah Kita Net - ISP Management*
+*RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS)*
 
 Kepada Rekan Teknisi Lapangan,
 Berikut data pelanggan yang jadwal pencabutan peralatannya telah jatuh tempo:

@@ -326,11 +326,16 @@ export default function CustomerDismantlePage() {
             <div className="hidden print:block mb-6 border-b-2 border-slate-900 pb-4">
                 <div className="flex justify-between items-start">
                     <div>
+                        <div className="inline-flex items-center gap-2.5 mb-2">
+                            <img src="/logo-mms.png" alt="PT. Megarap Mitra Solusi (MMS)" className="h-7 w-auto" />
+                            <span className="h-5 w-px bg-slate-400" />
+                            <img src="/logo_baru.png" alt="Rumah Kita Network" className="h-8 w-auto" />
+                        </div>
                         <h2 className="text-xl font-bold uppercase tracking-wider text-slate-900">
                             Surat Perintah Kerja (SPK) Pencopotan Perangkat
                         </h2>
                         <p className="text-xs text-slate-600">
-                            Rumah Kita Net — ISP Management System | Dicetak pada: {new Date().toLocaleString('id-ID')}
+                            RUMAH KITA NETWORK POWERED BY PT. Megarap Mitra Solusi (MMS) | Dicetak pada: {new Date().toLocaleString('id-ID')}
                         </p>
                     </div>
                     <div className="text-right text-xs">
