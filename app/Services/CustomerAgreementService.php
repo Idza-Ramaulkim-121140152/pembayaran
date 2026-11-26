@@ -284,18 +284,76 @@ class CustomerAgreementService
         return collect($photoLinks)
             ->map(function (array $item): array {
                 $url = trim((string) ($item['url'] ?? ''));
-                $dataUri = $url !== '' ? $this->remoteImageDataUri($url) : null;
+                $dataUri = $url !== '' ? ($this->localImageDataUri($url) ?? $this->remoteImageDataUri($url)) : null;
 
                 return [
                     'label' => (string) ($item['label'] ?? 'Foto'),
                     'url' => $url,
                     'data_uri' => $dataUri,
                     'is_image' => $dataUri !== null,
-                    'error' => $dataUri ? null : 'Foto tidak dapat dimuat, pastikan akses Google Drive publik.',
+                    'error' => $dataUri ? null : 'Foto tidak dapat dimuat dari server lokal maupun Google Drive.',
                 ];
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * Baca foto langsung dari storage lokal server jika URL mengarah ke server sendiri (/storage/... atau domain aplikasi).
+     */
+    private function localImageDataUri(string $url): ?string
+    {
+        $trimmed = trim($url);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        $pathCandidate = null;
+        if (preg_match('#^https?://#i', $trimmed)) {
+            $parsed = parse_url($trimmed);
+            $host = strtolower((string) ($parsed['host'] ?? ''));
+            $appHost = strtolower((string) (parse_url((string) config('app.url'), PHP_URL_HOST) ?: ''));
+            $localHosts = array_filter([
+                $appHost,
+                'rumahkitanet.my.id',
+                'www.rumahkitanet.my.id',
+                'rumahkitanet.site',
+                'www.rumahkitanet.site',
+                '10.1.0.5',
+                'localhost',
+                '127.0.0.1',
+            ]);
+
+            if (!in_array($host, $localHosts, true)) {
+                return null;
+            }
+
+            $pathCandidate = (string) ($parsed['path'] ?? '');
+        } else {
+            $pathCandidate = (string) (parse_url($trimmed, PHP_URL_PATH) ?? $trimmed);
+        }
+
+        $decodedPath = rawurldecode(trim($pathCandidate));
+        if ($decodedPath === '' || str_contains($decodedPath, '..')) {
+            return null;
+        }
+
+        $normalized = ltrim(str_replace('\\', '/', $decodedPath), '/');
+        $storageRelative = str_starts_with($normalized, 'storage/')
+            ? substr($normalized, strlen('storage/'))
+            : $normalized;
+
+        if ($storageRelative !== '' && Storage::disk('public')->exists($storageRelative)) {
+            $absolute = Storage::disk('public')->path($storageRelative);
+            return PdfImageHelper::toDataUri($absolute);
+        }
+
+        $publicAbsolute = public_path($normalized);
+        if (is_file($publicAbsolute)) {
+            return PdfImageHelper::toDataUri($publicAbsolute);
+        }
+
+        return null;
     }
 
     private function remoteImageDataUri(string $url): ?string

@@ -111,6 +111,30 @@ class CustomerAgreementTest extends TestCase
         $this->assertStringContainsString('media_failed', (string) $agreement->whatsapp_error);
     }
 
+    public function test_local_server_photos_are_embedded_directly_without_http_fetch(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('verifications/front-house.png', $this->tinyPng());
+        Storage::disk('public')->put('verifications/modem.png', $this->tinyPng());
+        Http::fake();
+
+        $service = app(CustomerAgreementService::class);
+        $method = new \ReflectionMethod(CustomerAgreementService::class, 'resolveSheetPhotos');
+        $method->setAccessible(true);
+
+        $resolved = $method->invoke($service, [
+            ['label' => 'Poto Depan Rumah', 'url' => 'https://rumahkitanet.my.id/storage/verifications/front-house.png'],
+            ['label' => 'Poto Modem', 'url' => '/storage/verifications/modem.png'],
+        ]);
+
+        $this->assertCount(2, $resolved);
+        $this->assertTrue($resolved[0]['is_image']);
+        $this->assertStringStartsWith('data:image/png;base64,', (string) $resolved[0]['data_uri']);
+        $this->assertTrue($resolved[1]['is_image']);
+        $this->assertStringStartsWith('data:image/png;base64,', (string) $resolved[1]['data_uri']);
+        Http::assertNothingSent();
+    }
+
     private function tinyPng(): string
     {
         return base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lw7nJAAAAABJRU5ErkJggg==');
