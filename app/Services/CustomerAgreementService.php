@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Customer;
 use App\Models\CustomerAgreement;
 use App\Models\CustomerProspect;
+use App\Models\Package;
 use App\Models\SiteSetting;
 use App\Support\PdfImageHelper;
 use App\Support\SafeExternalUrl;
@@ -162,7 +163,7 @@ class CustomerAgreementService
             'company_email' => SiteSetting::get('company_email', 'rumahkita69@gmail.com'),
             'director_name' => 'Idza Ramaulkim',
             'customer_name' => $customer->name,
-            'gender' => $customer->gender ?: ($prevCustomer['gender'] ?? null),
+            'gender' => $this->formatGenderLabel($customer->gender ?: ($prevCustomer['gender'] ?? null)),
             'ktp_number' => $maskedNik,
             'phone' => $customer->phone,
             'email' => $customer->email,
@@ -237,15 +238,27 @@ class CustomerAgreementService
         ?CustomerAgreement $previousAgreement = null
     ): array {
         $prevDevice = is_array($previousAgreement?->device_data) ? $previousAgreement->device_data : [];
+        $resolvedPackage = $this->resolveCustomerPackage($customer);
         $resolvedOdp = $customer->odp_full_text
             ?: ($customer->odpBox?->nama ?? null)
             ?: trim((string) $customer->getRawOriginal('odp'))
             ?: ($prevDevice['odp'] ?? null);
 
+        $packagePrice = $resolvedPackage?->price;
+        if ($packagePrice === null || (float) $packagePrice <= 0) {
+            $customer->loadMissing('billingProfile');
+            $billingMonthly = $customer->billingProfile?->monthly_fee;
+            if ($billingMonthly !== null && (float) $billingMonthly > 0) {
+                $packagePrice = $billingMonthly;
+            } elseif (isset($prevDevice['package_price']) && (float) $prevDevice['package_price'] > 0) {
+                $packagePrice = $prevDevice['package_price'];
+            }
+        }
+
         return [
-            'package_name' => $customer->package?->name ?: ($customer->package_type ?: $customer->custom_package),
-            'package_speed' => $customer->package?->speed,
-            'package_price' => $customer->package?->price,
+            'package_name' => $resolvedPackage?->name ?: ($customer->package_type ?: $customer->custom_package),
+            'package_speed' => $resolvedPackage?->speed,
+            'package_price' => $packagePrice,
             'installation_fee' => $customer->installation_fee,
             'odp' => $resolvedOdp ?: '-',
             'pppoe_username' => $customer->pppoe_username,
@@ -257,6 +270,73 @@ class CustomerAgreementService
             'device_serial_number' => $this->stringInput($input, 'contract_device_serial') ?: ($prevDevice['device_serial_number'] ?? null),
             'device_notes' => $this->stringInput($input, 'contract_device_notes') ?: ($prevDevice['device_notes'] ?? null),
         ];
+    }
+
+    private function formatGenderLabel(?string $gender): ?string
+    {
+        $normalized = strtolower(trim((string) $gender));
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (in_array($normalized, ['male', 'm', 'l', 'laki', 'laki-laki', 'pria'], true) || str_contains($normalized, 'laki')) {
+            return 'Laki-laki';
+        }
+
+        if (in_array($normalized, ['female', 'f', 'p', 'perempuan', 'wanita'], true) || str_contains($normalized, 'perempuan')) {
+            return 'Perempuan';
+        }
+
+        return trim((string) $gender);
+    }
+
+    private function resolveCustomerPackage(Customer $customer): ?Package
+    {
+        if ($customer->package) {
+            return $customer->package;
+        }
+
+        $candidates = array_values(array_filter(array_unique([
+            trim((string) ($customer->package_type ?? '')),
+            trim((string) ($customer->custom_package ?? '')),
+        ]), fn (string $value) => $value !== ''));
+
+        foreach ($candidates as $candidate) {
+            $exact = Package::query()
+                ->whereRaw('LOWER(name) = ?', [strtolower($candidate)])
+                ->orderByDesc('is_active')
+                ->first();
+            if ($exact) {
+                return $exact;
+            }
+        }
+
+        $profile = trim((string) ($customer->mikrotik_profile ?? ''));
+        if ($profile !== '') {
+            $byProfile = Package::query()
+                ->whereRaw('LOWER(mikrotik_profile) = ?', [strtolower($profile)])
+                ->orderByDesc('is_active')
+                ->first();
+            if ($byProfile) {
+                return $byProfile;
+            }
+        }
+
+        if ($candidates !== []) {
+            $allPackages = Package::query()->orderByDesc('is_active')->get();
+            foreach ($candidates as $candidate) {
+                $needle = strtolower($candidate);
+                $matched = $allPackages->first(function (Package $pkg) use ($needle): bool {
+                    $name = strtolower(trim((string) $pkg->name));
+                    return $name !== '' && (str_contains($needle, $name) || str_contains($name, $needle));
+                });
+                if ($matched) {
+                    return $matched;
+                }
+            }
+        }
+
+        return null;
     }
 
     private function storeAttachments(Customer $customer, array $files, ?CustomerAgreement $previousAgreement = null): array

@@ -143,8 +143,20 @@
 
     <table>
         <tr><th colspan="2">Data Pelanggan</th></tr>
+        @php
+            $rawGender = strtolower(trim((string) ($customerData['gender'] ?? '')));
+            $displayGender = match (true) {
+                $rawGender === '' => '-',
+                in_array($rawGender, ['male', 'm', 'l', 'laki', 'laki-laki', 'pria'], true) || str_contains($rawGender, 'laki') => 'Laki-laki',
+                in_array($rawGender, ['female', 'f', 'p', 'perempuan', 'wanita'], true) || str_contains($rawGender, 'perempuan') => 'Perempuan',
+                default => $customerData['gender'],
+            };
+            $packageNameText = trim((string) ($deviceData['package_name'] ?? ''));
+            $packageSpeedText = trim((string) ($deviceData['package_speed'] ?? ''));
+            $showSpeedSuffix = $packageSpeedText !== '' && ($packageNameText === '' || !str_contains(strtolower($packageNameText), strtolower($packageSpeedText)));
+        @endphp
         <tr><td>Nama</td><td>{{ $customerData['customer_name'] ?? '-' }}</td></tr>
-        <tr><td>Jenis Kelamin</td><td>{{ $customerData['gender'] ?? '-' }}</td></tr>
+        <tr><td>Jenis Kelamin</td><td>{{ $displayGender }}</td></tr>
         <tr><td>Nomor KTP</td><td>{{ $customerData['ktp_number'] ?? '-' }}</td></tr>
         <tr><td>Nomor HP/WA</td><td>{{ $customerData['phone'] ?? '-' }}</td></tr>
         <tr><td>Alamat</td><td>{{ $customerData['address'] ?? '-' }}</td></tr>
@@ -153,8 +165,8 @@
         @endif
         <tr><td>Koordinat Rumah</td><td>{{ ($customerData['latitude'] ?? null) && ($customerData['longitude'] ?? null) ? ($customerData['latitude'] . ', ' . $customerData['longitude']) : '-' }}</td></tr>
         <tr><th colspan="2">Data Layanan dan Perangkat</th></tr>
-        <tr><td>Paket</td><td>{{ $deviceData['package_name'] ?? '-' }} {{ $deviceData['package_speed'] ? '(' . $deviceData['package_speed'] . ')' : '' }}</td></tr>
-        <tr><td>Biaya Paket</td><td>{{ isset($deviceData['package_price']) ? 'Rp ' . number_format((float) $deviceData['package_price'], 0, ',', '.') : '-' }}</td></tr>
+        <tr><td>Paket</td><td>{{ $packageNameText !== '' ? $packageNameText : '-' }}{{ $showSpeedSuffix ? ' (' . $packageSpeedText . ')' : '' }}</td></tr>
+        <tr><td>Biaya Paket</td><td>{{ isset($deviceData['package_price']) && (float) $deviceData['package_price'] > 0 ? 'Rp ' . number_format((float) $deviceData['package_price'], 0, ',', '.') . ' / bulan' : '-' }}</td></tr>
         <tr><td>Biaya Pemasangan</td><td>{{ isset($deviceData['installation_fee']) ? 'Rp ' . number_format((float) $deviceData['installation_fee'], 0, ',', '.') : '-' }}</td></tr>
         <tr><td>Tanggal Aktivasi</td><td>{{ $customerData['activation_date'] ?? '-' }}</td></tr>
         <tr><td>ODP</td><td>{{ $deviceData['odp'] ?? '-' }}</td></tr>

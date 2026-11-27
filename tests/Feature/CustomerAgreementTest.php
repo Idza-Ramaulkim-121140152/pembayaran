@@ -179,6 +179,54 @@ class CustomerAgreementTest extends TestCase
         $this->assertEquals(75, $second->device_data['dropcore_length']);
     }
 
+    public function test_agreement_translates_gender_to_indonesian_and_resolves_master_package_price(): void
+    {
+        Storage::fake('public');
+
+        \App\Models\Package::create([
+            'name' => 'Paket 200K 30Mbps',
+            'speed' => '30Mbps',
+            'mikrotik_profile' => '30Mbps',
+            'price' => 200000,
+            'device_count' => '5 Device',
+            'is_active' => true,
+        ]);
+
+        $maleCustomer = Customer::create([
+            'name' => 'Sahrul',
+            'gender' => 'male',
+            'phone' => '082177444772',
+            'address' => 'Samping musola',
+            'package_id' => null,
+            'package_type' => 'Paket 200K 30Mbps',
+            'mikrotik_profile' => '30Mbps',
+            'installation_fee' => 225000,
+            'due_date' => now()->toDateString(),
+            'is_active' => true,
+        ]);
+
+        $femaleCustomer = Customer::create([
+            'name' => 'Siti',
+            'gender' => 'female',
+            'phone' => '082177444773',
+            'address' => 'Depan masjid',
+            'package_id' => null,
+            'package_type' => 'Paket 200K 30Mbps',
+            'due_date' => now()->toDateString(),
+            'is_active' => true,
+        ]);
+
+        $service = app(CustomerAgreementService::class);
+        $maleAgreement = $service->generate($maleCustomer, []);
+        $femaleAgreement = $service->generate($femaleCustomer, []);
+
+        $this->assertSame('Laki-laki', $maleAgreement->customer_data['gender']);
+        $this->assertSame('Perempuan', $femaleAgreement->customer_data['gender']);
+        $this->assertSame('Paket 200K 30Mbps', $maleAgreement->device_data['package_name']);
+        $this->assertEquals(200000, (float) $maleAgreement->device_data['package_price']);
+        $this->assertEquals(200000, (float) $femaleAgreement->device_data['package_price']);
+    }
+
     private function tinyPng(): string
     {
         return base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lw7nJAAAAABJRU5ErkJggg==');
