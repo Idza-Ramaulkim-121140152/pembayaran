@@ -741,6 +741,9 @@ class CustomerVerificationController extends Controller
             if (!empty($frontPhoto)) {
                 $customerPayload['foto_depan_rumah'] = $frontPhoto;
             }
+            if (isset($validated['installation_cable_used']) && (float) $validated['installation_cable_used'] > 0) {
+                $customerPayload['dropcore_cable_length_meters'] = (int) round((float) $validated['installation_cable_used']);
+            }
 
             $customer = Customer::create($customerPayload);
 
@@ -1184,15 +1187,11 @@ class CustomerVerificationController extends Controller
 
     private function validateInstallationCableUsage(array $validated): void
     {
-        if (!($validated['enable_installation_team'] ?? false)) {
-            return;
-        }
-
         $cableUsed = $validated['installation_cable_used'] ?? null;
 
         if ($cableUsed === null || $cableUsed === '' || (float) $cableUsed <= 0) {
             throw ValidationException::withMessages([
-                'installation_cable_used' => 'Habis Kabel wajib diisi untuk pemasangan.',
+                'installation_cable_used' => 'Panjang Kabel yang digunakan wajib diisi.',
             ]);
         }
     }
@@ -1380,10 +1379,8 @@ class CustomerVerificationController extends Controller
             $validated['installer_member_ids'] = [];
             $validated['installation_router_item_id'] = null;
             $validated['installation_cable_item_id'] = null;
-            $validated['installation_cable_used'] = null;
             $validated['installation_labor_fee'] = null;
             $validated['installation_cable_rate'] = null;
-            $validated['installation_notes'] = null;
         }
 
         return $validated;

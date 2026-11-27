@@ -874,38 +874,24 @@ function CustomerVerificationForm() {
                 kecamatan_id: formData.kecamatan_id ? Number(formData.kecamatan_id) : null,
                 desa_id: formData.desa_id ? Number(formData.desa_id) : null,
                 dusun_id: formData.dusun_id ? Number(formData.dusun_id) : null,
-                enable_home_router: Boolean(formData.enable_home_router),
-                enable_installation_team: Boolean(formData.enable_installation_team),
-                installer_member_ids: Array.isArray(formData.installer_member_ids)
-                    ? formData.installer_member_ids
-                    : [],
-                installation_router_item_id: formData.installation_router_item_id || null,
-                installation_cable_item_id: formData.installation_cable_item_id || null,
+                enable_home_router: false,
+                enable_installation_team: false,
+                installer_member_ids: [],
+                installation_router_item_id: null,
+                installation_cable_item_id: null,
                 installation_cable_used: formData.installation_cable_used === '' ? null : formData.installation_cable_used,
-                installation_labor_fee: formData.installation_labor_fee === '' ? null : formData.installation_labor_fee,
-                installation_cable_rate: formData.installation_cable_rate === '' ? null : formData.installation_cable_rate,
+                installation_labor_fee: null,
+                installation_cable_rate: null,
                 installation_notes: formData.installation_notes || null,
             };
 
-            if (!payload.enable_home_router) {
-                payload.home_router_type = null;
-                payload.home_router_host = null;
-                payload.home_router_port = null;
-                payload.home_router_username = null;
-                payload.home_router_password = null;
-                payload.home_router_wan_interface = null;
-                payload.home_router_monitoring_enabled = false;
-            }
-
-            if (!payload.enable_installation_team) {
-                payload.installer_member_ids = [];
-                payload.installation_router_item_id = null;
-                payload.installation_cable_item_id = null;
-                payload.installation_cable_used = null;
-                payload.installation_labor_fee = null;
-                payload.installation_cable_rate = null;
-                payload.installation_notes = null;
-            }
+            payload.home_router_type = null;
+            payload.home_router_host = null;
+            payload.home_router_port = null;
+            payload.home_router_username = null;
+            payload.home_router_password = null;
+            payload.home_router_wan_interface = null;
+            payload.home_router_monitoring_enabled = false;
 
             const installationFee = Number(payload.installation_fee || 0);
             if (installationFee > 0) {
@@ -1067,8 +1053,8 @@ function CustomerVerificationForm() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (formData.enable_installation_team && Number(formData.installation_cable_used || 0) <= 0) {
-            const message = 'Habis Kabel wajib diisi untuk pemasangan.';
+        if (Number(formData.installation_cable_used || 0) <= 0) {
+            const message = 'Panjang Kabel yang digunakan wajib diisi.';
             setError(message);
             setErrorModalMessage(message);
             setShowErrorModal(true);
@@ -1473,136 +1459,7 @@ function CustomerVerificationForm() {
                         </div>
                     </div>
 
-                    <div>
-                        <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
-                            <input
-                                type="checkbox"
-                                name="enable_home_router"
-                                checked={formData.enable_home_router}
-                                onChange={handleChange}
-                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                            />
-                            <span className="text-sm font-medium text-gray-700">Aktifkan Router Rumah Pelanggan</span>
-                        </label>
-
-                        {formData.enable_home_router && (
-                            <div className="mt-4">
-                                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                    <div>
-                                        <h2 className="text-xl font-bold text-gray-900">Router Rumah Pelanggan</h2>
-                                        <p className="mt-1 text-sm text-gray-600">
-                                            Opsional, tapi disarankan jika portal pelanggan ingin menampilkan traffic WAN dan jumlah perangkat langsung dari rumah.
-                                        </p>
-                                    </div>
-                                    <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
-                                        <input
-                                            type="checkbox"
-                                            name="home_router_monitoring_enabled"
-                                            checked={formData.home_router_monitoring_enabled}
-                                            onChange={handleChange}
-                                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                                        />
-                                        <span className="text-sm font-medium text-gray-700">Monitoring router rumah aktif</span>
-                                    </label>
-                                </div>
-
-                                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Tipe Router
-                                        </label>
-                                        <select
-                                            name="home_router_type"
-                                            value={formData.home_router_type}
-                                            onChange={handleChange}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        >
-                                            {HOME_ROUTER_OPTIONS.map((option) => (
-                                                <option key={option.value} value={option.value}>
-                                                    {option.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <p className="mt-1 text-xs text-gray-500">{selectedRouterPreset.helper}</p>
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Host / IP Router
-                                        </label>
-                                        <input
-                                            type="text"
-                                            name="home_router_host"
-                                            value={formData.home_router_host}
-                                            onChange={handleChange}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            placeholder="192.168.88.1"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Port API
-                                        </label>
-                                        <input
-                                            type="number"
-                                            name="home_router_port"
-                                            value={formData.home_router_port}
-                                            onChange={handleChange}
-                                            min="1"
-                                            max="65535"
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            placeholder="8728"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Username API
-                                        </label>
-                                        <input
-                                            type="text"
-                                            name="home_router_username"
-                                            value={formData.home_router_username}
-                                            onChange={handleChange}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            placeholder="admin"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Password API
-                                        </label>
-                                        <input
-                                            type="password"
-                                            name="home_router_password"
-                                            value={formData.home_router_password}
-                                            onChange={handleChange}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            placeholder="Password router"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                                            Interface WAN
-                                        </label>
-                                        <input
-                                            type="text"
-                                            name="home_router_wan_interface"
-                                            value={formData.home_router_wan_interface}
-                                            onChange={handleChange}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            placeholder="pppoe-out1"
-                                        />
-                                        <p className="mt-1 text-xs text-gray-500">Opsional. Kosongkan jika ingin dideteksi otomatis.</p>
-                                    </div>
-                                </div>
-
-                                <div className="mt-4 rounded-2xl border border-dashed border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                                    {selectedRouterPreset.managementMode === 'api'
-                                        ? 'Monitoring langsung dari router rumah paling akurat jika pelanggan memakai MikroTik dengan API port 8728 yang bisa dijangkau server.'
-                                        : 'Untuk router web-managed seperti VSOL/GL-01, portal akan probe panel admin dan menyiapkan pembacaan status model-specific.'}
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    {/* Panjang Kabel Dropcore untuk Kontrak */}
 
                     {/* Location */}
                     <div>
@@ -1842,165 +1699,41 @@ function CustomerVerificationForm() {
                         </div>
                     </div>
 
-                    {/* Installation Team & Material Details */}
-                    <div>
-                        <label className="flex items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3">
+                    {/* Panjang Kabel yang Digunakan (Wajib untuk Kontrak) */}
+                    <div className="space-y-4 rounded-2xl border border-gray-200 p-4 sm:p-5 bg-gray-50/50">
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-800 mb-1">
+                                Panjang Kabel yang digunakan (meter) <span className="text-red-500">*</span>
+                            </label>
                             <input
-                                type="checkbox"
-                                name="enable_installation_team"
-                                checked={formData.enable_installation_team}
+                                type="number"
+                                step="any"
+                                min="1"
+                                name="installation_cable_used"
+                                value={formData.installation_cable_used}
                                 onChange={handleChange}
-                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+                                required
+                                className="w-full px-4 py-2.5 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Contoh: 35"
                             />
-                            <span className="text-sm font-medium text-gray-700">Aktifkan Pelaksana Pemasangan</span>
-                        </label>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Wajib diisi. Panjang kabel dropcore ini akan otomatis dicatat pada Surat Perjanjian Berlangganan (kontrak).
+                            </p>
+                        </div>
 
-                        {formData.enable_installation_team && (
-                            <div className="mt-4">
-                                <h2 className="text-xl font-bold text-gray-900 mb-4">Pelaksana Pemasangan</h2>
-
-                                <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-                                    Pilih teknisi pelaksana dan detail material instalasi. Saat verifikasi disimpan, data ini otomatis masuk ke payroll proyek pemasangan dan inventori (stok router/kabel berkurang sesuai pemakaian).
-                                </div>
-
-                                <div className="space-y-5">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Checklist Pelaksana (Teknisi)
-                                </label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto">
-                                    {payrollMembers.length === 0 ? (
-                                        <p className="text-sm text-gray-500">Belum ada data anggota payroll. Tambahkan anggota di menu Payroll terlebih dahulu.</p>
-                                    ) : payrollMembers.map((member) => {
-                                        const checked = Array.isArray(formData.installer_member_ids)
-                                            ? formData.installer_member_ids.includes(Number(member.id))
-                                            : false;
-
-                                        return (
-                                            <label key={member.id} className="flex items-center gap-2 text-sm text-gray-700">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={() => handleInstallerToggle(member.id)}
-                                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                                                />
-                                                <span>{member.nama}</span>
-                                                {member.telepon && (
-                                                    <span className="text-xs text-gray-400">({member.telepon})</span>
-                                                )}
-                                            </label>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Router dari Stok Inventori
-                                    </label>
-                                    <select
-                                        name="installation_router_item_id"
-                                        value={formData.installation_router_item_id}
-                                        onChange={handleChange}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    >
-                                        <option value="">Tidak dipilih</option>
-                                        {routerStockOptions.map((item) => (
-                                            <option key={item.id} value={item.id}>
-                                                {item.name} ({item.type_name || 'Tanpa jenis'}) - stok {Number(item.current_stock || 0).toLocaleString('id-ID')} {item.unit || ''}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <p className="text-xs text-gray-500 mt-1">Saat verifikasi, stok router ini akan berkurang 1 unit.</p>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Kabel dari Stok Inventori
-                                    </label>
-                                    <select
-                                        name="installation_cable_item_id"
-                                        value={formData.installation_cable_item_id}
-                                        onChange={handleChange}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    >
-                                        <option value="">Tidak dipilih</option>
-                                        {cableStockOptions.map((item) => (
-                                            <option key={item.id} value={item.id}>
-                                                {item.name} ({item.type_name || 'Tanpa jenis'}) - stok {Number(item.current_stock || 0).toLocaleString('id-ID')} {item.unit || ''}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Habis Kabel
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="any"
-                                        min={formData.enable_installation_team ? '0.01' : '0'}
-                                        name="installation_cable_used"
-                                        value={formData.installation_cable_used}
-                                        onChange={handleChange}
-                                        required={formData.enable_installation_team}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        placeholder="Contoh: 35"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">Wajib diisi saat pemasangan aktif. Stok kabel terpilih otomatis berkurang sesuai angka ini.</p>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Biaya Pasang (Payroll)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        name="installation_labor_fee"
-                                        value={formData.installation_labor_fee}
-                                        onChange={handleChange}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        placeholder="0"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">Nilai default diambil dari master data inventori, tetap bisa diubah.</p>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        Harga Kabel (Payroll)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        name="installation_cable_rate"
-                                        value={formData.installation_cable_rate}
-                                        onChange={handleChange}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        placeholder="0"
-                                    />
-                                    <p className="text-xs text-gray-500 mt-1">Nilai default diambil dari master data inventori, tetap bisa diubah.</p>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Catatan Pemasangan
-                                </label>
-                                <textarea
-                                    name="installation_notes"
-                                    value={formData.installation_notes}
-                                    onChange={handleChange}
-                                    rows={2}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    placeholder="Catatan tambahan instalasi"
-                                />
-                            </div>
-                                </div>
-                            </div>
-                        )}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Catatan Pemasangan (Opsional)
+                            </label>
+                            <textarea
+                                name="installation_notes"
+                                value={formData.installation_notes}
+                                onChange={handleChange}
+                                rows={2}
+                                className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="Catatan tambahan instalasi"
+                            />
+                        </div>
                     </div>
 
                     {/* Status */}

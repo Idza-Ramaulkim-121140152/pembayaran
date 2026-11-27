@@ -135,6 +135,50 @@ class CustomerAgreementTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_regenerated_agreement_preserves_verification_ktp_mac_photos_and_fills_customer_details(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('verifications/front.png', $this->tinyPng());
+        Storage::disk('public')->put('verifications/modem.png', $this->tinyPng());
+        Http::fake();
+
+        $customer = Customer::create([
+            'name' => 'Suprapto',
+            'gender' => 'Laki-laki',
+            'phone' => '083174316312',
+            'address' => 'Cinta damai',
+            'odp' => 'ODP-KLD-05',
+            'odp_port_number' => 3,
+            'home_router_type' => 'ZTE F609',
+            'dropcore_cable_length_meters' => 75,
+            'due_date' => now()->toDateString(),
+            'is_active' => true,
+        ]);
+
+        $service = app(CustomerAgreementService::class);
+
+        // First agreement created during verification (has KTP, MAC, photos)
+        $first = $service->generate($customer, [
+            'contract_ktp_number' => '1801060101900007',
+            'contract_router_mac' => '64:E0:AB:63:26:66',
+            'contract_device_serial' => 'ZTEG12345678',
+            'contract_photo_front_url' => '/storage/verifications/front.png',
+            'contract_photo_modem_url' => '/storage/verifications/modem.png',
+        ]);
+
+        // Second agreement regenerated from Customer page with empty input
+        $second = $service->generate($customer, []);
+
+        $this->assertSame('180XXXXXXXXXX007', $second->customer_data['ktp_number']);
+        $this->assertSame('Laki-laki', $second->customer_data['gender']);
+        $this->assertCount(2, $second->customer_data['photo_links']);
+        $this->assertSame('ODP-KLD-05 (Port 3)', $second->device_data['odp']);
+        $this->assertSame('64:E0:AB:63:26:66', $second->device_data['router_mac_address']);
+        $this->assertSame('ZTEG12345678', $second->device_data['device_serial_number']);
+        $this->assertSame('ZTE F609', $second->device_data['router_type']);
+        $this->assertEquals(75, $second->device_data['dropcore_length']);
+    }
+
     private function tinyPng(): string
     {
         return base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lw7nJAAAAABJRU5ErkJggg==');

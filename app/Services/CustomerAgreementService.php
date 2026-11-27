@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Customer;
 use App\Models\CustomerAgreement;
+use App\Models\CustomerProspect;
 use App\Models\SiteSetting;
 use App\Support\PdfImageHelper;
 use App\Support\SafeExternalUrl;
@@ -15,6 +16,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -25,7 +27,10 @@ class CustomerAgreementService
 
     public function generate(Customer $customer, array $input = [], array $files = [], ?int $generatedBy = null): CustomerAgreement
     {
-        $customer->loadMissing(['package', 'odp']);
+        $customer->loadMissing(['package', 'odpBox', 'dusun', 'desa', 'kecamatan']);
+
+        $previousAgreement = $customer->agreements()->latest('id')->first();
+        $prospect = $this->findMatchingProspect($customer);
 
         $agreement = CustomerAgreement::create([
             'customer_id' => $customer->id,
@@ -33,9 +38,9 @@ class CustomerAgreementService
             'agreement_number' => $this->makeAgreementNumber($customer),
             'public_token' => Str::random(48),
             'status' => 'generated',
-            'customer_data' => $this->customerSnapshot($customer, $input),
-            'device_data' => $this->deviceSnapshot($customer, $input),
-            'attachment_paths' => $this->storeAttachments($customer, $files),
+            'customer_data' => $this->customerSnapshot($customer, $input, $previousAgreement, $prospect),
+            'device_data' => $this->deviceSnapshot($customer, $input, $previousAgreement),
+            'attachment_paths' => $this->storeAttachments($customer, $files, $previousAgreement),
             'generated_at' => now(),
         ]);
 
@@ -87,9 +92,67 @@ class CustomerAgreementService
         return $prefix . '/' . str_pad((string) $customer->id, 5, '0', STR_PAD_LEFT) . '-' . $sequence;
     }
 
-    private function customerSnapshot(Customer $customer, array $input): array
+    private function findMatchingProspect(Customer $customer): ?CustomerProspect
     {
-        $rawNik = $this->stringInput($input, 'contract_ktp_number') ?: ($customer->nik ?? '');
+        try {
+            if (!Schema::hasTable('customer_prospects')) {
+                return null;
+            }
+
+            $phone = trim((string) ($customer->phone ?? ''));
+            $name = trim((string) ($customer->name ?? ''));
+
+            if ($phone !== '') {
+                $digits = preg_replace('/\D+/', '', $phone) ?: '';
+                $tail = strlen($digits) >= 9 ? substr($digits, -9) : $digits;
+                $found = CustomerProspect::query()
+                    ->where('phone', $phone)
+                    ->when($tail !== '', fn ($q) => $q->orWhere('phone', 'like', '%' . $tail))
+                    ->latest('id')
+                    ->first();
+                if ($found) {
+                    return $found;
+                }
+            }
+
+            if ($name !== '') {
+                return CustomerProspect::query()
+                    ->where('name', $name)
+                    ->latest('id')
+                    ->first();
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private function customerSnapshot(
+        Customer $customer,
+        array $input,
+        ?CustomerAgreement $previousAgreement = null,
+        ?CustomerProspect $prospect = null
+    ): array {
+        $prevCustomer = is_array($previousAgreement?->customer_data) ? $previousAgreement->customer_data : [];
+
+        $rawNik = $this->stringInput($input, 'contract_ktp_number')
+            ?: ($customer->nik ?? null)
+            ?: ($prospect?->nik ?? null);
+        $maskedNik = $rawNik ? $this->maskNik($rawNik) : ($prevCustomer['ktp_number'] ?? null);
+
+        $wilayah = trim((string) ($customer->wilayah_lengkap ?? ''));
+        if ($wilayah === '-') {
+            $wilayah = '';
+        }
+
+        $address = trim((string) ($customer->address ?? ''));
+        $addressFull = $address;
+        if ($wilayah !== '' && ($address === '' || !str_contains(strtolower($address), strtolower($wilayah)))) {
+            $addressFull = $address !== '' ? ($address . ', ' . $wilayah) : $wilayah;
+        }
+
+        $photoLinks = $this->resolveCombinedPhotoLinks($input, $prevCustomer, $customer, $prospect);
 
         return [
             'company_name' => SiteSetting::get('contract_company_name', self::DEFAULT_COMPANY_NAME),
@@ -99,16 +162,50 @@ class CustomerAgreementService
             'company_email' => SiteSetting::get('company_email', 'rumahkita69@gmail.com'),
             'director_name' => 'Idza Ramaulkim',
             'customer_name' => $customer->name,
-            'ktp_number' => $this->maskNik($rawNik),
+            'gender' => $customer->gender ?: ($prevCustomer['gender'] ?? null),
+            'ktp_number' => $maskedNik,
             'phone' => $customer->phone,
             'email' => $customer->email,
-            'address' => $customer->address,
+            'address' => $addressFull !== '' ? $addressFull : $address,
+            'region' => $wilayah !== '' ? $wilayah : ($prevCustomer['region'] ?? null),
             'latitude' => $customer->latitude,
             'longitude' => $customer->longitude,
             'activation_date' => optional($customer->activation_date)->format('Y-m-d'),
             'due_date' => optional($customer->due_date)->format('Y-m-d'),
-            'photo_links' => $this->photoLinks($input),
+            'photo_links' => $photoLinks,
         ];
+    }
+
+    private function resolveCombinedPhotoLinks(
+        array $input,
+        array $prevCustomer,
+        Customer $customer,
+        ?CustomerProspect $prospect
+    ): array {
+        $links = $this->photoLinks($input);
+        $byLabel = [];
+        foreach ($links as $item) {
+            $byLabel[$item['label']] = $item;
+        }
+
+        // Fallback dari kontrak sebelumnya jika regenerate dari halaman pelanggan tanpa input ulang
+        foreach (($prevCustomer['photo_links'] ?? []) as $prevItem) {
+            $label = (string) ($prevItem['label'] ?? '');
+            $url = trim((string) ($prevItem['url'] ?? ''));
+            if ($label !== '' && $url !== '' && !isset($byLabel[$label])) {
+                $byLabel[$label] = ['label' => $label, 'url' => $url];
+            }
+        }
+
+        // Fallback foto depan rumah dari tabel customers atau customer_prospects
+        if (!isset($byLabel['Poto Depan Rumah'])) {
+            $frontUrl = trim((string) ($customer->getRawOriginal('foto_depan_rumah') ?: ($prospect?->foto_depan_rumah ?? '')));
+            if ($frontUrl !== '') {
+                $byLabel['Poto Depan Rumah'] = ['label' => 'Poto Depan Rumah', 'url' => $frontUrl];
+            }
+        }
+
+        return array_values($byLabel);
     }
 
     /**
@@ -134,27 +231,35 @@ class CustomerAgreementService
         return $start . $maskedMiddle . $end;
     }
 
-    private function deviceSnapshot(Customer $customer, array $input): array
-    {
-        $odpRelation = $customer->getRelationValue('odp');
+    private function deviceSnapshot(
+        Customer $customer,
+        array $input,
+        ?CustomerAgreement $previousAgreement = null
+    ): array {
+        $prevDevice = is_array($previousAgreement?->device_data) ? $previousAgreement->device_data : [];
+        $resolvedOdp = $customer->odp_full_text
+            ?: ($customer->odpBox?->nama ?? null)
+            ?: trim((string) $customer->getRawOriginal('odp'))
+            ?: ($prevDevice['odp'] ?? null);
 
         return [
             'package_name' => $customer->package?->name ?: ($customer->package_type ?: $customer->custom_package),
             'package_speed' => $customer->package?->speed,
             'package_price' => $customer->package?->price,
             'installation_fee' => $customer->installation_fee,
-            'odp' => $odpRelation?->nama ?: (string) $customer->getAttribute('odp'),
+            'odp' => $resolvedOdp ?: '-',
             'pppoe_username' => $customer->pppoe_username,
             'mikrotik_profile' => $customer->mikrotik_profile,
-            'router_type' => $customer->home_router_type,
-            'router_host' => $customer->home_router_host,
-            'router_mac_address' => $this->stringInput($input, 'contract_router_mac'),
-            'device_serial_number' => $this->stringInput($input, 'contract_device_serial'),
-            'device_notes' => $this->stringInput($input, 'contract_device_notes'),
+            'router_type' => $customer->home_router_type ?: ($prevDevice['router_type'] ?? null),
+            'router_host' => $customer->home_router_host ?: ($prevDevice['router_host'] ?? null),
+            'dropcore_length' => $customer->dropcore_cable_length_meters ?: ($prevDevice['dropcore_length'] ?? null),
+            'router_mac_address' => $this->stringInput($input, 'contract_router_mac') ?: ($prevDevice['router_mac_address'] ?? null),
+            'device_serial_number' => $this->stringInput($input, 'contract_device_serial') ?: ($prevDevice['device_serial_number'] ?? null),
+            'device_notes' => $this->stringInput($input, 'contract_device_notes') ?: ($prevDevice['device_notes'] ?? null),
         ];
     }
 
-    private function storeAttachments(Customer $customer, array $files): array
+    private function storeAttachments(Customer $customer, array $files, ?CustomerAgreement $previousAgreement = null): array
     {
         $paths = [];
         foreach ($files as $file) {
@@ -163,6 +268,10 @@ class CustomerAgreementService
             }
 
             $paths[] = $file->store('customer-contracts/photos/' . $customer->id, 'public');
+        }
+
+        if ($paths === [] && is_array($previousAgreement?->attachment_paths)) {
+            return array_values(array_filter($previousAgreement->attachment_paths));
         }
 
         return $paths;

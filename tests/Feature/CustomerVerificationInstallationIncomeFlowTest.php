@@ -58,6 +58,9 @@ class CustomerVerificationInstallationIncomeFlowTest extends TestCase
 
         $response->assertOk();
         $this->assertDatabaseCount('customers', 1);
+        $this->assertDatabaseHas('customers', [
+            'dropcore_cable_length_meters' => 35,
+        ]);
         $this->assertDatabaseMissing('financial_transactions', [
             'source' => 'installation_income',
         ]);
@@ -365,6 +368,7 @@ class CustomerVerificationInstallationIncomeFlowTest extends TestCase
             'contract_router_mac' => 'AA:BB:CC:DD:EE:FF',
             'enable_home_router' => 0,
             'enable_installation_team' => 0,
+            'installation_cable_used' => 35,
         ], $overrides);
     }
 

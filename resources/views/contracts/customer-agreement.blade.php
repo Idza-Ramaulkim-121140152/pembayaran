@@ -93,6 +93,9 @@
 
     <table class="field-table">
         <tr><td class="field-label">Nama Pelanggan</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['customer_name'] ?? '-' }}</td></tr>
+        @if (!empty($customerData['gender']))
+            <tr><td class="field-label">Jenis Kelamin</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['gender'] }}</td></tr>
+        @endif
         <tr><td class="field-label">Nomor KTP</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['ktp_number'] ?? '-' }}</td></tr>
         <tr><td class="field-label">Alamat</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['address'] ?? '-' }}</td></tr>
         <tr><td class="field-label">Nomor HP/WA</td><td class="field-colon">:</td><td class="field-value">{{ $customerData['phone'] ?? '-' }}</td></tr>
@@ -141,9 +144,13 @@
     <table>
         <tr><th colspan="2">Data Pelanggan</th></tr>
         <tr><td>Nama</td><td>{{ $customerData['customer_name'] ?? '-' }}</td></tr>
+        <tr><td>Jenis Kelamin</td><td>{{ $customerData['gender'] ?? '-' }}</td></tr>
         <tr><td>Nomor KTP</td><td>{{ $customerData['ktp_number'] ?? '-' }}</td></tr>
         <tr><td>Nomor HP/WA</td><td>{{ $customerData['phone'] ?? '-' }}</td></tr>
         <tr><td>Alamat</td><td>{{ $customerData['address'] ?? '-' }}</td></tr>
+        @if (!empty($customerData['region']))
+            <tr><td>Wilayah</td><td>{{ $customerData['region'] }}</td></tr>
+        @endif
         <tr><td>Koordinat Rumah</td><td>{{ ($customerData['latitude'] ?? null) && ($customerData['longitude'] ?? null) ? ($customerData['latitude'] . ', ' . $customerData['longitude']) : '-' }}</td></tr>
         <tr><th colspan="2">Data Layanan dan Perangkat</th></tr>
         <tr><td>Paket</td><td>{{ $deviceData['package_name'] ?? '-' }} {{ $deviceData['package_speed'] ? '(' . $deviceData['package_speed'] . ')' : '' }}</td></tr>
@@ -153,6 +160,12 @@
         <tr><td>ODP</td><td>{{ $deviceData['odp'] ?? '-' }}</td></tr>
         <tr><td>Username PPPoE</td><td>{{ $deviceData['pppoe_username'] ?? '-' }}</td></tr>
         <tr><td>Profile MikroTik</td><td>{{ $deviceData['mikrotik_profile'] ?? '-' }}</td></tr>
+        @if (!empty($deviceData['router_type']))
+            <tr><td>Tipe Router / ONT</td><td>{{ $deviceData['router_type'] }}</td></tr>
+        @endif
+        @if (!empty($deviceData['dropcore_length']))
+            <tr><td>Panjang Kabel Dropcore</td><td>{{ $deviceData['dropcore_length'] }} meter</td></tr>
+        @endif
         <tr><td>MAC Address Router/ONU</td><td>{{ $deviceData['router_mac_address'] ?? '-' }}</td></tr>
         <tr><td>Serial Number Perangkat</td><td>{{ $deviceData['device_serial_number'] ?? '-' }}</td></tr>
         <tr><td>Catatan Perangkat</td><td>{{ $deviceData['device_notes'] ?? '-' }}</td></tr>
